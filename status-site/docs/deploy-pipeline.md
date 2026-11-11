@@ -16,9 +16,11 @@ Python tests, `npm run lint` and `npm run build` on a GitHub-hosted runner.
 On main, the `deploy-status` job of `.github/workflows/sites.yml` waits for the
 `status-deploy` lock, checks out the tip of `main`, builds it and deploys it
 with `npm run deploy:prebuilt` (the two vantage Workers, then `ts-status`) using
-the repository's `CLOUDFLARE_API_TOKEN`, and checks that the live revision is
-the commit it checked out. Pull requests never deploy and the Worker has no
-preview URLs.
+the repository's `CLOUDFLARE_API_TOKEN`, with that commit as each version's
+message. The monorepo's `scripts/ci/prove-worker-deploy.mjs` then reads
+Cloudflare's records: each Worker's active deployment must serve the version the
+deploy created at 100%, and that version's message must be the commit. Pull
+requests never deploy and the Worker has no preview URLs.
 Cloudflare runs it all; ts-status has no process on OCI, so it keeps working
 while the platform is down.
 
@@ -30,7 +32,7 @@ The build's `REVISION` environment variable, the commit the deploy job checked
 out, supplies the status Worker's `VERSION` binding.
 `GET https://status.terrascale.tech/health/version` returns that full revision
 and the colo the request entered (not proof of where any vantage ran) without
-caching or reading D1; `deploy-status` checks it matches that commit.
+caching or reading D1.
 
 ## Monitoring coverage
 

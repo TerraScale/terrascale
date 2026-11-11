@@ -8,7 +8,7 @@ on:
       - 'Makefile'
       - 'landing-site/**'
       - 'status-site/**'
-      - '.github/workflows/docs-deploy.yml'
+      - 'scripts/ci/prove-worker-deploy.mjs'
       - '.github/workflows/sites.yml'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
@@ -42,25 +42,56 @@ jobs:
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
-              - .github/workflows/docs-deploy.yml
+              - scripts/ci/prove-worker-deploy.mjs
               - .github/workflows/sites.yml
             landing:
               - landing-site/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/ci/prove-worker-deploy.mjs
               - .github/workflows/sites.yml
             status:
               - status-site/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/ci/prove-worker-deploy.mjs
               - .github/workflows/sites.yml
 
   deploy-docs:
     needs: changes
     if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
-      actions: read
-    uses: ./.github/workflows/docs-deploy.yml
-    with:
-      revision: ${{ github.sha }}
-    secrets: inherit
+    concurrency:
+      group: docs-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: main
+      - name: Record the checked-out revision
+        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: docs-site/.node-version
+          package-manager-cache: false
+      - name: Install dependencies
+        working-directory: docs-site
+        run: npm ci --no-audit --no-fund
+      - name: Build the checked-out revision
+        working-directory: docs-site
+        run: npm run build
+      - name: Deploy the site to Workers
+        working-directory: docs-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
+        run: npm run deploy:site -- --message "$REVISION"
+      - name: Prove the deployed revision
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-docs
 
   deploy-landing:
     needs: changes
@@ -77,11 +108,8 @@ jobs:
         with:
           persist-credentials: false
           ref: main
-      - id: revision
-        name: Record the checked-out revision
-        run: |
-          sha=$(git rev-parse HEAD)
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Record the checked-out revision
+        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: landing-site/.node-version
@@ -98,15 +126,13 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler deploy
-      - name: Prove the live revision
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
+        run: npx wrangler deploy --message "$REVISION"
+      - name: Prove the deployed revision
         env:
-          REVISION: ${{ steps.revision.outputs.sha }}
-        run: |
-          set -euo pipefail
-          live=$(curl -fsS https://terrascale.tech/build-info.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])')
-          test "$live" = "$REVISION"
-          echo "live revision $live matches $REVISION"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-landing
 
   deploy-status:
     needs: changes
@@ -123,11 +149,8 @@ jobs:
         with:
           persist-credentials: false
           ref: main
-      - id: revision
-        name: Record the checked-out revision
-        run: |
-          sha=$(git rev-parse HEAD)
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Record the checked-out revision
+        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: status-site/.node-version
@@ -138,20 +161,16 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Build the checked-out revision
         working-directory: status-site
-        env:
-          REVISION: ${{ steps.revision.outputs.sha }}
         run: npm run build
       - name: Deploy the status Workers
         working-directory: status-site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
         run: npm run deploy:prebuilt
-      - name: Prove the live revision
+      - name: Prove the deployed revision
         env:
-          REVISION: ${{ steps.revision.outputs.sha }}
-        run: |
-          set -euo pipefail
-          live=$(curl -fsS https://status.terrascale.tech/health/version | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
-          test "$live" = "$REVISION"
-          echo "live revision $live matches $REVISION"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-status-vantage-sfo ts-status-vantage-gru ts-status

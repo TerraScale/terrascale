@@ -196,7 +196,7 @@ impl ClientBuilder {
         if self
             .project
             .as_deref()
-            .is_some_and(|p| !super::ids::valid_entity_id(p))
+            .is_some_and(|p| !super::ids::is_valid_id(p))
         {
             return Err(Error::InvalidInput(
                 "project must be a canonical uppercase ULID".into(),

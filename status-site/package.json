@@ -11,7 +11,7 @@
     "test": "vitest run",
     "predeploy": "npm run check && npm test",
     "deploy": "npm run build && npm run deploy:prebuilt",
-    "deploy:prebuilt": "wrangler deploy -c dist/ts_status_vantage_sfo/wrangler.json --experimental-provision=false --experimental-auto-create=false && wrangler deploy -c dist/ts_status_vantage_gru/wrangler.json --experimental-provision=false --experimental-auto-create=false && wrangler deploy -c dist/ts_status/wrangler.json --experimental-provision=false --experimental-auto-create=false",
+    "deploy:prebuilt": "wrangler deploy -c dist/ts_status_vantage_sfo/wrangler.json --experimental-provision=false --experimental-auto-create=false --message \"$REVISION\" && wrangler deploy -c dist/ts_status_vantage_gru/wrangler.json --experimental-provision=false --experimental-auto-create=false --message \"$REVISION\" && wrangler deploy -c dist/ts_status/wrangler.json --experimental-provision=false --experimental-auto-create=false --message \"$REVISION\"",
     "db:bootstrap:local": "wrangler d1 execute ts-status --local --file schema.sql",
     "db:bootstrap:remote": "wrangler d1 execute ts-status --remote --file schema.sql",
     "world-map:sync": "node scripts/world-map-sync.mjs",
