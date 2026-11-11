@@ -1,3 +1,0 @@
-[
-  {"repo": "terrascale", "path": "^tests/TerraScale\\.Authentication\\.(?:Fast/Identity/PasscodeTests|Slow/Store/RegionalStorageTests)\\.cs$", "terms": ["webhooks"], "match": "using TerraScale\\.Authentication\\.Features\\.Webhooks;|\\bWebhookOutbox\\b|\\bWebhookEndpoints\\b", "reason": "Test construction of the identity stack with the lifecycle webhook outbox (T228)."}
-]

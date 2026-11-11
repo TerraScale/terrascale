@@ -1,7 +1,0 @@
-{
-  "source": "ShapeHintModels and GetShapeHintEndpoint at 65b8eb977; first-frame authentication and new_data also exercised by ShapeFlightTests",
-  "protocol": "terrascale.shape.v1",
-  "ready": { "type": "ready" },
-  "changed": { "type": "new_data", "handle": "h1-0123456789abcdef", "offset": "2", "next_offset": "4" },
-  "refused": { "type": "error", "code": "invalid_key" }
-}

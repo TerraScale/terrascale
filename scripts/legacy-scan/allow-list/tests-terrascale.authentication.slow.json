@@ -1,3 +1,0 @@
-[
-  {"path": "^tests/TerraScale\\.Authentication\\.Slow/(?:Store/StorageRecoveryTests\\.cs|TerraScale\\.Authentication\\.Slow\\.csproj|packages\\.lock\\.json)$", "repo": "terrascale", "terms": ["engine-brand"], "match": "(?i)\\bturso\\.(?:data(?:\\.sqlite)?|raw)\\b", "reason": "Critical crash-recovery test inspects its stopped fixture SQL engine files to inject a durable fault marker; these are internal driver identities."}
-]
