@@ -86,11 +86,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
                         break;
                     }
 
-                    if (context.Organization?.Kind != "personal")
-                    {
-                        throw new OnboardingValidationException("Return to your Personal workspace to finish account setup.");
-                    }
-
+                    context = await accounts.SwitchOrganizationAsync(session, context.Account.PersonalOrganizationId, cancellationToken);
                     var interval = form["interval"].ToString();
                     if (interval.Length == 0)
                     {
@@ -109,11 +105,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
                         throw new OnboardingValidationException("Complete the current setup step first.");
                     }
 
-                    if (context.Organization?.Id != context.Account.PersonalOrganizationId || context.Project?.IsDefault != true)
-                    {
-                        throw new OnboardingValidationException("Return to your default Personal project to finish account setup.");
-                    }
-
+                    context = await accounts.SwitchOrganizationAsync(session, context.Account.PersonalOrganizationId, cancellationToken);
                     var name = form["name"].ToString().Trim();
                     if (name.Any(char.IsControl))
                     {
