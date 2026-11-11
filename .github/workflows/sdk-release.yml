@@ -1,0 +1,417 @@
+name: SDK Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/go/**'
+      - 'scripts/sdk/**'
+      - '.github/workflows/sdk-release.yml'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+    tags:
+      - 'sdk/go/v0.0.*'
+      - 'sdk/js/v0.0.*'
+      - 'sdk/python/v0.0.*'
+      - 'sdk/rust/v0.0.*'
+      - 'sdk/dotnet/v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'sdk/go/v0.0.X tag to publish'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  GITHUB_FEED: https://nuget.pkg.github.com/TerraScale/index.json
+
+jobs:
+  tests:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      eligible: ${{ steps.gate.outputs.eligible }}
+      revision: ${{ steps.gate.outputs.revision }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - id: gate
+        name: Select green main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, subprocess, time
+          def gh(*args):
+              return json.loads(subprocess.check_output(['gh', *args], text=True))
+          repo, pushed = os.environ['REPOSITORY'], os.environ['REVISION']
+          def green(sha):
+              runs = gh('run', 'list', '--repo', repo, '--branch', 'main', '--commit', sha,
+                        '--event', 'push', '--limit', '100', '--json', 'status,conclusion,workflowName')
+              runs = [item for item in runs if item['workflowName'] != 'SDK Release']
+              return bool(runs) and all(item['status'] == 'completed'
+                                        and item['conclusion'] in {'success', 'skipped'} for item in runs)
+          def releasable():
+              return pushed if green(pushed) else None
+          deadline = time.monotonic() + 25 * 60
+          revision = releasable()
+          while time.monotonic() < deadline and revision is None:
+              time.sleep(30)
+              revision = releasable()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"eligible={'true' if revision else 'false'}\n")
+              if revision:
+                  output.write(f'revision={revision}\n')
+          if not revision:
+              print('No green main revision became releasable.')
+          PYTHON
+
+  go:
+    needs: tests
+    if: >-
+      !cancelled() && (needs.tests.outputs.eligible == 'true'
+      || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/sdk/go/'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      revision: ${{ steps.tag.outputs.revision }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.tests.outputs.revision || inputs.tag || github.ref }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate the versioned main tag
+        if: github.ref != 'refs/heads/main'
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^sdk/go/v0\.0\.(0|[1-9][0-9]*)$ ]]
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          install: false
+      - name: Install the pinned Go toolchains and GoReleaser
+        run: mise install "go@$(cat sdk/go/.go-version)" go@1.25.0 goreleaser@2.19.0
+      - name: Build the release artifacts with their release gates
+        id: qualified
+        run: python3 scripts/sdk/build-release.py go "$RUNNER_TEMP/qualified"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go
+          path: ${{ runner.temp }}/qualified
+          if-no-files-found: error
+          retention-days: 1
+      - name: Tag the built revision
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          VERSION: ${{ steps.qualified.outputs.version }}
+        run: |
+          revision=$(git rev-parse HEAD)
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            TAG="sdk/go/v$VERSION"
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/sdk%2Fgo%2Fv$VERSION" > /dev/null 2>&1; then
+              echo "$TAG is already released; nothing to do."
+              exit 0
+            fi
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$revision" > /dev/null
+          fi
+          test "$TAG" = "sdk/go/v$VERSION"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+  github-release:
+    needs: go
+    if: ${{ !cancelled() && needs.go.result == 'success' && needs.go.outputs.tag != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: go
+          path: ${{ runner.temp }}/qualified
+      - name: Publish the qualified CLI assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.go.outputs.tag }}
+          REVISION: ${{ needs.go.outputs.revision }}
+        run: |
+          cd "$RUNNER_TEMP/qualified"
+          sha256sum --check checksums.txt
+          version=$(cat version.txt)
+          test "$TAG" = "sdk/go/v$version"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$REVISION" \
+            --title "TerraScale Go $version" --notes "CLI and module release built and qualified in CI at $REVISION." \
+            ./*.tar.gz ./*.zip checksums.txt ts.rb install.sh
+
+  qualify:
+    if: startsWith(github.ref, 'refs/tags/sdk/') && !startsWith(github.ref, 'refs/tags/sdk/go/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      sdk: ${{ steps.tag.outputs.sdk }}
+      version: ${{ steps.qualified.outputs.version }}
+      sha256: ${{ steps.nupkg.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate the versioned main tag
+        id: tag
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^sdk/(js|python|rust|dotnet)/v0\.0\.(0|[1-9][0-9]*)$ ]]
+          sdk=${BASH_REMATCH[1]}
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          [ "$sdk" != rust ] || test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
+          echo "sdk=$sdk" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: steps.tag.outputs.sdk == 'js'
+        with:
+          node-version: '24.21.0'
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        if: steps.tag.outputs.sdk == 'python'
+        with:
+          install: false
+      - name: Install the pinned uv
+        if: steps.tag.outputs.sdk == 'python'
+        run: mise use -g uv@0.13.7 && dirname "$(mise which uv)" >> "$GITHUB_PATH"
+      - name: Install the pinned Rust toolchain
+        if: steps.tag.outputs.sdk == 'rust'
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+      - name: Keep the .NET SDK and packages in folders of this job
+        if: steps.tag.outputs.sdk == 'dotnet'
+        run: |
+          {
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet"
+            echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget-packages"
+            echo "NUGET_HTTP_CACHE_PATH=$RUNNER_TEMP/nuget-http"
+          } >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        if: steps.tag.outputs.sdk == 'dotnet'
+        with:
+          dotnet-version: |
+            10.0.401
+            11.0.100
+      - name: Build the release artifacts with their release gates
+        id: qualified
+        env:
+          SDK: ${{ steps.tag.outputs.sdk }}
+        run: python3 scripts/sdk/build-release.py "$SDK" "$RUNNER_TEMP/qualified"
+      - name: Require the tagged package version
+        env:
+          SDK: ${{ steps.tag.outputs.sdk }}
+          VERSION: ${{ steps.qualified.outputs.version }}
+        run: test "$GITHUB_REF_NAME" = "sdk/$SDK/v$VERSION"
+      - name: Require the .NET package of the tagged commit
+        id: nupkg
+        if: steps.tag.outputs.sdk == 'dotnet'
+        env:
+          VERSION: ${{ steps.qualified.outputs.version }}
+        run: |
+          package="$RUNNER_TEMP/qualified/TerraScale.DotNet.$VERSION.nupkg"
+          python3 - "$RUNNER_TEMP/qualified/provenance.json" "$GITHUB_SHA" <<'PYTHON'
+          import json, sys
+          assert json.load(open(sys.argv[1]))["sourceRevision"] == sys.argv[2]
+          PYTHON
+          unzip -p "$package" TerraScale.DotNet.nuspec | grep -F "commit=\"$GITHUB_SHA\""
+          echo "sha256=$(sha256sum "$package" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.tag.outputs.sdk }}
+          path: ${{ runner.temp }}/qualified
+          if-no-files-found: error
+
+  npm:
+    needs: qualify
+    if: needs.qualify.outputs.sdk == 'js'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: js
+          path: ${{ runner.temp }}/qualified
+      - name: Provision the reviewed npm CLI
+        working-directory: sdk/js
+        run: node scripts/provision-reviewed-npm.js
+      - name: Publish the qualified tarball
+        env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          package="$RUNNER_TEMP/qualified/terrascale-sdk-$VERSION.tgz"
+          test -f "$package"
+          tar -xOf "$package" package/package.json | node --input-type=module -e '
+            let input = ""; for await (const part of process.stdin) input += part;
+            const manifest = JSON.parse(input);
+            if (manifest.name !== "@terrascale/sdk" || manifest.version !== process.env.VERSION) process.exit(1);
+          '
+          npm publish "$package" --ignore-scripts --provenance --access public
+
+  pypi:
+    needs: qualify
+    if: needs.qualify.outputs.sdk == 'python'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python
+          path: ${{ runner.temp }}/qualified
+      - name: Stage only qualified distribution files
+        run: |
+          mkdir "$RUNNER_TEMP/dist"
+          cp "$RUNNER_TEMP/qualified/"*.whl "$RUNNER_TEMP/qualified/"*.tar.gz "$RUNNER_TEMP/dist/"
+      - name: Publish to PyPI through trusted publishing
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: ${{ runner.temp }}/dist/
+
+  crates-io:
+    needs: qualify
+    if: needs.qualify.outputs.sdk == 'rust'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rust
+          path: ${{ runner.temp }}/qualified
+      - name: Publish the qualified source without rebuilding
+        working-directory: sdk/rust
+        env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN" || { echo 'CARGO_REGISTRY_TOKEN must be installed by the release owner.' >&2; exit 1; }
+          python3 - "$VERSION" <<'PYTHON'
+          import sys, tomllib
+          from pathlib import Path
+          manifest = tomllib.loads(Path("Cargo.toml").read_text())["package"]
+          assert manifest["name"] == "terrascale" and manifest["version"] == sys.argv[1]
+          PYTHON
+          test -s "$RUNNER_TEMP/qualified/terrascale-$VERSION.crate"
+          cargo publish --no-verify --locked --all-features --registry crates-io
+
+  github-packages:
+    needs: qualify
+    if: needs.qualify.outputs.sdk == 'dotnet'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dotnet
+      - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.401
+      - env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+          SHA256: ${{ needs.qualify.outputs.sha256 }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$SHA256  TerraScale.DotNet.$VERSION.nupkg" | sha256sum --check
+          dotnet nuget push "TerraScale.DotNet.$VERSION.nupkg" --source "$GITHUB_FEED" --api-key "$GITHUB_TOKEN" --skip-duplicate
+
+  nuget-org:
+    needs: [qualify, github-packages]
+    if: needs.qualify.outputs.sdk == 'dotnet'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dotnet
+      - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.401
+      - name: GitHub Packages holds the qualified bytes
+        env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+          SHA256: ${{ needs.qualify.outputs.sha256 }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > "$RUNNER_TEMP/github-packages.config" <<EOF
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="github" value="$GITHUB_FEED" />
+            </packageSources>
+            <packageSourceCredentials>
+              <github>
+                <add key="Username" value="$GITHUB_ACTOR" />
+                <add key="ClearTextPassword" value="%GITHUB_TOKEN%" />
+              </github>
+            </packageSourceCredentials>
+          </configuration>
+          EOF
+          NUGET_PACKAGES="$RUNNER_TEMP/github-packages-cache" NUGET_HTTP_CACHE_PATH="$RUNNER_TEMP/github-packages-http" \
+            dotnet package download "TerraScale.DotNet@$VERSION" --configfile "$RUNNER_TEMP/github-packages.config" --output "$RUNNER_TEMP/github-packages"
+          echo "$SHA256  $RUNNER_TEMP/github-packages/terrascale.dotnet/$VERSION/terrascale.dotnet.$VERSION.nupkg" | sha256sum --check
+      - env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+          SHA256: ${{ needs.qualify.outputs.sha256 }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          echo "$SHA256  TerraScale.DotNet.$VERSION.nupkg" | sha256sum --check
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::error::Set the repository Actions secret NUGET_API_KEY before publishing a tag."; exit 1
+          fi
+          dotnet nuget push "TerraScale.DotNet.$VERSION.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY"
