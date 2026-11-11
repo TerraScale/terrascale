@@ -372,10 +372,9 @@ jobs:
         uses: ./terrascale/.github/actions/turso-native-cache
         with:
           dir: terrascale
-      - &locked-restore
-        name: Locked restore and pinned native libraries
+      - name: Locked restore and pinned native libraries
         working-directory: terrascale
-        run: make restore turso-native
+        run: make restore turso-native SOLUTION=libs.slnf
       - name: Checked build, whitespace and style
         working-directory: terrascale
         run: |
@@ -392,7 +391,9 @@ jobs:
       - *checkout
       - *setup-dotnet
       - *turso-native-cache
-      - *locked-restore
+      - name: Locked restore and pinned native libraries
+        working-directory: terrascale
+        run: make restore turso-native SOLUTION=auth.slnf
       - name: Checked build, whitespace, NuGet audit and OpenAPI contract
         working-directory: terrascale
         run: |
@@ -409,7 +410,9 @@ jobs:
       - *checkout
       - *setup-dotnet
       - *turso-native-cache
-      - *locked-restore
+      - name: Locked restore and pinned native libraries
+        working-directory: terrascale
+        run: make restore turso-native SOLUTION=terrabase.slnf
       - name: Whitespace
         working-directory: terrascale
         run: make -o restore fmt-check SOLUTION=terrabase.slnf CONFIGURATION=Release
