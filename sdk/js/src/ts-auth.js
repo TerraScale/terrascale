@@ -611,129 +611,6 @@ export class TsAuthSessionsClient {
   }
 }
 
-// api-keys (snake_case)
-
-/**
- * @typedef {{
- *   readonly id: import("./ids.js").EntityId;
- *   readonly name: string;
- *   readonly api_key: string; // One-time full sk_ bearer; only the creating call returns it.
- *   readonly scopes: readonly string[];
- *   readonly previous_secret_expires_at?: number | null | undefined; // Unix seconds; only a rotation with grace sets it.
- * }} TsAuthApiKeyWithSecret
- */
-
-/**
- * @typedef {{
- *   readonly graceSeconds?: number | undefined;
- * }} TsAuthRotateApiKeyRequest
- */
-
-/**
- * @typedef {{
- *   readonly id: import("./ids.js").EntityId;
- *   readonly name: string;
- *   readonly scopes: readonly string[];
- *   readonly created_at: number; // Unix seconds.
- *   readonly last_used_at?: number | null | undefined;
- *   readonly revoked: boolean;
- * }} TsAuthApiKey
- */
-
-/** @typedef {{ readonly data: readonly TsAuthApiKey[] }} TsAuthApiKeyPage */
-
-/**
- * @typedef {{
- *   readonly name: string;
- *   readonly scopes?: readonly string[] | undefined;
- * }} TsAuthCreateApiKeyRequest
- */
-
-export class TsAuthApiKeysClient {
-  /**
-   * @type {TsAuthHttp}
-   * @readonly
-   */
-  #http;
-  /**
-   * @type {string}
-   * @readonly
-   */
-  #slug;
-
-  /**
-   * @param {TsAuthHttp} http
-   * @param {string} instanceSlug
-   */
-  constructor(http, instanceSlug) {
-    this.#http = http;
-    this.#slug = instanceSlug;
-  }
-
-  /**
-   * @param {TsAuthCreateApiKeyRequest} request
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<TsAuthApiKeyWithSecret>>}
-   */
-  create(request, options = {}) {
-    requireText(request?.name, "name");
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "POST",
-      path: `v1/${this.#slug}/api-keys`,
-      routeName: "tsauth.apiKeys.create",
-      body: request,
-    });
-  }
-
-  /**
-   * @param {string} keyId
-   * @param {TsAuthRotateApiKeyRequest} [request={}]
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<TsAuthApiKeyWithSecret>>}
-   */
-  rotate(keyId, request = {}, options = {}) {
-    const graceSeconds = request?.graceSeconds ?? 0;
-    if (!Number.isInteger(graceSeconds) || graceSeconds < 0 || graceSeconds > 86400) {
-      throw new TypeError("graceSeconds must be 0-86400 seconds.");
-    }
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "POST",
-      path: `v1/${this.#slug}/api-keys/${segment(keyId, "key id")}/rotate`,
-      routeName: "tsauth.apiKeys.rotate",
-      body: { previous_secret_ttl: graceSeconds },
-    });
-  }
-
-  /**
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<TsAuthApiKeyPage>>}
-   */
-  list(options = {}) {
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "GET",
-      path: `v1/${this.#slug}/api-keys`,
-      routeName: "tsauth.apiKeys.list",
-    });
-  }
-
-  /**
-   * @param {string} keyId
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<void>>}
-   */
-  delete(keyId, options = {}) {
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "DELETE",
-      path: `v1/${this.#slug}/api-keys/${segment(keyId, "key id")}`,
-      routeName: "tsauth.apiKeys.delete",
-    });
-  }
-}
-
 // organizations (snake_case)
 
 /**
@@ -2478,11 +2355,6 @@ export class TsAuthClient {
    */
   sessions;
   /**
-   * @type {TsAuthApiKeysClient}
-   * @readonly
-   */
-  apiKeys;
-  /**
    * @type {TsAuthOrganizationsClient}
    * @readonly
    */
@@ -2549,7 +2421,6 @@ export class TsAuthClient {
     this.#http = new TsAuthHttp(config);
     this.users = new TsAuthUsersClient(this.#http, slug);
     this.sessions = new TsAuthSessionsClient(this.#http, slug);
-    this.apiKeys = new TsAuthApiKeysClient(this.#http, slug);
     this.organizations = new TsAuthOrganizationsClient(this.#http, slug);
     this.connections = new TsAuthConnectionsClient(this.#http, slug);
     this.directories = new TsAuthDirectoriesClient(this.#http, slug);

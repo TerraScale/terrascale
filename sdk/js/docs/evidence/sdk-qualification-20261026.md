@@ -32,7 +32,6 @@ Names below are exact Q11 export/member groups; constructor/factory rows mean ad
 | `.` `V1FileBucket.{delete, createUpload, upload}` | owned storage bucket/object and admitted object-store service (TS-962) | Historical FAIL (0.0.9); current PENDING; Q11 OP080, OP081, OP086 |
 | `.` `V1FileBucket.{completeUpload, downloadUrl, deleteFile, download}` | owned storage bucket/object and admitted object-store service (TS-962) | PENDING; Q11 OP082, OP084, OP085, OP087 |
 | `.` `V1Platform.{databases}` | separately authorized platform administrator; ordinary account denial insufficient | PENDING; Q11 OP126 |
-| `./ts-auth` `TsAuthApiKeysClient.{create, list, delete}` | registered tenant/app/resource; tenant administrator and disposable owned users/resources | PENDING; Q11 OP195, OP196, OP197 |
 | `./ts-auth` `TsAuthAuditEventsClient.{list}` | registered tenant/app/resource; tenant administrator and disposable owned users/resources | PENDING; Q11 OP198 |
 | `./ts-auth` `TsAuthBillingClient.{get, checkout, portal, enforceCheck, reconcileQuota}` | registered tenant/app/resource; tenant administrator and disposable owned users/resources | PENDING; Q11 OP199, OP200, OP201, OP202, OP203 |
 | `./ts-auth` `TsAuthConnectionsClient.{create, list, update, delete}` | registered tenant/app/resource; tenant administrator and disposable owned users/resources | PENDING; Q11 OP204, OP205, OP206, OP207 |

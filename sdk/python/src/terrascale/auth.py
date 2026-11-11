@@ -52,18 +52,6 @@ def _scoped_key_call(api_key: str | None, issuer: str | None, project: str, data
                       success=(201,), base_url=origin)
 
 
-def _rotate_key_call(api_key: str | None, issuer: str | None, key_id: str, grace_seconds: int) -> _spec.Call:
-    if api_key is None:
-        raise ValueError("rotate_api_key requires the client's api_key")
-    if not isinstance(grace_seconds, int) or isinstance(grace_seconds, bool) or not 0 <= grace_seconds <= 86400:
-        raise ValueError("grace_seconds must be 0 to 86400 seconds")
-    exchange = _Exchange(api_key, None, None, issuer)
-    origin = str(httpx.URL(exchange.endpoint).copy_with(path="/", query=None, fragment=None)).rstrip("/")
-    return _spec.Call("POST", ["v1", "terrascale", "api-keys", validate_id(key_id, "key id"), "rotate"],
-                      lambda r: models.RotatedApiKey.from_json(r.json()), headers=exchange.headers(),
-                      body={"previous_secret_ttl": grace_seconds}, base_url=origin)
-
-
 PROOF_HEADER = "X-TerraScale-Step-Up-Proof"
 
 
@@ -103,6 +91,15 @@ def list_api_keys_call(issuer: str | None, organization: str, project: str | Non
 def revoke_api_key_call(issuer: str | None, organization: str, project: str | None, key: str) -> _spec.Call:
     return _spec.Call("DELETE", _keys_path(organization, project, validate_id(key, "key id")), _spec._none,
                       success=(204,), base_url=_origin(issuer))
+
+
+def rotate_api_key_call(issuer: str | None, organization: str, project: str | None, key: str, grace_seconds: int,
+                        step_up_proof: str) -> _spec.Call:
+    if not isinstance(grace_seconds, int) or isinstance(grace_seconds, bool) or not 0 <= grace_seconds <= 86400:
+        raise ValueError("grace_seconds must be 0 to 86400 seconds")
+    return _spec.Call("POST", _keys_path(organization, project, validate_id(key, "key id"), "rotate"),
+                      lambda r: models.ApiKeySecret.from_json(r.json()), headers={PROOF_HEADER: step_up_proof},
+                      body={"previous_secret_ttl": grace_seconds}, base_url=_origin(issuer))
 
 
 def _clients_path(project: str, *extra: str) -> list[str]:

@@ -32,6 +32,14 @@ was kept before; and a `terrascale.tech` host only for its own service, so
 `authBaseUrl` refuses `api.terrascale.tech` and its regional hosts. The client
 throws a `TypeError` when it is built.
 
+`rotateOrganizationApiKey` and `rotateProjectApiKey` of
+`createTerraScaleIdentityManagementClient` take the `rotate_api_key` step-up
+proof as `options.stepUpProof` and send it as `X-TerraScale-Step-Up-Proof`,
+which ts-auth requires; without it they throw a `TypeError` before any request.
+Earlier versions refused the option, so every rotation failed with
+`step_up_required`. `TsAuthClient.apiKeys` (`TsAuthApiKeysClient`) is gone: it
+called `/v1/{slug}/api-keys`, which ts-auth does not serve.
+
 `execute` on a database, on a SQL session and inside `transaction` also takes
 one `{ sql, args }` or `{ sql, named }` statement value. Arguments next to a
 statement value, or any other value, are refused with a `TypeError` before

@@ -17,7 +17,6 @@ from ._spec import Call
 from ._version import __version__
 from .auth import (
     APIKeyTokenSource,
-    _rotate_key_call,
     _scoped_key_call,
     create_api_key_call,
     create_project_client_call,
@@ -35,6 +34,7 @@ from .auth import (
     list_users_call,
     revoke_api_key_call,
     revoke_session_call,
+    rotate_api_key_call,
     rotate_project_client_secret_call,
     set_provider_call,
     update_project_client_call,
@@ -314,10 +314,6 @@ class TerraScale:
         return self._send(_scoped_key_call(
             self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds))
 
-    def rotate_api_key(self, key_id: str, grace_seconds: int = 0) -> models.RotatedApiKey:
-        """Issue a new secret for the caller's API key id; the previous one keeps working for grace_seconds (0 to 86400)."""
-        return self._send(_rotate_key_call(self._api_key, self._issuer, key_id, grace_seconds))
-
     def create_api_key(
         self, organization: str, name: str, scopes: Sequence[str], *,
         project: str | None = None, database: str | None = None, expires_at: str | None = None,
@@ -336,6 +332,12 @@ class TerraScale:
     def revoke_api_key(self, organization: str, key: str, *, project: str | None = None) -> None:
         """Revoke a key at once; tokens already issued live out their 15 minutes."""
         self._send(revoke_api_key_call(self._issuer, organization, project, key))
+
+    def rotate_api_key(
+        self, organization: str, key: str, *, step_up_proof: str, project: str | None = None, grace_seconds: int = 0,
+    ) -> models.ApiKeySecret:
+        return self._send(rotate_api_key_call(
+            self._issuer, organization, project, key, grace_seconds, step_up_proof))
 
     def create_project_client(
         self, name: str, client_type: str, redirect_uris: Sequence[str], *, step_up_proof: str,

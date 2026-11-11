@@ -201,7 +201,7 @@ function platformCaller(config, provider, credential = signInToken) {
     const route = platformIdentityRoutes[operation];
     const stepUp = "stepUp" in route ? route.stepUp : undefined;
     if (stepUp === undefined && options.stepUpProof !== undefined)
-      throw new TypeError("Step-up proofs belong only to proof-required organization operations.");
+      throw new TypeError("Step-up proofs belong only to proof-required operations.");
     const proof = stepUp === undefined ? undefined : stepUpProof(options.stepUpProof);
     const path = route.pathTemplate.replace(/\{(organization|project|user|key|invitation|provider)\}/gu,
       (_match, name) => encodeURIComponent(name === "provider" ? providerName(selectors.provider) : requireId(Reflect.get(selectors, name), name)));

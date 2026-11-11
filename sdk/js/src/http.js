@@ -28,6 +28,8 @@ import { isValidId } from "./ids.js";
 const retryableStatuses = new Set([429, 502, 503, 504]);
 const stepUpRoutes = new Set([
   "tsauth.platform.delete_organization",
+  "tsauth.platform.rotate_organization_api_key",
+  "tsauth.platform.rotate_project_api_key",
   "tsauth.platform.start_ownership_transfer",
   "tsauth.projects.create_client",
   "tsauth.projects.update_client",
