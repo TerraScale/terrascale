@@ -35,7 +35,7 @@ test('a second user signs up on a phone, the Free plan refuses to invite them, a
   await ownerPage.locator('#invite-role').selectOption('member');
   await ownerPage.locator('#team-invite').locator('button[type=submit]').click();
   await ownerPage.waitForLoadState('load');
-  await expect(ownerPage.locator('main')).toContainText('The Free plan allows 1 members including pending invitations.');
+  await expect(ownerPage.locator('main')).toContainText('The Free plan allows 1 member including pending invitations.');
   await expect(ownerPage.locator('main tr').filter({ hasText: email })).toHaveCount(0);
   await ownerAudit.check('invitation refused on the Free plan');
   await ownerAudit.finish();
