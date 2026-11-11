@@ -193,31 +193,28 @@ jobs:
           npx playwright install --only-shell chromium
           wait "$python" || { cat "$RUNNER_TEMP/python-runner.log"; exit 1; }
           wait "$js" || { cat "$RUNNER_TEMP/js-runner.log"; exit 1; }
-      - id: trust
-        name: Pin the production names and trust the run CA
+      - id: namespace
+        name: Enter a network namespace with only loopback, the production names pinned and the run CA trusted
+        timeout-minutes: 2
         run: |
           bash e2e/env/pki.sh
-          bash e2e/env/install-runner.sh
+          sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
+          bash e2e/env/local.sh start
+      - name: Egress guard
+        timeout-minutes: 1
+        run: bash e2e/env/local.sh exec bash e2e/env/guard.sh
       - name: Boot the stack
         timeout-minutes: 3
-        env:
-          SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
-        run: |
-          bash e2e/env/up.sh
-          while read -r secret; do echo "::add-mask::$secret"; done < "$E2E_STATE/secrets"
+        run: bash e2e/env/local.sh exec bash e2e/env/up.sh
       - name: Journey
         timeout-minutes: 15
         working-directory: e2e
-        env:
-          SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
-          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/e2e/.state/pki/ca.pem
-          E2E_CA_FILE: ${{ github.workspace }}/e2e/.state/pki/ca.pem
         run: |
           read -ra projects <<< "$PROJECTS"
-          npx playwright test "${projects[@]}"
+          bash env/local.sh exec npx playwright test "${projects[@]}"
       - name: Stop the stack
-        if: always()
-        run: bash e2e/env/down.sh
+        if: always() && steps.namespace.outcome == 'success'
+        run: bash e2e/env/local.sh stop
       - id: scrub
         name: Redact every generated secret from the files that upload
         if: always()

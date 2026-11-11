@@ -8,13 +8,17 @@ server and a Cloudflare send-API sink that must stay empty. CI runs it on every 
 ## Run it on your machine (no root)
 
 ```sh
-bash e2e/env/local.sh        # build, boot the stack in a rootless user+network namespace, run the suite, stop
+bash e2e/env/local.sh        # build, enter a network namespace, run the egress guard, boot, run the suite, stop
 ```
 
-Needs the .NET SDK of `global.json`, Node 24, Go, Rust, Python 3 and `certutil` (Ubuntu `libnss3-tools`; NixOS
-`nix shell nixpkgs#nss.tools`). The namespace has no internet, so nothing can reach production. To iterate,
-`bash e2e/env/local.sh start`, then `bash e2e/env/local.sh exec npx playwright test --project setup --project pages-desktop`
-from `e2e/`, then `bash e2e/env/local.sh stop`. The script also builds the five SDK runners (`e2e/sdk/build.sh`).
+Needs the .NET SDK of `global.json`, Node 24, Go, Rust, Python 3.12, `certutil` (Ubuntu `libnss3-tools`; NixOS
+`nix shell nixpkgs#nss.tools`) and util-linux `unshare` and `nsenter` with unprivileged user namespaces; Ubuntu 23.10
+and later restrict those through AppArmor until `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, the
+one command CI runs with sudo. The namespace has only loopback: the production names resolve to the local edge and
+every other name or address fails to connect, so nothing reaches production; CI enters it through the same
+`local.sh`. To iterate: `bash e2e/env/local.sh prepare`, `bash e2e/env/local.sh start`,
+`bash e2e/env/local.sh exec bash e2e/env/up.sh`, then from `e2e/`
+`bash env/local.sh exec npx playwright test --project pages-desktop`, and `bash e2e/env/local.sh stop`.
 
 ## Stages
 
