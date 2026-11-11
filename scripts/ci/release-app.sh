@@ -5,13 +5,7 @@ service=${1:?service} image=${2:?image}
 work=${RUNNER_TEMP:?}/ts-orch
 log=$RUNNER_TEMP/release.log
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
-mkdir -p "$work"
-tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
-  --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
-test -n "$tag"
-gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "$work" --pattern terrascale-orchestrator-linux-amd64 --clobber
-curl -fsSL --max-time 30 https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "$work/regions.json"
-chmod +x "$work/terrascale-orchestrator-linux-amd64"
+tag=$(bash "$(dirname "$0")/fetch-ts-orch.sh" "$work")
 regions=$(jq -r '[.[].region] | join(",")' "$work/regions.json")
 echo "Releasing ${service} ${image} to ${regions} with ts-orch ${tag}"
 

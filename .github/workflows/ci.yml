@@ -554,6 +554,10 @@ jobs:
       # ts-orch accepts this job's OIDC token to release the pinned digest.
       id-token: write
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -570,15 +574,10 @@ jobs:
           image="ghcr.io/terrascale/terrabase@${ARM64}"
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
-          test -n "$tag"
-          gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
-          curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
-          chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
+          bash scripts/ci/fetch-ts-orch.sh "${RUNNER_TEMP}/ts-orch"
           status=0
-          for i in $(jq -r 'keys[]' "${RUNNER_TEMP}/regions.json"); do
-            jq -c "[.[$i]]" "${RUNNER_TEMP}/regions.json" > "${RUNNER_TEMP}/region.json"
+          for i in $(jq -r 'keys[]' "${RUNNER_TEMP}/ts-orch/regions.json"); do
+            jq -c "[.[$i]]" "${RUNNER_TEMP}/ts-orch/regions.json" > "${RUNNER_TEMP}/region.json"
             echo "Region $(jq -r '.[0].region' "${RUNNER_TEMP}/region.json")" | tee -a "$GITHUB_STEP_SUMMARY"
             out=$("${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service terrabase \
               --image "$image" --regions "${RUNNER_TEMP}/region.json" 2>&1) || status=1
