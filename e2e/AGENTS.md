@@ -64,9 +64,12 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
   password and token are registered secrets. Errors name the "inbox provider".
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
-  sender; the sign-up submission of the four `hosted` tests: each would send a production mail, and `setup`,
-  `desktop-setup` and `invitation` already audit the verify page; and the global teardown's check of the Stripe
-  stand-in's unexpected calls (`support/teardown.ts`), because production has no stand-in.
+  sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
+  snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach
+  `/account-deleted` by itself, without a click, within its timeout); the sign-up submission of the four `hosted`
+  tests: each would send a production mail, and `setup`, `desktop-setup` and `invitation` already audit the verify
+  page; and the global teardown's check of the Stripe stand-in's unexpected calls (`support/teardown.ts`), because
+  production has no stand-in.
 - The SDK stage keeps the pacing and every per-operation check. TerraBase's lane counters (`127.0.0.1:9091`) exist only
   on the local target, so a refused request that an SDK resends itself (Go and Rust REST calls, JavaScript and .NET
   reads) is caught on pull requests only; on production a refusal fails the run when it reaches the runner.
