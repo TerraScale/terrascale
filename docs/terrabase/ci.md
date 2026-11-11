@@ -1,14 +1,14 @@
 # TerraBase CI
 
-A pull request must pass these checks from `.github/workflows/ci.yml`:
+A pull request must pass the `all-green` check of `.github/workflows/ci.yml`, which needs these jobs:
 
 - `changes` selects the areas the change touches.
 - `checks` runs the policy checks that sit beside `changes`.
-- `fast` is the Fast suite for each selected area (`libs`, `auth`, `terrabase`).
+- `libs`, `auth` and `terrabase` build each selected area and run its Fast suite; `terrabase` also runs the local-only end-to-end category through `make terrabase-e2e-local`.
+- `dashboard`, `sdk`, `docs`, `landing` and `status` run the Fast checks of the dashboard, of each selected SDK and of the docs, landing and status sites.
+- `test` passes only when `changes`, `checks` and every selected Fast area passed.
 
-The Slow suite is not required on every pull request. `.github/workflows/slow.yml` runs it on `main` on a schedule when its inputs changed.
-
-The power-loss end-to-end tests run nightly on `main` from `.github/workflows/terrabase-power-loss.yml` and are not part of every pull request. The nightly power-loss job runs the local-only category through `make terrabase-e2e-local`.
+No workflow runs the Slow suite.
 
 Local Fast validation is `make terrabase-test-fast`. Local Slow validation is `make terrabase-test-slow`.
 

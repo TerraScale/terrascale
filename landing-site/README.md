@@ -37,8 +37,10 @@ npm run cf:dev
 
 ## Deployment
 
-The monorepo's `.github/workflows/landing-ci.yml` validates changes under
-`landing-site/` and deploys green `main` to the existing Cloudflare Worker.
+The monorepo's `.github/workflows/ci.yml` validates pull requests that change
+`landing-site/` (job `landing`). On `main`, `.github/workflows/sites.yml` (job
+`deploy-landing`) builds the tip of `main`, tests included, and deploys it to
+the existing Cloudflare Worker.
 From the monorepo root, `make landing-test-fast` installs locked dependencies,
 runs the tests, prerenders the site and validates the static output. Production
 builds publish their monorepo commit in `/build-info.json`.

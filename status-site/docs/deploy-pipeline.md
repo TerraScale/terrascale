@@ -10,13 +10,15 @@ that cache. Cached observations keep their original timestamps; clients receive
 produce unknown observations for that region while preserving the other region.
 
 ts-status lives in `status-site/` of the terrascale monorepo.
-`.github/workflows/status-ci.yml` runs on every pull request and main push that
-touches it: the `test` job runs `npm ci`, `npm run check`, `npm test`, the
+On every pull request that touches `status-site/`, the `status` job of
+`.github/workflows/ci.yml` runs `npm ci`, `npm run check`, `npm test`, the
 Python tests, `npm run lint` and `npm run build` on a GitHub-hosted runner.
-On main, the `deploy` job then deploys that exact build with `npm run
-deploy:prebuilt` (the two vantage Workers, then `ts-status`) using the
-repository's `CLOUDFLARE_API_TOKEN`, and checks that the live revision is the
-pushed commit. Pull requests never deploy and the Worker has no preview URLs.
+On main, the `deploy-status` job of `.github/workflows/sites.yml` waits for the
+`status-deploy` lock, checks out the tip of `main`, builds it and deploys it
+with `npm run deploy:prebuilt` (the two vantage Workers, then `ts-status`) using
+the repository's `CLOUDFLARE_API_TOKEN`, and checks that the live revision is
+the commit it checked out. Pull requests never deploy and the Worker has no
+preview URLs.
 Cloudflare runs it all; ts-status has no process on OCI, so it keeps working
 while the platform is down.
 
@@ -24,10 +26,11 @@ The Worker applies `schema.sql` to D1 on first use, so a deploy needs no
 separate D1 step. The status Worker's admin, subscription and probe
 credentials are Worker secrets.
 
-The build's `GITHUB_SHA` supplies the status Worker's `VERSION` binding.
+The build's `REVISION` environment variable, the commit the deploy job checked
+out, supplies the status Worker's `VERSION` binding.
 `GET https://status.terrascale.tech/health/version` returns that full revision
 and the colo the request entered (not proof of where any vantage ran) without
-caching or reading D1; the deploy job checks it matches the pushed commit.
+caching or reading D1; `deploy-status` checks it matches that commit.
 
 ## Monitoring coverage
 

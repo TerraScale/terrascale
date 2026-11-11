@@ -1,0 +1,157 @@
+name: Sites
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs-site/**'
+      - 'Makefile'
+      - 'landing-site/**'
+      - 'status-site/**'
+      - '.github/workflows/docs-deploy.yml'
+      - '.github/workflows/sites.yml'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.docs == 'true' }}
+      landing: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.landing == 'true' }}
+      status: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.status == 'true' }}
+    steps:
+      - if: github.event_name == 'push'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - id: filter
+        if: github.event_name == 'push'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          base: ${{ github.event.before }}
+          ref: ${{ github.sha }}
+          filters: |
+            docs:
+              - docs-site/**/!(AGENTS.md|CLAUDE.md)
+              - Makefile
+              - .github/workflows/docs-deploy.yml
+              - .github/workflows/sites.yml
+            landing:
+              - landing-site/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/sites.yml
+            status:
+              - status-site/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/sites.yml
+
+  deploy-docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/docs-deploy.yml
+    with:
+      revision: ${{ github.sha }}
+    secrets: inherit
+
+  deploy-landing:
+    needs: changes
+    if: needs.changes.outputs.landing == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: landing-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: main
+      - id: revision
+        name: Record the checked-out revision
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: landing-site/.node-version
+          cache: npm
+          cache-dependency-path: landing-site/package-lock.json
+      - name: Install dependencies
+        working-directory: landing-site
+        run: npm ci --no-audit --no-fund
+      - name: Run tests and validate the static build
+        working-directory: landing-site
+        run: npm run build
+      - name: Deploy static assets
+        working-directory: landing-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+      - name: Prove the live revision
+        env:
+          REVISION: ${{ steps.revision.outputs.sha }}
+        run: |
+          set -euo pipefail
+          live=$(curl -fsS https://terrascale.tech/build-info.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])')
+          test "$live" = "$REVISION"
+          echo "live revision $live matches $REVISION"
+
+  deploy-status:
+    needs: changes
+    if: needs.changes.outputs.status == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: status-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: main
+      - id: revision
+        name: Record the checked-out revision
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: status-site/.node-version
+          cache: npm
+          cache-dependency-path: status-site/package-lock.json
+      - name: Install dependencies
+        working-directory: status-site
+        run: npm ci --no-audit --no-fund
+      - name: Build the checked-out revision
+        working-directory: status-site
+        env:
+          REVISION: ${{ steps.revision.outputs.sha }}
+        run: npm run build
+      - name: Deploy the status Workers
+        working-directory: status-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm run deploy:prebuilt
+      - name: Prove the live revision
+        env:
+          REVISION: ${{ steps.revision.outputs.sha }}
+        run: |
+          set -euo pipefail
+          live=$(curl -fsS https://status.terrascale.tech/health/version | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          test "$live" = "$REVISION"
+          echo "live revision $live matches $REVISION"

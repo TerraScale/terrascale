@@ -21,11 +21,12 @@ TerraBase engine; engine qualification belongs in the monorepo.
 
 The site lives at `docs-site/` in the public `TerraScale/terrascale` monorepo.
 Run its commands from that directory. `make docs-test-fast` at the root runs
-locked installation, the site build and the core tests; Docs Fast in GitHub
-Actions runs it for every docs change.
+locked installation, the site build and the core tests; the `docs` job of
+`.github/workflows/ci.yml` runs it on every pull request that changes the docs.
 
-After a docs PR merges to `main` and Docs Fast passes, `docs-deploy.yml` builds that
-revision and publishes it through Cloudflare Workers. The workflow also accepts
+After a docs PR merges to `main`, the `Sites` workflow (`.github/workflows/sites.yml`)
+calls `docs-deploy.yml`, which builds that revision and publishes it through
+Cloudflare Workers unless a newer commit is already the head of `main`. The workflow also accepts
 a manual dispatch on green `main`. It verifies `build-info.json` and the pages
 and assets against `docs.terrascale.tech`. Publication uses the scoped
 `CLOUDFLARE_API_TOKEN` Actions secret and `CLOUDFLARE_ACCOUNT_ID` variable.
