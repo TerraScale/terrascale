@@ -1,4 +1,5 @@
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Analytics
@@ -23,7 +24,14 @@ namespace TerraScale.Dashboard.Features.Analytics
             {
                 var selection = AnalyticsSelection.For(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(),
                     http.Request.Query["region"].ToString(), http.Request.Query["range"].ToString());
-                return AnalyticsView.Create(await analytics.LoadAsync(ShellModel.For(http, selection.Context, "Analytics"), selection, http.RequestAborted));
+                var page = await analytics.LoadAsync(ShellModel.For(http, selection.Context, "Analytics"), selection, http.RequestAborted);
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await DatastarEvents.PatchElementsAsync(http, AnalyticsPageView.Create(page));
+                    return Results.Empty;
+                }
+
+                return AnalyticsView.Create(page);
             }
             catch (AccountAccessException error)
             {
