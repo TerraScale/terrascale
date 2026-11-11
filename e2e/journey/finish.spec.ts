@@ -1,7 +1,9 @@
 import { deleteAccount } from '../support/account';
 import { test, expect } from '../support/audit';
+import { completeUpload, deleteFile, leftFiles, putReserved, reserveUpload, stored, type Reservation } from '../support/files';
 import { runOperations, sdks } from '../support/sdk';
 import { shell } from '../support/shell';
+import { onLocalStack } from '../support/stack';
 import { journey, setupFinished } from '../support/state';
 
 test.describe.configure({ mode: 'default' });
@@ -60,7 +62,25 @@ test.describe('teardown', () => {
     await audit.check('profile renamed');
   });
 
-  test('the account is deleted through the profile danger tab and a new sign-in is refused', async ({ page, audit, browser }, info) => {
+  test('the account is deleted through the profile danger tab, a new sign-in is refused and its files leave the object store', async ({ page, audit, browser }, info) => {
+    const content = Buffer.from(`held ${journey().runId}`);
+    const files: { live: string; held: Reservation; late: Reservation }[] = [];
+    await onLocalStack(async () => {
+      const left = leftFiles();
+      await page.goto(`/storage?bucket=${left.bucket}`);
+      const held = await reserveUpload(page, left.bucket, `held-${journey().runId}.txt`, 'text/plain', content);
+      expect(await putReserved(held, content), 'the file to delete is uploaded').toBe(200);
+      expect(await completeUpload(page, left.bucket, held.id), 'the file to delete is completed').toBe(204);
+      expect(await deleteFile(page, left.bucket, held.id), 'the file is deleted just before the account').toBe(303);
+      const late = await reserveUpload(page, left.bucket, `late-${journey().runId}.txt`, 'text/plain', content);
+      expect([await stored(left.live), await stored(held.path), await stored(late.path)], 'the bucket holds a live file and a just-deleted file, and nothing for the reserved upload').toEqual([true, true, false]);
+      files.push({ live: left.live, held, late });
+    });
     await deleteAccount(page, audit, browser, info);
+    for (const { live, held, late } of files) {
+      expect([await stored(live), await stored(held.path)], 'the deleted account left no file in the object store').toEqual([false, false]);
+      expect(await putReserved(late, content), 'an upload link issued before the deletion still takes its file').toBe(200);
+      await expect.poll(() => stored(late.path), { message: 'a file uploaded after the deletion is erased again' }).toBe(false);
+    }
   });
 });
