@@ -39,23 +39,28 @@ namespace, no stack, no argument and no URL to set. `.github/workflows/productio
 never for a pull request: once after the last release of each commit (the rule is in the root `AGENTS.md`), daily at
 13:23 UTC and on dispatch, one run at a time. It is not a gate. `production.sh`:
 
-- refuses to run when an `E2E_*`, `TERRASCALE_*`, `NODE_EXTRA_CA_CERTS` or proxy variable is set, or when a
+- refuses to run when an `E2E_*`, `TERRASCALE_*`, `PW_*`, `PLAYWRIGHT_*`, `NODE_EXTRA_CA_CERTS`, `NODE_OPTIONS`,
+  `NODE_TLS_REJECT_UNAUTHORIZED`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE` or proxy variable is set, or when a
   `*.terrascale.tech` name of `env/hostnames` resolves to a loopback address (the namespace of `local.sh`); it sets
   `E2E_TARGET=production`, the state (`.state/production`, emptied first), the runners (`.state/sdk`) and the system
   CA bundle itself;
 - asks mail.tm for an active domain before the first request to production ("inbox provider … production was not
-  contacted" when it cannot), records both `/readyz` answers in `production-report/readyz.txt`, then runs the projects
-  of both pull-request shards but the paid flow (179 tests). A new project runs against production only once it is
-  added there; `paid`, `paid-invitation` and `paid-finish` stay local because they pay through the Stripe stand-in.
+  contacted" when it cannot), records both `/readyz` answers in `production-report/readyz.txt`, runs the projects of
+  both pull-request shards but the paid flow (179 tests), and records both answers again after the suite. A new
+  project runs against production only once it is added there; `paid`, `paid-invitation` and `paid-finish` stay
+  local because they pay through the Stripe stand-in.
 
 What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 
 - Mail: `newAddress` creates a fresh mail.tm inbox for each sign-up on the domain the preflight found
   (`E2E_INBOX_DOMAIN`), and `nextMail` waits for its mail for at most 120 s (`mailWait`; the test timeout is 60 s plus
   that wait), reading the message inside that bounded poll. mail.tm refuses bursts from one address (its
-  `RateLimit-Policy` is 10 requests a minute, and one a minute for `POST /accounts`), so the workers share two slot
-  series in the state: inbox creations are 60 s apart and every other call 6 s apart. A test's wait for its slot is
-  added to its timeout. Inboxes are never deleted: a deleted address can be registered again by anyone, while the
+  `RateLimit-Policy` is 10 requests a minute, and one a minute for `POST /accounts`), so every mail.tm call takes the
+  next free slot of one series in the state (`inbox-requests`, slots 7 s apart, in `support/inbox.ts` and
+  `env/production.sh`): eleven consecutive calls span at least ten gaps, 70 s, so they never share a 60-s window even
+  when one reaches mail.tm up to 10 s later than another. Inbox creations take only every tenth slot, 70 s apart. The
+  preflight's `GET /domains` claims the run's first slot and calls at once. A test's wait for its slot is added to
+  its timeout. Inboxes are never deleted: a deleted address can be registered again by anyone, while the
   account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
   password and token are registered secrets. Errors name the "inbox provider".
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
@@ -69,14 +74,28 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   host, with a fresh home and no extra CA.
 - Evidence: no trace, video or screenshot. The run writes `production-report/list.txt` (everything it printed, with
   the list reporter), `report.json` (JSON reporter) and `readyz.txt`; each audited page adds a `url` annotation and
-  the SDK runners print their output. `env/scrub.py` redacts them before they upload.
+  the SDK runners print their output. Playwright ends a run that reaches 25 minutes (`globalTimeout`, under the
+  step's 30), so a slow run still writes `report.json`. A timeout or a cancel signals only the step's shell, so the
+  scrub step first kills every process that carries the job's `RUNNER_TRACKING_ID` (the runner marks with it all a
+  job starts, and kills them itself only when the job ends) and every process those started (Chromium overwrites its
+  environment), until none is left; then `env/scrub.py` redacts the files, and they upload only when that step
+  succeeded.
 - Accounts: a run signs up three users (`setup`, `desktop-setup`, `invitation`); its last steps delete the two
   owners, the invitation's second user stays.
 
-A failed run opens the `Production journey failure` issue, or comments on the open one, with the run link, the trigger
-and suite commit, both `/readyz` versions, each failed test with its page and error (from `report.json`), or the last
-lines it printed when the suite did not start, and "inbox provider" when mail.tm failed first. The next green run
-closes it. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
+The workflow fetches only `uv` of the pinned tools (`env/tools.sh uv`): production starts no Caddy, no Mailpit and no
+branch action. `env/local.sh` refuses to run when `E2E_TARGET` is set, before it builds anything.
+
+A failed run opens the `Production journey failure` issue (found by its exact title in the REST list of open issues)
+with the run link, the trigger and suite commit, both `/readyz` versions, one `Cause:` line when the run knows it
+("inbox provider" when mail.tm failed first, "not ready" when a `/readyz` failed, "no report" when the run stopped
+before or during the suite, or the suite's own error such as its global timeout), every failed test by name and the first ten with their page and error
+(from `report.json`), or the last lines it printed when there is no `report.json`; the text stops under GitHub's
+65,536 characters. While the issue is open, a failed run replaces its body and comments only when the failed tests
+or the cause changed, naming the tests newly failing and fixed. The next green run closes it. A run during which a
+`/readyz` version changed, because a newer release rolled out under it, neither opens, updates nor closes the issue:
+its job summary says so, and the newer release's own run follows. Only the dashboard's version names a commit;
+ts-auth's names its package version, so a ts-auth rollout during a run goes unseen. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
 then `bash e2e/env/production.sh`; each run makes three production accounts.
 
 ## Stages
@@ -205,10 +224,11 @@ SHA-256 to its archive's.
   they use them, and the branch action's connection URL and scoped key are registered the moment the test reads them
   from `GITHUB_OUTPUT`. Before anything uploads, `env/scrub.py` replaces each value, raw, URL-encoded and
   JSON-escaped, with `[redacted]` in every file, inside zip archives and inside the report's embedded zip, then checks
-  none is left; a file it cannot rewrite is deleted and named, and the step fails, so nothing uploads. Once the
-  namespace step has passed, Stop runs before the scrub, even after a timeout or a cancel, and ends every process
-  inside, so nothing the suite started writes after the scrub lists its files. Text is redacted; pixels are not
-  scanned: screenshots mask the secret fields by selector and videos are off. The 6-digit codes are not redacted
+  none is left; a file it cannot rewrite is deleted and named, and the step fails, so nothing uploads. On a pull
+  request, once the namespace step has passed, Stop runs before the scrub, even after a timeout or a cancel, and ends
+  every process inside, so nothing the suite started writes after the scrub lists its files; on production the scrub
+  step ends them itself ("The production target"). Text is redacted; pixels are not scanned: screenshots mask the
+  secret fields by selector and videos are off. The 6-digit codes are not redacted
   (single use, under 16 characters). Every secret of a PR run is generated in that run and dies with the VM: `ci.yml`
   passes no secret to `journey.yml`, which grants `contents: read` only, checks out with `persist-credentials: false`
   and uses no repository secret. Never print a secret.

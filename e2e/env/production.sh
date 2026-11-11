@@ -5,6 +5,7 @@ state=$e2e/.state/production
 report=$e2e/production-report
 ca=/etc/ssl/certs/ca-certificates.crt
 projects=(pages-desktop pages-mobile hosted interactions invitation)
+slot_ms=7000
 domain=
 
 refuse() {
@@ -14,7 +15,7 @@ refuse() {
 
 isolated() {
   local preset
-  preset=$(env | sed -n -E 's/^(E2E_[A-Z_]*|TERRASCALE_[A-Z_]*|NODE_EXTRA_CA_CERTS|[Hh][Tt][Tt][Pp][Ss]?_[Pp][Rr][Oo][Xx][Yy]|[Aa][Ll][Ll]_[Pp][Rr][Oo][Xx][Yy])=.*/\1/p' | sort | paste -sd ' ' -)
+  preset=$(env | sed -n -E 's/^(E2E_[A-Z_]*|TERRASCALE_[A-Z_]*|PW_[A-Z_]*|PLAYWRIGHT_[A-Z_]*|NODE_EXTRA_CA_CERTS|NODE_OPTIONS|NODE_TLS_REJECT_UNAUTHORIZED|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE|[Hh][Tt][Tt][Pp][Ss]?_[Pp][Rr][Oo][Xx][Yy]|[Aa][Ll][Ll]_[Pp][Rr][Oo][Xx][Yy])=.*/\1/p' | sort | paste -sd ' ' -)
   [ -z "$preset" ] || refuse "$preset set; the production target chooses its own state, hosts and trust"
   local host address
   while read -r host; do
@@ -28,6 +29,8 @@ isolated() {
 
 inbox() {
   local domains
+  mkdir -p "$state/inbox-requests"
+  : > "$state/inbox-requests/$(( ($(date +%s%3N) + slot_ms - 1) / slot_ms ))"
   domains=$(curl -fsS --max-time 15 -H 'accept: application/json' https://api.mail.tm/domains) || {
     echo "inbox provider mail.tm: GET /domains failed; production was not contacted"
     return 3
@@ -47,20 +50,23 @@ served() {
   local service body
   for service in dash auth; do
     body=$(curl -fsS --max-time 15 "https://$service.terrascale.tech/readyz") || {
-      echo "production: https://$service.terrascale.tech/readyz is not ready"
+      echo "production: https://$service.terrascale.tech/readyz is not ready $1 the suite"
       return 4
     }
-    echo "$service.terrascale.tech/readyz $body" | tee -a "$report/readyz.txt"
+    echo "$1 $service.terrascale.tech/readyz $body" | tee -a "$report/readyz.txt"
   done
 }
 
 journey() {
+  local status=0
   isolated
   inbox
-  served
+  served before
   cd "$e2e"
   E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" E2E_INBOX_DOMAIN="$domain" \
-    npx playwright test "${projects[@]/#/--project=}"
+    npx playwright test "${projects[@]/#/--project=}" || status=$?
+  served after
+  return "$status"
 }
 
 export SSL_CERT_FILE=$ca

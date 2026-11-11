@@ -1,8 +1,13 @@
 set -euo pipefail
 tools=${E2E_TOOLS:?E2E_TOOLS is the directory that caches the pinned tools}
+wanted=("$@")
 mkdir -p "$tools"
+want() {
+  [ ${#wanted[@]} -eq 0 ] || [[ " ${wanted[*]} " == *" $1 "* ]]
+}
 fetch() {
   local name=$1 url=$2 sum=$3 member=${4:-$1}
+  want "$name" || return 0
   local archive=$tools/${name}-${url##*/}
   if [ ! -f "$archive" ] || ! printf '%s  %s\n' "$sum" "$archive" | sha256sum --check --status; then
     curl -fsSL -o "$archive.part" "$url"
@@ -19,4 +24,4 @@ for script in install-ts.sh branch.sh; do
   fetch branch-action "https://github.com/TerraScale/branch-action/archive/$branch_action.tar.gz" \
     277518ac3558626462f11736626be72e8d607afb6ece7560b6f00342b593dcf5 "branch-action-$branch_action/$script"
 done
-RUNNER_OS=Linux RUNNER_ARCH=X64 HOME="$tools/ts" GITHUB_PATH=/dev/null bash "$tools/install-ts.sh"
+if want branch-action; then RUNNER_OS=Linux RUNNER_ARCH=X64 HOME="$tools/ts" GITHUB_PATH=/dev/null bash "$tools/install-ts.sh"; fi

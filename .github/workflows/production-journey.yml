@@ -15,7 +15,7 @@ jobs:
   release:
     if: >-
       github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run'
-      || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository
+      || (github.event.workflow_run.head_repository.full_name == github.repository
       && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -31,8 +31,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           RUN_UPDATED: ${{ github.event.workflow_run.updated_at }}
           COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+          RELEASE_STEPS: '["Release to every region", "Release the pinned arm64 digest to each region"]'
+          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main", "main-auth", "main-auth-ordered", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
         run: |
           set -euo pipefail
           [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
@@ -42,24 +45,35 @@ jobs:
             echo "journey=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [ "$RUN_ATTEMPT" -gt 1 ] && [ "$COMMIT" != "$GITHUB_SHA" ]; then
+            echo "$COMMIT: attempt $RUN_ATTEMPT of run $RUN_ID re-ran a commit that is no longer main's head ($GITHUB_SHA); its suite would audit a newer production, so no journey runs"
+            exit 0
+          fi
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$COMMIT&per_page=100" --jq '[.workflow_runs[]
             | select(.head_branch == "main" and (.event == "push" or .event == "workflow_dispatch")
               and (.path == ".github/workflows/ci.yml" or .path == ".github/workflows/images-ghcr.yml"))
-            | {id, name, status, updated_at}]')
+            | {id, name, path, event, status, updated_at}]')
           others=$(jq --argjson run "$RUN_ID" '[.[] | select(.id != $run)]' <<< "$runs")
           running=$(jq -r '[.[] | select(.status != "completed") | "\(.name) run \(.id)"] | join(", ")' <<< "$others")
           later=$(jq -r --arg at "$RUN_UPDATED" '[.[] | select(.status == "completed" and .updated_at > $at) | "\(.name) run \(.id)"] | join(", ")' <<< "$others")
-          released=""
           for id in "$RUN_ID" $(jq -r '.[] | select(.status == "completed") | .id' <<< "$others"); do
-            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --jq '[.jobs[]
-              | select(.conclusion == "success" and (.name == "main-auth" or .name == "main-auth-ordered" or .name == "release-only" or .name == "Publish and release"))
-              | .name] | join(", ")')
-            [ -z "$jobs" ] || released+="${released:+, }$jobs in run $id"
-          done
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --jq "{id: $id, jobs: [.jobs[] | {name, conclusion, steps: [.steps[]? | {name, conclusion}]}]}"
+          done > "$RUNNER_TEMP/jobs.json"
+          released=$(jq -rs --argjson steps "$RELEASE_STEPS" '[.[] | .id as $id | .jobs[]
+            | select(any(.steps[]; .conclusion == "success" and (.name | IN($steps[])))) | "\(.name) in run \($id)"] | join(", ")' "$RUNNER_TEMP/jobs.json")
+          unknown=$(jq -rs --argjson runs "$runs" --argjson known "$RELEASE_JOBS" --argjson steps "$RELEASE_STEPS" '[.[] | .id as $id
+            | ($runs[] | select(.id == $id)) as $run | $known[$run.path] as $names | [.jobs[] | select(.name | IN($names[]))] as $jobs
+            | (if $run.event == "push" and (.jobs | length) > 0 and ($jobs | length) == 0 then "\($run.name) run \($id) has none of the jobs \($names | join(", "))" else empty end),
+              ($jobs[] | select(.conclusion == "success" and (any(.steps[]; .name | IN($steps[])) | not))
+                | "job \(.name) of \($run.name) run \($id) has none of the steps \($steps | join(", "))")] | join("; ")' "$RUNNER_TEMP/jobs.json")
+          if [ -n "$unknown" ]; then
+            echo "::error::production-journey.yml no longer knows how $COMMIT released: $unknown. Name the renamed release jobs and steps in RELEASE_JOBS and RELEASE_STEPS."
+            exit 1
+          fi
           if [ -n "$running" ]; then
             echo "$COMMIT: $running is still running, and its completion starts the journey"
           elif [ -z "$released" ]; then
-            echo "$COMMIT: no release job succeeded in CI or Images (GHCR), so production did not change"
+            echo "$COMMIT: no release step succeeded in CI or Images (GHCR), so production did not change"
           elif [ -n "$later" ]; then
             echo "$COMMIT: $later completed after this run, and its completion starts the journey"
           else
@@ -103,7 +117,7 @@ jobs:
           DOTNET_NOLOGO: 1
         run: |
           (cd sdk/rust && rustup toolchain install)
-          bash env/tools.sh
+          bash env/tools.sh uv
           bash sdk/build.sh rust > "$RUNNER_TEMP/rust-runner.log" 2>&1 &
           rust=$!
           for sdk in dotnet go python js; do bash sdk/build.sh "$sdk"; done
@@ -116,13 +130,33 @@ jobs:
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
         run: bash e2e/env/production.sh
       - id: scrub
-        name: Redact every generated secret from the files that upload
+        name: End every process of this job, then redact every generated secret from the files that upload
         if: always()
+        timeout-minutes: 5
         run: |
+          : "${RUNNER_TRACKING_ID:?the runner marks every process of this job with RUNNER_TRACKING_ID}"
+          suite() {
+            local environ pid tracked=()
+            for environ in /proc/[0-9]*/environ; do
+              pid=${environ//[!0-9]/}
+              if [ "$pid" != $$ ] && [ "$pid" != "$BASHPID" ] && grep -qsxzF "RUNNER_TRACKING_ID=$RUNNER_TRACKING_ID" "$environ"; then tracked+=("$pid"); fi
+            done
+            ps -e -o pid=,ppid= | awk -v tracked="${tracked[*]}" '
+              BEGIN { n = split(tracked, roots, " "); for (i = 1; i <= n; i++) inside[roots[i]] = 1 }
+              { parent[$1] = $2 }
+              END {
+                do { grew = 0; for (p in parent) if (!(p in inside) && (parent[p] in inside)) { inside[p] = 1; grew = 1 } } while (grew)
+                for (p in inside) if (p in parent) print p
+              }'
+          }
+          while mapfile -t left < <(suite) && [ ${#left[@]} -gt 0 ]; do
+            ps -o pid=,comm= -p "${left[*]}" || true
+            kill -KILL "${left[@]}" 2> /dev/null || true
+          done
           python3 e2e/env/scrub.py e2e/.state/production e2e/production-report
           if [ -f e2e/production-report/list.txt ]; then echo "report=true" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && steps.scrub.outputs.report == 'true'
+        if: always() && steps.scrub.outcome == 'success' && steps.scrub.outputs.report == 'true'
         with:
           name: production-journey-report
           path: e2e/production-report
@@ -152,10 +186,12 @@ jobs:
         with:
           name: production-journey-report
           path: production-report
-      - name: Write the issue text
+      - id: text
+        name: Write the issue text
         run: |
           set -euo pipefail
           report=production-report
+          changed=""
           {
             if [ "$RESULT" = success ]; then
               echo "The production journey passed: $RUN"
@@ -166,11 +202,15 @@ jobs:
             echo "Trigger: $TRIGGER. Suite: $COMMIT."
             echo
             if [ ! -f "$report/list.txt" ]; then
-              echo "The run stopped before e2e/env/production.sh started (checkout, toolchain or runner build): read the job log."
+              echo "Cause: no report: the run stopped before or during the suite (setup, timeout, cancel or scrub). Read the job log."
             else
               if [ -s "$report/readyz.txt" ]; then
+                readings=$(jq -R -s '[split("\n")[] | capture("^(?<reading>\\S+) (?<url>\\S+) (?<body>.*)$") | {reading, url} + (try (.body | fromjson | {version, status}) catch {})]' "$report/readyz.txt")
                 echo "Production served:"
-                jq -R -r 'capture("^(?<url>\\S+) (?<body>.*)$") | "- \(.url): version \((.body | fromjson).version // "none"), status \((.body | fromjson).status // "none")"' "$report/readyz.txt"
+                jq -r '.[] | select(.reading == "before") | "- \(.url): version \(.version // "none"), status \(.status // "none")"' <<< "$readings"
+                changed=$(jq -r '(map(select(.reading == "after")) | INDEX(.url)) as $after
+                  | [.[] | select(.reading == "before" and $after[.url] != null and $after[.url].version != .version)
+                    | "\(.url) \(.version // "none") before the suite, \($after[.url].version // "none") after it"] | join("; ")' <<< "$readings")
               else
                 echo "Production served: not read, the run stopped before /readyz."
               fi
@@ -178,13 +218,25 @@ jobs:
               if grep -q '^inbox provider mail.tm: .*production was not contacted' "$report/list.txt"; then
                 echo "Cause: the inbox provider (mail.tm) failed before the first request to production. Production was not tested; this is not a production failure."
                 echo
+              elif grep -q '^production: .* is not ready' "$report/list.txt"; then
+                echo "Cause: $(grep -m1 '^production: .* is not ready' "$report/list.txt")."
+                echo
               elif grep -q 'Error: inbox provider mail.tm' "$report/list.txt"; then
                 echo "Cause: the inbox provider (mail.tm) refused or failed a request during the run; read those errors below before you look at production."
+                echo
+              elif [ ! -f "$report/report.json" ]; then
+                echo "Cause: no report: the run stopped before or during the suite (timeout, cancel or a refused start)."
+                echo
+              elif jq -e '.errors | length > 0' "$report/report.json" > /dev/null; then
+                jq -r '"Cause: \(.errors[0].message | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | split("\n")[0])."' "$report/report.json"
                 echo
               fi
               if [ -f "$report/report.json" ]; then
                 jq -r '.stats | "Tests: \(.expected) passed, \(.unexpected) failed, \(.flaky) flaky, \(.skipped) did not run, in \(.duration / 1000 | floor) s."' "$report/report.json"
                 echo
+                jq -r '[.suites | .. | objects | select(has("specs")) | .specs[] as $spec | $spec.tests[]
+                  | select(.status == "unexpected" or .status == "flaky") | "- \(.projectName) › \($spec.file) › \($spec.title)"]
+                  | if length > 0 then "Failed tests:\n\(join("\n"))\n" else empty end' "$report/report.json"
                 jq -r '[.suites | .. | objects | select(has("specs")) | .specs[] as $spec | $spec.tests[]
                   | select(.status == "unexpected" or .status == "flaky") | .results[-1] as $result
                   | "### \(.projectName) › \($spec.file):\($spec.line) › \($spec.title)\n\n"
@@ -193,7 +245,7 @@ jobs:
                       | join("\n\n") | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | split("\n") | .[:40] | join("\n")) + "\n````\n"]
                   | .[:10] | join("\n")' "$report/report.json"
               else
-                echo "The suite did not start. The last lines the run printed:"
+                echo "The last lines the run printed:"
                 echo
                 echo '````'
                 tail -n 30 "$report/list.txt"
@@ -201,15 +253,43 @@ jobs:
               fi
             fi
           } > issue.md
+          if [ "$(wc -c < issue.md)" -gt 60000 ]; then
+            head -c 60000 issue.md | sed '$d' > capped.md
+            if [ $(($(grep -c '^````$' capped.md) % 2)) -eq 1 ]; then echo '````' >> capped.md; fi
+            printf '\n%s\n' "The text stops here, under the 65,536 characters GitHub allows; the artifact of the run has the whole report." >> capped.md
+            mv capped.md issue.md
+          fi
           cat issue.md
+          if [ -n "$changed" ]; then
+            echo "Production changed during the run ($changed): this run neither opens, updates nor closes the issue; the run of the newer release follows." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Open, update or close the issue
+        if: steps.text.outputs.changed != 'true'
         run: |
           set -euo pipefail
-          open=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")
+          export LC_ALL=C
+          gh api --paginate "repos/$GH_REPO/issues?state=open&per_page=100" --jq '.[] | select(.title == env.TITLE and .pull_request == null) | {number, body}' > open.json
+          open=$(jq -rs 'min_by(.number).number // empty' open.json)
           if [ "$RESULT" = success ]; then
             if [ -n "$open" ]; then gh issue close "$open" --comment "$(cat issue.md)"; fi
-          elif [ -n "$open" ]; then
-            gh issue comment "$open" --body-file issue.md
-          else
+          elif [ -z "$open" ]; then
             gh issue create --title "$TITLE" --body-file issue.md
+          else
+            jq -rs 'min_by(.number).body // "" | gsub("\r"; "")' open.json > replaced.md
+            gh issue edit "$open" --body-file issue.md
+            tests() { sed -n '/^Failed tests:$/,/^$/s/^- //p' "$1" | sort; }
+            causes() { sed -n 's/^Cause: //p' "$1" | sort; }
+            {
+              if grep -q '^Tests: ' replaced.md && grep -q '^Tests: ' issue.md; then
+                comm -13 <(tests replaced.md) <(tests issue.md) | sed 's/^/- newly failing: /'
+                comm -23 <(tests replaced.md) <(tests issue.md) | sed 's/^/- fixed: /'
+              fi
+              comm -23 <(causes replaced.md) <(causes issue.md) | sed 's/^/- cause before: /'
+              comm -13 <(causes replaced.md) <(causes issue.md) | sed 's/^/- cause now: /'
+            } > change.md
+            if [ -s change.md ]; then
+              { echo "$RUN changed the result; the issue body now holds it."; echo; cat change.md; } > comment.md
+              gh issue comment "$open" --body-file comment.md
+            fi
           fi
