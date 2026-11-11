@@ -85,22 +85,26 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await audit.check('database created');
 
   await page.goto('/api-keys?create=key');
-  await expect(page.locator('#create-key[open]')).toBeVisible();
+  const keyDialog = page.locator('#create-key[open]');
+  await expect(keyDialog).toBeVisible();
   await page.locator('#key-name').fill(apiKeyName);
-  for (const scope of scopes) await page.locator(`#create-key input[name="scopes"][value="${scope}"]`).check();
+  await keyDialog.getByRole('checkbox', { name: /^Full access/ }).check();
+  for (const scope of scopes) {
+    const box = keyDialog.locator(`fieldset input[name="scopes"][value="${scope}"]`);
+    await expect(box).toBeChecked();
+    await expect(box).toBeDisabled();
+  }
   await audit.check('new API key dialog');
-  await page.locator('#create-key form').getByRole('button', { name: 'Create key', exact: true }).click();
-  await page.waitForURL((url) => url.origin === auth && url.pathname.startsWith('/ui/terrascale/step-up/'));
-  await audit.check('API key confirmation');
-  await enterSecret(page.locator('input[type=password]'), password);
-  await page.locator('form button[type=submit]').first().click();
+  await keyDialog.getByRole('button', { name: 'Create key', exact: true }).click();
   const secret = page.locator('.ts-apikeys-secret-value');
   await expect(secret).toBeVisible();
   const apiKey = (await secret.innerText()).trim();
   expect(apiKeyFormat.test(apiKey), 'the API key secret has the canonical format').toBe(true);
   await audit.check('API key created');
   await page.reload();
-  await expect(page.locator('main tr').filter({ hasText: apiKeyName })).toHaveCount(1);
+  const keyRow = page.locator('main tr').filter({ hasText: apiKeyName });
+  await expect(keyRow).toHaveCount(1);
+  await expect(keyRow.locator('.ts-apikeys-scopes .ts-badge')).toHaveText(['Full access']);
   expect((await page.content()).includes(apiKey), 'the API key secret is gone after a reload').toBe(false);
   await shell(page, identity);
   await audit.check('API keys after reload');

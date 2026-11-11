@@ -36,5 +36,8 @@ of `setup`) runs SDK group A, deletes the database through the UI, runs SDK grou
   images, horizontal overflow, axe WCAG 2.2 AA violations and uncovered links. A page whose purpose is an error
   expects its status in its own test (`audit.expectStatus`).
 - No retries, no fixed sleeps, no `waitForTimeout`: every wait ends on a condition.
+- Step-ups: ts-auth issues at most 10 per user in 15 minutes (`StepUpProofs.cs:59-61`); a run spends 1 for the
+  desktop owner (account deletion), 6 for the phone-and-flows owner (the access token in `interactions`, 4 in `hosted`,
+  account deletion) and none for any other user; API keys need none.
 - Tests that type a password or code or show a key run without trace and video; `env/scrub.py` removes any artifact
   file that still holds a generated secret. Never print a secret.

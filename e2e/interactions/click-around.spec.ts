@@ -60,13 +60,12 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
   await audit.check('table rows');
 });
 
-test('a second API key is created with a confirmation, shown once, and revoked', async ({ page, audit }) => {
+test('a second API key is created without a confirmation, shown once, and revoked', async ({ page, audit }) => {
   const current = journey();
   const name = unique('second-key');
   await page.goto('/api-keys?create=key');
   await page.locator('#key-name').fill(name);
   await page.locator('#create-key form').getByRole('button', { name: 'Create key', exact: true }).click();
-  await confirmWithPassword(page, audit, current.password, 'second API key');
   const secret = page.locator('.ts-apikeys-secret-value');
   await expect(secret).toBeVisible();
   const key = (await secret.innerText()).trim();
