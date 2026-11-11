@@ -4,7 +4,7 @@
     <div class="ts-card-body ts-stack-sm">
         <form class="ts-form" method="post" action="/api/v1/dashboard/profile/email-change" data-submit-once>
             <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-            <div class="ts-field"><label class="ts-label" for="new-email">New sign-in email</label><input class="ts-input" id="new-email" name="new_email" type="email" maxlength="254" autocomplete="email" required /></div>
+            <div class="ts-field"><label class="ts-label" for="new-email">New sign-in email</label><input class="ts-input" id="new-email" name="new_email" type="text" inputmode="email" autocomplete="email" required /></div>
             <div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Verify identity and send code</button></div>
         </form>
         <details open="@Model.EmailCodeEntry">
@@ -12,7 +12,7 @@
             @if (Model.PendingEmail is { } email) { <p class="ts-meta">Code sent to @email.</p> }
             <form class="ts-form" method="post" action="/api/v1/dashboard/profile/email-change/confirm" data-submit-once>
                 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-                <div class="ts-field"><label class="ts-label" for="email-change-code">Email change code</label><input class="ts-input ts-mono" id="email-change-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="123456" required title="Enter the 6-digit code" /></div>
+                <div class="ts-field"><label class="ts-label" for="email-change-code">Email change code</label><input class="ts-input ts-mono" id="email-change-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[\s\u0085]*[0-9]{6}[\s\u0085]*" placeholder="123456" required title="Enter the 6-digit code" /></div>
                 <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Change email and sign out</button></div>
             </form>
         </details>

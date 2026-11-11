@@ -18,9 +18,7 @@ namespace TerraScale.Dashboard.Features.Backups
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return DatabaseResults.WantsHtml(http)
-                    ? await DatabaseEndpoints.BackupDetailPageAsync(http, context, form["databaseId"].ToString(), "This form expired. Review your input and submit again.", 400)
-                    : Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "backups"), Results.BadRequest("Invalid form token."));
             }
 
             var databaseId = form["databaseId"].ToString();

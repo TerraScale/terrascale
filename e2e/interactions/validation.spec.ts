@@ -25,7 +25,7 @@ test('a short request ID shows inline validation and blocks submission without l
   await expect(field).not.toHaveAttribute('aria-invalid');
 });
 
-test('a rejected account deletion keeps its dialog and typed email with an error', async ({ page, audit }) => {
+test('validated dialog errors keep drafts and expired forms reject drafts', async ({ page, audit }) => {
   await page.goto('/profile?tab=danger');
   await page.getByRole('button', { name: 'Delete account', exact: true }).click();
   const dialog = page.locator('#delete-account');
@@ -36,4 +36,17 @@ test('a rejected account deletion keeps its dialog and typed email with an error
   await expect(dialog.getByRole('alert')).toContainText('Type your account email to confirm deletion.');
   await expect(dialog.locator('#delete-account-email')).toHaveValue('different@example.com');
   await audit.check('account deletion error inside dialog');
+  await Promise.all(['/profile/delete', '/profile/sign-out-everywhere', '/profile/access-tokens/invalid/revoke',
+    '/project/grants', '/data/sql', '/backups/policy', '/log-drain', '/organization/sso'].map(async action => {
+    const response = await page.request.post(`/api/v1/dashboard${action}`, {
+      headers: { Accept: 'text/html' },
+      form: { _csrf: 'expired', email: 'untrusted@example.com', userId: 'untrusted-user', role: 'admin', sql: 'SELECT untrusted_statement' },
+    });
+    expect(response.status(), action).toBe(400);
+    const html = await response.text();
+    expect(html).toContain('Nothing was changed. Open the form again to send it.');
+    expect(html).not.toContain('untrusted');
+    expect(html).not.toContain('name="_csrf"');
+    expect(html).not.toContain('<dialog');
+  }));
 });

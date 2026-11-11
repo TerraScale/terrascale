@@ -22,11 +22,7 @@ namespace TerraScale.Dashboard.Features.Data
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return DatabaseResults.WantsHtml(http)
-                    ? await PageAsync(http, context, form["databaseId"].ToString(), data, saved, "This form expired. Review your input and submit again.",
-                        action == "saved-queries" ? "save-query" : action == "saved-queries/delete" ? "delete-query-" + form["id"] : "",
-                        form["sql"].ToString(), queryName: form["name"].ToString(), status: 400)
-                    : Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "sql"), Results.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();

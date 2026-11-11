@@ -1,4 +1,5 @@
 const checked = new WeakSet();
+const edited = new WeakSet();
 const messages = new WeakMap();
 let sequence = 0;
 
@@ -8,14 +9,19 @@ function fieldElement(element) {
 
 function messageFor(field) {
   const validity = field.validity;
+  const value = field.value.replace(/^[\s\u0085]+|[\s\u0085]+$/gu, '');
   const label = field.labels?.[0]?.textContent.trim().replace(/[:*]$/, '').toLowerCase() || field.name || 'a value';
   if (validity.valueMissing) return field instanceof HTMLSelectElement ? `Choose ${label}` : `Enter ${label}`;
   if (validity.badInput) return field.type === 'number' ? 'Enter a number' : 'Enter a valid date and time';
   if (validity.typeMismatch) return field.type === 'email' ? 'Enter a valid email address' : 'Enter a valid URL';
-  if (field.value && field.minLength > 0 && field.value.length < field.minLength) return `Use at least ${field.minLength} characters`;
-  if (field.dataset.lengthReserveField && field.form?.elements.namedItem(field.dataset.lengthReserveField)?.value && field.value.length > field.maxLength - Number(field.dataset.lengthReserve)) return `Use at most ${field.maxLength - Number(field.dataset.lengthReserve)} characters`;
-  if (field.maxLength >= 0 && field.value.length > field.maxLength) return `Use at most ${field.maxLength} characters`;
-  if (field.dataset.maxBytes && new TextEncoder().encode(field.value).length > Number(field.dataset.maxBytes)) return `Use at most ${field.dataset.maxBytes} bytes`;
+  if (validity.tooShort) return `Use at least ${field.minLength} characters`;
+  if (edited.has(field) && field.dataset.maxLength) {
+    const reserve = field.form?.elements.namedItem(field.dataset.lengthReserveField)?.value ? Number(field.dataset.lengthReserve) : 0;
+    const limit = Number(field.dataset.maxLength) - reserve;
+    if (value.length > limit) return `Use at most ${limit} characters`;
+  }
+  if (validity.tooLong) return `Use at most ${field.maxLength} characters`;
+  if (edited.has(field) && field.dataset.maxBytes && new TextEncoder().encode(value).length > Number(field.dataset.maxBytes)) return `Use at most ${field.dataset.maxBytes} bytes`;
   if (validity.patternMismatch) return field.title || 'Use the requested format';
   if (validity.rangeUnderflow) return `Use ${field.min} or more`;
   if (validity.rangeOverflow) return `Use ${field.max} or less`;
@@ -72,6 +78,7 @@ document.addEventListener('focusout', event => {
 });
 for (const type of ['input', 'change']) document.addEventListener(type, event => {
   if (!fieldElement(event.target)) return;
+  edited.add(event.target);
   if (checked.has(event.target)) validate(event.target);
   for (const field of event.target.form?.elements || []) if (fieldElement(field) && checked.has(field) && field.dataset.lengthReserveField === event.target.name) validate(field);
 });
