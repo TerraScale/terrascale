@@ -32,7 +32,8 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return await ProfileDialogErrors.PageAsync(http, sessions, accounts, "delete-account", "danger", "This form expired. Review your input and submit again.", 400, form["email"].ToString());
+                return RequestError.WantsJson(http) ? Results.StatusCode(403)
+                    : await ProfileDialogErrors.PageAsync(http, sessions, accounts, "delete-account", "danger", "This form expired. Review your input and submit again.", 400, form["email"].ToString());
             }
 
             if (await ReadOperationAsync(http, storage, identity) is { } pending)

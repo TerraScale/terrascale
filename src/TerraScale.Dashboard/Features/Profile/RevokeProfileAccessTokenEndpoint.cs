@@ -20,7 +20,8 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return await ProfileDialogErrors.PageAsync(http, sessions, accounts, "revoke-" + http.Request.RouteValues["id"], "access-tokens", "This form expired. Review the token and submit again.", 400);
+                return RequestError.WantsJson(http) ? Results.StatusCode(403)
+                    : await ProfileDialogErrors.PageAsync(http, sessions, accounts, "revoke-" + http.Request.RouteValues["id"], "access-tokens", "This form expired. Review the token and submit again.", 400);
             }
 
             try { await tokens.RevokeAsync(context, http.Request.RouteValues["id"]?.ToString() ?? "", http.RequestAborted); }
