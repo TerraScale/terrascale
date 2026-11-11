@@ -93,7 +93,7 @@ For custom upload code, call `bucket.createUpload({ name, contentType, size, sha
 1. PUT the exact bytes to `url` with the returned headers. Browsers supply `Content-Length` themselves. Do not send application credentials or cookies, follow redirects, or log the URL.
 2. Call `bucket.completeUpload(id)` before the five-minute upload capability expires. Completion verifies both size and checksum before the file becomes readable.
 
-`bucket.downloadUrl(id)` issues a download capability valid for 60 seconds. Downloads are attachments with an octet-stream content type. Treat every signed URL as a secret: anyone holding it can use it until expiry. Changing rules or deleting a file stops new capabilities; already-issued capabilities retain their short lifetime.
+`bucket.downloadUrl(id)` issues a download capability valid for 60 seconds. Downloads are attachments with an octet-stream content type. Treat every signed URL as a secret: anyone holding it can use it until expiry. Changing rules or deleting a file stops new capabilities; already-issued capabilities retain their short lifetime, unless the bucket is deleted first.
 
 The SDK does not automatically retry mutations or signed transfers. If a response is lost, inspect the file's state before repeating an operation.
 
@@ -103,7 +103,7 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 
 Files and database data count together against the organization's existing [plan storage allowance](/pricing). Reserving an upload immediately counts its full declared size. Project usage exposes `fileBytes`, and includes those bytes in `storageBytes` and `logicalBytes`.
 
-Deleting a file prevents new downloads and queues physical cleanup. Expired or failed uploads also need cleanup. Their storage reservations are released after object deletion succeeds, so the usage total can take time to fall. Delete files and wait for cleanup before calling `bucket.delete()`; deleting a bucket with files or reservations returns 409.
+Deleting a file prevents new downloads and queues physical cleanup. Expired or failed uploads also need cleanup. Their storage reservations are released after object deletion succeeds, so the usage total can take time to fall. Delete a bucket's files before calling `bucket.delete()`. It does not wait for cleanup: it erases the files you already deleted, and returns 409 while the bucket holds a completed file or an upload that has not expired. Deleting your account erases every bucket of its projects with their files.
 
 | Status | Meaning |
 | --- | --- |
@@ -111,7 +111,7 @@ Deleting a file prevents new downloads and queues physical cleanup. Expired or f
 | 401 | Missing, expired or invalid access token |
 | 403 | The token or bucket rules deny the operation |
 | 404 | The bucket or file is unavailable to this project |
-| 409 | An upload is incomplete, or a bucket still contains files or reservations |
+| 409 | An upload is incomplete, or a bucket still contains a completed file or an unexpired upload |
 | 429 | The shared database and file storage allowance is full |
 | 503 | File storage or usage accounting is temporarily unavailable |
 
@@ -124,7 +124,7 @@ All paths below start with `/v1/projects/{project}` and use Bearer authorization
 | POST | `/buckets` | 201 bucket, from `{ name, rules }` |
 | GET | `/buckets?after=ULID` | `{ items, next }` bucket page; project credentials only |
 | PUT | `/buckets/{bucket}/rules` | Bucket with replacement `{ rules }` |
-| DELETE | `/buckets/{bucket}` | 204 after an empty bucket is deleted |
+| DELETE | `/buckets/{bucket}` | 204 after a bucket without completed files or unexpired uploads is deleted |
 | POST | `/buckets/{bucket}/files/upload` | 201 signed upload capability |
 | POST | `/buckets/{bucket}/files/{file}/complete` | Verified file metadata |
 | GET | `/buckets/{bucket}/files?after=ULID` | `{ items, next }` readable file page |

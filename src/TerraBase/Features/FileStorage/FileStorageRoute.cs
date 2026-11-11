@@ -19,7 +19,8 @@ internal static class FileStorageRoute
         + "reserve shared database/file storage, PUT the exact bytes with every returned header to the five-minute URL, then POST complete. "
         + "Files are immutable; checksum and size are verified before reads. Download capabilities expire after 60 seconds; existing capabilities remain valid until expiry. "
         + "Keep URLs private. List accepts after (exclusive ULID), 50 results per page, with authorized filtering before pagination. "
-        + "Delete queues cleanup; reserved bytes remain billed until physical deletion succeeds. Replicas are never counted again. No automatic mutation retries.";
+        + "Deleting a file queues cleanup; reserved bytes remain billed until physical deletion succeeds. Deleting a bucket erases its deleted files at once and answers 409 while it holds a completed file or an unexpired upload. "
+        + "Replicas are never counted again. No automatic mutation retries.";
 
     public static string BucketId(HttpContext context) => context.RouteValue("bucket");
     public static string FileId(HttpContext context) => context.RouteValue("file");

@@ -2,8 +2,8 @@
 
 The peer-authenticated `PUT /admin/projects/{project}/closure` accepts two explicit contracts.
 Version 1 keeps the existing empty-project check. Version 2 is ts-auth's handoff after an authorized
-account deletion: it permanently fences the project, revokes its TerraBase project keys and removes
-its databases regardless of replica placement. Both versions retain verified namespace binding checks.
+account deletion: it permanently fences the project, revokes its TerraBase project keys, removes
+its databases regardless of replica placement and erases its file buckets with their files. Both versions retain verified namespace binding checks.
 A different closure id or organization conflicts. Account consent may upgrade the same fence from version 1 to 2; receipt versions must match and downgrade is refused.
 
 Each catalog holder advances bounded cleanup batches. Database unregister records the existing permanent
@@ -16,6 +16,21 @@ one already started finishes. The closure stays pending, for the purge passes an
 what is recorded, while a client session holds a database open, a peer region has not confirmed a key destruction, the
 project has more than 100 databases or tracked purges, the 10 seconds ran out, or a purge found only by the
 purge-history scan (a peer's shred, a regional import) is not yet erased and recorded.
+## File buckets
+
+Version 2 also erases the project's file buckets: the bucket definitions, every file record (completed, incomplete and deleted but held) and the objects in the object store. The request does it after the databases, inside the same 10 seconds, and each machine's convergence pass (2 s) does it for every closure that is not settled, so a spent budget, a crash or a lost response goes on from what is left. The steps, for one bucket at a time:
+
+1. Read up to 100 file records of the bucket.
+2. Delete the object of each record in the object-store bucket of the definition's region (16 at a time).
+3. In one transaction remove those records. A record whose upload URL could still be used gets a `file_object_purges` record in the same transaction ([file-buckets.md](file-buckets.md)).
+4. Repeat from 1 until the bucket has no record. Then one transaction that sees no record drops the file kind and deletes the bucket definition.
+
+An object is deleted before its record, and the bucket definition goes last, so whatever a stopped erasure leaves behind is still named by a record the next pass reads. Every transaction of the erasure reads the fence again: a version-2 closure record of that project whose authority organization is TerraBase's own binding of the project. Without it nothing is read or removed, and the closure stays pending. Kinds and object keys are built from that project id, that organization id, the bucket ids of the project's own definition kind and the file ids of that bucket's own file kind. The 6 minute hold on deleted files is not waited for. Usage and quota are sums over file records, so they are zero for the project once step 3 has removed the last one.
+
+After the fence no upload can be reserved or completed and no bucket created. An upload URL issued before it stays valid for up to five minutes; a file uploaded through it is deleted again by the 5 s late-object pass until the URL has expired by a minute, which the closure does not wait for. An unreachable object store keeps the closure pending.
+
+Limit: the erasure covers the buckets in the catalog of each machine that holds the fence. A bucket created through another region's listener is recorded in that region's catalog, which a closure sent to one region does not reach.
+
 An offline holder keeps closure pending. `200 accepted` requires every catalog holder's empty receipt;
 `202 pending` retains durable work. Backup and shared-history erasure keep their existing deadlines and
 completion evidence; this response does not certify that those retention lifecycles have finished.
