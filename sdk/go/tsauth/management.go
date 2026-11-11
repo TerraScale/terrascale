@@ -26,7 +26,6 @@ import (
 //
 //	c, err := tsauth.New(tsauth.Config{})
 //	u := c.WithToken(signInToken) // the signed-in user's access token
-//	org, err := u.CreateOrganization(ctx, "Acme")
 type Client struct {
 	base string // {origin}/v1/{tenant}
 	hc   *http.Client
@@ -287,9 +286,13 @@ func keyPath(org, project string, extra ...string) []string {
 	return projectPath(org, project, append([]string{"api-keys"}, extra...)...)
 }
 
-// CreateOrganization creates an organization with the user as its owner.
-func (u *User) CreateOrganization(ctx context.Context, name string) (*Organization, error) {
-	return call[Organization](ctx, u, http.MethodPost, []string{"organizations"}, nil, nameBody{name})
+type CreateOrganizationRequest struct {
+	Name           string `json:"name"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+func (u *User) CreateOrganization(ctx context.Context, request CreateOrganizationRequest) (*Organization, error) {
+	return call[Organization](ctx, u, http.MethodPost, []string{"organizations"}, nil, request)
 }
 
 // Organizations lists the organizations the user belongs to or collaborates on.

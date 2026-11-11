@@ -191,8 +191,10 @@ Errors use the `{"error":{"code","message"}}` envelope: `400 invalid_request`,
 `401 unauthorized`, `403 forbidden_role` or `email_mismatch`, `404 not_found`,
 `409` `name_taken`, `not_empty`, `last_owner`, `already_member`,
 `invitation_pending`, `invitation_expired`, `not_pending`,
-`closure_conflict` or `binding_conflict`, and
+`closure_conflict`, `binding_conflict` or `organization_deleted`, and
 `503 temporarily_unavailable`. Messages never echo input.
+
+Organization creation accepts an optional caller-scoped idempotency key. A replay returns the same live organization without adding membership or audit records. A deleted or closing organization ID is refused with 409 organization_deleted; organization deletion ledger rows remain as tombstones after cleanup.
 
 ## 5. API keys
 

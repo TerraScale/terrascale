@@ -97,6 +97,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow().AddDays(15));
                 await WriteOperationAsync(http, storage, identity, operation);
                 persisted = true;
+                await billing.CancelPendingOrganizationAsync(context.UserId, cancellationToken);
                 try
                 {
                     if (!await platform.DeleteAccountAsync(context.Session, operation.Receipt, operation.Authorization, cancellationToken))
@@ -150,6 +151,7 @@ namespace TerraScale.Dashboard.Features.Profile
         {
             try
             {
+                await billing.CancelPendingOrganizationAsync(operation.Session.UserId, http.RequestAborted);
                 bool completed;
                 try { completed = await platform.AccountDeletionCompletedAsync(operation.Receipt, http.RequestAborted); }
                 // An unknown receipt has no accepted durable auth job. Its saved grant

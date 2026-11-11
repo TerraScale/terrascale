@@ -130,7 +130,7 @@ public sealed class CreateOrganizationEndpoint(PlatformDirectory platform, Platf
     public override void Configure()
     {
         Post(Organizations);
-        this.Describe("create_organization", "Create an organization", "The caller becomes its first member, with the owner role.", "Organizations", typeof(CreateOrganizationRequest), StatusCodes.Status201Created, typeof(OrganizationBody), roleChecked: false, scoped: false);
+        this.Describe("create_organization", "Create an organization", "The caller becomes its first member, with the owner role.", "Organizations", typeof(CreateOrganizationRequest), StatusCodes.Status201Created, typeof(OrganizationBody), roleChecked: false, scoped: false, conflict: true);
     }
 
     /// <inheritdoc />

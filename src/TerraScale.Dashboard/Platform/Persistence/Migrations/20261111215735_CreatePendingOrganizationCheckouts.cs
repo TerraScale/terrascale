@@ -27,14 +27,16 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     table.PrimaryKey("PK_pending_organization_checkouts", x => x.user_id);
                     table.CheckConstraint("ck_pending_organization_checkouts_id", "length(user_id) = 26 AND length(draft_id) = 26");
                     table.CheckConstraint("ck_pending_organization_checkouts_name", "length(name) BETWEEN 1 AND 128");
+                    table.CheckConstraint("ck_pending_organization_checkouts_plan", "plan IN ('starter', 'pro', 'team')");
+                    table.CheckConstraint("ck_pending_organization_checkouts_interval", "interval IN ('monthly', 'annual')");
+                    table.CheckConstraint("ck_pending_organization_checkouts_checkout", "length(checkout_id) > 0");
                 });
 
             migrationBuilder.CreateIndex(
                 name: "IX_pending_organization_checkouts_checkout_id",
                 table: "pending_organization_checkouts",
                 column: "checkout_id",
-                unique: true,
-                filter: "checkout_id <> ''");
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_pending_organization_checkouts_draft_id",

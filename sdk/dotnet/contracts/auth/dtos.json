@@ -25,6 +25,13 @@
       {"name": "audience", "type": "string", "nullable": false, "default": null},
       {"name": "operation_receipt", "type": "string", "nullable": true, "default": null},
       {"name": "organization_id", "type": "string", "nullable": true, "default": null}]},
+    "CreateOrganizationRequest": {
+      "sdk_type": "TerraScaleAuthPlatformCreateOrganization",
+      "fields": [
+        {"name": "name", "type": "string?", "nullable": true, "default": null},
+        {"name": "idempotency_key", "type": "string?", "nullable": true, "default": null}
+      ]
+    },
     "NameRequest": {
       "sdk_type": "TerraScaleAuthPlatformName",
       "fields": [

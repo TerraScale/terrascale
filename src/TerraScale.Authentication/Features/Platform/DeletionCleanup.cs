@@ -85,7 +85,7 @@ public sealed class DeletionCleanup(
     public async Task RunHistoryOnceAsync(CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
-        var jobs = await data.ReadAsync((db, token) => db.DeletionJobs.Where(job => job.NextAttemptAt <= now && job.AuthLogicalVerifiedAt != null
+        var jobs = await data.ReadAsync((db, token) => db.DeletionJobs.Where(job => job.NextAttemptAt <= now && job.AuthLogicalVerifiedAt != null && (job.Scope != "organization" || job.HistoryCompletedAt == null)
                 && (job.HistoryCompletedAt == null || job.DashboardVerifiedAt != null || job.InstanceId != PlatformDirectory.Instance))
             .OrderBy(job => job.NextAttemptAt).Take(BatchSize).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
         foreach (var rowData in jobs)

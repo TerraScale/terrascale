@@ -20,10 +20,10 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
     /// <summary>create_organization: POST /v1/terrascale/organizations.</summary>
     public Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(
         string accessToken,
-        TerraScaleAuthPlatformName request,
+        TerraScaleAuthPlatformCreateOrganization request,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/terrascale/organizations",
-            request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
+            request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateOrganization,
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOrganization,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
 

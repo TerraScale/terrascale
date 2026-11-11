@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Organizations
     public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
         OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
         BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null, string ProjectDraftId = "",
-        string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0, InvitationDraft? InviteDraft = null, string OrganizationDraftName = "", string OrganizationDraftPlan = "", string OrganizationDraftInterval = "");
+        string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0, InvitationDraft? InviteDraft = null, string OrganizationDraftName = "", string OrganizationDraftPlan = "", string OrganizationDraftInterval = "", string CheckoutNotice = "", bool CheckoutRetry = false);
 
     public static class OrganizationEndpoints
     {
@@ -88,10 +88,11 @@ namespace TerraScale.Dashboard.Features.Organizations
             // Only an owner sets the two-factor policy; the card stays hidden while ts-auth does not report it.
             var requireMfa = tab == "organization" && context.Role == "owner" && context.Organization is { } owned
                 ? await http.RequestServices.GetRequiredService<ITsAuthMfa>().GetRequireMfaAsync(context.Session, owned.Id, http.RequestAborted) : null;
+            var checkoutNotice = await StripeBilling.OrganizationCheckoutNoticeAsync(http, context.UserId);
             var shell = ShellModel.For(http, context, "Organization");
             var pageWithoutDialog = wizard.Length > 0 ? "/organization" : openCreateProject ? "/organization?tab=projects" : null;
             return new(pageWithoutDialog is null ? shell : shell with { ReturnUrl = WorkspaceUrl.For(context, pageWithoutDialog) }, tab, regions, error,
-                openCreateProject, wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
+                openCreateProject, wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: draft is not null, CheckoutNotice: checkoutNotice?.Notice ?? "", CheckoutRetry: checkoutNotice?.Retry == true,
                 OrganizationDraftName: draft?.Name ?? http.Request.Query["name"].ToString(), OrganizationDraftPlan: draft?.Plan ?? "", OrganizationDraftInterval: draft?.Interval ?? "",
                 Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "", RequireMfa: requireMfa,
                 Sso: tab == "sso" && context.CanManage ? await http.RequestServices.GetRequiredService<OrganizationSsoService>().ReadAsync(context, http.RequestAborted) : null);

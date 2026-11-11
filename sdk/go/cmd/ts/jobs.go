@@ -39,7 +39,7 @@ func createProject(ctx context.Context, u *tsauth.User, org, name string, out io
 	case len(matches) == 0 && org != "":
 		return fmt.Errorf("no organization %q: ts orgs lists them", org)
 	case len(matches) == 0:
-		o, err := u.CreateOrganization(ctx, name)
+		o, err := u.CreateOrganization(ctx, tsauth.CreateOrganizationRequest{Name: name})
 		if err != nil {
 			return err
 		}

@@ -28,10 +28,12 @@ namespace TerraScale.Dashboard.Platform.Mcp
         [McpServerTool(Name = "get_context", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Get your account, accessible organizations and current project selection.")]
         public async Task<DashboardMcpContext> Context()
         {
-            var context = await accounts.GetContextAsync(Account().Session, Cancellation);
+            var session = Account().Session;
+            var completion = await http.HttpContext!.RequestServices.GetRequiredService<StripeBilling>().ResumeOrganizationAsync(session, http.HttpContext);
+            var context = await accounts.GetContextAsync(session, Cancellation);
             return new(new(context.UserId, context.Account.Name, context.Account.Email, null),
                 new(context.Account.ActiveOrganizationId, context.Account.ActiveProjectId),
-                [.. context.Organizations.Select(org => OrganizationSummary(context with { Organization = org, Project = null }))]);
+                [.. context.Organizations.Select(org => OrganizationSummary(context with { Organization = org, Project = null }))], completion.Notice);
         }
 
         [McpServerTool(Name = "get_organization", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read the selected organization's details and projects.")]
@@ -66,12 +68,21 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         public sealed record OrganizationCheckoutResult(string Status, string CheckoutUrl);
 
-        [McpServerTool(Name = "create_organization", UseStructuredContent = true, Destructive = false, OpenWorld = false), Description("Start checkout for a business organization. Creates no organization until payment is confirmed. Open the checkout URL; the organization appears on your next authenticated dashboard or MCP request after paying.")]
+        [McpServerTool(Name = "create_organization", UseStructuredContent = true, Destructive = false, OpenWorld = false), Description("Start checkout for a business organization. Creates no organization until payment is confirmed. Open the checkout URL; the organization appears on your next full dashboard page navigation or organization-list MCP call after paying.")]
         public async Task<OrganizationCheckoutResult> CreateOrganization(string name, string plan = "starter", string interval = "monthly")
         {
             var session = Account().Session;
-            var url = await http.HttpContext!.RequestServices.GetRequiredService<StripeBilling>()
-                .StartOrganizationCheckoutAsync(session, name, plan, interval, Cancellation);
+            var billing = http.HttpContext!.RequestServices.GetRequiredService<StripeBilling>();
+            var completion = await billing.ResumeOrganizationAsync(session, http.HttpContext);
+            if (completion.OrganizationId is not null)
+            {
+                return new("created", "/organization?organizationId=" + Uri.EscapeDataString(completion.OrganizationId));
+            }
+            if (completion.Notice.Length > 0)
+            {
+                return new(completion.Notice, "/organization");
+            }
+            var url = await billing.StartOrganizationCheckoutAsync(session, name, plan, interval, Cancellation);
             return new("checkout_required", url);
         }
 

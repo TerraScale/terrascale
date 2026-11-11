@@ -1,10 +1,12 @@
 import { createHmac, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { onboard, signUp, verify } from '../support/hosted';
 import { createApiKey, createDatabase, databaseNames, stripeLog } from '../support/paid';
 import { shell } from '../support/shell';
-import { dash } from '../support/stack';
+import { dash, stateDir } from '../support/stack';
 import { saveJourney, saveSecret, saveSession } from '../support/state';
 
 const checkout = 'https://checkout.stripe.com';
@@ -187,6 +189,34 @@ test('organization checkout creates nothing before payment and completes exactly
   await expect(page.locator('#create-organization[open]')).toBeVisible();
   await audit.check('confirmed organization project step after repeated completion');
   console.log('organization checkout: absent before payment; one organization, one owner membership and one creation audit after repeated completion and keyed auth create');
+  const canceledName = 'Canceled payment ' + owner.run;
+  await page.goto('/organization?newOrganization=organization');
+  const canceledWizard = page.locator('#create-organization[open]');
+  await canceledWizard.locator('input[name=name]').fill(canceledName);
+  await canceledWizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await canceledWizard.locator('input[name=plan][value=pro]').check();
+  await canceledWizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  const canceledId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+  const paid = await page.request.post(page.url(), { maxRedirects: 0 });
+  expect(paid.status()).toBe(303);
+  const stripeKey = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n').find((line) => line.startsWith('sk_test_'));
+  if (!stripeKey) throw new Error('The local stack has no Stripe credential');
+  const stripeHeaders = { authorization: 'Bearer ' + stripeKey, 'stripe-version': '2026-09-30.endive' };
+  const sessionResponse = await page.request.get('https://api.stripe.com/v1/checkout/sessions/' + canceledId, { headers: stripeHeaders });
+  expect(sessionResponse.status()).toBe(200);
+  const paidSession = await sessionResponse.json();
+  const canceled = await page.request.delete('https://api.stripe.com/v1/subscriptions/' + paidSession.subscription, { headers: stripeHeaders });
+  expect(canceled.status()).toBe(200);
+  await page.goto(paid.headers().location);
+  await expect(page.locator('#organization-checkout-notice')).toContainText("The payment didn't go through.");
+  await expect(page.locator('#organization-checkout-notice')).toHaveAttribute('role', 'status');
+  expect((await owner.organizations()).filter((org) => org.name === canceledName)).toHaveLength(0);
+  await audit.check('payment canceled before return creates no organization');
+  await page.reload();
+  await expect(page.locator('#organization-checkout-notice')).toHaveCount(0);
+  console.log('organization checkout: subscription canceled before return; no organization; payment refusal displayed once');
+
 });
 
 test('canceling organization checkout leaves no organization and preserves the wizard draft', async ({ page, audit }) => {

@@ -77,7 +77,7 @@ func selectProject(ctx context.Context, u *tsauth.User, org, selector string) (*
 // organization administration. Server role checks apply to every mutation.
 func organizationLifecycle(ctx context.Context, u *tsauth.User, command string, args []string, out io.Writer) error {
 	if command == "orgs create" {
-		result, err := u.CreateOrganization(ctx, args[0])
+		result, err := u.CreateOrganization(ctx, tsauth.CreateOrganizationRequest{Name: args[0]})
 		if err != nil {
 			return err
 		}

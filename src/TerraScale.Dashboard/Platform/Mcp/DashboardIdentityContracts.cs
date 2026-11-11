@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
     // versions. A generic object return is wrapped by the official SDK on older
     // protocol versions and hides these fields under an extra result property.
     public sealed record DashboardMcpContext(DashboardMcpUser User, DashboardMcpSelection Selection,
-        IReadOnlyList<DashboardMcpOrganization> Organizations);
+        IReadOnlyList<DashboardMcpOrganization> Organizations, string OrganizationCheckoutNotice = "");
 
     public sealed record DashboardMcpUser(string Id, string Name, string Email,
         [property: Description("Authoritative platform-admin status is unavailable from the current producer contract; administration remains denied.")]

@@ -171,6 +171,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             "organization_changed",
             "organization_deletion_in_progress",
             "organization_exists",
+            "organization_deleted",
             "organization_not_found",
             "origin_rejected",
             "passkey_not_found",

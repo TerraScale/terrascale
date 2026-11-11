@@ -192,11 +192,6 @@ namespace TerraScale.Dashboard.Common.Accounts
         public async Task<AccountContext> GetContextAsync(SessionRecord session, CancellationToken cancellationToken,
             string? organizationId = null, string? projectId = null)
         {
-            if (requests.HttpContext is { } request)
-            {
-                await request.RequestServices.GetRequiredService<StripeBilling>().CompletePendingOrganizationAsync(session, request, cancellationToken);
-            }
-
             var loadedAt = ServerTiming.Now();
             // The account and ts-auth's organization list load together; a Personal organization this call just
             // created is listed again below, so the parallel list never hides it.
@@ -642,7 +637,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             return context with { Account = selected, Loaded = null };
         }
 
-        internal async Task<OrganizationRecord> CompleteBusinessAsync(SessionRecord session, string name, string checkoutId, BillingPlan plan, bool paymentValid, CancellationToken cancellationToken)
+        internal async Task<OrganizationRecord> CompleteBusinessAsync(SessionRecord session, string name, string checkoutId, BillingPlan plan, CancellationToken cancellationToken)
         {
             name = ValidName(name);
             var live = await platform.CreateOrganizationAsync(session, name, checkoutId, cancellationToken);
@@ -653,8 +648,8 @@ namespace TerraScale.Dashboard.Common.Accounts
                 Slug = Slug(live.Name),
                 Kind = "business",
                 PlanId = plan.Id,
-                BillingStatus = paymentValid ? "active" : "billing_required",
-                PaymentMethodValidated = paymentValid,
+                BillingStatus = "active",
+                PaymentMethodValidated = true,
                 OwnerUserId = session.UserId,
                 CreatedAt = live.CreatedAt,
                 Members = new() { [session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = live.CreatedAt } }

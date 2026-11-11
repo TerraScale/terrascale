@@ -1029,17 +1029,22 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     b.HasKey("UserId");
 
                     b.HasIndex("CheckoutId")
-                        .IsUnique()
-                        .HasFilter("checkout_id <> ''");
+                        .IsUnique();
 
                     b.HasIndex("DraftId")
                         .IsUnique();
 
                     b.ToTable("pending_organization_checkouts", null, t =>
                         {
+                            t.HasCheckConstraint("ck_pending_organization_checkouts_checkout", "length(checkout_id) > 0");
+
                             t.HasCheckConstraint("ck_pending_organization_checkouts_id", "length(user_id) = 26 AND length(draft_id) = 26");
 
+                            t.HasCheckConstraint("ck_pending_organization_checkouts_interval", "interval IN ('monthly', 'annual')");
+
                             t.HasCheckConstraint("ck_pending_organization_checkouts_name", "length(name) BETWEEN 1 AND 128");
+
+                            t.HasCheckConstraint("ck_pending_organization_checkouts_plan", "plan IN ('starter', 'pro', 'team')");
                         });
                 });
 

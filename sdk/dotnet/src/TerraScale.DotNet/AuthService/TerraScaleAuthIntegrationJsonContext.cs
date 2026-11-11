@@ -4,6 +4,7 @@ namespace TerraScale.DotNet;
 
 [JsonSourceGenerationOptions(RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true)]
 [JsonSerializable(typeof(TerraScaleAuthPlatformName))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformCreateOrganization))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformRole))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformMfaPolicy))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformAccountMfa))]
