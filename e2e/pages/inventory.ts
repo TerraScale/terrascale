@@ -297,6 +297,17 @@ export const dashboardStates: readonly PageState[] = [
     }),
   ),
   {
+    name: 'invite member dialog',
+    url: () => '/organization?tab=members&invite=1',
+    covers: { path: /^\/organization$/, query: { tab: /^members$/, invite: /^1$/ } },
+    heading: inDialog('team-invite', 'Invite member'),
+    data: async (page) => {
+      await expect(page.locator('#team-invite').getByLabel('Email', { exact: true })).toHaveValue('');
+      await expect(page.locator('#team-invite').getByLabel('Role', { exact: true })).toHaveValue('member');
+      await expect(page.locator('#team-invite-error')).toHaveCount(0);
+    },
+  },
+  {
     name: 'organization audit second page',
     url: () => '/organization?tab=audit&range=7d&severity=all&action=all&search=&page=2',
     covers: { path: /^\/organization$/, query: { tab: /^audit$/, severity: /^all$/, action: /^all$/, search: /^$/, page: /^2$/ } },
