@@ -41,12 +41,12 @@ paths:
       operationId: create_organization
       tags: [Organizations]
       summary: Create an organization
-      description: The caller becomes its first member, with the owner role.
+      description: The caller becomes its first member, with the owner role. An optional idempotency_key returns the same organization for that caller without repeating membership or audit creation.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/NameRequest' }
+            schema: { $ref: '#/components/schemas/CreateOrganizationRequest' }
             example: { name: Acme }
       responses:
         '201':
@@ -1667,6 +1667,13 @@ components:
       properties:
         error: { type: string }
         error_description: { type: string }
+    CreateOrganizationRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { $ref: '#/components/schemas/Name' }
+        idempotency_key: { type: [string, 'null'], maxLength: 128 }
     NameRequest:
       type: object
       required: [name]
