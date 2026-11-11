@@ -206,7 +206,6 @@ async function build() {
       'auth-branding': resolve(source, 'auth-branding.js'),
       'auth-directory-export': resolve(source, 'auth-directory-export.js'),
       'file-storage': resolve(source, 'file-storage.js'),
-      'region-map': resolve(source, 'region-map.js'),
     },
     entryNames: '[name]',
     chunkNames: '[name].[hash]',
