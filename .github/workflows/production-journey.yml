@@ -1,0 +1,215 @@
+name: Production journey
+
+on:
+  workflow_run:
+    workflows: [CI, "Images (GHCR)"]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '23 13 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  release:
+    if: >-
+      github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run'
+      || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository
+      && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      journey: ${{ steps.release.outputs.journey }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - id: release
+        name: Start one journey after the last release of the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_UPDATED: ${{ github.event.workflow_run.updated_at }}
+          COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" != workflow_run ]; then
+            echo "$EVENT: the journey runs the suite of $COMMIT"
+            echo "journey=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$COMMIT&per_page=100" --jq '[.workflow_runs[]
+            | select(.head_branch == "main" and (.event == "push" or .event == "workflow_dispatch")
+              and (.path == ".github/workflows/ci.yml" or .path == ".github/workflows/images-ghcr.yml"))
+            | {id, name, status, updated_at}]')
+          others=$(jq --argjson run "$RUN_ID" '[.[] | select(.id != $run)]' <<< "$runs")
+          running=$(jq -r '[.[] | select(.status != "completed") | "\(.name) run \(.id)"] | join(", ")' <<< "$others")
+          later=$(jq -r --arg at "$RUN_UPDATED" '[.[] | select(.status == "completed" and .updated_at > $at) | "\(.name) run \(.id)"] | join(", ")' <<< "$others")
+          released=""
+          for id in "$RUN_ID" $(jq -r '.[] | select(.status == "completed") | .id' <<< "$others"); do
+            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --jq '[.jobs[]
+              | select(.conclusion == "success" and (.name == "main-auth" or .name == "main-auth-ordered" or .name == "release-only" or .name == "Publish and release"))
+              | .name] | join(", ")')
+            [ -z "$jobs" ] || released+="${released:+, }$jobs in run $id"
+          done
+          if [ -n "$running" ]; then
+            echo "$COMMIT: $running is still running, and its completion starts the journey"
+          elif [ -z "$released" ]; then
+            echo "$COMMIT: no release job succeeded in CI or Images (GHCR), so production did not change"
+          elif [ -n "$later" ]; then
+            echo "$COMMIT: $later completed after this run, and its completion starts the journey"
+          else
+            echo "$COMMIT: released by $released; the journey runs its suite"
+            echo "journey=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  journey:
+    needs: release
+    if: needs.release.outputs.journey == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    concurrency:
+      group: production-journey
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    outputs:
+      report: ${{ steps.scrub.outputs.report }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.release.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.21.0'
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: sdk/go/.go-version
+          cache: false
+      - name: Install the suite, its browser and the five runners
+        working-directory: e2e
+        env:
+          E2E_TOOLS: ${{ runner.temp }}/tools
+          E2E_SDK_BUILD: ${{ github.workspace }}/e2e/.state/sdk
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+          DOTNET_NOLOGO: 1
+        run: |
+          (cd sdk/rust && rustup toolchain install)
+          bash env/tools.sh
+          bash sdk/build.sh rust > "$RUNNER_TEMP/rust-runner.log" 2>&1 &
+          rust=$!
+          for sdk in dotnet go python js; do bash sdk/build.sh "$sdk"; done
+          npm ci --no-audit --no-fund
+          npx playwright install --only-shell chromium
+          wait "$rust" || { cat "$RUNNER_TEMP/rust-runner.log"; exit 1; }
+      - name: Journey against production
+        timeout-minutes: 30
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+        run: bash e2e/env/production.sh
+      - id: scrub
+        name: Redact every generated secret from the files that upload
+        if: always()
+        run: |
+          python3 e2e/env/scrub.py e2e/.state/production e2e/production-report
+          if [ -f e2e/production-report/list.txt ]; then echo "report=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && steps.scrub.outputs.report == 'true'
+        with:
+          name: production-journey-report
+          path: e2e/production-report
+          retention-days: 30
+          if-no-files-found: error
+
+  report:
+    needs: [release, journey]
+    if: >-
+      always() && needs.journey.result != 'skipped'
+      && (needs.journey.result != 'cancelled' || needs.journey.outputs.report == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: Production journey failure
+      RESULT: ${{ needs.journey.result }}
+      TRIGGER: ${{ github.event_name == 'workflow_run' && format('{0} run {1}', github.event.workflow_run.name, github.event.workflow_run.id) || github.event_name }}
+      COMMIT: ${{ needs.release.outputs.commit }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.journey.outputs.report == 'true'
+        with:
+          name: production-journey-report
+          path: production-report
+      - name: Write the issue text
+        run: |
+          set -euo pipefail
+          report=production-report
+          {
+            if [ "$RESULT" = success ]; then
+              echo "The production journey passed: $RUN"
+            else
+              echo "The production journey ended with $RESULT: $RUN"
+            fi
+            echo
+            echo "Trigger: $TRIGGER. Suite: $COMMIT."
+            echo
+            if [ ! -f "$report/list.txt" ]; then
+              echo "The run stopped before e2e/env/production.sh started (checkout, toolchain or runner build): read the job log."
+            else
+              if [ -s "$report/readyz.txt" ]; then
+                echo "Production served:"
+                jq -R -r 'capture("^(?<url>\\S+) (?<body>.*)$") | "- \(.url): version \((.body | fromjson).version // "none"), status \((.body | fromjson).status // "none")"' "$report/readyz.txt"
+              else
+                echo "Production served: not read, the run stopped before /readyz."
+              fi
+              echo
+              if grep -q '^inbox provider mail.tm: .*production was not contacted' "$report/list.txt"; then
+                echo "Cause: the inbox provider (mail.tm) failed before the first request to production. Production was not tested; this is not a production failure."
+                echo
+              elif grep -q 'Error: inbox provider mail.tm' "$report/list.txt"; then
+                echo "Cause: the inbox provider (mail.tm) refused or failed a request during the run; read those errors below before you look at production."
+                echo
+              fi
+              if [ -f "$report/report.json" ]; then
+                jq -r '.stats | "Tests: \(.expected) passed, \(.unexpected) failed, \(.flaky) flaky, \(.skipped) did not run, in \(.duration / 1000 | floor) s."' "$report/report.json"
+                echo
+                jq -r '[.suites | .. | objects | select(has("specs")) | .specs[] as $spec | $spec.tests[]
+                  | select(.status == "unexpected" or .status == "flaky") | .results[-1] as $result
+                  | "### \(.projectName) › \($spec.file):\($spec.line) › \($spec.title)\n\n"
+                    + "Result: \($result.status).\(([.annotations[]?, $result.annotations[]? | select(.type == "url") | .description] | unique | map(" Page: \(.)") | join("")))\n\n"
+                    + "````\n" + ([$result.errors[]? | (.message // .value // "") + (if .location then "\n    at \(.location.file | sub("^.*/e2e/"; "e2e/")):\(.location.line)" else "" end)]
+                      | join("\n\n") | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | split("\n") | .[:40] | join("\n")) + "\n````\n"]
+                  | .[:10] | join("\n")' "$report/report.json"
+              else
+                echo "The suite did not start. The last lines the run printed:"
+                echo
+                echo '````'
+                tail -n 30 "$report/list.txt"
+                echo '````'
+              fi
+            fi
+          } > issue.md
+          cat issue.md
+      - name: Open, update or close the issue
+        run: |
+          set -euo pipefail
+          open=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")
+          if [ "$RESULT" = success ]; then
+            if [ -n "$open" ]; then gh issue close "$open" --comment "$(cat issue.md)"; fi
+          elif [ -n "$open" ]; then
+            gh issue comment "$open" --body-file issue.md
+          else
+            gh issue create --title "$TITLE" --body-file issue.md
+          fi
