@@ -67,15 +67,14 @@ The docs, landing and status sites deploy from `.github/workflows/sites.yml`
 gh workflow run sites.yml --repo TerraScale/terrascale --ref main
 ```
 
-`deploy-landing` and `deploy-status` build and deploy the tip of `main` and
-prove the live revision. `deploy-docs` runs `docs-deploy.yml`, which skips the
-run's revision once a newer commit is the head of `main`. A `Sites` dispatch
-redeploys docs only when the tip of `main` has a push `CI` run in which no job
-failed and `test` succeeded (or was skipped in a run that succeeded), and every
-other push run of the tip completed as success or skipped
-(`docs-site/scripts/check-main.py`); otherwise its docs job fails without
-deploying. To retry a failed site deploy, re-run the whole `Sites` run with
-`gh run rerun <run id>`, never with `--failed`: a full re-run checks the head of
-`main` again before it deploys docs and deploys landing and status from the tip
-of `main` at that moment, while `--failed` keeps the first attempt's head check
-and can put an older docs revision live after a newer one.
+`deploy-docs`, `deploy-landing` and `deploy-status` each wait for their site's
+lock, check out the tip of `main` when they start, build it and deploy it. A
+dispatch deploys that tip without checking its CI, as a push does: CI on the
+pull request checks a change before it reaches `main`. Each job then runs
+`scripts/ci/prove-worker-deploy.mjs`. It takes the version each Worker got from
+the deploy's own record and reads Cloudflare's records for it: the Worker's
+active deployment must serve that version at 100%, and the version's message
+must be the commit the job checked out. It never requests the public sites, so
+a new version still reaching Cloudflare's edge cannot fail it. To retry a
+failed site deploy, re-run its failed job with `gh run rerun <run id> --failed`;
+like every deploy job, the re-run checks out the tip of `main` when it starts.

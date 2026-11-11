@@ -24,11 +24,14 @@ Run its commands from that directory. `make docs-test-fast` at the root runs
 locked installation, the site build and the core tests; the `docs` job of
 `.github/workflows/ci.yml` runs it on every pull request that changes the docs.
 
-After a docs PR merges to `main`, the `Sites` workflow (`.github/workflows/sites.yml`)
-calls `docs-deploy.yml`, which builds that revision and publishes it through
-Cloudflare Workers unless a newer commit is already the head of `main`. The workflow also accepts
-a manual dispatch on green `main`. It verifies `build-info.json` and the pages
-and assets against `docs.terrascale.tech`. Publication uses the scoped
+After a docs PR merges to `main`, the `deploy-docs` job of the `Sites` workflow
+(`.github/workflows/sites.yml`) waits for the `docs-deploy` lock, checks out the
+tip of `main`, builds it and publishes it through Cloudflare Workers with
+`npm run deploy:site`; a manual `Sites` dispatch on `main` does the same. The job
+then proves from Cloudflare's records that the version it created serves 100% of
+`ts-docs` and carries that commit as its message (`scripts/ci/prove-worker-deploy.mjs`
+at the monorepo root). The build fails when a page of the public page list in
+`scripts/check-public.mjs` is missing. Publication uses the scoped
 `CLOUDFLARE_API_TOKEN` Actions secret and `CLOUDFLARE_ACCOUNT_ID` variable.
 
 `cf` is pinned in `package-lock.json`. Its required `workersDev`, `previewUrls`

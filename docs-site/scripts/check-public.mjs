@@ -22,5 +22,7 @@ for (const source of sources.filter((file) => file.endsWith('.md'))) {
   const page = join(dist, relative(join(root, 'docs'), source).replace(/\.md$/, '.html'))
   assert.ok(existsSync(page), `Missing generated page: ${relative(root, source)}`)
 }
+for (const page of ['index.html', '404.html', 'llms.txt', 'getting-started/javascript.html', 'guides/zero-configuration.html'])
+  assert.ok(existsSync(join(dist, page)), `Missing public page: ${page}`)
 assert.ok(htmlFiles.length > 0, 'The output contains no rendered pages')
 console.log(`Public audit passed: ${sources.length} source files, ${filesIn(dist).length} bundled files, ${htmlFiles.length} pages.`)
