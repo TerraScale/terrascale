@@ -199,7 +199,7 @@ delivery. Current TerraBase clients still require an endpoint/resolver pending
 TS-507; legacy direct-origin, proxy and tuning selectors remain inventoried for
 owning implementation changes. Examples below show current API boundaries,
 not a first-party production setup recipe. `discoveredOrigin` below is a trusted
-HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
+HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See the [zero-configuration contract](https://docs.terrascale.tech/guides/zero-configuration).
 
 ## TerraBase client
 
@@ -369,8 +369,8 @@ End-user lifecycle webhook deliveries are verified by `TerraScaleWebhooks.Verify
 ## Verification and package distribution
 
 ```bash
-dotnet build TerraScale.DotNet.slnx --configuration Release
-dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
+dotnet restore TerraScale.DotNet.slnx --locked-mode
+dotnet build TerraScale.DotNet.slnx --configuration Release --no-restore
 ```
 
 [Package release](docs/package-release.md) records the release procedure; it does not authorize

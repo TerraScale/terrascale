@@ -1,8 +1,8 @@
 # ts-js ADR index
 
 These records define the public JavaScript SDK boundary, test fixtures,
-reactive protocol, and package release gates. The repository
-[AGENTS.md](../../AGENTS.md) defines the zero-configuration operating contract. Status does not replace implementation or live
+reactive protocol, and package release gates. The
+[zero-configuration contract](https://docs.terrascale.tech/guides/zero-configuration) defines the operating rules. Status does not replace implementation or live
 qualification tests.
 
 | ADR | Status | Decision |

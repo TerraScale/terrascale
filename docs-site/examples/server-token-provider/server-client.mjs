@@ -43,7 +43,7 @@ export function createServerClient() {
     return pending
   }
   const client = createTerraBaseV1Client({
-    baseUrl: required('TERRASCALE_API_URL'),
+    baseUrl: 'https://api.terrascale.tech',
     project,
     token: getAccessToken,
   })

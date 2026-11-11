@@ -121,7 +121,7 @@ These ship from the next published release; the current npm release predates the
 
 ## Atlas and endpoint selection
 
-The [zero-configuration operating contract](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)
+The [zero-configuration operating contract](https://docs.terrascale.tech/guides/zero-configuration)
 requires first-party services to discover every eligible serving region and
 receive production credentials automatically, without regional activation or
 manual endpoint/secret wiring. Customer project/database scope and authorized

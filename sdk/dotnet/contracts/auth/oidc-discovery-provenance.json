@@ -1,9 +1,0 @@
-{
-  "producer_revision": "7680aca4b8434238755b6a33af64aab0661571cb",
-  "sources_sha256": {
-    "src/TerraScale.Authentication/Features/Oidc/OidcServer.cs": "65a63d5ece260285389f83e172dd568531878a4d277962a4c117db208f138776",
-    "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
-  },
-  "scope": "Discovery omits introspection_endpoint; no introspection route/grant/result is supported. claims_supported lists the claims sign-in tokens emit: aud, exp, iat, iss, sub, email, email_verified, auth_time (TS-1256). Platform MFA is independently owned and remains unchanged.",
-  "qualification": "Pinned-source HTTP fixture; supported authenticated device/refresh flow still requires production proof."
-}

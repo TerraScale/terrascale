@@ -6,8 +6,7 @@
     "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "537ccff7a106269305268d075e733cc076d58c892d512c392c3f71f0a4a99862",
     "src/TerraScale.Authentication/Features/Platform/PlatformAuthentication.cs": "4a7658aac2737b5ac5749bc9a79eb5d6bcf44a1b67014b52935b824705e2d829",
     "src/TerraScale.Authentication/Features/Mfa/TotpCredentials.cs": "1d5c28042b3ae17ff9f01204bbd8e221e727225b7a21bf7477ce0a7195790c44",
-    "docs/auth/platform-api.openapi.yaml": "a77c17ba7041549f5df9f854689254e7bd83c653a6e8e1ef42a5400d1414fec8",
-    "tests/TerraScale.Authentication.Fast/Platform/OpenApiTests.cs": "5f3df4fe5223edd7f51ed36d2edfde96dc7d3e9ea9ad07995d3e8044b177e303"
+    "docs/auth/platform-api.openapi.yaml": "a77c17ba7041549f5df9f854689254e7bd83c653a6e8e1ef42a5400d1414fec8"
   },
   "operations": {"get_account_mfa": {"method": "GET", "path": "/v1/terrascale/account/mfa", "response": "AccountMfaBody", "success": 200, "errors": [401, 503], "request_media_type": null}, "set_organization_mfa_policy": {"method": "PUT", "path": "/v1/terrascale/organizations/{organization}/mfa-policy", "request": "MfaPolicyRequest", "response": "OrganizationBody", "success": 200, "errors": [400, 401, 403, 404, 409, 503], "request_media_type": "application/json"}},
   "security": "PlatformUser sign-in bearer; account status is self-only; policy requires organization owner and enrolled factor to enable. No OAuth scopes. No SDK authority inference.",

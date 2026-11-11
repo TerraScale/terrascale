@@ -27,19 +27,3 @@ export const npmReleasePolicy = Object.freeze({
   }),
   nodeVersions: Object.freeze({ 22: "v22.23.2", 24: "v24.21.0" }),
 });
-
-/**
- * @param {string} version
- * @returns {string}
- */
-export function qualificationFilename(version) {
-  return `terrascale-sdk-${version}.qualification.json`;
-}
-
-/**
- * @param {string} version
- * @returns {string}
- */
-export function tarballFilename(version) {
-  return `terrascale-sdk-${version}.tgz`;
-}

@@ -35,7 +35,7 @@ origin `https://auth.terrascale.tech` unless the caller names another ts-auth
 activation, endpoint pinning or manual secret copying belongs in setup.
 Customer tenant/project scope and authorized access credentials remain required.
 The examples describe SDK boundaries; deployed issuer trust still requires
-qualification. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
+qualification. See the [zero-configuration contract](https://docs.terrascale.tech/guides/zero-configuration).
 
 `Client.ListRegions(ctx)` reads the anonymous [serving-region catalog](contracts/regions.md)
 for database placement. It sends one request, accepts future valid region IDs, and
