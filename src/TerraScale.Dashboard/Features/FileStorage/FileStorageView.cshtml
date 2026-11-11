@@ -173,6 +173,6 @@ else
         "application/zip" or "application/gzip" or "application/x-gzip" or "application/x-tar" or "application/x-7z-compressed" or "application/vnd.rar" or "application/zstd" => ("Archive", "archive"),
         var type when type.StartsWith("image/", StringComparison.Ordinal) => ("Eye", "image"),
         var type when type.StartsWith("video/", StringComparison.Ordinal) || type.StartsWith("audio/", StringComparison.Ordinal) => ("Play", "media"),
-        _ => ("FileText", "document")
+        _ => ("FileText", "file")
     };
 }
