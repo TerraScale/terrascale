@@ -2,9 +2,10 @@
 
 Sensitive operations require a fresh credential check, including MFA when active.
 A valid management access token or hosted session alone cannot authorize account
-deletion, organization deletion, ownership-transfer start, API-key
-creation/rotation, or confidential OAuth client creation.
+deletion, organization deletion, ownership-transfer start, API-key rotation, or
+confidential OAuth client creation.
 Dashboard PAT issuance also consumes a proof before storing any credential.
+API-key creation needs no proof.
 
 The backend calls `POST /v1/terrascale/step-up` with its management bearer and
 `{purpose,audience,return_uri}`. A 201 response returns `proof`, `step_up_url`,
@@ -17,7 +18,7 @@ Supported pairs are `delete_account` with `ts-dashboard` or `ts-auth`,
 `start_ownership_transfer`, `change_plan`, `create_api_key`, `rotate_api_key`,
 `create_oauth_client`, `update_oauth_client`, `rotate_oauth_client`,
 `create_webhook_endpoint`, `rotate_webhook_secret`,
-`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). Organization deletion and starting an ownership transfer consume their proof exactly like API-key creation, and their proofs additionally bind the exact `organization_id`: the minting request carries it and consumption refuses a proof minted for another organization. Dashboard plan changes consume their `change_plan/ts-auth` proof single-use at the step-up consume endpoint for the signed-in user before any Stripe effect; the dashboard binds the resume to the organization the proof was minted for through its one-use encrypted, organization-pinned intent. The hosted page identifies the operation
+`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). Organization deletion and starting an ownership transfer consume their proof exactly like API-key rotation, and their proofs additionally bind the exact `organization_id`: the minting request carries it and consumption refuses a proof minted for another organization. Dashboard plan changes consume their `change_plan/ts-auth` proof single-use at the step-up consume endpoint for the signed-in user before any Stripe effect; the dashboard binds the resume to the organization the proof was minted for through its one-use encrypted, organization-pinned intent. The hosted page identifies the operation
 and account. It requires a fresh password, or one explicitly requested email
 code for a passwordless account, followed by a fresh active MFA factor.
 Opening the page sends no email. An attempt requests at most one code and uses
@@ -38,6 +39,10 @@ any account-deletion side effect. PAT consumption returns 204. Deletion
 consumption returns 200 with a separate `operation_grant` bearer capability only
 after consumption completes before the proof's deadline. These
 mutations must never be automatically retried after an ambiguous response.
+
+API-key creation never reads `X-TerraScale-Step-Up-Proof`: a client that still
+sends a `create_api_key` proof gets the same answer as one that sends none, and
+the proof stays unconsumed.
 
 Dashboard deletion additionally supplies a canonical base64url encoding of 32
 random bytes as `operation_receipt`. Consumption atomically creates a grant
@@ -62,10 +67,11 @@ of email configuration. This does not claim exclusive consumption across
 independent regional writers. Request creation is budgeted per account and
 expired proof, passcode and grant records are pruned.
 
-Issued API-key secrets and confidential OAuth-client secrets retain the fresh
-primary verification's credential lineage, including the account authentication
-state. Global sign-out, password reset, or a losing verification branch prevents
-further exchanges with those secrets. Closing only the initiating browser
+A created API-key secret is bound to its creator's account authentication state
+at creation. Rotated API-key secrets and confidential OAuth-client secrets retain
+the fresh primary verification's credential lineage, including the account
+authentication state. Global sign-out, password reset, or a losing verification
+branch prevents further exchanges with those secrets. Closing only the initiating browser
 authorization does not revoke the independent credential. During API-key rotation,
 the previous secret retains its own original lineage throughout its grace period.
 Already issued access tokens retain their existing bounded lifetime. Immutable

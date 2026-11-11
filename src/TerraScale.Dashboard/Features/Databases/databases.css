@@ -532,6 +532,32 @@ dialog.ts-db-create-dialog .ts-dialog-title {
   border-radius: 2px;
 }
 
+.ts-db-region-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+}
+
+.ts-db-region-list .ts-btn::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ts-ink-3);
+}
+
+.ts-db-region-list .ts-btn[aria-pressed="true"] {
+  border-color: var(--ts-link);
+}
+
+.ts-db-region-list .ts-btn[aria-pressed="true"]::before {
+  background: var(--ts-link);
+}
+
+.ts-db-region-list .ts-btn[data-home]::before {
+  box-shadow: 0 0 0 2px var(--ts-surface-2), 0 0 0 3.5px var(--ts-link);
+}
+
 .ts-db-region-status {
   min-height: 20px;
 }

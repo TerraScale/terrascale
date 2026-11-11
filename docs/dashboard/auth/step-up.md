@@ -1,27 +1,34 @@
 # Sensitive dashboard operations
 
 Account deletion, personal access token issuance (including MCP OAuth's 90-day
-PAT), API-key creation and rotation, OAuth client creation, and billing plan
+PAT), API-key rotation, OAuth client creation, and billing plan
 changes with their undo
 require hosted confirmation at ts-auth. Confirmation uses password or email
 verification and enrolled MFA. A recent OIDC login alone does not authorize an
 operation. PAT issuance still creates its own independent OIDC grant afterward.
+API-key creation needs no confirmation.
 
 The dashboard keeps the opaque purpose/audience proof inside encrypted TerraBase
 `auth-flows` state. The browser receives only the hosted confirmation URL and an
 HttpOnly correlation cookie. The fixed return path is `/auth/step-up/callback`;
 query-bearing callbacks are refused. Pending intents are single use, expire with
 the proof, and bind the initiating account, browser session, selected workspace
-and original form. Switching accounts or sessions invalidates continuation.
+and original form. Switching accounts or sessions invalidates continuation. A
+browser whose callback cannot continue (a used, expired or foreign intent, or an
+unavailable service) gets the dashboard's error page with the reason; API
+callers get problem JSON.
 
 The dashboard consumes `create_pat/ts-dashboard` immediately before storing the
-independent credential. API-key and OAuth-client operations send their
+independent credential. API-key rotation and OAuth-client operations send their
 purpose-bound `ts-auth` proof through the SDK in
 `X-TerraScale-Step-Up-Proof` to the owning service. A `change_plan/ts-auth`
 proof is organization-bound and never leaves the dashboard: the owner's exact
 posted plan change or undo replays from the single-use intent after approval,
 re-checking the owner role and re-validating the plan before any Stripe call.
-API/MCP
+API-key creation sends no proof: the CSRF-checked form and its API create the
+key at once, and ts-auth binds the new secret to its creator's account
+authentication state. The MCP `create_api_key` tool validates its input and
+answers `step_up_required`, so an assistant leaves creation to the dashboard. Other API/MCP
 credential mutations without hosted confirmation receive an actionable refusal;
 they do not get an unattended credential issuance path.
 

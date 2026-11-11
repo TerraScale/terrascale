@@ -6,6 +6,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Security;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 using ZLogger;
@@ -32,7 +33,7 @@ public static class TerraBaseScopes
     };
 }
 
-public sealed partial class ApiKeys(AuthData data, Credentials credentials, StepUpProofs proofs, PlatformDirectory directory, TimeProvider clock, ILogger<ApiKeys> logger)
+public sealed partial class ApiKeys(AuthData data, Credentials credentials, StepUpProofs proofs, PlatformDirectory directory, AttemptLimiter limiter, TimeProvider clock, ILogger<ApiKeys> logger)
 {
     public static readonly TimeSpan MaxPreviousSecretTtl = TimeSpan.FromDays(1);
 
@@ -88,8 +89,17 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
 
     public static bool IsDatabaseId(string? value) => PlatformDirectory.IsId(value);
 
-    public Task<(ApiKeyRecord Key, string Secret)> CreateAsync(UserRecord caller, string organizationId, string? projectId, string name, IReadOnlyList<string> scopes, string? database, DateTimeOffset? expiresAt, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken) =>
-        directory.CommitAsync(async () =>
+    public const int CreationsPerUserPerHour = 20;
+
+    public async Task<(ApiKeyRecord Key, string Secret)> CreateAsync(UserRecord caller, string organizationId, string? projectId, string name, IReadOnlyList<string> scopes, string? database, DateTimeOffset? expiresAt, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        if (await limiter.AcquireAsync(Instance, "api-key-create", caller.Id, CreationsPerUserPerHour, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            throw ApiException.RateLimited("Too many API keys created; retry after the Retry-After delay.", wait);
+        }
+
+        return await directory.CommitAsync(async () =>
         {
             var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
@@ -101,13 +111,14 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             var (id, secret) = Generate();
             var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt, allowedCidrs)
             {
-                SecretBindings = caller.StepUpBindings,
+                SecretBindings = [Credentials.UserState(caller.Id, caller.AuthStamp!)],
             };
             List<Change> operations = [.. await this.RequirementsAsync(caller, cancellationToken).ConfigureAwait(false), .. authority.Assertions, Change.Insert(key)];
 
             operations.Add(directory.Audit(organizationId, caller.Id, "api_key.created", id, string.Join(' ', scopes)));
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(operations, (key, secret));
-        }, cancellationToken);
+        }, cancellationToken).ConfigureAwait(false);
+    }
 
     public const int ScopedKeysPerMinute = 600;
 
@@ -177,6 +188,11 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     public Task<(ApiKeyRecord Key, string Secret)> RotateAsync(UserRecord caller, string organizationId, string? projectId, string keyId, TimeSpan previousTtl, CancellationToken cancellationToken) =>
         directory.CommitAsync(async () =>
         {
+            if (caller.StepUpBindings.Count == 0)
+            {
+                throw StepUpProofs.Required();
+            }
+
             var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
@@ -213,8 +229,6 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             return null;
         }
 
-        // A secret issued before fresh-proof lineage existed has none to lose and keeps working; every secret issued since
-        // carries its lineage (CreateAsync and RotateAsync refuse a caller without one), so only those can lose it.
         var current = key.SecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.SecretBindings, cancellationToken).ConfigureAwait(false);
         var previous = key.PreviousSecretHash is not null && key.PreviousSecretExpiresAt > clock.GetUtcNow()
             && (key.PreviousSecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.PreviousSecretBindings, cancellationToken).ConfigureAwait(false));
@@ -347,11 +361,6 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
         if (caller.InstanceId != Instance)
         {
             throw PlatformDirectory.Forbidden();
-        }
-
-        if (caller.StepUpBindings.Count == 0)
-        {
-            throw StepUpProofs.Required();
         }
 
         if (!await credentials.AreCurrentAsync(Instance, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
