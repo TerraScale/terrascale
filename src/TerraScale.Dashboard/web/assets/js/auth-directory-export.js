@@ -1,6 +1,8 @@
 const form = document.getElementById('auth-export-form');
 if (form) {
   const status = document.getElementById('auth-export-status');
+  const error = document.getElementById('auth-export-error');
+  const fail = message => { status.textContent = ''; error.firstElementChild.textContent = message; error.hidden = false; };
   const cursor = form.elements.namedItem('after');
   const submit = form.querySelector('[type=submit]');
   const reset = form.querySelector('[type=reset]');
@@ -10,6 +12,7 @@ if (form) {
     event.preventDefault();
     const body = new FormData(form);
     controls.forEach(control => { control.disabled = true; });
+    error.hidden = true;
     status.textContent = 'Downloading…';
     try {
       const response = await fetch(form.action, { method: 'POST', body, credentials: 'same-origin', cache: 'no-store' });
@@ -20,12 +23,11 @@ if (form) {
           409: 'The selected project changed. Reload Users before exporting.',
           422: 'The format or page was refused. Reload Users or start over.',
         };
-        status.textContent = `${messages[response.status] ?? 'Download failed; retry later.'} Retry to continue from this page.`;
+        fail(`${messages[response.status] ?? 'Download failed; retry later.'} Retry to continue from this page.`);
         return;
       }
       const next = response.headers.get('X-Export-Next');
       if (!response.headers.get('X-Export-Created-Before')) throw new Error('Export metadata is missing.');
-      // Hold only this page; never fetch the next page automatically or persist directory data.
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement('a');
       link.href = url;
@@ -40,7 +42,7 @@ if (form) {
       submit.textContent = next ? 'Next page' : 'Export complete';
       status.textContent = next ? 'Page downloaded.' : 'Final page downloaded.';
     } catch {
-      status.textContent = 'Download failed. Retry to continue from this page.';
+      fail('Download failed. Retry to continue from this page.');
     } finally {
       controls.forEach(control => { control.disabled = false; });
       submit.disabled = complete;
@@ -53,6 +55,7 @@ if (form) {
     submit.disabled = false;
     submit.textContent = 'Download';
     status.textContent = '';
+    error.hidden = true;
     reset.hidden = true;
     submit.focus();
   });
