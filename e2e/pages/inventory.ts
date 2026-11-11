@@ -125,6 +125,13 @@ const organizationTabs: [string, Identity][] = [
   ['sso', title('Single sign-on', 2)],
   ['danger', title('Danger zone', 2)],
 ];
+const auditDefaults = { severity: /^(all)?$/, action: /^(all)?$/, search: /^$/ };
+const auditFilteredTo = (action: string) => `/organization?tab=audit&search=&action=${action}&severity=all&range=7d`;
+const auditRows = (page: Page) => page.locator('#recent-activity tbody tr');
+
+async function onlyAction(page: Page, action: string): Promise<void> {
+  await expect(auditRows(page).filter({ hasNotText: action }), `every row of the filtered audit is ${action}`).toHaveCount(0);
+}
 
 const profileTabs: [string, Identity][] = [
   ['profile', title('Profile details', 2)],
@@ -139,11 +146,6 @@ const organizationData: Record<string, PageState['data']> = {
     const row = page.locator('main tr').filter({ hasText: journey.email });
     await expect(row).toHaveCount(1);
     await expect(row).toContainText('Owner');
-  },
-  audit: async (page, journey) => {
-    const rows = page.locator('main tr');
-    await expect(rows.filter({ hasText: 'Database created' }).filter({ hasText: journey.databaseName })).toHaveCount(1);
-    await expect(rows.filter({ hasText: 'API key created' }).first()).toBeVisible();
   },
 };
 
@@ -275,11 +277,37 @@ export const dashboardStates: readonly PageState[] = [
     ([tab, heading]): PageState => ({
       name: `organization ${tab}`,
       url: () => `/organization?tab=${tab}`,
-      covers: { path: /^\/organization$/, query: { tab: new RegExp(`^${tab}$`) } },
+      covers: { path: /^\/organization$/, query: { tab: new RegExp(`^${tab}$`), ...(tab === 'audit' ? auditDefaults : {}) } },
       heading,
       data: organizationData[tab],
     }),
   ),
+  {
+    name: 'organization audit second page',
+    url: () => '/organization?tab=audit&range=7d&severity=all&action=all&search=&page=2',
+    covers: { path: /^\/organization$/, query: { tab: /^audit$/, severity: /^all$/, action: /^all$/, search: /^$/, page: /^2$/ } },
+    heading: title('Recent activity', 2),
+  },
+  {
+    name: 'organization audit of database creations',
+    url: () => auditFilteredTo('database.created'),
+    covers: { path: /^\/organization$/, query: { tab: /^audit$/, search: /^$/, action: /^database\.created$/, severity: /^all$/ } },
+    heading: title('Recent activity', 2),
+    data: async (page, journey) => {
+      await onlyAction(page, 'database.created');
+      await expect(auditRows(page).filter({ hasText: 'Database created' }).filter({ hasText: journey.databaseName })).toHaveCount(1);
+    },
+  },
+  {
+    name: 'organization audit of API key creations',
+    url: () => auditFilteredTo('api_key.created'),
+    covers: { path: /^\/organization$/, query: { tab: /^audit$/, search: /^$/, action: /^api_key\.created$/, severity: /^all$/ } },
+    heading: title('Recent activity', 2),
+    data: async (page, journey) => {
+      await onlyAction(page, 'api_key.created');
+      await expect(auditRows(page).filter({ hasText: 'API key created' }).filter({ hasText: journey.apiKey.split('_')[0] })).toHaveCount(1);
+    },
+  },
   {
     name: 'new project dialog',
     url: () => '/organization?newProject=1',
