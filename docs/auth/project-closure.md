@@ -36,8 +36,10 @@ ts-auth's half of the closure handoff; the TerraBase fence and its acceptance ru
   - Any other answer (an outage, a lost answer, a wrong listener's 404, a wrong peer credential's 401): the intent stays
     (202). No such answer is evidence of absence or acceptance.
 - A pass whose intent is gone or re-created removes nothing and cleans nothing while the root survives (202).
-- `ClosureWorker` resumes due intents at startup and every 2 seconds. A pending intent is due again 2 seconds after its
-  attempt, doubling to 1 minute; after 65 attempts it is parked and due every 15 minutes.
+- `ClosureWorker` resumes due intents at startup and every 2 seconds. A new intent is first due 30 seconds after it is
+  created: the request that created it makes the first attempt, and its callers wait at most 30 seconds for it. A
+  pending intent is due again 2 seconds after its attempt, doubling to 1 minute; after 65 attempts it is parked and due
+  every 15 minutes.
 
 Limit: TerraBase writes its fence once and never removes it, and answers `accepted`/`pending` for it on every machine
 that holds it. A refusal can still meet an intent whose `fenceSeen` was never recorded: the answer that showed the
