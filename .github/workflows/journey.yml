@@ -46,7 +46,7 @@ jobs:
         with:
           name: services-${{ matrix.service }}
           path: ${{ runner.temp }}/services
-          retention-days: 1
+          retention-days: 30
           if-no-files-found: error
       - if: always() && matrix.service != 'dashboard' && steps.build.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -97,7 +97,7 @@ jobs:
         with:
           name: runner-${{ matrix.sdk }}
           path: ${{ runner.temp }}/sdk
-          retention-days: 1
+          retention-days: 30
           if-no-files-found: error
       - if: always() && matrix.sdk == 'rust' && steps.build.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
