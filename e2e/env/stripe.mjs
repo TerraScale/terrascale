@@ -15,6 +15,8 @@ const list = (data) => ({ data, has_more: false });
 const store = (object) => (objects.set(object.id, object), object);
 const find = (prefix, key) => (key?.startsWith(`${prefix}_`) ? objects.get(key) : undefined);
 const owned = (prefix, customer) => [...objects.values()].filter((object) => object.id.startsWith(`${prefix}_`) && object.customer === customer);
+const keys = (query) => [...new Set(query.keys())].filter((key) => !key.startsWith('expand[')).sort();
+const customerId = /^cus_\w+$/;
 const secret = (prefix) => readFileSync(`${process.env.E2E_STATE}/secrets`, 'utf8').split('\n').find((line) => line.startsWith(prefix));
 const fields = (form, prefix) =>
   Object.fromEntries([...form].filter(([key]) => key.startsWith(`${prefix}[`) && key.indexOf('[', prefix.length + 1) < 0).map(([key, value]) => [key.slice(prefix.length + 1, -1), value]));
@@ -61,10 +63,9 @@ const api = [
     checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url') });
     return session;
   }],
-  ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer')))],
+  ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }],
   ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session)],
-  ['GET', /^\/v1\/subscriptions$/, (query) =>
-    list(owned('sub', query.get('customer')).filter((subscription) => query.get('status') === 'all' || subscription.status !== 'canceled'))],
+  ['GET', /^\/v1\/subscriptions$/, (query) => list(owned('sub', query.get('customer'))), { customer: customerId, status: /^all$/ }],
   ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription)],
   ['DELETE', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [key]) => {
     const subscription = find('sub', key);
@@ -72,8 +73,8 @@ const api = [
     log.cancels.push({ subscription: subscription.id, customer: subscription.customer, organization: subscription.metadata.organization_id });
     return Object.assign(subscription, { status: 'canceled' });
   }],
-  ['GET', /^\/v1\/invoices$/, (query) => list(owned('in', query.get('customer')))],
-  ['GET', /^\/v1\/invoiceitems$/, () => list([])],
+  ['GET', /^\/v1\/invoices$/, (query) => list(owned('in', query.get('customer'))), { customer: customerId }],
+  ['GET', /^\/v1\/invoiceitems$/, () => list([]), { customer: customerId }],
 ];
 
 function complete(session) {
@@ -119,7 +120,7 @@ function reply(response, status, body, headers = {}) {
 }
 
 function unexpected(response, request, url, reason) {
-  const line = { method: request.method, host: url.hostname, path: url.pathname, reason };
+  const line = { method: request.method, host: url.hostname, path: url.pathname, query: keys(url.searchParams), reason };
   log.unexpected.push(line);
   console.log(JSON.stringify({ unexpected: line }));
   reply(response, 404, { error: { type: 'invalid_request_error', message: `Unrecognized request URL (${request.method}: ${url.pathname}).` } });
@@ -131,7 +132,7 @@ async function handle(request, response, body) {
   if (url.hostname === 'checkout.stripe.com') {
     const session = find('cs', /^\/c\/pay\/(cs_test_\w+)$/.exec(url.pathname)?.[1]);
     if (session?.status !== 'open' || !['GET', 'POST'].includes(request.method)) return unexpected(response, request, url, 'no open checkout session');
-    log.calls.push({ method: request.method, path: 'checkout.stripe.com/c/pay/{cs_test}', status: request.method === 'GET' ? 200 : 303 });
+    log.calls.push({ method: request.method, path: 'checkout.stripe.com/c/pay/{cs_test}', query: keys(url.searchParams), status: request.method === 'GET' ? 200 : 303 });
     if (request.method === 'GET') return reply(response, 200, page(session));
     await deliver('checkout.session.completed', structuredClone(complete(session)));
     return reply(response, 303, '', { location: checkouts.get(session.id).success.replace('{CHECKOUT_SESSION_ID}', session.id) });
@@ -141,6 +142,8 @@ async function handle(request, response, body) {
   if (request.headers['stripe-version'] !== apiVersion) return unexpected(response, request, url, `Stripe-Version ${request.headers['stripe-version']}`);
   const parameters = request.method === 'POST' ? new URLSearchParams(body) : url.searchParams;
   const route = api.find(([method, path]) => method === request.method && path.test(url.pathname));
+  const unfiltered = Object.entries(route?.[3] ?? {}).find(([key, value]) => !value.test(parameters.get(key) ?? ''))?.[0];
+  if (unfiltered) return unexpected(response, request, url, `filter ${unfiltered}`);
   const replay = request.method !== 'GET' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';
   if (replays.has(replay)) return reply(response, 200, replays.get(replay));
   const found = route?.[2](parameters, route[1].exec(url.pathname).slice(1));
@@ -148,7 +151,7 @@ async function handle(request, response, body) {
   const answer = render(found, parameters);
   if (replay) replays.set(replay, answer);
   const expanded = [...parameters].filter(([key]) => key.startsWith('expand[')).map(([, path]) => path);
-  log.calls.push({ method: request.method, path: url.pathname.replace(/\/(cus|cs_test|sub)_\w+/g, (_, kind) => `/{${kind}}`), expand: expanded, status: 200 });
+  log.calls.push({ method: request.method, path: url.pathname.replace(/\/(cus|cs_test|sub)_\w+/g, (_, kind) => `/{${kind}}`), query: keys(url.searchParams), expand: expanded, status: 200 });
   return reply(response, 200, answer);
 }
 

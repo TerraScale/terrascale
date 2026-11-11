@@ -5,12 +5,12 @@ import { stripeStandIn } from './stack';
 
 export type PaidJourney = Journey & { secondDatabaseId: string; secondDatabaseName: string };
 
-type StripeCall = { method: string; path: string; expand?: string[]; status: number };
+type StripeCall = { method: string; path: string; query: string[]; expand?: string[]; status: number };
 export type StripeLog = {
   calls: StripeCall[];
   events: { type: string; object: string; status: number }[];
   cancels: { subscription: string; customer: string; organization: string }[];
-  unexpected: { method: string; host: string; path: string; reason: string }[];
+  unexpected: { method: string; host: string; path: string; query: string[]; reason: string }[];
 };
 
 const apiKeyFormat = /^[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;

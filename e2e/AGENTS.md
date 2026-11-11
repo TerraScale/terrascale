@@ -165,8 +165,11 @@ SHA-256 to its archive's.
 - A Stripe call the dashboard makes: one route in `api` of `env/stripe.mjs` for exactly that method and path, whose
   answer holds only the fields the dashboard reads plus those Stripe.net needs to deserialize, named as in the entity
   classes of the Stripe.net version `Directory.Packages.props` pins (its `StripeConfiguration.ApiVersion` is the only
-  `Stripe-Version` the stand-in accepts). Any other call gets 404 and a line in the stand-in's `unexpected` list,
-  which fails the run when it ends (`support/teardown.ts`).
+  `Stripe-Version` the stand-in accepts). A list route names the filters the dashboard must send (the customer, and
+  `status=all` on subscriptions), so a list call without them is unexpected like a call to no route: either gets 404
+  and a line in the stand-in's `unexpected` list, which fails the run when it ends (`support/teardown.ts`). Each
+  line of its call log holds the method, the path, the query keys and the expand paths, and no other query or form
+  value.
 
 ## Rules
 
