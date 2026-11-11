@@ -26,7 +26,7 @@ public interface IBackupKeyShredding
 {
     void Shred(TenantContext database);
 
-    Task<bool> DestroyAsync(TenantContext database, CancellationToken cancellationToken);
+    Task<bool> DestroyAsync(TenantContext database, DateTimeOffset until, CancellationToken cancellationToken);
 }
 
 internal sealed class DatabaseBackupPurge(
@@ -132,11 +132,11 @@ internal sealed class DatabaseBackupPurge(
         }
     }
 
-    public async Task<bool> DestroyAsync(TenantContext database, CancellationToken cancellationToken)
+    public async Task<bool> DestroyAsync(TenantContext database, DateTimeOffset until, CancellationToken cancellationToken)
     {
         try
         {
-            return await ShredAsync(database, cancellationToken).ConfigureAwait(false) is not null;
+            return await ShredAsync(database, until, cancellationToken).ConfigureAwait(false) is not null;
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -152,7 +152,7 @@ internal sealed class DatabaseBackupPurge(
         try
         {
             await Task.Yield();
-            if (await ShredAsync(database, _stopping.Token).ConfigureAwait(false) is null)
+            if (await ShredAsync(database, DateTimeOffset.MaxValue, _stopping.Token).ConfigureAwait(false) is null)
             {
                 logger.ZLogInformation($"Backup keys of deleted database {database.DatabaseId:@Database} are not all destroyed yet; the erasure pass retries");
             }
@@ -170,15 +170,21 @@ internal sealed class DatabaseBackupPurge(
         }
     }
 
-    internal async Task<DateTimeOffset?> ShredAsync(TenantContext database, CancellationToken token)
+    internal async Task<DateTimeOffset?> ShredAsync(TenantContext database, DateTimeOffset until, CancellationToken token)
     {
+        if (await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, ProgressKind, database.DatabaseId!,
+            BackupPurgeJsonContext.Default.BackupPurgeProgress, token), token).ConfigureAwait(false) is { KeysShreddedAt: { } recorded })
+        {
+            return recorded;
+        }
+
         string? after = null;
         do
         {
             var page = await catalog.ReadUncheckedAsync(transaction => UnshreddedSnapshotsAsync(transaction, database, after, token), token).ConfigureAwait(false);
             foreach (var snapshot in page.Items)
             {
-                if (await ShredScopeAsync(snapshot, token).ConfigureAwait(false) is null)
+                if (await ShredScopeAsync(snapshot, until, token).ConfigureAwait(false) is null)
                 {
                     return null;
                 }
@@ -187,7 +193,7 @@ internal sealed class DatabaseBackupPurge(
         }
         while (after is not null);
 
-        return await ShredScopeAsync(database, token).ConfigureAwait(false);
+        return await ShredScopeAsync(database, until, token).ConfigureAwait(false);
     }
 
     private static async ValueTask<ManagementPage<TenantContext>> UnshreddedSnapshotsAsync(IStorageTransaction transaction, TenantContext database, string? after, CancellationToken token)
@@ -207,8 +213,13 @@ internal sealed class DatabaseBackupPurge(
         return new(snapshots, page.Next);
     }
 
-    private async Task<DateTimeOffset?> ShredScopeAsync(TenantContext database, CancellationToken token)
+    private async Task<DateTimeOffset?> ShredScopeAsync(TenantContext database, DateTimeOffset until, CancellationToken token)
     {
+        if (time.GetUtcNow() >= until)
+        {
+            return null;
+        }
+
         var scope = BackupLayout.KeyScope(database);
         platformKeys.Forget(scope);
         var (record, complete) = await custody.ShredAsync(database, time.GetUtcNow(), token).ConfigureAwait(false);
@@ -239,7 +250,7 @@ internal sealed class DatabaseBackupPurge(
 
     private async Task<BackupPurgeProgress> PurgeAsync(DatabasePurgeRecord job, BackupPurgeProgress progress, CancellationToken token)
     {
-        if (progress.KeysShreddedAt is null && await ShredAsync(job.Database, token).ConfigureAwait(false) is { } shredded)
+        if (progress.KeysShreddedAt is null && await ShredAsync(job.Database, DateTimeOffset.MaxValue, token).ConfigureAwait(false) is { } shredded)
         {
             progress = progress with { KeysShreddedAt = shredded };
         }

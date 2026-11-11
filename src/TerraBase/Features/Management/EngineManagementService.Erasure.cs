@@ -12,8 +12,11 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
+    private static readonly TimeSpan ErasureBudget = TimeSpan.FromSeconds(10);
+
     private async ValueTask EraseClosingDatabasesAsync(string project, CancellationToken token)
     {
+        var until = time.GetUtcNow() + ErasureBudget;
         var pending = await ReadAsync<IReadOnlyList<ClosingDatabase>>(async transaction =>
         {
             var tracked = await transaction.ListAsync(ProjectClosure.Purges(project), null, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
@@ -40,6 +43,11 @@ internal sealed partial class EngineManagementService
         }, static _ => [], token).ConfigureAwait(false);
         foreach (var database in pending)
         {
+            if (time.GetUtcNow() >= until)
+            {
+                return;
+            }
+
             try
             {
                 if (!database.Dropped)
@@ -49,7 +57,7 @@ internal sealed partial class EngineManagementService
 
                 if (!database.Shredded)
                 {
-                    _ = await shredding.Value.DestroyAsync(database.Storage, token).ConfigureAwait(false);
+                    _ = await shredding.Value.DestroyAsync(database.Storage, until, token).ConfigureAwait(false);
                 }
             }
             catch (Exception error) when (!token.IsCancellationRequested)

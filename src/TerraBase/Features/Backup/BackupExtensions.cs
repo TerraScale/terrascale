@@ -71,7 +71,7 @@ public static class BackupExtensions
 
     private sealed class NoBackup : IContinuousBackup, IPointInTimeRestore, IBackupKeyShredding
     {
-        public Task<bool> DestroyAsync(TenantContext database, CancellationToken cancellationToken) => Task.FromResult(true);
+        public Task<bool> DestroyAsync(TenantContext database, DateTimeOffset until, CancellationToken cancellationToken) => Task.FromResult(true);
 
         public void Shred(TenantContext database)
         {
