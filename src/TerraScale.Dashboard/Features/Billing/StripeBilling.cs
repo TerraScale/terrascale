@@ -15,6 +15,8 @@ namespace TerraScale.Dashboard.Features.Billing
         IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger)
     {
         internal const string Origin = "https://dash.terrascale.tech";
+        internal static readonly TimeSpan CheckoutLifetime = TimeSpan.FromHours(1);
+        private static readonly TimeSpan CheckoutCreationWindow = TimeSpan.FromMinutes(15);
         internal static IReadOnlySet<string> WebhookEvents { get; } = new HashSet<string>(StringComparer.Ordinal)
         {
             "checkout.session.completed", "checkout.session.async_payment_succeeded", "checkout.session.async_payment_failed",
@@ -91,9 +93,14 @@ namespace TerraScale.Dashboard.Features.Billing
                     Name = org.Name,
                     Email = context.Account.Email,
                     Metadata = new() { ["organization_id"] = org.Id }
-                }, Idempotent("customer-" + org.Id), cancellationToken);
+                }, Idempotent("customer-" + binding.RequestId), cancellationToken);
                 binding = await UpdateAsync(org.Id, current =>
                 {
+                    if (current.RequestId != binding.RequestId)
+                    {
+                        throw new IOException("Checkout reservation changed.");
+                    }
+
                     if (current.CustomerId.Length != 0 && current.CustomerId != customer.Id)
                     {
                         throw new IOException("Billing customer changed.");
@@ -136,7 +143,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 CancelUrl = Origin + returnPath + (returnPath.Contains('?') ? "&" : "?") + "payment=canceled&plan=" + Uri.EscapeDataString(plan.Key),
                 Mode = plan.PriceCents == 0 ? "setup" : "subscription",
                 BillingAddressCollection = "required",
-                ExpiresAt = binding.StartedAt.UtcDateTime.AddHours(1)
+                ExpiresAt = (binding.StartedAt + CheckoutLifetime).UtcDateTime
             };
             if (plan.PriceCents > 0)
             {
@@ -151,9 +158,9 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             var checkout = await client.V1.Checkout.Sessions.CreateAsync(options,
                 Idempotent("checkout-" + binding.RequestId), cancellationToken);
-            ValidateCheckout(binding, checkout);
             try
             {
+                ValidateCheckout(binding, checkout);
                 binding = await UpdateAsync(org.Id, current =>
                 {
                     if (current.RequestId != binding.RequestId || current.CustomerId != checkout.CustomerId)
@@ -369,7 +376,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 if (subscription.Status is not ("canceled" or "incomplete_expired"))
                 {
-                    subscription = await client.V1.Subscriptions.CancelAsync(subscription.Id, new(), Idempotent("delete-organization-" + subscription.Id), cancellationToken);
+                    subscription = await client.V1.Subscriptions.CancelAsync(subscription.Id, cancellationToken: cancellationToken);
                     if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId || subscription.Status is not ("canceled" or "incomplete_expired"))
                     {
                         throw new IOException("Subscription cancellation is incomplete.");
@@ -593,7 +600,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             var endedSubscription = existing.SubscriptionId.Length > 0 && existing.Status is "canceled" or "incomplete_expired";
-            if (!endedSubscription && existing.StartedAt.AddHours(1) > time.GetUtcNow())
+            if (!endedSubscription && existing.StartedAt + (existing.CheckoutId.Length > 0 ? CheckoutLifetime : CheckoutCreationWindow) > time.GetUtcNow())
             {
                 if (existing.Plan != plan || existing.Interval != interval || existing.ReturnPath != returnPath)
                 {
@@ -607,7 +614,7 @@ namespace TerraScale.Dashboard.Features.Billing
             // preserving the customer's binding.
             return await UpdateAsync(orgId, current =>
             {
-                if (current.RequestId != existing.RequestId)
+                if (current.RequestId != existing.RequestId || current.CheckoutId != existing.CheckoutId)
                 {
                     throw new AccountAccessException("Another checkout is in progress.", 409);
                 }

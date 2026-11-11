@@ -60,6 +60,10 @@ public sealed class DeletionCleanupRow
 
     public required DateTime CreatedAt { get; init; }
 
+    public DateTime? AcknowledgedAt { get; init; }
+
+    public DateTime? BillingSettledAt { get; init; }
+
     public sealed class Configuration : IEntityTypeConfiguration<DeletionCleanupRow>
     {
         public void Configure(EntityTypeBuilder<DeletionCleanupRow> builder)

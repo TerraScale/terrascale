@@ -14,11 +14,20 @@ export type StripeLog = {
 };
 
 const apiKeyFormat = /^[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
+const dashboardMetrics = 'http://127.0.0.1:8085/metrics';
 
 export async function stripeLog(): Promise<StripeLog> {
   const response = await fetch(`${stripeStandIn}/log`);
   expect(response.status).toBe(200);
   return (await response.json()) as StripeLog;
+}
+
+export async function failingDeletionEntries(): Promise<number> {
+  const response = await fetch(dashboardMetrics);
+  expect(response.status).toBe(200);
+  const value = /^terrascale_deletion_cleanup_failing_entries\{service="ts-dashboard"\} (\d+)$/m.exec(await response.text())?.[1];
+  expect(value, 'the dashboard exports terrascale_deletion_cleanup_failing_entries').toBeDefined();
+  return Number(value);
 }
 
 export async function createDatabase(page: Page, audit: Audit, name: string, region: string, label: string): Promise<string> {

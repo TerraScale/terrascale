@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { deleteAccount } from '../support/account';
 import { test, expect, type Audit } from '../support/audit';
 import { branchAction, installAction, psql, sourceUrl, withoutPassword, workflowRun } from '../support/branch';
-import { databaseNames, stripeLog, type PaidJourney } from '../support/paid';
+import { databaseNames, failingDeletionEntries, stripeLog, type PaidJourney } from '../support/paid';
 import { runOperations, sdks } from '../support/sdk';
 import { shell } from '../support/shell';
 import { journey, setupFinished } from '../support/state';
@@ -13,6 +13,7 @@ const tsAuthDeletionCleanupInterval = 60_000;
 const deletionReconcilerInterval = 30_000;
 const deletionReconcilerPassMargin = 20_000;
 const subscriptionCancelBound = tsAuthDeletionCleanupInterval + deletionReconcilerInterval + deletionReconcilerPassMargin;
+const deletionCleanupSettledBound = deletionReconcilerInterval + deletionReconcilerPassMargin;
 
 test.beforeAll(({}, info) => {
   expect(setupFinished(info), 'setup did not finish').toBe(true);
@@ -78,7 +79,7 @@ test.describe('branch action', () => {
 
 test.describe('teardown', () => {
   test('the Pro owner deletes the account, which cancels the Stripe subscription, and a new sign-in is refused', async ({ page, audit, browser }, info) => {
-    test.setTimeout(info.timeout + subscriptionCancelBound);
+    test.setTimeout(info.timeout + subscriptionCancelBound + deletionCleanupSettledBound);
     const current = journey<PaidJourney>();
     await deleteAccount(page, audit, browser, info);
     await expect
@@ -88,6 +89,13 @@ test.describe('teardown', () => {
         intervals: [500],
       })
       .toBe(1);
-    expect((await stripeLog()).unexpected, 'calls the Stripe stand-in answered with 404').toEqual([]);
+    await expect
+      .poll(failingDeletionEntries, {
+        message: 'deletion cleanup entries the dashboard reports failing on /metrics once the subscription is cancelled',
+        timeout: deletionCleanupSettledBound,
+        intervals: [500],
+      })
+      .toBe(0);
+    expect((await stripeLog()).unexpected, 'calls the Stripe stand-in refused').toEqual([]);
   });
 });

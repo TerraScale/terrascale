@@ -10,6 +10,8 @@ const replays = new Map();
 const log = { calls: [], events: [], cancels: [], unexpected: [] };
 
 const now = () => Math.floor(Date.now() / 1000);
+const hour = 3600;
+const within = (earliest, latest) => (value) => value === null || (/^\d+$/.test(value) && Number(value) >= now() + earliest && Number(value) <= now() + latest);
 const id = (prefix) => `${prefix}_${randomBytes(12).toString('hex')}`;
 const list = (data) => ({ data, has_more: false });
 const store = (object) => (objects.set(object.id, object), object);
@@ -62,14 +64,15 @@ const api = [
     session.url = `https://checkout.stripe.com/c/pay/${session.id}`;
     checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url') });
     return session;
-  }],
+  }, {}, { expires_at: within(hour / 2, 24 * hour) }],
   ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }],
   ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session)],
   ['GET', /^\/v1\/subscriptions$/, (query) => list(owned('sub', query.get('customer'))), { customer: customerId, status: /^all$/ }],
   ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription)],
   ['DELETE', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [key]) => {
     const subscription = find('sub', key);
-    if (!subscription || subscription.status === 'canceled') return undefined;
+    if (subscription?.status === 'canceled') return { refused: 'A canceled subscription can only update its metadata and cancellation_details.' };
+    if (!subscription) return undefined;
     log.cancels.push({ subscription: subscription.id, customer: subscription.customer, organization: subscription.metadata.organization_id });
     return Object.assign(subscription, { status: 'canceled' });
   }],
@@ -119,11 +122,11 @@ function reply(response, status, body, headers = {}) {
   response.end(text);
 }
 
-function unexpected(response, request, url, reason) {
+function unexpected(response, request, url, reason, status = 404, error = { type: 'invalid_request_error', message: `Unrecognized request URL (${request.method}: ${url.pathname}).` }) {
   const line = { method: request.method, host: url.hostname, path: url.pathname, query: keys(url.searchParams), reason };
   log.unexpected.push(line);
   console.log(JSON.stringify({ unexpected: line }));
-  reply(response, 404, { error: { type: 'invalid_request_error', message: `Unrecognized request URL (${request.method}: ${url.pathname}).` } });
+  reply(response, status, { error });
 }
 
 async function handle(request, response, body) {
@@ -144,10 +147,13 @@ async function handle(request, response, body) {
   const route = api.find(([method, path]) => method === request.method && path.test(url.pathname));
   const unfiltered = Object.entries(route?.[3] ?? {}).find(([key, value]) => !value.test(parameters.get(key) ?? ''))?.[0];
   if (unfiltered) return unexpected(response, request, url, `filter ${unfiltered}`);
-  const replay = request.method !== 'GET' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';
+  const replay = request.method === 'POST' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';
   if (replays.has(replay)) return reply(response, 200, replays.get(replay));
+  const invalid = Object.entries(route?.[4] ?? {}).find(([key, valid]) => !valid(parameters.get(key)))?.[0];
+  if (invalid) return unexpected(response, request, url, `parameter ${invalid}`, 400, { type: 'invalid_request_error', param: invalid, message: `Invalid ${invalid}.` });
   const found = route?.[2](parameters, route[1].exec(url.pathname).slice(1));
   if (!found) return unexpected(response, request, url, route ? 'no such object' : 'route');
+  if (found.refused) return reply(response, 400, { error: { type: 'invalid_request_error', message: found.refused } });
   const answer = render(found, parameters);
   if (replay) replays.set(replay, answer);
   const expanded = [...parameters].filter(([key]) => key.startsWith('expand[')).map(([, path]) => path);

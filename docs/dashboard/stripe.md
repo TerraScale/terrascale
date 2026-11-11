@@ -16,6 +16,34 @@ this same origin. The webhook endpoint is
 `https://dash.terrascale.tech/api/v1/billing/stripe/webhook`. Configure
 one matching enabled endpoint per Stripe account.
 
+## Checkout reservations
+
+Starting a checkout reserves the organization's `billing` row with a new request ID
+and `started_at`. Its Checkout Session expires one hour after `started_at`
+(`StripeBilling.CheckoutLifetime`), and nobody is sent to a session before it is
+saved on its reservation. A reservation with a saved session is replaced only after
+that hour, or once Stripe confirmed the session expired. Stripe accepts
+an `expires_at` 30 minutes to 24 hours after the session is created, so a
+reservation whose session was never saved creates one only in its first 15 minutes
+(`CheckoutCreationWindow`), which leaves it at least 45 minutes; a later start
+replaces that reservation, whose session nobody was sent to, with a new one. A
+replacement is written only while the reservation still has the request ID and the
+saved session, or no saved session, that the replacing start read, and answers 409
+otherwise; a customer or a session is saved only on the reservation it was created
+for. So, as long as Stripe ends each session at its `expires_at`, an organization
+never has two sessions open that someone was sent to.
+The organization's Stripe customer and the session are both created with the
+reservation's request ID in their idempotency keys. Stripe replays a saved answer,
+a 500 included, for at least 24 hours under one key, so a failed create blocks only
+its own reservation, for at most those 15 minutes, and the next reservation sends a
+new request. Concurrent starts of one reservation share its key, and the `billing`
+row and `stripe_customers` bind one customer to the organization. A customer create
+whose outcome was lost (a timeout, or a 500 after Stripe created the customer)
+followed by a start on the next reservation, or two starts on either side of minute
+15, can leave a second customer that is never bound. It gets no session or
+subscription, and the organization's deletion finds it by its `organization_id`
+metadata and ends any session or subscription it holds.
+
 ## Read-only Stripe audit
 
 Run the app's audit command in an environment where ts-orch has delivered the

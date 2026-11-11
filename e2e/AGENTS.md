@@ -111,7 +111,8 @@ to the organization choice and opens the Pro organization; the owner then sees b
 `paid-finish`, the teardown of `paid`, runs in order in one worker: SDK group C, the branch action and the account
 deletion, which waits for ts-auth's deletion cleanup (every 60 s) to prove the organization deleted, then for the
 dashboard's deletion reconciler (every 30 s) to cancel the subscription at the stand-in; the wait is bounded by the
-two periods plus 20 s for the reconciler's passes. CI runs the
+two periods plus 20 s for the reconciler's passes. It then reads the dashboard's `/metrics` until
+`terrascale_deletion_cleanup_failing_entries` is 0, within one more period plus 20 s. CI runs the
 users in two shards, each with the `projects` of its row in the journey matrix of `journey.yml`: the phone owner's
 projects in one, `pages-desktop` and the paid flow in the other. In the phone shard, once `setup` has passed, the
 tests of `pages-mobile`, `hosted`, `interactions` and `invitation` share six workers. Playwright queues them in the
@@ -188,7 +189,14 @@ SHA-256 to its archive's.
   classes of the Stripe.net version `Directory.Packages.props` pins (its `StripeConfiguration.ApiVersion` is the only
   `Stripe-Version` the stand-in accepts). A list route names the filters the dashboard must send (the customer, and
   `status=all` on subscriptions), so a list call without them is unexpected like a call to no route: either gets 404
-  and a line in the stand-in's `unexpected` list, which fails the run when it ends (`support/teardown.ts`). Each
+  and a line in the stand-in's `unexpected` list, which fails the run when it ends (`support/teardown.ts`). A route
+  also checks a parameter whose range Stripe checks, after its idempotency replay as Stripe does: a Checkout
+  Session's `expires_at` outside 30 minutes to 24 hours from now gets Stripe's 400 `invalid_request_error` for that
+  `param` and a line in `unexpected`. Only a `POST` is replayed by its idempotency key, as at Stripe, where a key on
+  `GET` or `DELETE` has no effect: a second cancel runs again, and the cancel of a canceled subscription, which Stripe
+  keeps immutable except for its metadata and `cancellation_details`, gets 400 `invalid_request_error` without a line
+  in `unexpected`, because two cancellers that race send it. Only a cancel that ends a subscription is added to
+  `cancels`, where `journey/paid-finish.spec.ts` waits for exactly one entry of the deleted organization. Each
   line of its call log holds the method, the path, the query keys and the expand paths, and no other query or form
   value.
 

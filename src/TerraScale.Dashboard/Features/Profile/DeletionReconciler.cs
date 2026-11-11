@@ -1,27 +1,32 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Stripe;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
+using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
+using TerraBaseStorageException = TerraScale.DotNet.TerraBase.TerraBaseException;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
     // Local fences guard CAS writers; immutable authorization and enrollment references
     // replay after ACK to repair delayed regional writes.
-    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDbContextFactory<DashboardDbContext> storage, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
-        AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ILogger<DeletionReconciler> logger) : BackgroundService
+    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
+        AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ServiceSloTelemetry telemetry, ILogger<DeletionReconciler> logger) : BackgroundService
     {
+        private readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
         private readonly DeletionCleanupJournal journal = new(storage, organizations, clock);
         private readonly DeletionProjectRecords projectRecords = new(storage);
         private readonly DeletionRelatedRecords related = new(storage, accounts);
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), clock);
             try
             {
+                await initializer.WhenInitialized.WaitAsync(stoppingToken);
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), clock);
                 do { await RunOnceAsync(stoppingToken); }
                 while (await timer.WaitForNextTickAsync(stoppingToken));
             }
@@ -30,6 +35,8 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            var failed = new Dictionary<string, string>(StringComparer.Ordinal);
+            var cleaned = new HashSet<string>(StringComparer.Ordinal);
             // Replay does not depend on producer availability or delivery of an already ACKed proof.
             try
             {
@@ -38,9 +45,12 @@ namespace TerraScale.Dashboard.Features.Profile
                     try
                     {
                         Validate(entry.Proof);
+                        var started = clock.GetUtcNow().UtcDateTime;
                         await CleanAsync(entry, cancellationToken);
+                        await SettleAsync(entry, started, cancellationToken);
+                        cleaned.Add(entry.Proof.Id);
                     }
-                    catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
+                    catch (Exception error) when (Retryable(error, cancellationToken)) { Fail(failed, entry.Proof, error); }
                 }
             }
             catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
@@ -58,7 +68,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     Validate(proof);
                 }
             }
-            catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); return; }
+            catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); proofs = []; }
             foreach (var proof in proofs)
             {
                 try
@@ -66,8 +76,67 @@ namespace TerraScale.Dashboard.Features.Profile
                     var entry = await journal.RememberAsync(proof, cancellationToken);
                     await CleanAsync(entry, cancellationToken);
                     await deletions.AcknowledgeAsync(proof, cancellationToken);
+                    await journal.AcknowledgedAsync(proof.Id, cancellationToken);
+                    cleaned.Add(proof.Id);
                 }
-                catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
+                catch (Exception error) when (Retryable(error, cancellationToken)) { Fail(failed, proof, error); }
+            }
+
+            cleaned.ExceptWith(failed.Keys);
+            foreach (var id in cleaned)
+            {
+                failing.Remove(id);
+            }
+
+            foreach (var (id, cause) in failed)
+            {
+                failing[id] = cause;
+            }
+
+            telemetry.ReportDeletionCleanupFailures(failing.Count);
+        }
+
+        internal static (string Type, string Code) Failure(Exception error)
+        {
+            for (var cause = error; cause is not null; cause = cause.InnerException)
+            {
+                var code = cause switch
+                {
+                    StripeException { StripeError: { } stripe } => string.Join(' ', stripe.Type, stripe.Code).Trim(),
+                    TerraBaseStorageException { ErrorCode: { } storage } => storage,
+                    TerraBaseException rpc => rpc.ErrorCode,
+                    AccountAccessException access => string.Join(' ', access.StatusCode, access.Code).Trim(),
+                    _ => null,
+                };
+                if (code is not null)
+                {
+                    return (cause.GetType().Name, code);
+                }
+            }
+
+            return (error.GetType().Name, "-");
+        }
+
+        private async Task SettleAsync(DeletionCleanupJournal.Entry entry, DateTime started, CancellationToken cancellationToken)
+        {
+            switch (entry)
+            {
+                case { Proof.Scope: DeletionCleanupRow.Organization, AcknowledgedAt: null }:
+                    await deletions.AcknowledgeAsync(entry.Proof, cancellationToken);
+                    await journal.AcknowledgedAsync(entry.Proof.Id, cancellationToken);
+                    break;
+                case { Proof.Scope: DeletionCleanupRow.Organization, BillingSettledAt: null, AcknowledgedAt: { } acknowledged } when started >= acknowledged + StripeBilling.CheckoutLifetime:
+                    await journal.BillingSettledAsync(entry.Proof.Id, cancellationToken);
+                    break;
+            }
+        }
+
+        private void Fail(Dictionary<string, string> failed, TsAuthDeletionProof proof, Exception error)
+        {
+            var (type, code) = Failure(error);
+            if (failed.TryAdd(proof.Id, type + " " + code) && failing.GetValueOrDefault(proof.Id) != failed[proof.Id])
+            {
+                logger.DashboardDeletionCleanupFailed(proof.Id, proof.Scope, proof.SubjectId, type, code);
             }
         }
 
@@ -91,7 +160,11 @@ namespace TerraScale.Dashboard.Features.Profile
                     break;
                 case "organization":
                     var ended = await billing.EndSubscriptionAsync(proof.SubjectId, cancellationToken, completedDeletion: true);
-                    await billing.EndCustomersForDeletionAsync(proof.SubjectId, entry.CustomerIds, cancellationToken);
+                    if (entry.BillingSettledAt is null)
+                    {
+                        await billing.EndCustomersForDeletionAsync(proof.SubjectId, entry.CustomerIds, cancellationToken);
+                    }
+
                     await Features.Data.SqlWorkspace.EraseAsync(storage, row => row.OrganizationId == proof.SubjectId, cancellationToken);
                     await using (var db = await storage.CreateDbContextAsync(cancellationToken))
                     {
