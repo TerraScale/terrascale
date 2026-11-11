@@ -2,12 +2,13 @@
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-grants-title" data-signals="{_grantPending: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_grantPending = true)" data-on:pageshow__window="$_grantPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_grantPending = false)">
     <header class="ts-page-header"><h1 id="project-grants-title">Members</h1><p>@Model.Shell.Context.Project!.Name · your role: @Model.Shell.Context.Project.Role</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
+    @if (Model.Dialog.Length > 0) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectGrantErrorDialog, TerraScale.Dashboard.Features.Organizations.Projects.ProjectGrantPage>(Model)) }
     @if (Model.Status.Length > 0) { <p class="ts-alert ts-alert-success" role="status">@Model.Status</p> }
     @if (Model.CanManageGrants)
     {
         <form class="ts-form" method="post" action="@Model.PostUrl" data-submit-once data-attr:aria-busy="$_grantPending ? 'true' : 'false'">
             <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-            <label class="ts-label" for="grant-user-id">Member user ID</label><input class="ts-input" id="grant-user-id" name="userId" value="@Model.DraftUserId" required minlength="26" maxlength="26" placeholder="01JBX8Y3Z4N5P6Q7R8S9T0V1W2" autocomplete="off" spellcheck="false" />
+            <label class="ts-label" for="grant-user-id">Member user ID</label><input class="ts-input" id="grant-user-id" name="userId" value="@Model.DraftUserId" required minlength="26" maxlength="26" placeholder="01JBX8Y3Z4N5P6Q7R8S9T0V1W2" autocomplete="off" spellcheck="false" pattern="[0-7][0-9A-HJKMNP-TV-Z]{25}" title="Enter a 26-character uppercase user ID starting with 0–7" />
             <label class="ts-label" for="grant-role">Explicit project role</label><select class="ts-select" id="grant-role" name="role">
                 @if (Model.DraftRole is not ("viewer" or "member" or "admin")) { <option value="@Model.DraftRole" selected disabled>Choose a valid role (@Model.DraftRole)</option> }
                 @foreach (var role in new[] { "viewer", "member", "admin" }) { <option value="@role" selected="@(role == Model.DraftRole ? "selected" : null)">@role</option> }
@@ -16,7 +17,7 @@
             <p role="status" aria-live="polite" data-text="$_grantPending ? 'Updating explicit project grant…' : ''"></p>
         </form>
     }
-    @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Open the first page</a></p> }
+    @if (Model.Error.Length > 0 && Model.Dialog.Length == 0) { <p class="ts-alert ts-alert-danger" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Open the first page</a></p> }
     else if (Model.Grants.Count == 0) { <p class="ts-empty" role="status">No explicit project grants on this page.</p> }
     else
     {
@@ -29,7 +30,7 @@
                 <td><button class="ts-btn ts-btn-secondary" type="button" command="show-modal" commandfor="edit-grant-@grant.UserId">Change role</button><button class="ts-btn ts-btn-secondary" type="button" command="show-modal" commandfor="remove-grant-@grant.UserId">Remove explicit grant</button>
                     <dialog class="ts-dialog" id="edit-grant-@grant.UserId" aria-labelledby="edit-grant-title-@grant.UserId" closedby="any"><div class="ts-dialog-content">
                         <h2 id="edit-grant-title-@grant.UserId">Change explicit project role</h2><p>@grant.Email</p>
-                        <form method="post" action="@Model.PostUrl" data-submit-once data-attr:aria-busy="$_grantPending ? 'true' : 'false'"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="userId" value="@grant.UserId" />
+                        <form method="post" action="@Model.PostUrl" data-submit-once data-attr:aria-busy="$_grantPending ? 'true' : 'false'"><input type="hidden" name="dialog" value="edit" /><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="userId" value="@grant.UserId" />
                             <label class="ts-label" for="edit-grant-role-@grant.UserId">Explicit role for @grant.Email</label><select class="ts-select" id="edit-grant-role-@grant.UserId" name="role">@foreach (var role in new[] { "viewer", "member", "admin" }) { <option value="@role" selected="@(role == grant.Role ? "selected" : null)">@role</option> }</select>
                             <button class="ts-btn ts-btn-primary" type="submit" name="operation" value="set">Save role</button><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="edit-grant-@grant.UserId">Cancel</button>
                             <p role="status" aria-live="polite" data-text="$_grantPending ? 'Saving explicit project role…' : ''"></p>
@@ -38,7 +39,7 @@
                     <dialog class="ts-dialog" id="remove-grant-@grant.UserId" aria-labelledby="remove-grant-title-@grant.UserId" closedby="any"><div class="ts-dialog-content">
                         <h2 id="remove-grant-title-@grant.UserId">Remove explicit grant?</h2><p>@grant.Email · @grant.UserId · @grant.Role</p>
                         <p>Organization-implied access and independent service keys remain; removing your own last grant may remove your access.</p>
-                        <form method="post" action="@Model.PostUrl" data-submit-once data-attr:aria-busy="$_grantPending ? 'true' : 'false'"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="userId" value="@grant.UserId" /><button class="ts-btn ts-btn-danger" type="submit" name="operation" value="remove">Remove only this grant</button><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="remove-grant-@grant.UserId">Cancel</button></form>
+                        <form method="post" action="@Model.PostUrl" data-submit-once data-attr:aria-busy="$_grantPending ? 'true' : 'false'"><input type="hidden" name="dialog" value="remove" /><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="userId" value="@grant.UserId" /><button class="ts-btn ts-btn-danger" type="submit" name="operation" value="remove">Remove only this grant</button><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="remove-grant-@grant.UserId">Cancel</button></form>
                         <p role="status" aria-live="polite" data-text="$_grantPending ? 'Removing explicit project grant…' : ''"></p>
                     </div></dialog>
                 </td>

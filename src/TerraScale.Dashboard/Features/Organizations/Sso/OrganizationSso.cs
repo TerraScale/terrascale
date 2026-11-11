@@ -211,7 +211,8 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/organization?tab=sso", Results.BadRequest("Invalid form token."));
+                return RequestError.WantsJson(http) ? Results.BadRequest("Invalid form token.")
+                    : await OrganizationEndpoints.PageAsync(http, context, placement, "This form expired. Review your input and submit again.", 400, "sso");
             }
 
             try

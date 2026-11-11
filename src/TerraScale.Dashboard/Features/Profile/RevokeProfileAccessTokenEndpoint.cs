@@ -20,11 +20,12 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/profile?tab=access-tokens", Results.StatusCode(403));
+                return await ProfileDialogErrors.PageAsync(http, sessions, accounts, "revoke-" + http.Request.RouteValues["id"], "access-tokens", "This form expired. Review the token and submit again.", 400);
             }
 
             try { await tokens.RevokeAsync(context, http.Request.RouteValues["id"]?.ToString() ?? "", http.RequestAborted); }
-            catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
+            catch (AccountAccessException error)
+            { return await ProfileDialogErrors.PageAsync(http, sessions, accounts, "revoke-" + http.Request.RouteValues["id"], "access-tokens", error.Message, error.StatusCode); }
             return HttpRedirects.SeeOther(AccessTokenEndpoints.ReturnTo + "&status=token-revoked");
         }
     }

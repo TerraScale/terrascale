@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/profile?tab=danger", Results.StatusCode(403));
+                return await ProfileDialogErrors.PageAsync(http, sessions, accounts, "delete-account", "danger", "This form expired. Review your input and submit again.", 400, form["email"].ToString());
             }
 
             if (await ReadOperationAsync(http, storage, identity) is { } pending)
@@ -121,7 +121,8 @@ namespace TerraScale.Dashboard.Features.Profile
                     { await DropAsync(storage, Key(http), cancellationToken); http.Response.Cookies.Delete(Cookie); }
                 }
                 var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "danger", Error: error.Message,
-                    Tokens: await tokens.ListAsync(context, cancellationToken), Sessions: await sessions.ListAsync(http, context.Session)));
+                    Tokens: await tokens.ListAsync(context, cancellationToken), Sessions: await sessions.ListAsync(http, context.Session))
+                { DialogId = "delete-account", DraftEmail = form["email"].ToString() });
                 view.StatusCode = error.StatusCode;
                 return view;
             }

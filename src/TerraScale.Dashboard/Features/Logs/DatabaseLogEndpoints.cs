@@ -41,7 +41,8 @@ namespace TerraScale.Dashboard.Features.Logs
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "logs"), Results.BadRequest("Invalid form token."));
+                return RequestError.WantsJson(http) ? Results.BadRequest("Invalid form token.")
+                    : await PageAsync(http, context, form["databaseId"].ToString(), "", databases, backend, drains, "This form expired. Review your input and submit again.", 400);
             }
 
             var databaseId = form["databaseId"].ToString();

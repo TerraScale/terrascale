@@ -4,7 +4,7 @@ using TerraScale.Dashboard.Platform.TsAuth;
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
     public sealed record ProjectGrantPage(ShellModel Shell, IReadOnlyList<TsAuthPlatformProjectMember> Grants,
-        string? Next = null, string Error = "", bool HasPrevious = false, string DraftUserId = "", string DraftRole = "viewer", string Status = "")
+        string? Next = null, string Error = "", bool HasPrevious = false, string DraftUserId = "", string DraftRole = "viewer", string Status = "", string Dialog = "")
     {
         public string Url => WorkspaceUrl.For(Shell.Context, "/project/members", replace: true);
         public string PostUrl => WorkspaceUrl.For(Shell.Context, "/api/v1/dashboard/project/grants", replace: true);
@@ -53,12 +53,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             var role = form["role"].ToString();
             IResult Error(string message, int status)
             {
-                return Page(http, context, [], error: message, status: status, draftUserId: userId, draftRole: role);
+                return Page(http, context, [], error: message, status: status, draftUserId: userId, draftRole: role, dialog: form["dialog"] == "edit" ? "edit-grant-" + userId : form["dialog"] == "remove" ? "remove-grant-" + userId : "");
             }
 
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/project/members", Error("The form expired. Reload project grants and try again.", 400));
+                return Error("The form expired. Review the grant and submit again.", 400);
             }
 
             try
@@ -90,11 +90,11 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
         }
 
         private static RazorSlices.RazorSlice<ProjectGrantPage> Page(HttpContext http, AccountContext context, IReadOnlyList<TsAuthPlatformProjectMember> grants,
-            string? next = null, string error = "", int status = 200, bool previous = false, string draftUserId = "", string draftRole = "viewer", string notice = "")
+            string? next = null, string error = "", int status = 200, bool previous = false, string draftUserId = "", string draftRole = "viewer", string notice = "", string dialog = "")
         {
             http.Response.Headers.CacheControl = "no-store";
             var shell = ShellModel.For(http, context, "Project grants") with { ReturnUrl = WorkspaceUrl.For(context, "/project/members", replace: true) };
-            var page = ProjectGrantView.Create(new(shell, grants, next, error, previous, draftUserId, draftRole, notice));
+            var page = ProjectGrantView.Create(new(shell, grants, next, error, previous, draftUserId, draftRole, notice, dialog));
             page.StatusCode = status;
             return page;
         }
