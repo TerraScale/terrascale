@@ -201,7 +201,11 @@ namespace TerraScale.Dashboard.Features.Profile
                 if (billing is not null)
                 {
                     try { await billing.EndSubscriptionAsync(orgId, cancellationToken, completedDeletion: true); }
-                    catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested) { }
+                    catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                    {
+                        var (type, code) = DeletionReconciler.Failure(error);
+                        http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(AccountDeletion)).AccountDeletionDidNotEndBilling(orgId, type, code);
+                    }
                 }
 
                 await http.RequestServices.GetRequiredService<OrganizationStore>().FenceAsync(orgId, AccountService.NewId(), cancellationToken);

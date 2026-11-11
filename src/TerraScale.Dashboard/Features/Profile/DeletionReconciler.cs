@@ -1,18 +1,22 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Stripe;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
+using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
+using TerraBaseStorageException = TerraScale.DotNet.TerraBase.TerraBaseException;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
     // Local fences guard CAS writers; immutable authorization and enrollment references
     // replay after ACK to repair delayed regional writes.
     public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDbContextFactory<DashboardDbContext> storage, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
-        AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ILogger<DeletionReconciler> logger) : BackgroundService
+        AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ServiceSloTelemetry telemetry, ILogger<DeletionReconciler> logger) : BackgroundService
     {
+        private readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
         private readonly DeletionCleanupJournal journal = new(storage, organizations, clock);
         private readonly DeletionProjectRecords projectRecords = new(storage);
         private readonly DeletionRelatedRecords related = new(storage, accounts);
@@ -30,6 +34,8 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            var failed = new Dictionary<string, string>(StringComparer.Ordinal);
+            var cleaned = new HashSet<string>(StringComparer.Ordinal);
             // Replay does not depend on producer availability or delivery of an already ACKed proof.
             try
             {
@@ -39,8 +45,9 @@ namespace TerraScale.Dashboard.Features.Profile
                     {
                         Validate(entry.Proof);
                         await CleanAsync(entry, cancellationToken);
+                        cleaned.Add(entry.Proof.Id);
                     }
-                    catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
+                    catch (Exception error) when (Retryable(error, cancellationToken)) { Fail(failed, entry.Proof, error); }
                 }
             }
             catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
@@ -58,7 +65,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     Validate(proof);
                 }
             }
-            catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); return; }
+            catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); proofs = []; }
             foreach (var proof in proofs)
             {
                 try
@@ -66,8 +73,51 @@ namespace TerraScale.Dashboard.Features.Profile
                     var entry = await journal.RememberAsync(proof, cancellationToken);
                     await CleanAsync(entry, cancellationToken);
                     await deletions.AcknowledgeAsync(proof, cancellationToken);
+                    cleaned.Add(proof.Id);
                 }
-                catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
+                catch (Exception error) when (Retryable(error, cancellationToken)) { Fail(failed, proof, error); }
+            }
+
+            cleaned.ExceptWith(failed.Keys);
+            foreach (var id in cleaned)
+            {
+                failing.Remove(id);
+            }
+
+            foreach (var (id, cause) in failed)
+            {
+                failing[id] = cause;
+            }
+
+            telemetry.ReportDeletionCleanupFailures(failing.Count);
+        }
+
+        internal static (string Type, string Code) Failure(Exception error)
+        {
+            for (var cause = error; cause is not null; cause = cause.InnerException)
+            {
+                var code = cause switch
+                {
+                    StripeException { StripeError: { } stripe } => string.Join(' ', stripe.Type, stripe.Code).Trim(),
+                    TerraBaseStorageException { ErrorCode: { } storage } => storage,
+                    TerraBaseException rpc => rpc.ErrorCode,
+                    _ => null,
+                };
+                if (code is not null)
+                {
+                    return (cause.GetType().Name, code);
+                }
+            }
+
+            return (error.GetType().Name, "-");
+        }
+
+        private void Fail(Dictionary<string, string> failed, TsAuthDeletionProof proof, Exception error)
+        {
+            var (type, code) = Failure(error);
+            if (failed.TryAdd(proof.Id, type + " " + code) && failing.GetValueOrDefault(proof.Id) != failed[proof.Id])
+            {
+                logger.DashboardDeletionCleanupFailed(proof.Id, proof.Scope, proof.SubjectId, type, code);
             }
         }
 

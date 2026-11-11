@@ -19,6 +19,12 @@ namespace TerraScale.Dashboard.Platform.Observability
         }
         private long good;
         private long bad;
+        private long failingDeletionEntries;
+
+        public void ReportDeletionCleanupFailures(int entries)
+        {
+            Interlocked.Exchange(ref failingDeletionEntries, entries);
+        }
 
         public static void MarkBad(HttpContext? http = null)
         {
@@ -96,7 +102,9 @@ namespace TerraScale.Dashboard.Platform.Observability
             http.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
             return http.Response.WriteAsync("# TYPE terrascale_slo_requests_total counter\n" +
                 "terrascale_slo_requests_total{service=\"ts-dashboard\",outcome=\"good\"} " + Interlocked.Read(ref good).ToString(CultureInfo.InvariantCulture) + "\n" +
-                "terrascale_slo_requests_total{service=\"ts-dashboard\",outcome=\"bad\"} " + Interlocked.Read(ref bad).ToString(CultureInfo.InvariantCulture) + "\n");
+                "terrascale_slo_requests_total{service=\"ts-dashboard\",outcome=\"bad\"} " + Interlocked.Read(ref bad).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_deletion_cleanup_failing_entries gauge\n" +
+                "terrascale_deletion_cleanup_failing_entries{service=\"ts-dashboard\"} " + Interlocked.Read(ref failingDeletionEntries).ToString(CultureInfo.InvariantCulture) + "\n");
         }
     }
 }

@@ -144,6 +144,12 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 47, Level = LogLevel.Warning, Message = "A Stripe binding could not be refreshed ({ErrorType}); other organizations continue.")]
         internal static partial void AStripeBindingCouldNotBeRefreshed(this ILogger logger, object? errorType);
 
+        [LoggerMessage(EventId = 48, Level = LogLevel.Warning, Message = "Dashboard deletion cleanup of {Scope} {SubjectId} (proof {ProofId}) failed with {ErrorType} {ErrorCode}; retrying every 30 seconds, logged again when the error changes.")]
+        internal static partial void DashboardDeletionCleanupFailed(this ILogger logger, string proofId, string scope, string subjectId, string errorType, string errorCode);
+
+        [LoggerMessage(EventId = 49, Level = LogLevel.Warning, Message = "Account deletion did not end the billing of organization {OrganizationId} with {ErrorType} {ErrorCode}; the deletion cleanup retries it.")]
+        internal static partial void AccountDeletionDidNotEndBilling(this ILogger logger, string organizationId, string errorType, string errorCode);
+
         [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
         internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);
     }
