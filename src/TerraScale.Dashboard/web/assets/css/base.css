@@ -1,5 +1,3 @@
-/* Fonts, reset, page defaults and accessibility helpers. */
-
 /* Self-hosted variable Geist. "swap" shows the system face until the file
    arrives, so text is never invisible. */
 @font-face {
