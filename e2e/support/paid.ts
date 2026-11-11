@@ -50,7 +50,7 @@ export async function createApiKey(page: Page, audit: Audit, name: string, label
   const dialog = page.locator('#create-key[open]');
   await expect(dialog).toBeVisible();
   await page.locator('#key-name').fill(name);
-  await dialog.getByRole('checkbox', { name: /^Full access/ }).check();
+  await dialog.getByRole('radio', { name: 'Full access', exact: true }).check();
   await audit.check(`${label} dialog`);
   await dialog.getByRole('button', { name: 'Create key', exact: true }).click();
   const secret = page.locator('.ts-apikeys-secret-value');
