@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Profile;
 public static class ProfileDialogErrors
 {
     public static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts,
-        string dialog, string tab, string message, int status, string email = "")
+        string dialog, string tab, string message, int status)
     {
         if (RequestError.WantsJson(http))
         {
@@ -22,7 +22,7 @@ public static class ProfileDialogErrors
         var tokens = tab == "access-tokens" ? await http.RequestServices.GetRequiredService<IProfileTokens>().ListAsync(context, http.RequestAborted) : null;
         var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Error: message,
             Tokens: tokens, Sessions: await sessions.ListAsync(http, context.Session))
-        { DialogId = dialog, DraftEmail = email });
+        { DialogId = dialog });
         view.StatusCode = status;
         return view;
     }
