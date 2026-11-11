@@ -1,0 +1,177 @@
+@keyframes ts-button-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ts-progress-pulse {
+  50% { opacity: 0.5; }
+}
+
+@keyframes ts-progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@keyframes ts-skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@keyframes ts-loading-in {
+  from { opacity: 0; }
+}
+
+@keyframes ts-loading-out {
+  to { opacity: 0; }
+}
+
+@keyframes ts-btn-pending {
+  to { opacity: 0.75; }
+}
+
+@keyframes ts-btn-pending-label {
+  to { color: transparent; opacity: 0.75; }
+}
+
+body.ts-nav-pending::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--ts-z-progress);
+  width: 40%;
+  height: 2px;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-link);
+  pointer-events: none;
+  animation: ts-loading-in var(--ts-base) linear var(--ts-fast) backwards,
+    ts-progress-slide var(--ts-loop) ease-in-out var(--ts-fast) infinite backwards;
+}
+
+.ts-spinner,
+.ts-measurement-loading::before,
+.ts-empty[aria-busy="true"]::before {
+  display: inline-block;
+  flex: none;
+  width: var(--ts-s4);
+  height: var(--ts-s4);
+  border: 2px solid color-mix(in oklab, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: ts-button-spin 700ms linear infinite;
+}
+
+.ts-measurement-loading::before,
+.ts-empty[aria-busy="true"]::before {
+  content: "";
+  color: var(--ts-ink-3);
+}
+
+.ts-btn.ts-btn-loading {
+  opacity: 1;
+  position: relative;
+  cursor: progress;
+  animation: ts-btn-pending var(--ts-base) var(--ts-ease) var(--ts-fast) forwards;
+}
+
+.ts-btn.ts-btn-loading-label {
+  animation-name: ts-btn-pending-label;
+}
+
+.ts-btn-loading > .ts-btn-idle-icon {
+  animation: ts-loading-out var(--ts-base) var(--ts-ease) var(--ts-fast) forwards;
+}
+
+.ts-btn-spinner {
+  position: absolute;
+  animation: ts-loading-in var(--ts-base) var(--ts-ease) var(--ts-fast) backwards,
+    ts-button-spin 700ms linear infinite;
+}
+
+.ts-btn-loading-label > .ts-btn-spinner {
+  inset: 0;
+  margin: auto;
+}
+
+.ts-skeleton {
+  display: block;
+  height: var(--ts-s3);
+  border-radius: var(--ts-radius-sm);
+  background: linear-gradient(90deg, var(--ts-selected) 35%, var(--ts-line-strong) 50%, var(--ts-selected) 65%) 0 0 / 200% 100%;
+  animation: ts-loading-in var(--ts-base) linear var(--ts-fast) backwards,
+    ts-skeleton-shimmer var(--ts-loop) linear var(--ts-fast) infinite;
+}
+
+.ts-skeleton-table {
+  height: calc(4 * var(--ts-s12));
+  border-radius: 0;
+  mask: repeating-linear-gradient(to bottom, transparent 0 18px, #000 18px 30px, transparent 30px var(--ts-s12));
+}
+
+.ts-skeleton-chart {
+  height: 220px;
+  border-radius: var(--ts-radius-lg);
+}
+
+.ts-measurement-loading {
+  display: none;
+}
+
+body.ts-nav-pending .ts-measurement-loading {
+  position: absolute;
+  top: var(--ts-s3);
+  left: 50%;
+  z-index: var(--ts-z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  height: var(--ts-control-h-sm);
+  padding-inline: var(--ts-s3);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
+  white-space: nowrap;
+  translate: -50%;
+  animation: ts-loading-in var(--ts-base) var(--ts-ease) var(--ts-fast) backwards;
+}
+
+.ts-empty[aria-busy="true"] {
+  animation: ts-loading-in var(--ts-base) var(--ts-ease) var(--ts-fast) backwards;
+}
+
+.ts-progress {
+  height: var(--ts-s1);
+  overflow: hidden;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+}
+
+.ts-progress-bar {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ts-accent);
+  transition: width var(--ts-base) var(--ts-ease);
+}
+
+.ts-progress-bar[data-progress="33"] { width: 33%; }
+.ts-progress-bar[data-progress="66"] { width: 66%; }
+.ts-progress-bar[data-progress="100"] { width: 100%; }
+
+.ts-progress-bar-success { background: var(--ts-success); }
+.ts-progress-bar-warning { background: var(--ts-warning); }
+.ts-progress-bar-danger { background: var(--ts-danger); }
+
+@media (max-width: 47.99rem) {
+  body.ts-nav-pending .ts-measurement-loading {
+    top: calc(var(--ts-s3) + var(--ts-control-h-lg) + var(--ts-s2));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.ts-nav-pending::before {
+    width: 100%;
+    border-radius: 0;
+    animation: ts-loading-in 0s linear var(--ts-fast) backwards;
+  }
+}

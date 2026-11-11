@@ -14,23 +14,24 @@ function start(button, native = false) {
   let state = pending.get(button);
   if (!state) {
     const icon = button.querySelector(':scope > svg, :scope > span[aria-hidden="true"]');
-    const spinner = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    spinner.setAttribute('viewBox', '0 0 24 24');
-    spinner.setAttribute('width', icon?.getAttribute('width') ?? '16');
-    spinner.setAttribute('height', icon?.getAttribute('height') ?? '16');
+    const spinner = document.createElement('span');
+    spinner.className = 'ts-spinner ts-btn-spinner';
     spinner.setAttribute('aria-hidden', 'true');
-    spinner.classList.add('ts-btn-spinner');
-    const circle = document.createElementNS(spinner.namespaceURI, 'circle');
-    for (const [name, value] of Object.entries({cx: '12', cy: '12', r: '9', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-dasharray': '42 15'})) {
-      circle.setAttribute(name, value);
-    }
-    spinner.append(circle);
     state = {icon, spinner, busy: button.getAttribute('aria-busy'), disabled: button.getAttribute('aria-disabled'), count: 0, native: false};
     pending.set(button, state);
-    icon?.classList.add('ts-btn-idle-icon');
-    if (icon) icon.before(spinner);
-    else button.prepend(spinner);
+    spinner.style.color = getComputedStyle(button).color;
     button.classList.add('ts-btn-loading');
+    if (icon) {
+      const slot = icon.getBoundingClientRect(), box = button.getBoundingClientRect();
+      const size = Math.min(slot.width, slot.height);
+      spinner.style.width = spinner.style.height = `${size}px`;
+      spinner.style.left = `${slot.left - box.left - button.clientLeft + (slot.width - size) / 2}px`;
+      spinner.style.top = `${slot.top - box.top - button.clientTop + (slot.height - size) / 2}px`;
+      icon.classList.add('ts-btn-idle-icon');
+    } else {
+      button.classList.add('ts-btn-loading-label');
+    }
+    button.append(spinner);
     button.setAttribute('aria-busy', 'true');
     button.setAttribute('aria-disabled', 'true');
   }
@@ -43,7 +44,7 @@ function stop(button, reset = false) {
   if (!state || (!reset && --state.count > 0)) return;
   state.spinner.remove();
   state.icon?.classList.remove('ts-btn-idle-icon');
-  button.classList.remove('ts-btn-loading');
+  button.classList.remove('ts-btn-loading', 'ts-btn-loading-label');
   for (const [name, value] of [['aria-busy', state.busy], ['aria-disabled', state.disabled]]) {
     if (value === null) button.removeAttribute(name);
     else button.setAttribute(name, value);
