@@ -111,7 +111,8 @@ to the organization choice and opens the Pro organization; the owner then sees b
 `paid-finish`, the teardown of `paid`, runs in order in one worker: SDK group C, the branch action and the account
 deletion, which waits for ts-auth's deletion cleanup (every 60 s) to prove the organization deleted, then for the
 dashboard's deletion reconciler (every 30 s) to cancel the subscription at the stand-in; the wait is bounded by the
-two periods plus 20 s for the reconciler's passes. CI runs the
+two periods plus 20 s for the reconciler's passes. It then reads the dashboard's `/metrics` until
+`terrascale_deletion_cleanup_failing_entries` is 0, within one more period plus 20 s. CI runs the
 users in two shards, each with the `projects` of its row in the journey matrix of `journey.yml`: the phone owner's
 projects in one, `pages-desktop` and the paid flow in the other. In the phone shard, once `setup` has passed, the
 tests of `pages-mobile`, `hosted`, `interactions` and `invitation` share six workers. Playwright queues them in the
