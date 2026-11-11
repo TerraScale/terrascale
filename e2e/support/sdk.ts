@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { e2eRoot, stateDir } from './stack';
+import { e2eRoot, production, stateDir } from './stack';
 import { journey, mask } from './state';
 
 export const sdks = ['dotnet', 'go', 'python', 'js', 'rust'] as const;
@@ -111,7 +111,7 @@ export async function runOperations(sdk: Sdk, group: 'a' | 'b'): Promise<void> {
     test.info().annotations.push({ type: 'not run', description: `${op.id} (${op.title}): ${op.needs}` });
   }
   const { before, result } = await paced(group, async () => ({
-    before: await lane(current.organizationId),
+    before: production ? undefined : await lane(current.organizationId),
     result: await execute(sdk, {
       TERRASCALE_API_KEY: current.apiKey,
       TERRASCALE_PROJECT_ID: current.projectId,
@@ -122,20 +122,25 @@ export async function runOperations(sdk: Sdk, group: 'a' | 'b'): Promise<void> {
       E2E_SECRETS: secretsDir,
     }),
   }));
-  const used = since(await lane(current.organizationId), before);
+  const used = before && since(await lane(current.organizationId), before);
   const booked = requestsPerRunner[group];
-  const summary = `${sdk} group ${group}: TerraBase admitted ${used.admitted} of the ${booked} requests booked and refused ${used.refused}${used.reasons ? ` (${used.reasons})` : ''}`;
-  process.stdout.write(`${summary}\n`);
-  test.info().annotations.push({ type: 'lane', description: summary });
+  if (used) {
+    const summary = `${sdk} group ${group}: TerraBase admitted ${used.admitted} of the ${booked} requests booked and refused ${used.refused}${used.reasons ? ` (${used.reasons})` : ''}`;
+    process.stdout.write(`${summary}\n`);
+    test.info().annotations.push({ type: 'lane', description: summary });
+  }
   const scoped = join(secretsDir, `scoped-key-${sdk}`);
   if (existsSync(scoped)) mask(readFileSync(scoped, 'utf8'));
-  await test.info().attach(`${sdk} group ${group}`, { body: `${result.stdout}\n${result.stderr}`, contentType: 'text/plain' });
+  if (production) process.stdout.write(`${sdk} group ${group} runner output:\n${result.stdout}\n${result.stderr}\n`);
+  else await test.info().attach(`${sdk} group ${group}`, { body: `${result.stdout}\n${result.stderr}`, contentType: 'text/plain' });
   const lines = result.stdout.split('\n').filter((line) => line.startsWith('{')).map((line) => JSON.parse(line) as Line);
   for (const line of lines) test.info().annotations.push({ type: line.ok ? 'passed' : 'failed', description: `${line.id} ${line.ms} ms${line.error ? `: ${line.error}` : ''}` });
-  const budgetRule = `the pacing in e2e/support/sdk.ts books ${booked} requests per group ${group} runner (requestsPerRunner)`;
-  expect(used.refused, `${sdk} runner: TerraBase refused ${used.refused} of its requests with tenant_busy${used.reasons ? ` (${used.reasons})` : ''}; ${budgetRule}`).toBe(0);
-  expect(used.admitted, `${sdk} runner: TerraBase admitted ${used.admitted} of its requests; ${budgetRule}`).toBeLessThanOrEqual(booked);
-  expect(used.admitted, `${sdk} runner: TerraBase admitted none of its requests in the journey organization's lane, so support/sdk.ts reads the wrong metric`).toBeGreaterThan(0);
+  if (used) {
+    const budgetRule = `the pacing in e2e/support/sdk.ts books ${booked} requests per group ${group} runner (requestsPerRunner)`;
+    expect(used.refused, `${sdk} runner: TerraBase refused ${used.refused} of its requests with tenant_busy${used.reasons ? ` (${used.reasons})` : ''}; ${budgetRule}`).toBe(0);
+    expect(used.admitted, `${sdk} runner: TerraBase admitted ${used.admitted} of its requests; ${budgetRule}`).toBeLessThanOrEqual(booked);
+    expect(used.admitted, `${sdk} runner: TerraBase admitted none of its requests in the journey organization's lane, so support/sdk.ts reads the wrong metric`).toBeGreaterThan(0);
+  }
   const expected = planned.filter((op) => !op.needs).map((op) => op.id);
   expect(lines.map((line) => line.id), `${sdk} ran every runnable group ${group} operation once`).toEqual(expected);
   expect(lines.filter((line) => !line.ok).map((line) => `${line.id}: ${line.error}`), `${sdk} group ${group} failures`).toEqual([]);
