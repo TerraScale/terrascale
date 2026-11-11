@@ -19,7 +19,7 @@ Only these three projects come over: no upstream tests, samples, benchmarks or o
 The Rust core (`libturso_sdk_kit`) is built from the pinned commit above with FTS, replacing `Turso.Data.Native`.
 `scripts/vendor/Dockerfile.turso-native` pins the source checksum, Rust image/toolchain and build timestamp. Explicit
 maintenance builds once on each real architecture (linux-x64 and linux-arm64) and runs FTS/encryption smokes. Normal
-CI, Fast, Slow and image builds download the combined pinned release and verify its SHA-256 hashes; they never build
+CI and image builds download the combined pinned release and verify its SHA-256 hashes; they never build
 Rust. Missing or mismatched native assets fail the build. See `src/vendor/Turso.Native/README.md` for delivery and
 qualification evidence, and `docs/terrabase/turso-fts-native.md` for the SQL/runtime contract.
 
@@ -31,7 +31,6 @@ qualification evidence, and `docs/terrabase/turso-fts-native.md` for the SQL/run
   are for TerraScale's code, off upstream's.
 - `patches/*.patch`: TerraScale's changes to upstream files, one fix per patch, applied in name order. Every file
   under `src/`, `LICENSE.md` and `NOTICE.md` is upstream's with exactly these patches applied.
-- The driver's regression tests: `tests/Turso.Data.Sqlite.Tests`.
 
 ## Updating
 
@@ -40,8 +39,8 @@ scripts/vendor/update-turso-driver.sh v0.8.3 --commit   # pristine import commit
 ```
 
 Then update the native source/checksum pins to the same version, restore (`make restore`, which
-rewrites `locks/`), build and run `make terrabase-check` and the driver tests, and redo `SECURITY-AUDIT.md` (the
-provenance, package, vulnerability, license and patch checks) for the new tag. Without `--commit` the script only
+rewrites `locks/`), build (`make terrabase-build`; the pull request's journey then runs TerraBase on the new driver),
+and redo `SECURITY-AUDIT.md` (the provenance, package, vulnerability, license and patch checks) for the new tag. Without `--commit` the script only
 changes the working tree. Re-importing the current tag must leave no diff.
 
 A patch that no longer applies stops the script with conflict markers in the working tree: resolve them, commit, and
@@ -49,7 +48,7 @@ regenerate that patch. A patch upstream has merged is deleted.
 
 ## Adding a fix
 
-Edit the upstream file under `src/`, add its regression test to `tests/Turso.Data.Sqlite.Tests`, commit, then save
+Edit the upstream file under `src/`, commit, then save
 the commit's change to the vendored files as the next patch and amend the commit with it:
 
 ```sh
@@ -57,4 +56,4 @@ git format-patch -1 HEAD --relative=src/vendor/Turso.Data.Sqlite --start-number 
 git add src/vendor/Turso.Data.Sqlite/patches && git commit --amend --no-edit
 ```
 
-Patch 0015 allows wrapping connections returned directly by `TursoSyncDatabase.ConnectAsync`. Their connection string is local even though they own a sync database. Ordinary local connections remain refused. RegionShapeTailTests exercises this wrapper through the regional shape HTTP surface.
+Patch 0015 allows wrapping connections returned directly by `TursoSyncDatabase.ConnectAsync`. Their connection string is local even though they own a sync database. Ordinary local connections remain refused.

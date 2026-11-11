@@ -13,9 +13,6 @@ ts-auth credential, cookie or form depends on DataProtection:
 | Hosted form posts | Origin check against the public origin; no antiforgery tokens | no per-process secret |
 
 `OpenIddict.Server.DataProtection` is not referenced, and ts-auth never calls `IDataProtector` or antiforgery.
-`RestartSurvivalTests` proves this end to end. It signs in, stops the server and starts a new process on the same
-storage, which gets fresh in-memory DataProtection keys. The session cookie still authorizes, and the access token,
-refresh token and a new code still work.
 
 Adding a TerraBase-backed DataProtection key ring would protect nothing today, so none is added. If a future feature
 uses `IDataProtector`, antiforgery or cookie authentication, it must first persist the ring: an `IXmlRepository` on

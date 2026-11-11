@@ -117,15 +117,6 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         stats.Wrote(database, writes);
     }
 
-    internal int PendingDatabases
-    {
-        get
-        {
-            Publish();
-            return _pending.Count;
-        }
-    }
-
     public void Add(UsageKey key, OpCounts counts)
     {
         if (counts.Meters is not null)

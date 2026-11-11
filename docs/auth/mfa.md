@@ -117,8 +117,7 @@ issuer has deployed PR #63 and every earlier access token has expired on
 every replica. Wait at least one access-token lifetime (currently one hour)
 plus the 30-second clock-skew allowance after the last old issuer stops
 issuing. Record the verified rollout cutoff and earliest deployment time.
-No authentication time is synthesized. Fast tests cover independent clocks
-at and beyond the allowance, as well as original-time continuity after refresh.
+No authentication time is synthesized.
 
 The table comes from the committed EF Core migrations that every replica
 applies at startup, and `/readyz` requires that no migration is pending. Never

@@ -8,10 +8,5 @@
     <PackageId>$(MSBuildProjectName)</PackageId>
   </PropertyGroup>
 
-  <!-- The driver's regression tests reach the hooks TerraScale's patches add (tests/Turso.Data.Sqlite.Tests). -->
-  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Turso.Data.Sqlite'">
-    <InternalsVisibleTo Include="Turso.Data.Sqlite.Tests" />
-  </ItemGroup>
-
   <Import Project="native/Turso.Native.targets" Condition="'$(MSBuildProjectName)' == 'Turso.Raw'" />
 </Project>

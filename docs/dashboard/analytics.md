@@ -47,7 +47,7 @@ build a dictionary from platform data with `ToDictionary` or `Add`, and never pa
 straight to BCL calls that throw `ArgumentException` (`Enum.Parse`, range-checked arithmetic, `Uri`
 and date constructors): check first with `TryAdd`, `TryParse` or an explicit range test, and
 reject the response. A repeated counter in the project analytics once made the whole Databases
-page answer 500 with only `ArgumentException` in the log (`DatabaseListJourneyTests`).
+page answer 500 with only `ArgumentException` in the log.
 
 The Databases page loads its optional parts through `OptionalPanel`
 (`src/TerraScale.Dashboard/Platform/Http/OptionalPanel.cs`): the list's TerraBase sync and
@@ -62,9 +62,7 @@ context, the database a detail page shows) are not panels and still fail the req
 
 Paths are relative to `src/TerraScale.Dashboard`. `IAnalyticsBackend`
 (`Features/Analytics/AnalyticsModels.cs`) is the read-only contract used by
-the UI. Tests keep the real adapter and serve a test-only producer protocol
-from `tests/TerraScale.Dashboard.E2E/Demo/TestReporting.cs`. Production never
-synthesizes metrics.
+the UI. Production never synthesizes metrics.
 
 SDK 0.0.3 source (`ff1d1126087d40d112ca27383fbb3111e320cb4a`) exposes usage,
 but does not publish analytics/replication methods. TerraBase main
@@ -89,9 +87,6 @@ default body bound. The bound applies to both the declared content length and
 bytes actually streamed, under the existing five-second deadline. Authentication
 and discovery envelopes retain their shared 64 KiB limit. This permits full
 database-region series without treating normal dense responses as unavailable.
-
-Analytics has no dedicated dashboard test; tenant-scope refusal is covered by
-`ReportingJourneyTests` and `UsageBackendContractTests`.
 
 Historical: the Go application left its `core.MetricsReader` unset because the
 ts-go pin lacked these methods, and read region latency through ts-go

@@ -1,12 +1,12 @@
 # Turso 0.8.2: combined FTS + encryption contract1 artifacts
 
 This delivery path supersedes the build/delivery instructions in
-`docs/terrabase/turso-fts-native.md`. Normal PR, merge-group, main, Fast, Slow and
+`docs/terrabase/turso-fts-native.md`. Normal PR, merge-group, main and
 image jobs download and verify the pinned release; they never compile Rust.
 The required `native` job still gates `test`. Native maintenance is an explicit
 `workflow_dispatch` operation on the existing `.github/workflows/ci.yml`.
 One maintenance dispatch runs two independent clean builds per real architecture
-and compares their library bytes before preparing an artifact for parent publication; they do not qualify Fast, publish images or upload a release.
+and compares their library bytes before preparing an artifact for parent publication; they do not publish images or upload a release.
 
 Release: [`turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-sqlparser1-20261104`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-sqlparser1-20261104) (run https://github.com/TerraScale/terrascale/actions/runs/41855905197). Its Turso libraries are rebuilt from the same inputs as `turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-20261104` (run https://github.com/TerraScale/terrascale/actions/runs/41767214589): patches 0001-0006 of the 2026-10-29 build (the WAL revision contract, [2026-10-29-wal-revision.md](2026-10-29-wal-revision.md); the interrupt, query timeout and value length exports, patch 0005; the sync client's own CDC table, patch 0006), sync engine local encryption, patch 0007 ([2026-11-03-sync-local-encryption.md](2026-11-03-sync-local-encryption.md)), and the upstream Turso 26dbb464 backport, patch 0008, which keeps a correct CDC before image for UPSERT in `full` mode. It adds TerraBase's SQL router parser, `libterrascale_sql_parser.so` (crate `sql/`, header `sql/ts_sql.h`, exports `ts_sql_abi_version`, `ts_sql_next` and `ts_sql_free`), published as `terrascale-sql-parser-<rid>.so` with its smoke, exports, Cargo.lock, compiler and license receipts prefixed `sql-parser-<rid>-`. The parser builds from the same pinned Turso archive with `sql/parser-limits.patch` (`scripts/vendor/Dockerfile.router-parser`); each build checks its ELF machine and runs `scripts/vendor/router-parser-smoke.c`. The download installs it next to `libturso_sdk_kit.so` in `runtimes/<rid>/native/`; managed builds copy it beside the app and single-file publishes bundle it as a native library. The earlier releases stay immutable.
 `SHA256SUMS` pins the four qualified libraries (Turso and SQL parser per architecture); downloads and managed builds reject
@@ -112,7 +112,8 @@ tests, and 14/14 focused FTS HTTP tests on linux-x64 at `52ca8e1bd`. The isolate
 single-file driver also passes 23/23 and its extracted Turso library matches the
 pin. `ClassifyTursoNativeForSingleFile` restores native metadata lost through
 project references; otherwise .NET 11 leaves a sidecar outside the bundle.
-Normal TerraBase CI repeats the executable-only loading and extracted-hash check.
+Normal TerraBase CI now checks only that the release publish keeps both libraries
+inside the single file (`make terrabase-publish` in the `terrabase` leg).
 ARM64 native smoke proof does not imply ARM64 managed Fast qualification.
 
 ## Maintenance and publication
@@ -161,10 +162,11 @@ tag and reviewed pins; the published tag above is immutable.
    file and install the four candidate libraries under
    `src/vendor/Turso.Data.Sqlite/native/runtimes/<rid>/native/` as `libturso_sdk_kit.so` and
    `libterrascale_sql_parser.so`.
-   Parent must run the admitted Release/Fast and published single-file loading
-   qualification with these exact candidate bytes and the integrated managed
-   changes. This supplies pre-publication Fast proof without an unpublished
-   release download or a second native build inside normal CI.
+   Parent must run the journey and the single-file release publish
+   (`make terrabase-publish`, which fails when either library lies beside the
+   single file) with these exact candidate bytes and the integrated managed
+   changes, without an unpublished release download or a second native build
+   inside normal CI.
 
 4. Parent publishes the new release after qualification, using all assembled
    assets and reviewed evidence as release notes:
@@ -180,11 +182,11 @@ tag and reviewed pins; the published tag above is immutable.
    or overwrite published assets. Relay the exact new tag to the parent/COS
    publication owner after upload. Commit/push the actual pins in the final batch.
 
-5. Qualify normal CI at the final pinned head. `native` downloads and verifies
-   both architectures once; Fast, Slow and image jobs consume that verified run
-   artifact. Docker and MSBuild verify hashes and ELF architecture again before
-   using cached bytes. Retain final Fast and published single-file loading proof,
-   including the parent-owned encryption regressions. No NuGet fallback exists.
+5. Qualify normal CI at the final pinned head. The legs and image jobs download
+   and verify both architectures; Docker and MSBuild verify hashes and ELF
+   architecture again before using cached bytes. Retain the journey run and the
+   `terrabase` leg's single-file release publish, which fails when either
+   library lies beside the single file. No NuGet fallback exists.
 
 For an admitted native dev-host build, the same helper accepts
 `nice -n 19 scripts/vendor/build-turso-native.sh amd64 artifacts/native-x64`

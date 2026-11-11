@@ -1,6 +1,6 @@
 ---
 name: add-feature
-description: Plan and build a new TerraScale product feature end to end in the monorepo (owning service, API contract, storage, SDKs, dashboard UI, docs, tests). Use when asked to add or extend a feature, endpoint, SDK operation or screen.
+description: Plan and build a new TerraScale product feature end to end in the monorepo (owning service, API contract, storage, SDKs, dashboard UI, docs, journey). Use when asked to add or extend a feature, endpoint, SDK operation or screen.
 ---
 
 # Add a feature
@@ -23,12 +23,11 @@ Another product's data is reached only through its API (Dashboard → TerraBase 
 
 ## 2. Find a sibling to copy
 
-Look for the closest existing feature and copy its shape, naming and tests:
+Look for the closest existing feature and copy its shape and naming:
 
 ```sh
 ls src/TerraBase/Features/                 # one folder per feature
 git grep -n 'Name("' src/TerraBase/Features/<Similar>/
-ls tests/TerraBase.Fast/<Similar>/
 ```
 
 A feature folder holds its endpoints, records, services, options, storage and registration together (`Features/<Feature>/`).
@@ -51,12 +50,10 @@ A feature folder holds its endpoints, records, services, options, storage and re
 - Async and cancellation-aware; bound every queue, cache and buffer by count and bytes.
 - .NET: register every request/response type in the service's `System.Text.Json` source-generated context (TerraBase: `src/TerraBase/Hosting/TerraBaseJsonContext.cs`). Warnings are errors; no suppressions.
 
-## 5. Tests: few and fast
+## 5. Journey
 
-- One happy-path test and, if the feature has a critical failure mode (auth, isolation, data loss), one critical-failure test. Nothing else.
-- Tests drive the real app over real listeners with their own database/tenant and synthetic data (`tests/<Project>.Fast/<Feature>/`). No fixed ports, sleeps or `NotInParallel`.
-- Each test runs in under 10 s.
+- The journey in `e2e/` is the only test. A behaviour that matters becomes a journey step: a page, a flow or an SDK operation (`e2e/AGENTS.md` says how). Add no other test, fixture or fake.
 
 ## 6. Ship
 
-Build only what you changed (`make <area>-build`, `npm run typecheck`, `go build ./...`), commit on a branch from fresh `origin/main` and open a PR to `main`. CI runs the tests on it; it squash-merges when checks are green. If your merge turns main red, fix or revert within about 30 minutes. See `docs/dev/shipping.md`.
+Build only what you changed (`make <area>-build`, `npm run typecheck`, `go build ./...`), commit on a branch from fresh `origin/main` and open a PR to `main`. CI builds and checks it and runs the journey; it squash-merges when checks are green. If your merge turns main red, fix or revert within about 30 minutes. See `docs/dev/shipping.md`.

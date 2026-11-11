@@ -86,5 +86,3 @@ that crosses into another UTC month or runs past 30 seconds answers `503`. Respo
 - A node reads the organization's month on its first check of the month, then on every usage flush
   tick, adding the units it serves in between.
 - A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
-Covered by `tests/TerraBase.Fast/Sql/SqlMeteringTests.cs`.

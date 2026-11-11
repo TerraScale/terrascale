@@ -1,3 +1,0 @@
-[
-  {"path": "^ops/e2e/journey\\.py$", "terms": ["document-feeds"], "match": "\\.feed\\(", "reason": "Python stdlib html.parser.HTMLParser.feed call that parses the hosted sign-in pages; unrelated to the retired document feed surface."}
-]

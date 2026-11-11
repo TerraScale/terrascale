@@ -79,13 +79,6 @@ prove application. A node that starts consuming revisits retained messages from 
 deduplicates transactions already held by the home. Promotion separately drains retained origin pushes before
 answering success; see [origin writes across a home move](home-move-origin-replay.md).
 
-To replay from a known applied transaction, `HomePush.ReplayFromAsync(origin, database, transactionId)` finds that
-transaction's stream sequence by its `Nats-Msg-Id` on the database's subject and resets the consumer to the message
-after it, but never past the ack floor + 1, because one consumer carries every database of that origin. It returns
-the sequence consumption resumes at, or nothing when the stream no longer holds the transaction. Anything redelivered
-that the home already applied is answered from `_ts_applied` by transaction id and changes nothing, so a replay
-from any earlier position applies each transaction exactly once.
-
 ## Ordering with forwarded writes
 
 A region's local writes and the writes it forwards home stay in the order its clients sent them (found by R13's

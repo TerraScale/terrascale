@@ -44,7 +44,7 @@ bash scripts/check-ci-lock.sh
 pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt
 ```
 
-Prefix local build/test/lint/audit commands with `nice -n 19`. Run the existing
-Ruff, mypy and pytest checks across the supported matrix. Build without isolation,
+Prefix local build/lint/audit commands with `nice -n 19`. Run the existing
+Ruff and mypy checks across the supported matrix. Build without isolation,
 run Twine, and smoke-test the wheel in a fresh consumer environment. No release,
 tag, registry publication or signing approval is implied by these checks.

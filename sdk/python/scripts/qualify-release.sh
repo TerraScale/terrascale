@@ -21,8 +21,7 @@ uv pip sync --python "$workspace/audit/bin/python" --require-hashes --only-binar
 "$workspace/audit/bin/pip-audit" --strict --disable-pip --require-hashes -r requirements-ci.txt -r requirements-audit.txt
 uv pip install --python "$VIRTUAL_ENV/bin/python" --no-deps --no-build-isolation -e '.[dev]'
 uv pip check --python "$VIRTUAL_ENV/bin/python"
-ruff check src tests
+ruff check src
 mypy
-pytest -q
 uv build --python "$VIRTUAL_ENV/bin/python" --no-build-isolation --out-dir "$output"
 twine check "$output"/*

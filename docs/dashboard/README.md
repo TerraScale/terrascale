@@ -26,23 +26,19 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 ## Layout
 - `src/TerraScale.Dashboard/`: the application (`Features/`, `Platform/`, `UI/`).
   CSS/JS sources are in `web/assets/`, feature CSS sits beside its slice in `Features/`; served files are in `web/static/`.
-- `tests/TerraScale.Dashboard.E2E/Demo/`: synthetic providers compiled only into test binaries.
-- `tests/TerraScale.Dashboard.E2E/`: TUnit E2E journeys; scenario and protocol controls in `Demo/`.
-- `scripts/dashboard/`: dev/demo launchers, asset builds, SDK and E2E lint checks.
+- `scripts/dashboard/`: the development launcher, asset builds and lint checks.
 
 ## Commands
 Run from the monorepo root:
 
 ```sh
 make dashboard-build
-make dashboard-test-fast
+make dashboard-lint
 make dashboard-check
-make dashboard-test-slow
 bash scripts/dashboard/dev.sh   # development host with hot reload
-bash scripts/dashboard/demo.sh  # local synthetic demo host
 ```
-## Synthetic development host
-The local demo launcher references the E2E project for synthetic protocol providers.
+
+The journey in `e2e/` is the only test ([`e2e/AGENTS.md`](../../e2e/AGENTS.md)).
 The production image always uses ts-orch's persistent service contract.
 
 ## OCI production

@@ -24,10 +24,6 @@ per-tenant password/code attempt budgets, shared sign-in/sign-up code budget,
 independent reset-code budget, durable once-per-window notice claims and unknown
 account response behavior are preserved. No extra completion email is introduced.
 
-The locale and lockout matrix tests were deleted under the 2026-11-04 happy-path
-test policy. Fast `EmailApiTests` keeps one case: the next sign-in code email uses
-the saved branding and copy.
-
 The separate [queue admission change](queue-admission.md) refuses a full or
 stopping authentication queue before accepting a start or committing an
 invitation. Lockout notices remain best effort on their independent bounded

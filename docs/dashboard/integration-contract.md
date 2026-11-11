@@ -14,19 +14,12 @@ Workspace changes require the same-origin `_csrf` form token and current access.
 Documented cookie authentication does not bypass either check. SDK access tokens
 and key secrets stay server-side.
 
-Fast verifies the served specification against the committed contract, authenticated
-response fields, anonymous refusal and invalid CSRF refusal. A contract change
-must update endpoint metadata and the committed specification explicitly. The test
-writes its generated specification to a unique `test-results/openapi/*.json` file for
-review. Scalar uses its packaged scripts and the request's CSP nonce.
+A contract change must update endpoint metadata and the committed specification
+explicitly. Scalar uses its packaged scripts and the request's CSP nonce.
 
-Run `nice -n 19 make check` before advancing an artifact. Required CI includes
-that check and the root Dockerfile's actual-application image build, with no image
-push or deployment. Slow runs independently on main or manual dispatch, keeps a
-red result on failure, and creates or updates a failure issue. Reports include
-safe method identities, the commit, environment, reproduction and CI URL; raw
-response bodies, argument values, credentials and detailed vulnerability output
-are withheld. An infrastructure failure without a usable TRX is still reported.
+Required CI builds and lints the dashboard (`dashboard-ci.yml`; locally
+`make dashboard-check`) and runs the journey against it
+([`e2e/AGENTS.md`](../../e2e/AGENTS.md)).
 
 The current package pin and HTTP fakes do not establish live producer parity.
 SDK K and its package P are selected after the owning auth/TerraBase slices land;

@@ -11,8 +11,8 @@ produce unknown observations for that region while preserving the other region.
 
 ts-status lives in `status-site/` of the terrascale monorepo.
 On every pull request that touches `status-site/`, the `status` job of
-`.github/workflows/ci.yml` runs `npm ci`, `npm run check`, `npm test`, the
-Python tests, `npm run lint` and `npm run build` on a GitHub-hosted runner.
+`.github/workflows/ci.yml` runs `npm ci`, `npm run check`, `npm run lint` and
+`npm run build` on a GitHub-hosted runner.
 On main, the `deploy-status` job of `.github/workflows/sites.yml` waits for the
 `status-deploy` lock, checks out the tip of `main`, builds it and deploys it
 with `npm run deploy:prebuilt` (the two vantage Workers, then `ts-status`) using

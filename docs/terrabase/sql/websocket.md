@@ -2,9 +2,6 @@
 
 - Status: implemented, 2026-11-03 (PIVOT task E3, with E7 error mapping).
 - Code: `src/TerraBase/Features/Sql/SqlSocketEndpoint.cs`, `SqlSocket.cs`, `SqlSocketModels.cs`.
-- Proof: `tests/TerraBase.Fast/Sql/SqlSurfaceParityTests.cs` runs one script over REST, the WebSocket and the
-  PostgreSQL wire over a first-frame-authenticated socket and requires the same results and errors;
-  `SqlSocketAuthTests.cs` covers refused credentials and the 5-second deadline.
 
 ## Connecting
 

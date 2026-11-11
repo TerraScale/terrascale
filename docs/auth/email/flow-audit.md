@@ -19,7 +19,7 @@ handling in [queue admission](queue-admission.md).
 | Existing-account signup fallback | Sends a sign-in code, discarding the submitted new password. Live full-message delivery proven. |
 | Platform email-code sign-in | Live full-message delivery proven. Hosted session redemption and protected OAuth access are separate observations. |
 | Platform password reset | Live full-message delivery proven; the replacement password authenticated through hosted auth. |
-| Password, sign-in/signup-code and reset-code lockouts | Live full-message delivery proven for password, sign-in-code and reset-code notices. Signup-code shares the sign-in-code budget. Fast coverage includes project isolation and negotiated locale. |
+| Password, sign-in/signup-code and reset-code lockouts | Live full-message delivery proven for password, sign-in-code and reset-code notices. Signup-code shares the sign-in-code budget. |
 | Project end-user signup, sign-in and reset | Same hosted routes in the project tenant. Project creation and ownership access are prerequisites; signed-in live proofs remain pending while access is unavailable. |
 | Organization/project invitations and resend | Actual invite creation reserves capacity before persistence. Dashboard resend revokes and creates a replacement. Signed-in live proofs remain pending. |
 | Operations allowance at 80% and 100% | Dashboard measured-usage producer and durable auth relay. Forcing real quota consumption is outside this isolated delivery check; controlled HTTP integration tests cover delivery outcomes. |
@@ -59,6 +59,6 @@ proofs remain pending until the user confirms the separate sign-in fix is live.
 
 The independent daily signup workflow runs reviewed main code, never redeems a
 signup code, and reports failures without making production delivery an
-unreliable external dependency of required CI. Required Fast integration tests
-remain the merge gate. Provider acceptance, inbox delivery and final resource
+unreliable external dependency of required CI. The journey, with Mailpit as the
+SMTP server, is the merge gate. Provider acceptance, inbox delivery and final resource
 cleanup are distinct results; none implies the others.

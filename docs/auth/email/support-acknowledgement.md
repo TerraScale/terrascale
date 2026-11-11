@@ -37,9 +37,3 @@ completion was not saved, repeats report support `accepted` and acknowledgement
 acknowledgement that was never actually sent. Storage write failures are surfaced
 as request failures; the endpoint does not claim a final saved outcome when its
 conditional write fails.
-
-Fast HTTP integration coverage uses real sign-in and isolated TerraBase
-databases with a controlled sender. It gates acknowledgement completion to
-check the persisted support acceptance and a concurrent repeat, then checks
-independent acknowledgement outcomes, exceptions and support retry behavior.
-No live provider sends are required.

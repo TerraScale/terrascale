@@ -14,8 +14,5 @@ Each HTTP request is its own transaction; the second batch shares one read-only 
 invalidate the earlier name list, so refresh is available and retains SQL/history. Completion quotes identifiers.
 No API, SDK or storage contract changes or migrations are required. Embedded completion JSON now names SQL tables.
 
-Fast listener cases cover batching, read grants, empty tables/catalogs, 100-table truncation,
-quoted names, types and metadata failure after successful execution. Slow covers completion and loading/refresh.
-Builds and integration/browser tests have not run for this prepared follow-up; running-app captures are pending.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

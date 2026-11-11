@@ -12,7 +12,7 @@ jobs:
   delivery:
     # Only reviewed main code may spend the production mail allowance.
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
       contents: read
@@ -42,7 +42,7 @@ jobs:
           body = f"""The independent live signup email check failed.
 
           Commit: {os.environ['GITHUB_SHA']}
-          Environment: GitHub-hosted ubuntu-latest; production auth.terrascale.tech; mail.tm inbox
+          Environment: GitHub-hosted ubuntu-24.04; production auth.terrascale.tech; mail.tm inbox
           Reproduce locally: `nice -n 19 make auth-mail-delivery-check`
           Expected: one hosted signup request delivers a verification code to a fresh disposable inbox within 120 seconds, then the inbox is deleted.
           Actual: a check stage failed; delivery evidence and cleanup failures are reported separately below. No account verification was submitted.

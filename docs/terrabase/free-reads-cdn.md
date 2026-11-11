@@ -40,7 +40,7 @@ and clients fall back to origin reads.
 3. Give the bucket's S3 credentials Object Read & Write on that bucket only. Give `cloudflare-api-token` Zone Cache
    Purge and Zone Analytics Read on `terrascale.tech`. Both go to OCI Vault and reach nodes through ts-orch.
 
-Buckets set up this way: `terrascale-gru-terrabase` (production gru), `ts-terrabase-ci` (Slow tests),
+Buckets set up this way: `terrascale-gru-terrabase` (production gru), `ts-terrabase-ci` (unused),
 `ts-terrabase-bench` (benchmarks).
 
 ## Purge
@@ -86,7 +86,6 @@ It uses the existing Zone Cache Purge and Zone Analytics Read permissions on `te
   Opening the bytes still needs the epoch key from the authenticated key route.
 - Live polls at the head stay on the origin (`private, no-store`). T2 serves only catch-up reads of sealed objects.
 
-Proof: `tests/TerraBase.Fast/Shapes/ShapeMirrorHttpTests.cs` checks that mirrored objects decrypt to the origin bytes.
 Measurements are in `benchmark/bench/2026-10-23-free-reads.md`.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

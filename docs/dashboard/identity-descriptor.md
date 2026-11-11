@@ -13,7 +13,7 @@ and delivers protected files named by `<NAME>_FILE`. The app supports those file
 and direct environment values for test hosts. There is no default; startup fails
 closed on missing or invalid secrets, and values are never logged.
 CI secrets remain in GitHub Actions secrets. This guide provisions nothing.
-All five secrets are required in Development too; test-only hosts supply synthetic identities.
+All five secrets are required in Development too; the journey's throwaway environment supplies synthetic ones.
 
 | Environment variable | Format checked by the app | Used for | Issued by |
 | --- | --- | --- | --- |

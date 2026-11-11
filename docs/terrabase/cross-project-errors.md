@@ -53,15 +53,4 @@ cannot tell another tenant's database from a missing one.
 > `403` means the database is yours but the key lacks a scope or the request comes from an
 > address outside the key's IP allowlist.
 
-## Proof
-
-- `tests/TerraBase.Fast/Management/CrossProjectErrorTests.cs`: foreign database by name and ULID,
-  through the foreign and the caller's project route, against absent databases and projects, on
-  tables, table delete, export and HTTP SQL; the foreign database is
-  unchanged afterwards.
-- `tests/TerraBase.Fast/Postgres/PostgresWireTests.cs`
-  `Wrong_keys_unknown_databases_and_unreached_databases_fail_alike`: `28P01` for all three.
-- `tests/TerraBase.Fast/Management/ProjectTokenTests.cs`: `database`-restricted tokens and
-  hidden management routes.
-
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

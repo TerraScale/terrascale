@@ -5,11 +5,8 @@
 - Code: `src/TerraBase/Features/Sql/Routing/` (router, schema facts, native parser binding),
   `Features/Sql/ReplicaSqlSession.cs` (psql and WebSocket sessions), `Features/Sql/SqlExecuteEndpoint.cs` (REST),
   `Features/Replicas/HomeSessions.cs` (`batch` call), `Features/Regions/HomeForwarding.cs`.
-- Proof: `tests/TerraBase.Slow/Sql/WriteRouterTests.cs` (one row per routing class; a forwarded psql transaction
-  and WebSocket batch; a `40001` retry).
-- Differential proof (R13): `tests/TerraBase.Slow/Sync/RouterDifferentialTests.cs` runs 10,000 random transactions in
-  local mode (sjc, `TerraScale-Durability: home`) and home-only mode and requires the same final rows, or a
-  `terrascale.conflicts` record for every difference; results in
+- Differential proof (R13): 10,000 random transactions in local mode (sjc, `TerraScale-Durability: home`) and
+  home-only mode gave the same final rows, or a `terrascale.conflicts` record for every difference; results in
   `benchmark/bench/2026-11-05-r13-router-differential.md`.
 
 ## Where a write goes

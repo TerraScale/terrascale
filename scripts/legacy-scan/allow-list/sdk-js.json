@@ -1,3 +1,0 @@
-[
-  {"path": "^sdk/js/test/(?:v1-public-api|forbidden-surface)\\.test\\.js$", "repo": "terrascale", "terms": ["documents", "collections"], "match": "\\bdocuments?\\b|\\bcollections?\\b", "reason": "Tests asserting the retired document API stays absent from the SDK."}
-]

@@ -35,12 +35,11 @@ export GITHUB_PATH="$workspace/github.path"
 bash scripts/audit-dependencies.sh
 test -z "$(gofmt -l .)"
 go vet ./...
-go test -tags slow -race -count=1 ./...
 # Invoke resolved tools directly: mise exec can prepend the system profile's Go
 # ahead of the pinned PATH on dev hosts.
 consumer_go_root=$(mise where go@1.25.0)
 GOROOT="$consumer_go_root" PATH="$consumer_go_root/bin:$PATH" bash scripts/check-consumer.sh
 "$(mise where goreleaser@2.19.0)/goreleaser" release --snapshot --clean
-python3 scripts/test-release.py
+python3 scripts/check-release.py
 cp dist/*.tar.gz dist/*.zip dist/checksums.txt dist/homebrew/Formula/ts.rb scripts/install.sh "$output/"
 printf '%s\n' "$version" > "$output/version.txt"

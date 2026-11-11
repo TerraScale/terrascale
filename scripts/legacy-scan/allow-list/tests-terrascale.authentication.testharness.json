@@ -1,3 +1,0 @@
-[
-  {"repo": "terrascale", "path": "^tests/TerraScale\\.Authentication\\.TestHarness/StepUpFixtures\\.cs$", "terms": ["webhooks"], "match": "webhook-endpoints|create_webhook_endpoint|rotate_webhook_secret", "reason": "Test proof attachment for the end-user lifecycle webhook routes (T221)."}
-]

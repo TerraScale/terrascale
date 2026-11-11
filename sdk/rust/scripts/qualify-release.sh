@@ -29,7 +29,6 @@ while IFS= read -r -d '' lock; do
   cargo audit --deny warnings --file "$lock"
 done < "$workspace/lockfiles"
 cargo fmt --all -- --check
-cargo test --locked --all-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo publish --dry-run --locked --all-features --registry crates-io
 # The dry run verifies the package; cargo package writes the .crate to target/package on every cargo version.

@@ -60,10 +60,7 @@ Verified Stripe sandbox deliveries remain required before live approval.
 
 1. Complete [`stripe-sandbox-dsh207.md`](stripe-sandbox-dsh207.md), including
    signed deliveries, duplicate/out-of-order events, failed-payment recovery,
-   checkout returns and invoice reconciliation. Local regression checks:
-   `nice -n 19 dotnet run --configuration Release --project tests/TerraScale.Dashboard.E2E -- --treenode-filter '/*/*/(BillingBrowserJourneyTests|BillingPlanJourneyTests|BillingPlanMcpJourneyTests)/*' --report-trx`.
-   These TUnit journeys exercise native HTTP/browser and MCP payment flows;
-   protocol fixtures do not replace the required actual sandbox deliveries.
+   checkout returns and invoice reconciliation.
 2. Inventory dashboard billing through the official ts-dotnet SDK
    (`TerraScale.DotNet`) or public APIs, without publishing
    customer details. Test Stripe customers, subscriptions, invoices, checkout

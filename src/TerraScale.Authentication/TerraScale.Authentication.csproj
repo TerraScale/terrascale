@@ -19,11 +19,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="TerraScale.Authentication.Fast" />
-    <InternalsVisibleTo Include="TerraScale.Authentication.Slow" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="../TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj" />
     <ProjectReference Include="../TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj" />
     <ProjectReference Include="$(TsDotnetRoot)/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />

@@ -96,8 +96,6 @@ internal class HomePush(
 
     public bool Ready(TenantContext database) => _ready && _js is not null;
 
-    public bool TwoNodeAck => LocalAckAvailable && partner.PartnerHealthy;
-
     private bool RegionWriter => owners.Writer;
 
     public bool LocalAckAvailable => RegionWriter && _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
@@ -279,57 +277,6 @@ internal class HomePush(
         }
 
         Interlocked.Exchange(ref _progress, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
-    }
-
-    internal async Task<PubAckResponse> PublishAgainAsync(TenantContext database, string id, CancellationToken cancellationToken)
-    {
-        var transaction = _overlay.Find(database, id) ?? throw new InvalidOperationException("the transaction is not in the overlay");
-        var placement = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placed }
-            ? placed
-            : throw new InvalidOperationException("the database has no placement");
-        return await _js!.PublishAsync(PushNames.Subject(options.Region, placement.Home, database),
-            await services.GetRequiredService<ITransactionCrypto>().SealAsync(database, Encode(transaction), cancellationToken).ConfigureAwait(false),
-            opts: new NatsJSPubOpts { MsgId = id }, headers: Headers(transaction.Hlc!.Value, placement.Version), cancellationToken: cancellationToken).ConfigureAwait(false);
-    }
-
-    internal async Task<ulong?> ReplayFromAsync(string origin, TenantContext database, string transactionId, CancellationToken cancellationToken)
-    {
-        var js = _js ?? throw new InvalidOperationException("this node has no push stream connection");
-        var stream = PushNames.Stream(origin);
-        var scan = await js.CreateOrderedConsumerAsync(stream, new NatsJSOrderedConsumerOpts
-        {
-            FilterSubjects = [PushNames.DatabaseFilter(origin, database)],
-            DeliverPolicy = ConsumerConfigDeliverPolicy.All,
-        }, cancellationToken).ConfigureAwait(false);
-        ulong? found = null;
-        while (found is null)
-        {
-            var read = 0;
-            await foreach (var message in scan.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
-            {
-                read++;
-                if (found is null && message.Headers is { } headers && headers.TryGetValue("Nats-Msg-Id", out var id) && id.ToString() == transactionId
-                    && message.Metadata is { } metadata)
-                {
-                    found = metadata.Sequence.Stream;
-                }
-            }
-
-            if (read == 0)
-            {
-                break;
-            }
-        }
-
-        if (found is not { } sequence)
-        {
-            return null;
-        }
-
-        var consumer = await js.GetConsumerAsync(stream, PushNames.Consumer(options.Region), cancellationToken).ConfigureAwait(false);
-        var resume = Math.Min(sequence + 1, consumer.Info.AckFloor.StreamSeq + 1);
-        await consumer.ResetAsync(resume, cancellationToken).ConfigureAwait(false);
-        return resume;
     }
 
     internal async Task<int> DrainOriginsAsync(TenantContext database, long fence, CancellationToken cancellationToken)

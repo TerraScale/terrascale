@@ -80,7 +80,7 @@ def main():
                 for match in pattern.finditer(line):
                     if any(start <= match.start() and match.end() <= end for start, end in spans):
                         continue
-                    owner = owners.get(args.repo, "P8" if name.startswith("benchmark/") else "P1" if name.startswith(("src/TerraScale.Authentication", "tests/TerraScale.Authentication")) else "C3" if name.startswith("docs/") else term["owner"])
+                    owner = owners.get(args.repo, "P8" if name.startswith("benchmark/") else "P1" if name.startswith("src/TerraScale.Authentication") else "C3" if name.startswith("docs/") else term["owner"])
                     hits.append((name, number, term["id"], match.group(), owner))
     sha = git(root, "rev-parse", "HEAD").decode().strip()
     print(f"Legacy scan: {args.repo} {sha} mode={mode} hits={len(hits)}")

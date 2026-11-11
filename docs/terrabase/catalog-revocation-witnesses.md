@@ -14,10 +14,10 @@ A machine seeded without its own anchor still needs the existing trusted-peer ad
 
 The outer encrypted anchor format remains version 1. The additive `revocations: 1` evidence is understood by this build. Anchors written by older builds require pulls from every known holder before a new gate may open; the first upgraded anchor publishes a causal witness. Unknown evidence versions, malformed/oversized objects, missing existing anchors, and unverifiable origins fail closed. During rollout, old software does not provide the new cross-machine guarantee; complete the server rollout before accepting restore proof.
 
-The Fast regressions include the one-restored-origin/two-uninformed-peer case that opened on the previous gate, mixed and all-restored catalogs, a current-origin control that converges, revoked-key denial, and stale catalog access after database deletion. Tenant-state tombstones and collected-state floors remain required independently; this gate does not authorize replay of an old tenant file or discard deletion evidence. The snapshot regression also refuses a source's collected absence when the destination still holds an unproven live row.
+Tenant-state tombstones and collected-state floors remain required independently; this gate does not authorize replay of an old tenant file or discard deletion evidence. A snapshot refuses a source's collected absence when the destination still holds an unproven live row.
 
 Bucket rollback or replay of the external authority itself is outside this proof. A per-machine anchor must remain outside the restored volume. There is no operator bypass.
 
-The existing `DatabasePurgeTests.A_stale_live_catalog_row_cannot_serve_restore_adopt_or_place_a_purged_database` exercises permanent database authority against replayed catalog rows. `AntiEntropyGcTests.Collected_documents_stay_absent_when_two_healthy_replicas_pull_a_stale_peer` covers deleted records before and after restart; the collecting-writer race test covers replay queued across table. These protections remain separate from startup anchor admission.
+Permanent database authority against replayed catalog rows and the absence of collected records before and after restart remain separate from startup anchor admission.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

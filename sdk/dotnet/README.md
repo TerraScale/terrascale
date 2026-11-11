@@ -321,16 +321,10 @@ sent once. Every `TerraBaseException` carries
 the answering region (`X-TerraBase-Region`) when TerraBase named it.
 
 No TerraBase runs in this repository (user rule, 2026-10-11: no repository other
-than the monorepo depends on TerraBase). The clients are tested over HTTP fakes.
-`contracts/terrabase/routes.json` records the existing TerraBase routes the clients call;
-`TerraBaseContractTests` checks the clients send exactly those, and the monorepo's
-ts-auth Fast suite checks that the TerraBase built from the same commit serves each
-one, so the SDK and TerraBase cannot drift apart silently. ts-auth's suites exercise
-these clients end to end against that same TerraBase.
-
-```bash
-nice -n 19 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj --framework net10.0 --configuration Release
-```
+than the monorepo depends on TerraBase).
+`contracts/terrabase/routes.json` records the existing TerraBase routes the clients call. The monorepo's journey
+drives these clients through ts-auth, the dashboard and its .NET runner against the TerraBase built from the same
+commit.
 
 `TerraBasePlatformClient` lists TerraScale's own databases (`platform-auth`, `platform-dashboard`) for the dashboard's
 platform-admin pages: pass the signed-in admin's ts-auth access token through `AccessTokenProvider` (it must carry
@@ -378,13 +372,7 @@ End-user lifecycle webhook deliveries are verified by `TerraScaleWebhooks.Verify
 ```bash
 dotnet build TerraScale.DotNet.slnx --configuration Release
 dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
-dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
-  --framework net10.0 --configuration Release --no-build --no-restore -- \
-  --minimum-expected-tests 231
 ```
-
-Run the suite for `net11.0` with a .NET 11 toolchain too. Tests use TUnit over HTTP fakes and cover the TerraBase
-clients (route manifest, regional contract, responses) and the retained ts-auth contract.
 
 [Package release](docs/package-release.md) records the release procedure; it does not authorize
 publication. NuGet remains on hold. Source/local-pack consumers must verify the loaded SDK DLL

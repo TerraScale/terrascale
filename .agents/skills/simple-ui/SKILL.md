@@ -35,13 +35,13 @@ description: TerraScale UI standard — simple purpose, architecture, design and
 ## Proof
 
 - Before/after screenshots of every changed page, shown in your T3 thread (repo rule in `AGENTS.md`). How:
-  1. **Run both versions.** Before = `origin/main`, after = your branch; same seed data, same signed-in role, same viewport (1280x800, plus 390x844 if the page has a narrow layout), every supported theme. Start the stack with `make dev`, or reuse the Dashboard E2E fixture (`tests/TerraScale.Dashboard.E2E`) in a scratch test that you delete before committing.
-  2. **Capture** with Playwright 1.63 (its Chromium is installed on every dev server): `npx -y playwright@1.63.0 screenshot --viewport-size=1280,800 --full-page <url> <file>` for a page you can reach by URL, or `page.ScreenshotAsync(new() { Path = <file>, FullPage = true })` in the scratch E2E test for signed-in states.
+  1. **Run both versions.** Before = `origin/main`, after = your branch; same seed data, same signed-in role, same viewport (1280x800, plus 390x844 if the page has a narrow layout), every supported theme. Start the stack with `make dev`, or the journey's environment (`bash e2e/env/local.sh`, see `e2e/AGENTS.md`) for signed-in states.
+  2. **Capture** with Playwright 1.63 (its Chromium is installed on every dev server): `npx -y playwright@1.63.0 screenshot --viewport-size=1280,800 --full-page <url> <file>` for a page you can reach by URL.
   3. **Save** to `~/.local/state/shots/<branch>/<page>-<theme>-before.png` and `-after.png`. Never commit screenshots (no `docs/qa/` folders).
   4. **Show them in the thread.** With T3 tools: `html_preview`, then `html_render` one grid per page (columns before | after, a caption row with page, theme and viewport, `<img src="<absolute path>">`; local images are inlined). Without T3 tools (GLM in OpenCode): put a `SCREENSHOTS` section in your final reply with one line per page, `![before: <page> <theme>](<absolute path>) ![after: <page> <theme>](<absolute path>)`.
   5. Compare them against every rule in this file before you open the PR.
-- Don't run suites locally; CI runs Fast and the browser journeys on push.
-- Update tests that asserted removed copy to assert behavior instead; never weaken them.
+- CI runs the journey on the pull request; it audits every page (console errors, failed requests, overflow, axe WCAG 2.2 AA).
+- When a page's heading or data changes, update its state in `e2e/pages/inventory.ts`; never weaken a check.
 - [ ] Before shipping UI, compare actual before/after screenshots against every applicable rule below in dark and supported light themes; fix default-styled or unfinished controls first.
 
 ## Tabs and segmented controls
@@ -52,4 +52,4 @@ description: TerraScale UI standard — simple purpose, architecture, design and
 - Select the first tab initially so the active language is visible on narrow screens.
 - Use tablist/tab/tabpanel semantics, associated IDs, selected state and a single tab stop. Support Left/Right, Home/End and wraparound; selection must switch the snippet and copy target together.
 - Verify desktop and narrow layouts, pointer and keyboard switching, loaded icons, and screenshots in every supported theme across dashboard, docs and landing.
-- When shared tab sources change, update the importing entry points in docs and landing in the same change so all three sites run their Fast and deployment pipelines. Workflow dependency changes belong to the CI owner.
+- When shared tab sources change, update the importing entry points in docs and landing in the same change so all three sites run their CI builds and deployments. Workflow dependency changes belong to the CI owner.

@@ -6,8 +6,8 @@ endpoint and logging overhead. Results and raw measurement evidence belong in
 measured; they do not qualify current capacity.
 
 Run builds, checks and measurements on a dev host (delta, mariogk-dev, beta or rafael-dev).
-`make -C benchmark check` builds the Go SQL tools, checks their
-formatting and runs the Fast suite. `make benchmark-build` also builds the
+`make -C benchmark check` checks the formatting of the Go SQL tools, vets and
+builds them. `make benchmark-build` also builds the
 .NET endpoint and logging benchmarks.
 
 - [`cmd/replica-lag`](cmd/replica-lag/main.go) measures SQL write acknowledgement

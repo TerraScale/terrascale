@@ -3,9 +3,9 @@
        meet stays scoped to the area that had it before (IsTerraBaseArea, IsLibsArea). -->
   <PropertyGroup>
     <ProjectFolder>$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)'))</ProjectFolder>
-    <IsTerraBaseArea Condition="$(ProjectFolder.StartsWith('src/TerraBase')) or $(ProjectFolder.StartsWith('tests/TerraBase'))">true</IsTerraBaseArea>
+    <IsTerraBaseArea Condition="$(ProjectFolder.StartsWith('src/TerraBase'))">true</IsTerraBaseArea>
     <IsLibsArea Condition="$(ProjectFolder.Contains('TerraScale.Endpoints')) or $(ProjectFolder.Contains('TerraScale.Logging'))">true</IsLibsArea>
-    <IsDashboardArea Condition="$(ProjectFolder.StartsWith('src/TerraScale.Dashboard')) or $(ProjectFolder.StartsWith('tests/TerraScale.Dashboard'))">true</IsDashboardArea>
+    <IsDashboardArea Condition="$(ProjectFolder.StartsWith('src/TerraScale.Dashboard'))">true</IsDashboardArea>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -25,7 +25,6 @@
     <!-- CS1591: TerraBase is a server, not a library, and its code carries no comments (user rule 2026-10-29: "do not
          comment the code"). The documentation file stays generated because IDE0005 needs it in the build. -->
     <NoWarn Condition="'$(IsTerraBaseArea)' == 'true'">$(NoWarn);CS1591</NoWarn>
-    <!-- ts-libs tests use real cultures (fr-FR), so the invariant mode stays with TerraBase and ts-auth. -->
     <InvariantGlobalization Condition="'$(IsLibsArea)' != 'true'">true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
     <!-- The pinned compiler retains invalid Razor generator state across shared compilations. -->

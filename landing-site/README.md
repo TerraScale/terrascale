@@ -39,10 +39,10 @@ npm run cf:dev
 
 The monorepo's `.github/workflows/ci.yml` validates pull requests that change
 `landing-site/` (job `landing`). On `main`, `.github/workflows/sites.yml` (job
-`deploy-landing`) builds the tip of `main`, tests included, and deploys it to
-the existing Cloudflare Worker.
-From the monorepo root, `make landing-test-fast` installs locked dependencies,
-runs the tests, prerenders the site and validates the static output. Production
+`deploy-landing`) builds the tip of `main` and deploys it to the existing
+Cloudflare Worker.
+From the monorepo root, `make landing-build` installs locked dependencies,
+prerenders the site and validates the static output. Production
 builds publish their monorepo commit in `/build-info.json`.
 
 `wrangler.toml` serves `build/` as static assets only (no Worker script) on

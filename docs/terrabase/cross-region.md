@@ -74,5 +74,3 @@ Serving regions come from `TS_REGION` and the ts-orch peers file `TS_PEERS_FILE`
 are used for routing and private listener binding; discovering a region grants no placement and creates no copy.
 
 ## Tests
-
-Fast covers placement and its refusals in `tests/TerraBase.Fast/Management/RegionCatalogTests.cs` and `DatabaseRegionTests.cs` (the reported region across restarts).

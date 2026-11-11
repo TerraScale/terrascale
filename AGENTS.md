@@ -6,7 +6,7 @@
 
 - Ship every change as a pull request to `main`. Fetch `origin` first and branch from fresh `origin/main` in your own worktree or clone, outside shared checkouts. Commit small changes; no AI attribution. Ignore outside contributors' PRs unless asked.
 - Record non-obvious choices in the commit message as `DECISION: <choice>. Reason: <why>`.
-- Before pushing, build or type-check only the project you changed. Don't run test suites locally: GitHub CI runs them on the PR. A PR squash-merges as soon as its checks are green and its review passed; rebase it when it conflicts. Never push directly to, force-push or delete `main`.
+- Before pushing, build or type-check only the project you changed. GitHub CI on the PR is the gate. A PR squash-merges as soon as its checks are green and its review passed; rebase it when it conflicts. Never push directly to, force-push or delete `main`.
 - Deploy only green main. If your merge makes main red, fix or revert within about 30 minutes. For a red main you did not cause, wait for its owner's fix and rebase.
 - Never run anything on or SSH to mariogk-desktop.
 - StorageFormat.cs bumps and production resets need the user's approval; otherwise put `Needs format bump` in the commit message.
@@ -14,16 +14,15 @@
 ### Code
 
 - No comments: no `//`, `#`, `/* */`, `///` doc comments or commented-out code in code, scripts or build files, including code you move or rewrite. Names and types carry the meaning; non-obvious choices go in the commit message as `DECISION:`.
-- Fix the root cause. No workarounds: no retries, sleeps, longer timeouts, swallowed errors, special cases, flags or skipped or weakened tests that hide a symptom. If the cause is outside your task or outside our code, report it instead of patching around it.
+- Fix the root cause. No workarounds: no retries, sleeps, longer timeouts, swallowed errors, special cases, flags or skipped or weakened journey steps that hide a symptom. If the cause is outside your task or outside our code, report it instead of patching around it.
 - No legacy: no deprecated paths, compatibility shims, fallbacks, old-format readers, dead code or copies kept "for now". Replace the old path and delete it in the same change.
-- No unit tests. Tests drive the real service through its public interface (integration or end-to-end); never test a single class or function in isolation or mock our own code. Delete unit tests you come across; cover a critical path they guarded with an integration test.
+- No tests but the journey. The only test is the user-journey E2E suite in terrascale: it runs on every terrascale PR against a throwaway environment and after every release against production. Never add unit, integration, contract, Fast or Slow tests, test projects, fakes or fixtures in any repo; delete any you find. A behaviour that matters becomes a journey step. Production monitors (ts-orchestrator `multi-region`, `deploy-lag`, `app-canary`) are not tests; keep them. ts-orchestrator also keeps its single-host E2E (job `e2e-m1`) as its PR gate.
 
-### Tests
+### CI and proof
 
-- Keep tests few. Fast covers only the happy path and critical paths. Slow keeps only heavy critical tests; delete everything else.
-- A new feature adds at most one happy-path and one critical-failure test. Refactors, renames, docs and config changes add none. Deleting low-value tests is welcome.
-- Fast tests run fully parallel. Each single test finishes in under 10 s, each area's Fast suite in under 30 s, and every CI test job in under 5 minutes. Anything slower is a bug.
-- Prove flaky fixes with 5 repeats; benchmarks with 3 measured repeats in `benchmark/bench/`.
+- One PR workflow per repo (`ci.yml`); its last job is `all-green`, the one required check. Release, deploy and monitor workflows stay separate.
+- CI must be as fast as it can be: no test jobs, no duplicate builds, cached toolchains, jobs in parallel.
+- The shared CI-time check (`ci-time.yml` in `TerraScale/.github`) runs after every CI run. A run more than 30 s slower than the median of the last 5 successful runs of the same workflow opens or updates a `CI time regression: <workflow>` issue. It never blocks a merge; investigate the issue and fix the cause like a bug.
 - UI changes: screenshot every changed page before (`origin/main`) and after (your branch), same viewport, data and theme, in every supported theme. Save the PNGs outside the repo as `~/.local/state/shots/<branch>/<page>-before.png` and `-after.png`; never commit screenshots. Show them in your T3 thread: if you have T3 tools, `html_render` a before/after grid (absolute local image paths are inlined); otherwise embed each as a Markdown image with its absolute path, e.g. `![after: /settings](/home/<user>/.local/state/shots/<branch>/settings-after.png)`, in your final reply. List the pages in the PR body.
 
 ### Secrets and hard gates
@@ -32,7 +31,7 @@
 - Never expose secret values in chat, arguments, history, logs, git or commits. Use stdin or a 0600 file. Credential installs are one-command handoffs the user runs.
 - Ask first before new paid capacity, security permissions or credentials.
 - ts-auth and ts-dashboard store data in TerraBase through ts-dotnet; keep the SDK current with TerraBase's API.
-- Outside the monorepo, never download or run TerraBase binaries in tests, CI or helpers; use HTTP fakes or contract fixtures. Live ts-status API monitoring is allowed. Never publish TerraBase binaries.
+- Outside the monorepo, never download or run TerraBase binaries in CI or helpers. Live ts-status API monitoring is allowed. Never publish TerraBase binaries.
 - Use GitHub and `gh`; no polling loops.
 
 <!-- shared-rules:end -->
@@ -43,25 +42,24 @@
 
 Step-by-step guides live in `.agents/skills/` (also linked from `.claude/skills/`):
 
-- `add-feature`: build a feature end to end (owner, contract, storage, SDKs, UI, docs, tests).
+- `add-feature`: build a feature end to end (owner, contract, storage, SDKs, UI, docs, journey).
 - `add-endpoint`: add an HTTP endpoint with TerraScale.Endpoints.
 - `sdk-parity`: add or change an operation across the five SDKs.
 - `simple-ui`: design and build dashboard, auth and site screens.
 
 ## Layout and commands
 
-- Libraries: `src/TerraScale.Endpoints*`, `src/TerraScale.Logging` and their tests. Read `src/TerraBase/AGENTS.md` and `src/TerraScale.Authentication/AGENTS.md` for service rules.
-- Projects go in `src/<Project>/`, tests in `tests/<Project>/`, scripts in `scripts/<area>/`, and docs in `docs/<area>/`. All benchmark code, datasets and results belong in `benchmark/`; .NET benchmarks use `benchmark/dotnet/`. Save comparable Markdown result tables in `benchmark/bench/`.
-- Use the root Makefile when a target exists. Build: `make build`; Fast: `make test-fast`; Slow: `make test-slow`; full checks: `make check`. Area targets: `libs-build`, `libs-test`, `libs-check`, `auth-build`, `auth-test-fast`, `auth-test-slow`, `auth-check`, `terrabase-build`, `terrabase-test-fast`, `terrabase-test-slow`, `terrabase-check`, `benchmark-build`, `benchmark-check`.
-- Fast: `make test-fast`, or the changed area's `make libs-test`, `make auth-test-fast` or `make terrabase-test-fast`.
-- SDKs live in `sdk/dotnet`, `sdk/js`, `sdk/go`, `sdk/python` and `sdk/rust`; read each area's `AGENTS.md`. Fast: `make sdk-dotnet-test-fast`, `make sdk-js-test-fast`, `make sdk-go-test-fast`, `make sdk-python-test-fast`, `make sdk-rust-test-fast`; each finishes in under 30 s wall time, with each single test in under 10 s. `make sdk-test-fast` runs all five.
+- Libraries: `src/TerraScale.Endpoints*` and `src/TerraScale.Logging`. Read `src/TerraBase/AGENTS.md` and `src/TerraScale.Authentication/AGENTS.md` for service rules.
+- Projects go in `src/<Project>/`, scripts in `scripts/<area>/`, and docs in `docs/<area>/`. All benchmark code, datasets and results belong in `benchmark/`; .NET benchmarks use `benchmark/dotnet/`. Save comparable Markdown result tables in `benchmark/bench/`.
+- Use the root Makefile when a target exists. Build: `make build`; full checks: `make check`. Area targets: `libs-build`, `libs-check`, `auth-build`, `auth-check`, `terrabase-build`, `dashboard-build`, `dashboard-lint`, `benchmark-build`, `benchmark-check`, `docs-build`, `landing-build`, `status-build`.
+- SDKs live in `sdk/dotnet`, `sdk/js`, `sdk/go`, `sdk/python` and `sdk/rust`; read each area's `AGENTS.md`. `make sdk-dotnet-check`, `make sdk-js-check`, `make sdk-go-check`, `make sdk-python-check` or `make sdk-rust-check` installs or restores one SDK locked and builds or type-checks it; `make sdk-check` runs all five.
 - Auth and TerraBase consume the libraries through ProjectReference. ts-auth consumes sdk/dotnet from the same monorepo revision via `TsDotnetRoot` in `Directory.Build.props`.
 - Shared build configuration lives in `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `global.json`, `NuGet.config`, `.editorconfig` and `BannedSymbols.txt`.
 
 ## Product rules
 
 - Never fork the Turso database: use upstream tursodatabase/turso at a pinned commit, tarball verified by SHA-256 at build time (benchmark/turso-sync-host/turso-pin.env). Only the Turso client may be forked (today: the vendored driver in src/vendor/Turso.Data.Sqlite), and only when upstream can't do what we need.
-- Every feature is always on. No feature flags, opt-in settings, enabled booleans, deploy toggles or kill switches. Delete their guarded paths. Values have one correct setting in code; expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test binaries.
+- Every feature is always on. No feature flags, opt-in settings, enabled booleans, deploy toggles or kill switches. Delete their guarded paths. Values have one correct setting in code; expose no tuning knobs. No fakes, demo stores or skip-auth: the journey stands in only for third parties (`e2e/AGENTS.md`).
 - Derive region, node and peers from `TS_REGION`, `TS_NODE` and `TS_PEERS_FILE` (one `<node> <region> <netbird-ipv4>` line per peer). Every region serves automatically. Libraries must preserve automatic discovery for services and benchmarks.
 - CI rejects switch-style configuration; unavoidable third-party names need a narrow allowance and one-line reason. Always-on behavior preserves authentication, consent, permissions, revocation, validation, isolation, backups and recovery safeguards. Preserve CI branch/event identity, quality gates and cleanup conditions.
 - Greenfield: no old-format shims, compatibility layers or migrations unless requested. Public HTTP APIs use `/v1`; breaking API changes are explicit compatibility decisions. Generated IDs are ULIDs.
@@ -79,21 +77,22 @@ Step-by-step guides live in `.agents/skills/` (also linked from `.claude/skills/
 - Every HTTP endpoint, including health, admin and examples, uses `TerraScale.Endpoints` via ProjectReference: one endpoint class per file; register with `AddTerraScaleEndpoints()`, `MapTerraScaleEndpoints()` and `MapTerraScaleOpenApi()`. No raw minimal API handlers or controllers. Exceptions: gRPC, Prometheus scraping and OpenAPI/Scalar documents.
 - Public HTTP APIs need OpenAPI rendered by Scalar.
 - Manage versions only in `Directory.Packages.props`; no Version on PackageReference. Prerelease packages only where .NET 11 requires them. Commit lock files; restore locked. `NuGet.config` uses nuget.org; keep source mappings correct if a source is added.
+- `Microsoft.CodeAnalysis.*` stays at or below the compiler of the SDK pinned in `global.json`, or the analyzers fail to load (CS8032).
+- `System.Formats.Cbor` is pinned centrally only because Fido2 4.3.2 asks for 9.0.0 (GHSA-vmv3-wvjp-wqpj); the pin goes when Fido2 asks for a patched version.
 - Keep project files minimal. Use ProjectReference for libraries not consumed as packages.
 - Warnings are errors in every configuration. Never lower warning levels or weaken analyzer/style enforcement. `NoWarn` is limited to existing justified entries in shared build files. No global suppressions, assembly suppressions, enforced-rule severity reductions or warning pragmas outside generated code. Any necessary local suppression needs a documented justification and human approval.
 
 ## Tests
 
-- Libs Fast must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug.
-- Use TUnit and Bogus. Service tests are integration/end-to-end only. Run TUnit through `dotnet run --project` (the Makefile does this).
-- Tests must be safe alongside every other test. Keep default parallelism; no `NotInParallel`, `ParallelLimiter`, sequential execution or lower parallelism to hide isolation bugs. Servers may be shared per assembly or in a small pool; each test owns its database, tenant or prefix and synthetic data, then cleans up. Server fixtures own their ephemeral ports, directories and lifecycle. No ordering dependencies, mutable static state outside fixture-owned resources, fixed ports or wall-clock sleeps.
-- Auth and TerraBase each have Fast and Slow integration suites plus source-linked TestHarness utilities; the harness is not another suite. Library tests stay in `tests/TerraScale.Endpoints.Tests` and `tests/TerraScale.Logging.Tests`.
-- Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. New features add at most one happy-path and one critical-failure test. Never skip, disable or weaken retained tests to bypass failures.
-- No workflow runs the Slow suites: run them locally with `make test-slow` or an area's `*-test-slow` target.
+- The journey in `e2e/` is the only test. It drives TerraBase, ts-auth and the dashboard built from the commit under test, and all five SDKs, on every pull request (`journey` job of `ci.yml`, `.github/workflows/journey.yml`). Read `e2e/AGENTS.md` before you change it.
+- A behaviour that matters becomes a journey step: a page, flow or SDK operation in `e2e/` (`e2e/AGENTS.md` says how). Never add any other test, test project, fake or fixture.
+- `checks` fails a pull request that adds a file outside `e2e/`, or moves one in, whose folder or name marks it as a test. The pattern lives in one place: the `No test file outside the journey` step of `ci.yml`.
 
 ## CI
 
-- `.github/workflows/ci.yml` is the only pull-request workflow. Its `changes` job picks the legs from the changed paths, and `all-green`, the one required check, needs every leg: a failed or cancelled leg fails it, a skipped leg passes. "Re-run failed jobs" re-runs `all-green` in the same run.
+- `.github/workflows/ci.yml` (`CI`) is the only pull-request workflow. `all-green`, its last job, is the one required check: a failed or cancelled job fails it, a skipped job passes. "Re-run failed jobs" re-runs `all-green` in the same run.
+- On a pull request, `changes` picks the jobs from the changed paths and `checks` runs the policy checks (legacy-name scan, workflow lint, frozen EF Core migrations, storage train, retired-provider grep, no added test file). The legs build and check what changed and run no test: `libs`, `auth` and `terrabase` (locked restore, pinned native libraries, whitespace format, Release build with analyzers and warnings as errors; libs also checks style, auth its NuGet audit and OpenAPI contract, terrabase that its single-file release publish keeps the native libraries inside), `dashboard` (`dashboard-ci.yml`: the lint set and the Release build) and `sdk` (`make sdk-<x>-check` for each changed SDK). `docs`, `landing` and `status` build the sites, and `journey` runs the journey unless only Markdown, `docs/` or the sites changed. `test` passes when `changes`, `checks` and every selected leg passed.
+- On a push to `main` the legs run again on the merged commit: `changes` selects `libs`, `auth`, `terrabase` and `sdk` for the changed areas as on a pull request (a change to TerraBase's server also selects `auth`), and `checks` runs the legacy-name scan. `dashboard`, the sites and `journey` run on pull requests only. When the push changes TerraBase or ts-auth, `main` publishes TerraBase once `test` and `terrabase` passed, and `main-auth` or `main-auth-ordered` publishes and releases ts-auth once `test` and `auth` passed, each from its own Release build (`scripts/ci/image-payloads.sh publish`). A failed leg or build stops its release. TerraBase reaches the regions only through a `release-only` dispatch.
 - Releases stay in jobs defined in `ci.yml` (TerraBase, ts-auth) and `images-ghcr.yml` (dashboard): ts-orch accepts release tokens only from those two files, never from a called workflow.
-- `CI time` (`.github/workflows/ci-time.yml`) runs the shared `TerraScale/.github` check after `CI`, `Sites` and `Images (GHCR)` runs: it compares a successful first attempt with the median of the latest three to five earlier successful first attempts of the same workflow, event and (outside pull requests) branch that ran the same jobs, opens or comments on one `ci-time` issue per workflow and event when the run is more than 30 s slower, and never blocks a merge.
+- `CI time` (`.github/workflows/ci-time.yml`) runs the shared `TerraScale/.github` check after each `CI`, `Sites` and `Images (GHCR)` run that succeeded on its first attempt; runs from forks are never measured or used as history. It compares the run with the median of the latest five earlier successful first attempts of the same workflow and event (and, outside pull requests, branch) that ran the same jobs, and each job with the slowest of its own latest five successful runs. When the run is more than 30 s over its median or a job more than 30 s over its slowest, it opens or comments on the `CI time regression: <workflow> (<event>)` issue (label `ci-time`). It never blocks a merge.
 - Site deploys run in `.github/workflows/sites.yml` (`Sites`), never in `ci.yml`, so a site deploy cannot turn a `CI` run red. A main push selects each site whose paths its own `before..sha` diff changed. `deploy-docs`, `deploy-landing` and `deploy-status` wait for their site's lock (`docs-deploy`, `landing-deploy`, `status-deploy`), then check out the tip of `main`, build it, deploy it with that commit as the Worker version message, and run `scripts/ci/prove-worker-deploy.mjs`: Cloudflare's records must show each deployed Worker's active deployment serving the version the deploy created at 100%, with that commit as its message. A `Sites` dispatch on `main` redeploys all three; retry a failed deploy with `gh run rerun <run id> --failed` (`docs/dev/ci-recovery.md`).

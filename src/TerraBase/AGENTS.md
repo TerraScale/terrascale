@@ -8,7 +8,7 @@ TerraBase is a SQL-only, multi-region database. Clients query with SQL over the 
 
 - Never fork the Turso database: use upstream tursodatabase/turso at a pinned commit, tarball verified by SHA-256 at build time (benchmark/turso-sync-host/turso-pin.env). Only the Turso client may be forked (today: the vendored driver in src/vendor/Turso.Data.Sqlite), and only when upstream can't do what we need.
 - Ship one self-contained JIT binary, `terrabase`. No native AOT or trimming. Stay single-file compatible: no `Assembly.Location` or dependence on adjacent assembly files; preserve the single-file analyzer.
-- Keep one server project, `src/TerraBase`. Analyzers live in `src/TerraBase.Analyzers` and its BuildCheck project. Separate projects require a real boundary, such as native interop, generated gRPC contracts or an externally consumed library.
+- Keep one server project, `src/TerraBase`. Analyzers live in `src/TerraBase.Analyzers`. Separate projects require a real boundary, such as native interop, generated gRPC contracts or an externally consumed library.
 - Group related endpoints, records, services, options, storage, metrics and registration by feature under `Features/<Feature>/` (Sql, Postgres, Shapes, Management, Backup, FileStorage, UserAuth, Regions, Replicas, Sync, and the rest). Namespaces follow folders under `TerraBase`. Features communicate through small public types; keep unused internals internal. Share primitives only when two features need them.
 - Consume services, stores, engines and adapters through DI interfaces; implementations are internal. Swapping an implementation must not change callers. `Program.cs` is the sole composition root, using top-level statements and `WebApplication.CreateSlimBuilder`; no App or Startup class. One shared process per node serves every listener.
 - The storage engine is Turso (decision `docs/terrabase/decisions/0014-turso-storage-engine-naming.md`), with one database file per database. All storage goes through `Engine/` interfaces; engine-specific types stay inside their implementation directory. Another engine uses the same interfaces. Do not build a TerraBase B-tree or LSM engine.
@@ -26,10 +26,8 @@ TerraBase is a SQL-only, multi-region database. Clients query with SQL over the 
 - Record Prometheus metrics through `System.Diagnostics.Metrics` on `TerraScale.TerraBase` (`Hosting/Telemetry.cs`); scrape `/metrics` on the metrics listener. Keep labels bounded; no tenant-controlled label values.
 - Clients use the public `api.` host, with optional static override and pinned sessions. No hardcoded regional client endpoints; follow `docs/terrabase/region-identity.md`.
 
-## Build and tests
+## Build
 
-- TerraBase Fast must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug.
 
-- Build: `make terrabase-build`. Fast: `make terrabase-test-fast`. Slow: `make terrabase-test-slow`. Additional checks: `make terrabase-analyzer-check`, `make terrabase-check`.
-- Fast/Slow suites live in `tests/TerraBase.Fast` and `tests/TerraBase.Slow`. Drive the actual app over real listeners. `tests/TerraBase.TestHarness/TerraBaseTestServer.cs` starts top-level Program through `WebApplicationFactory<Program>.UseKestrel()` with an owned data directory.
-- Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. New features add at most one happy-path and one critical-failure test.
+- Build: `make terrabase-build`. CI's `terrabase` leg also checks whitespace (`make fmt-check SOLUTION=terrabase.slnf`).
+- The journey in `e2e/` is the only test: it drives the TerraBase built from the commit under test. A behaviour that matters becomes a journey step (`e2e/AGENTS.md`).

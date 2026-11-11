@@ -5,9 +5,10 @@ on:
     types: [completed]
 permissions:
   actions: read
+  checks: read
   issues: write
 jobs:
   ci-time:
-    uses: TerraScale/.github/.github/workflows/ci-time.yml@e6820e417b26b154a613aa22f7365ca3def253ad
+    uses: TerraScale/.github/.github/workflows/ci-time.yml@28b336d5bc9f4d58c63c41b8a86af4b6d79888bf
     with:
       scan-limit: 15

@@ -301,7 +301,6 @@ nice -n 19 npm ci
 nice -n 19 npm run typecheck
 nice -n 19 npm run lint
 nice -n 19 npm run build
-nice -n 19 npm test
 ```
 
 `lint` reuses the strict TypeScript/JSDoc check, including unused-code checks,

@@ -35,7 +35,3 @@ This change adds no price. If billing charges per replica region, that applies a
 gains a copy for each region that joins.
 
 ## Proof
-
-`tests/TerraBase.Fast/Replication/AllRegionsPlacementTests.cs` covers this. gru creates the database while it is the
-only region. sjc and then fra join and receive it with no call: fra also refills writes made before it existed. sjc
-leaves, gru stops streaming to it, and later writes still reach fra.

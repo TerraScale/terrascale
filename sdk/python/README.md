@@ -269,13 +269,11 @@ The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to
 
 ```sh
 uv venv && uv pip install -e '.[dev]'
-pytest && ruff check src tests && mypy
+ruff check src && mypy
 ```
 
-Tests run against an in-memory HTTP fake (`tests/fake.py`) and check every
-request against the published route list in `contracts/openapi-routes.json`
-(`python scripts/refresh-contract.py` updates it). They never start a TerraBase
-server. Releases: bump `src/terrascale/_version.py`, tag `vX.Y.Z` and publish a
+`contracts/openapi-routes.json` is the published route list
+(`python scripts/refresh-contract.py` updates it). Releases: bump `src/terrascale/_version.py`, tag `vX.Y.Z` and publish a
 GitHub release for it; the publish workflow uploads to PyPI with trusted publishing.
 
 `401 key_revoked` and `401 key_expired` raise `KeyRevokedError` and

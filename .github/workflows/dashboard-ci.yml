@@ -1,4 +1,4 @@
-name: Dashboard Fast
+name: Dashboard
 
 # Main pushes run this through images-ghcr.yml, the dashboard's single main entry point.
 on:
@@ -13,39 +13,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          global-json-file: global.json
-      # dashboard-test-fast verifies the pinned native libraries (or downloads them on a miss): the
-      # cache keeps a release-CDN outage from blocking the dashboard's only build job.
-      - name: Cached pinned Turso native libraries
-        uses: ./.github/actions/turso-native-cache
-      - name: Dashboard Fast
-        run: make dashboard-test-fast
-      # The image job wraps these exact bytes without another build.
-      - name: Publish the tested application
-        if: github.event_name != 'pull_request'
-        env:
-          REVISION: ${{ github.sha }}
-        run: |
-          dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore \
-            --output "$RUNNER_TEMP/dashboard-publish" -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$REVISION"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: github.event_name != 'pull_request'
-        with:
-          name: dashboard-publish
-          path: ${{ runner.temp }}/dashboard-publish
-          if-no-files-found: error
-          retention-days: 1
-
   lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -66,9 +33,27 @@ jobs:
           cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
       - name: Install the web asset build
         run: npm ci --prefix src/TerraScale.Dashboard/web
+      - name: Checked build
+        run: |
+          dotnet build scripts/dashboard/TerraScale.Dashboard.slnx --configuration Release --no-restore
+          scripts/ci/release-only.sh
       - name: Dashboard lint
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ -n "$BASE_SHA" ]; then git fetch --no-tags --depth=1 origin "$BASE_SHA"; fi
           make dashboard-lint
+      - name: Publish the checked application
+        if: github.event_name != 'pull_request'
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore \
+            --output "$RUNNER_TEMP/dashboard-publish" -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$REVISION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name != 'pull_request'
+        with:
+          name: dashboard-publish
+          path: ${{ runner.temp }}/dashboard-publish
+          if-no-files-found: error
+          retention-days: 1

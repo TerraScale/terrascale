@@ -91,10 +91,3 @@ an immutable workflow revision: retain its reviewed source SHA in activation evi
 | Token used for record/database writes | TerraBase denies; no mutation |
 | Deadline approached / reached | Token expiry capped to deadline; exchanges at/after deadline denied |
 | Missing bind arguments, invalid ULIDs/name/time, nonexistent or mismatched target, deadline beyond 24 hours, rebind to different target/deadline | Command fails; no replacement binding |
-
-Fast HTTP tests cover exchange/binding/claims/replay/time boundaries against real
-auth and TerraBase storage with a fake GitHub discovery/JWKS transport. The real
-auth-to-TerraBase `UserAuthTests` case covers selected record reads, cross-target,
-write and management denial using a separate fixture-only project credential to
-seed data. Parent CI must validate both changed suites; no live activation is
-implied by those synthetic integration tests.

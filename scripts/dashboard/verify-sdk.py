@@ -17,21 +17,13 @@ solution = ET.parse(root / "scripts/dashboard/TerraScale.Dashboard.slnx")
 assert [item.get("Path") for item in solution.iter("Project")] == [
     "../../sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj",
     "../../sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj",
-    "../../src/TerraBase/TerraBase.csproj",
-    "../../src/TerraBase.Analyzers/TerraBase.Analyzers.csproj",
     "../../src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj",
     "../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj",
     "../../src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj",
     "../../src/TerraScale.Endpoints/TerraScale.Endpoints.csproj",
     "../../src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj",
-    "../../src/TerraScale.Logging/TerraScale.Logging.csproj",
-    "../../src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj",
-    "../../src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj",
-    "../../src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj",
-    "../../src/vendor/Turso.Data.Sqlite/src/Turso.Data/Turso.Data.csproj",
-    "../../src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj",
-    "../../tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj"], \
-    "The dashboard solution lists its full Release build closure: the application, its EF design host, TerraBase for the E2E suite, the shared contracts, RPC, endpoint, logging and SDK projects, the vendored driver, the analyzers and the E2E suite"
+    "../../src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj"], \
+    "The dashboard solution lists its full Release build closure: the application, its EF design host, the shared contracts, endpoint and SDK projects and the analyzer"
 sources = {path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
            for path in (root / "src/TerraScale.Dashboard").rglob("*.cs") if not {"bin", "obj"} & set(path.parts)}
 assert sorted(name for name, text in sources.items() if ".ExecuteSqlAsync(" in text) == ["src/TerraScale.Dashboard/Common/Databases/DatabaseBackend.cs"], \

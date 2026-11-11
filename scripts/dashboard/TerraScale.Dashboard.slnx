@@ -4,21 +4,11 @@
     <Project Path="../../sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
   </Folder>
   <Folder Name="/src/">
-    <Project Path="../../src/TerraBase/TerraBase.csproj" />
-    <Project Path="../../src/TerraBase.Analyzers/TerraBase.Analyzers.csproj" />
     <Project Path="../../src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj" />
     <Project Path="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
     <Project Path="../../src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj" />
     <Project Path="../../src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
     <Project Path="../../src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" />
-    <Project Path="../../src/TerraScale.Logging/TerraScale.Logging.csproj" />
     <Project Path="../../src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
-    <Project Path="../../src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
-    <Project Path="../../src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
-    <Project Path="../../src/vendor/Turso.Data.Sqlite/src/Turso.Data/Turso.Data.csproj" />
-    <Project Path="../../src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj" />
-  </Folder>
-  <Folder Name="/tests/">
-    <Project Path="../../tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj" />
   </Folder>
 </Solution>

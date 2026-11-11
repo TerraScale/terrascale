@@ -13,8 +13,7 @@ claim that the current runtime or deployed fleet already implements it.
   Actions secrets. Nobody copies secret values into code or config; names and
   formats are in [identity-descriptor.md](identity-descriptor.md).
 - Each value has one correct setting in code. Production exposes no tuning
-  knobs. Fakes, demo stores and authentication bypasses belong only in test
-  code and test binaries (`tests/TerraScale.Dashboard.E2E/Demo`).
+  knobs. No fakes, demo stores or authentication bypasses.
 - CI rejects new switch-style configuration. A narrow allowance for an
   unavoidable third-party name needs a one-line reason.
 

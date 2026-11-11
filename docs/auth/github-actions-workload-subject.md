@@ -24,7 +24,3 @@ before any request ran, so the post-deploy e2e job could not create or use `ci-e
 
 No shim. Tokens issued with the old subject were never accepted by TerraBase and expire within 15 minutes. No storage
 format, migration or binding change: the existing binding keeps working.
-
-Coverage: `tests/TerraScale.Authentication.Fast/Platform/GitHubActionsGrantTests.cs` (the issued `sub`) and
-`tests/TerraBase.Slow/Management/UserAuthTests.cs` (the real ts-auth's workload token creating, writing and reading
-`ci-e2e` on a real TerraBase, refused for another project).

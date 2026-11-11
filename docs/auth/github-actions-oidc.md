@@ -70,7 +70,7 @@ The issued token's `sub` is `github-actions:1414527764:<run_id>`. It carries `or
 - **Isolation.** Every token of this grant names the binding's project only; the caller cannot choose another. Other
   projects answer 404.
 
-## The e2e job (`.github/workflows/ci.yml`, `scripts/e2e/ci-oidc-credential.sh`)
+## The e2e job (retired)
 
 The credential exchange:
 
@@ -84,6 +84,6 @@ The credential exchange:
    `PATCH …/databases/ci-e2e` at the home region and checked again; a wrong home cannot change, so the step fails naming
    the project, the database and its placement (never a body). It is kept between runs; each test creates and deletes
    its own table (and any database it creates) in the project;
-A token lives 60 seconds, so each step builds first (`make terrabase-build`, then `make -o terrabase-build terrabase-e2e`)
-and mints its own after the build; a step running longer fails with 401 rather than reusing anything. The script's
-self-check (`scripts/e2e/ci-oidc-credential-test.sh`, a fake curl: no request leaves the runner) runs in the `test` job.
+A token lives 60 seconds, so each use mints its own; a use running longer fails with 401 rather than reusing anything.
+No workflow in this repository runs the exchange today: the job and `scripts/e2e/ci-oidc-credential.sh` are gone, and
+the grant stays in ts-auth (`GitHubActionsGrant`) unused by CI.

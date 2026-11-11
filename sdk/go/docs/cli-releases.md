@@ -46,12 +46,12 @@ Every green main push that touches `sdk/go/**`, `scripts/sdk/**` or the Go relea
 and publish workflows releases the CLI automatically; there is no manual tag step and no
 deploy switch. The path is:
 
-1. Push the change to main; the `CI` leg `sdk (sdk-go) / fast` runs in GitHub Actions.
+1. Push the change to main; the `CI` leg `sdk (sdk-go)` runs in GitHub Actions.
 2. The `SDK Go Release` workflow fires on every main push that touches the Go
    SDK paths. It waits until the pushed commit's other push workflows are green. Its
    `autorelease` job runs `python3 scripts/sdk/build-release.py go`: the release
    gates, all six GoReleaser targets (version = highest existing
-   `sdk/go/v0.0.X` tag + 1) and `python3 scripts/test-release.py`. It then
+   `sdk/go/v0.0.X` tag + 1) and `python3 scripts/check-release.py`. It then
    creates the `sdk/go/v0.0.X` tag on that exact revision. Queue delays and busy main
    sections heal on the next trigger; an already-released version is skipped.
 3. A tag created with the job token starts no workflow, so the same run then
@@ -63,7 +63,7 @@ deploy switch. The path is:
 4. Confirm the release assets, checksums and installed `ts --version`. The
    homebrew-tap syncs the new `ts.rb` on its own 15-minute schedule.
 
-Credential-free package checks run `goreleaser release --snapshot --clean`, validate archives/install behavior with `python3 scripts/test-release.py`, and retain packages for three days. This does not run or download TerraBase. For release packaging set `TS_GO_VERSION` to the numeric `0.0.X` version; the default snapshot version stays `0.0.0-dev`.
+Credential-free package checks run `goreleaser release --snapshot --clean` and check the archives, the Homebrew formula and `ts --version` with `python3 scripts/check-release.py`. This does not run or download TerraBase. For release packaging set `TS_GO_VERSION` to the numeric `0.0.X` version; the default snapshot version stays `0.0.0-dev`.
 
 ## Homebrew
 

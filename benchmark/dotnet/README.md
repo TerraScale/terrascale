@@ -31,7 +31,6 @@ Results go to `benchmark/bench/`. Numbers from a shared or busy
 machine are noisy; compare allocations (deterministic) first, and re-run timings
 on an idle machine before drawing conclusions from small differences.
 
-The SQL shared-process harness measures database admission and write latency.
 `DatabaseEncryption` measures encrypted SQL writes, reads, checkpoints and reopen.
 `TerraBase.LiveRestoreDrill` validates backups in private scratch storage through
 a read-only transport. These diagnostics use internal engine types; their output

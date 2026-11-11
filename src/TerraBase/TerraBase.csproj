@@ -46,12 +46,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="TerraBase.Fast" />
-    <InternalsVisibleTo Include="TerraBase.Slow" />
-    <InternalsVisibleTo Include="TerraBase.E2E" />
-  </ItemGroup>
-
-  <ItemGroup>
     <None Update="THIRD-PARTY-NOTICES" CopyToPublishDirectory="PreserveNewest" />
     <EmbeddedResource Include="../../landing-site/static/pricing.json" LogicalName="TerraBase.pricing.json" />
   </ItemGroup>

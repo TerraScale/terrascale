@@ -83,8 +83,6 @@ The deployment owner wipes and re-bootstraps the serving data after merge; this 
 that reset. Existing plaintext data cannot be opened by the new binary.
 There is no migration or compatibility shim.
 
-Fast integration coverage writes a recognizable record, checks database
-and WAL bytes for that marker, restarts with the same fake master, and
-checks rejection of damaged key material. The overhead report is
+The overhead report is
 `benchmark/bench/2026-10-23-encryption.md`; distinguish its driver workload
 from production HTTP performance.

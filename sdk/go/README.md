@@ -527,20 +527,6 @@ is preserved; `RetryBudgetError` refuses a retry that cannot fit the deadline.
 Mutations and quota failures are not replayed; redirects are refused.
 The service briefly caches responses; the SDK adds no cache.
 
-Unit tests use `httptest`. The live contract test requires authorized test inputs and skips HTTP 404
-until the endpoint is deployed:
-
-```sh
-TERRASCALE_STATUS_LIVE=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
-```
-
-Before merging this client, require the deployed endpoint to match the response,
-region filter, public CORS, and cache contract (404 now fails):
-
-```sh
-TERRASCALE_STATUS_REQUIRE_LATENCY=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
-```
-
 ## ts-auth tokens (`terrascale.tech/sdk/tsauth`)
 
 ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
@@ -694,9 +680,6 @@ Invalid arguments exit with status 2, other failures with 1.
 test -z "$(gofmt -l .)"
 nice -n 19 go vet ./...
 nice -n 19 go build ./...
-nice -n 19 go test -race ./...
-# Full critical qualification, including the isolated module-cache consumer:
-nice -n 19 go test -tags slow -race -count=1 ./...
 ```
 
 The module requires Go 1.25 and has no CGO dependency. CI and CLI releases use

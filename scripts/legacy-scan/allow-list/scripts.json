@@ -1,7 +1,3 @@
 [
-  {"path": "^scripts/auth/fast\\.slnx$", "repo": "terrascale", "terms": ["engine-brand"], "match": "src/vendor/Turso\\.Data\\.Sqlite/src/Turso\\.[A-Za-z0-9_.-]*/Turso\\.[A-Za-z0-9_.-]*\\.csproj", "reason": "Fast solution lists the internal vendored driver project paths; CI build wiring, not product branding."},
-  {"path": "^scripts/dashboard/TerraScale\\.Dashboard\\.slnx$", "repo": "terrascale", "terms": ["engine-brand"], "match": "src/vendor/Turso\\.Data\\.Sqlite/src/Turso\\.[A-Za-z0-9_.-]*/Turso\\.[A-Za-z0-9_.-]*\\.csproj", "reason": "Dashboard solution lists the internal vendored driver project paths; CI build wiring, not product branding."},
-  {"path": "^scripts/dashboard/verify-sdk\\.py$", "repo": "terrascale", "terms": ["engine-brand"], "match": "src/vendor/Turso\\.Data\\.Sqlite/src/Turso\\.[A-Za-z0-9_.-]*/Turso\\.[A-Za-z0-9_.-]*\\.csproj", "reason": "Dashboard SDK check asserts the solution's internal vendored driver project paths; CI build wiring, not product branding."},
-  {"path": "^scripts/legacy-scan/", "repo": "terrascale", "reason": "Scanner policy and process fixtures necessarily name forbidden terms."},
-  {"path": "^scripts/terrabase/fast\\-build\\.slnf$", "repo": "terrascale", "terms": ["engine-brand"], "match": "(?:src/vendor/Turso\\.Data\\.Sqlite/src/Turso\\.[A-Za-z0-9_.-]*/Turso\\.[A-Za-z0-9_.-]*\\.csproj|tests/Turso\\.Data\\.Sqlite\\.Tests/Turso\\.Data\\.Sqlite\\.Tests\\.csproj)", "reason": "Fast solution filter lists the internal vendored driver project paths; CI build wiring, not product branding."}
+  {"path": "^scripts/legacy-scan/", "repo": "terrascale", "reason": "Scanner policy and process fixtures necessarily name forbidden terms."}
 ]
