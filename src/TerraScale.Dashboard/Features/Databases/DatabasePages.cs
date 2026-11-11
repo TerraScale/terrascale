@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.Features.Databases
     public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecord> Databases, IReadOnlyList<DatabaseRegion> Choices,
         string Search = "", string Error = "", bool OpenCreate = false, string Name = "", string RegionsError = "")
     {
+        public string TtlHours { get; init; } = "";
         public string Notice { get; init; } = "";
         public AccountContext Context => Shell.Context;
         public IReadOnlyList<DatabaseRecord> All => Context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];

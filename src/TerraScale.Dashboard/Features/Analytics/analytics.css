@@ -26,6 +26,7 @@
   font-size: var(--ts-fs-xs);
 }
 .ts-analytics-map .ts-region-node-label strong { display: block; font-weight: 500; }
+.ts-analytics-map .ts-region-node-ring { display: none; }
 .ts-analytics-region { color: var(--ts-ink); text-decoration: none; }
 .ts-analytics-region:hover { border-color: var(--ts-line-strong); text-decoration: none; }
 @media (max-width: 64rem) {
