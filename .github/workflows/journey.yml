@@ -190,7 +190,11 @@ jobs:
           bash sdk/build.sh js > "$RUNNER_TEMP/js-runner.log" 2>&1 &
           js=$!
           npm ci --no-audit --no-fund
+          { started=$SECONDS; npx tsc --noEmit && echo "tsc --noEmit over e2e/ took $((SECONDS - started)) s"; } > "$RUNNER_TEMP/typecheck.log" 2>&1 &
+          typecheck=$!
           npx playwright install --only-shell chromium
+          wait "$typecheck" || { cat "$RUNNER_TEMP/typecheck.log"; exit 1; }
+          cat "$RUNNER_TEMP/typecheck.log"
           wait "$python" || { cat "$RUNNER_TEMP/python-runner.log"; exit 1; }
           wait "$js" || { cat "$RUNNER_TEMP/js-runner.log"; exit 1; }
       - id: namespace

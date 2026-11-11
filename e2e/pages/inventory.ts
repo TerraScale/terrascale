@@ -1,12 +1,16 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import type { Journey } from '../support/state';
 
 export type PagePattern = { path: RegExp; query?: Record<string, RegExp> };
+
+type Identity = (page: Page, journey: Journey) => Locator;
 
 export type PageState = {
   name: string;
   url: (journey: Journey) => string;
   covers: PagePattern;
+  heading: Identity;
+  path?: string;
   status?: number;
   shell?: false;
   data?: (page: Page, journey: Journey) => Promise<void>;
@@ -18,16 +22,29 @@ const optionalId = new RegExp(`^(${ulid})?$`);
 const database = (journey: Journey) => `/databases/${journey.databaseId}`;
 const databasePath = (tab: string) => new RegExp(`^/databases/${ulid}${tab ? `/${tab}` : ''}$`);
 
+const title =
+  (name: string | RegExp, level: 1 | 2 = 1): Identity =>
+  (page) =>
+    page.getByRole('heading', { level, name, exact: typeof name === 'string' });
+const inDialog =
+  (dialog: string, name: string): Identity =>
+  (page) =>
+    page.locator(`dialog#${dialog}[open]`).getByRole('heading', { level: 2, name, exact: true });
+const region =
+  (name: string): Identity =>
+  (page) =>
+    page.getByRole('region', { name, exact: true });
+const currentTab =
+  (navigation: string, label: string): Identity =>
+  (page) =>
+    page.getByRole('navigation', { name: navigation }).locator('[aria-current="page"]', { hasText: new RegExp(`^${label}$`) });
+
 function stat(page: Page, label: string) {
   return page.locator('dl[aria-label="Workspace metrics"] .ts-stat').filter({ has: page.locator('dt', { hasText: label }) }).locator('dd');
 }
 
-async function heading(page: Page, text: string): Promise<void> {
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(text);
-}
-
 async function databaseHeader(page: Page, journey: Journey): Promise<void> {
-  await heading(page, journey.databaseName);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(journey.databaseName);
   const header = page.locator('main');
   await expect(header.getByText('ready', { exact: true }).first()).toBeVisible();
   await expect(header.getByText(new RegExp(`^${journey.databaseRegion}$`, 'i')).first()).toBeVisible();
@@ -45,19 +62,19 @@ async function connectCard(page: Page, journey: Journey): Promise<void> {
   }
 }
 
-const databaseTabs: [string, string][] = [
-  ['tables', 'Tables'],
-  ['grants', 'Grants'],
-  ['sql', 'SQL editor'],
-  ['functions', 'Functions'],
-  ['replication', 'Replication'],
-  ['conflicts', 'Conflicts'],
-  ['logs', 'Logs'],
-  ['backups', 'Backups'],
-  ['branches', 'Forks'],
-  ['settings', 'Settings'],
-  ['danger', 'Danger zone'],
-  ['point-in-time', 'Point-in-time recovery'],
+const databaseTabs: [string, string, Identity][] = [
+  ['tables', 'Tables', currentTab('Database sections', 'Tables')],
+  ['grants', 'Grants', title('Grants', 2)],
+  ['sql', 'SQL editor', title('Saved queries', 2)],
+  ['functions', 'Functions', title('Functions', 2)],
+  ['replication', 'Replication', title('Replication', 2)],
+  ['conflicts', 'Conflicts', title('Conflicts', 2)],
+  ['logs', 'Logs', title('Request logs', 2)],
+  ['backups', 'Backups', title('Backup policy', 2)],
+  ['branches', 'Forks', title('Forks', 2)],
+  ['settings', 'Settings', title('Settings', 2)],
+  ['danger', 'Danger zone', title('Danger zone', 2)],
+  ['point-in-time', 'Point-in-time recovery', title('Restore database at UTC time', 2)],
 ];
 
 const tabStates: Record<string, PagePattern['query']> = {
@@ -65,21 +82,36 @@ const tabStates: Record<string, PagePattern['query']> = {
   tables: { table: /^[A-Za-z0-9_]*$/ },
 };
 
-const authSections: [string, string][] = [
-  ['overview', 'Overview'],
-  ['users', 'Users'],
-  ['sessions', 'Sessions'],
-  ['sign-in', 'Sign-in methods'],
-  ['social', 'Social sign-in'],
-  ['configuration', 'Configuration'],
-  ['clients', 'OAuth applications'],
-  ['webhooks', 'Webhooks'],
-  ['branding', 'Branding'],
-  ['danger', 'Danger zone'],
+const authSections: [string, string, Identity][] = [
+  ['overview', 'Overview', title('Project authentication', 2)],
+  ['users', 'Users', title('Authentication: Users')],
+  ['sessions', 'Sessions', title('Authentication: Sessions')],
+  ['sign-in', 'Sign-in methods', title('Authentication: Sign-in methods')],
+  ['social', 'Social sign-in', title('Authentication: Social sign-in')],
+  ['configuration', 'Configuration', title('Authentication: Configuration')],
+  ['clients', 'OAuth applications', title('Authentication: OAuth applications')],
+  ['webhooks', 'Webhooks', title('Authentication: Webhooks')],
+  ['branding', 'Branding', title('Authentication: Branding')],
+  ['danger', 'Danger zone', title('Authentication: Danger zone')],
 ];
 
-const organizationTabs = ['members', 'invitations', 'projects', 'billing', 'audit', 'sso', 'danger'];
-const profileTabs = ['profile', 'security', 'sessions', 'access-tokens', 'danger'];
+const organizationTabs: [string, Identity][] = [
+  ['members', title(/^Organization members/, 2)],
+  ['invitations', title(/^Invitations/, 2)],
+  ['projects', region('Organization projects')],
+  ['billing', title('Plans and billing', 2)],
+  ['audit', title('Recent activity', 2)],
+  ['sso', title('Single sign-on', 2)],
+  ['danger', title('Danger zone', 2)],
+];
+
+const profileTabs: [string, Identity][] = [
+  ['profile', title('Profile details', 2)],
+  ['security', title('Passkeys', 2)],
+  ['sessions', title('Active sessions', 2)],
+  ['access-tokens', title('Personal access tokens', 2)],
+  ['danger', title('Delete account', 2)],
+];
 
 const organizationData: Record<string, PageState['data']> = {
   members: async (page, journey) => {
@@ -99,17 +131,18 @@ export const dashboardStates: readonly PageState[] = [
     name: 'overview',
     url: () => '/',
     covers: { path: /^\/$/ },
+    heading: title('Overview'),
     data: async (page) => {
-      await heading(page, 'Overview');
       await expect(stat(page, 'Databases')).toHaveText('1');
     },
   },
-  { name: 'overview over 7 days', url: () => '/?range=7d', covers: { path: /^\/$/ } },
-  { name: 'overview connect', url: () => '/?tab=connect', covers: { path: /^\/$/, query: { tab: /^connect$/ } } },
+  { name: 'overview over 7 days', url: () => '/?range=7d', covers: { path: /^\/$/ }, heading: title('Overview') },
+  { name: 'overview connect', url: () => '/?tab=connect', covers: { path: /^\/$/, query: { tab: /^connect$/ } }, heading: title('Connect') },
   {
     name: 'databases',
     url: () => '/databases',
     covers: { path: /^\/databases$/ },
+    heading: title('Databases'),
     data: async (page, journey) => {
       const row = page.locator('main tr').filter({ hasText: journey.databaseName });
       await expect(row).toHaveCount(1);
@@ -117,19 +150,18 @@ export const dashboardStates: readonly PageState[] = [
       await expect(row).toContainText(journey.databaseRegion, { ignoreCase: true });
     },
   },
-  { name: 'databases over 7 days', url: () => '/databases?range=7d', covers: { path: /^\/databases$/ } },
+  { name: 'databases over 7 days', url: () => '/databases?range=7d', covers: { path: /^\/databases$/ }, heading: title('Databases') },
   {
     name: 'new database dialog',
     url: () => '/databases?create=1',
     covers: { path: /^\/databases$/, query: { create: /^1$/ } },
-    data: async (page) => {
-      await expect(page.locator('#create-database[open]')).toBeVisible();
-    },
+    heading: inDialog('create-database', 'New database'),
   },
   {
     name: 'database overview',
     url: database,
     covers: { path: databasePath(''), query: { created: /^1?$/ } },
+    heading: title('Connect', 2),
     data: async (page, journey) => {
       await databaseHeader(page, journey);
       await connectCard(page, journey);
@@ -139,31 +171,36 @@ export const dashboardStates: readonly PageState[] = [
     name: 'database overview over 7 days',
     url: (journey) => `${database(journey)}?reads=7d&writes=7d&storage=7d&latency=7d`,
     covers: { path: databasePath('') },
+    heading: title('Connect', 2),
   },
-  ...databaseTabs.map(([tab, title]): PageState => ({
-    name: `database ${title.toLowerCase()}`,
-    url: (journey) => `${database(journey)}/${tab}`,
-    covers: { path: databasePath(tab), query: tabStates[tab] },
-    data: async (page, journey) => {
-      await expect(page).toHaveTitle(`${journey.databaseName} · ${title} · TerraScale`);
-      await databaseHeader(page, journey);
-    },
-  })),
+  ...databaseTabs.map(
+    ([tab, label, heading]): PageState => ({
+      name: `database ${label.toLowerCase()}`,
+      url: (journey) => `${database(journey)}/${tab}`,
+      covers: { path: databasePath(tab), query: tabStates[tab] },
+      heading,
+      data: async (page, journey) => {
+        await expect(page).toHaveTitle(`${journey.databaseName} · ${label} · TerraScale`);
+        await databaseHeader(page, journey);
+      },
+    }),
+  ),
   {
     name: 'fork dialog',
     url: (journey) => `${database(journey)}/branches?fork=1`,
     covers: { path: databasePath('branches'), query: { fork: /^1$/ } },
-    data: async (page) => {
-      await expect(page.locator('#name-branch[open]')).toBeVisible();
-    },
+    heading: inDialog('name-branch', 'Fork database'),
   },
-  { name: 'file storage', url: () => '/storage', covers: { path: /^\/storage$/ } },
+  { name: 'file storage', url: () => '/storage', covers: { path: /^\/storage$/ }, heading: title('Files') },
   {
     name: 'api keys',
     url: () => '/api-keys',
     covers: { path: /^\/api-keys$/ },
+    heading: title('API keys'),
     data: async (page, journey) => {
-      await expect(page.locator('main tr').filter({ hasText: journey.apiKeyName })).toHaveCount(1);
+      const row = page.locator('main tr').filter({ hasText: journey.apiKeyName });
+      await expect(row).toHaveCount(1);
+      await expect(row.locator('.ts-apikeys-scopes .ts-badge')).toHaveText(['Full access']);
       expect((await page.content()).includes(journey.apiKey), 'the API key secret is never shown again').toBe(false);
     },
   },
@@ -171,42 +208,54 @@ export const dashboardStates: readonly PageState[] = [
     name: 'new api key dialog with scopes',
     url: () => '/api-keys?create=key&scopes=sql%3Aread%2Csql%3Awrite',
     covers: { path: /^\/api-keys$/, query: { create: /^key$/, scopes: /^[a-z:,]*$/ } },
+    heading: inDialog('create-key', 'New API key'),
     data: async (page) => {
-      await expect(page.locator('#create-key[open]')).toBeVisible();
       await expect(page.locator('#create-key input[name="scopes"][value="sql:write"]')).toBeChecked();
     },
   },
-  { name: 'authentication', url: () => '/auth', covers: { path: /^\/auth$/ } },
-  ...authSections.map(([section, title]): PageState => ({
-    name: `authentication ${title.toLowerCase()}`,
-    url: () => `/auth/${section}`,
-    covers: { path: new RegExp(`^/auth/${section}$`) },
-  })),
-  { name: 'authentication under its alias', url: () => '/authentication', covers: { path: /^\/authentication$/ } },
+  { name: 'authentication', url: () => '/auth', covers: { path: /^\/auth$/ }, heading: title('Project authentication', 2) },
+  ...authSections.map(
+    ([section, label, heading]): PageState => ({
+      name: `authentication ${label.toLowerCase()}`,
+      url: () => `/auth/${section}`,
+      covers: { path: new RegExp(`^/auth/${section}$`) },
+      heading,
+    }),
+  ),
+  {
+    name: 'authentication under its alias',
+    url: () => '/authentication',
+    covers: { path: /^\/authentication$/ },
+    heading: title('Project authentication', 2),
+  },
   {
     name: 'authentication users under its alias',
     url: () => '/authentication/users',
     covers: { path: new RegExp(`^/authentication/(${authSections.map(([section]) => section).join('|')})$`) },
+    heading: title('Authentication: Users'),
   },
-  { name: 'analytics', url: () => '/analytics', covers: { path: /^\/analytics$/ } },
-  { name: 'analytics over 7 days', url: () => '/analytics?range=7d', covers: { path: /^\/analytics$/ } },
+  { name: 'analytics', url: () => '/analytics', covers: { path: /^\/analytics$/ }, heading: title('Analytics') },
+  { name: 'analytics over 7 days', url: () => '/analytics?range=7d', covers: { path: /^\/analytics$/ }, heading: title('Analytics') },
   {
     name: 'analytics of the database',
-    url: (journey) => `/analytics?project=${journey.projectId}&database=${journey.databaseId}&region=local`,
-    covers: { path: /^\/analytics$/, query: { project: optionalId, database: optionalId, region: /^[A-Za-z]*$/ } },
+    url: (journey) => `/analytics?project=${journey.projectId}&database=${journey.databaseId}&region=${journey.databaseRegion}`,
+    covers: { path: /^\/analytics$/, query: { project: optionalId, database: optionalId, region: /^[A-Za-z0-9-]*$/ } },
+    heading: title('Analytics'),
   },
-  { name: 'usage', url: () => '/usage', covers: { path: /^\/usage$/ } },
+  { name: 'usage', url: () => '/usage', covers: { path: /^\/usage$/ }, heading: title('By project', 2) },
   {
     name: 'usage of the project',
     url: (journey) => `/usage?tab=overview&project=${journey.projectId}&database=`,
     covers: { path: /^\/usage$/, query: { tab: /^overview$/, project: id, database: optionalId } },
+    heading: title('By database', 2),
   },
-  { name: 'organization', url: () => '/organization', covers: { path: /^\/organization$/ } },
+  { name: 'organization', url: () => '/organization', covers: { path: /^\/organization$/ }, heading: title('Details', 2) },
   ...organizationTabs.map(
-    (tab): PageState => ({
+    ([tab, heading]): PageState => ({
       name: `organization ${tab}`,
       url: () => `/organization?tab=${tab}`,
       covers: { path: /^\/organization$/, query: { tab: new RegExp(`^${tab}$`) } },
+      heading,
       data: organizationData[tab],
     }),
   ),
@@ -214,40 +263,47 @@ export const dashboardStates: readonly PageState[] = [
     name: 'new project dialog',
     url: () => '/organization?newProject=1',
     covers: { path: /^\/organization$/, query: { newProject: /^1$/ } },
+    heading: inDialog('create-project', 'Create project'),
   },
   {
     name: 'new organization dialog',
     url: () => '/organization?newOrganization=organization',
     covers: { path: /^\/organization$/, query: { newOrganization: /^organization$/ } },
+    heading: inDialog('create-organization', 'Create organization'),
   },
-  { name: 'project settings', url: () => '/project', covers: { path: /^\/project$/ } },
-  { name: 'project members', url: () => '/project/members', covers: { path: /^\/project\/members$/ } },
-  { name: 'project invitations', url: () => '/project/invitations', covers: { path: /^\/project\/invitations$/ } },
-  { name: 'profile', url: () => '/profile', covers: { path: /^\/profile$/ } },
+  { name: 'project settings', url: () => '/project', covers: { path: /^\/project$/ }, heading: title('Project settings') },
+  { name: 'project members', url: () => '/project/members', covers: { path: /^\/project\/members$/ }, heading: region('Explicit project grants') },
+  { name: 'project invitations', url: () => '/project/invitations', covers: { path: /^\/project\/invitations$/ }, heading: title('Project invitations') },
+  { name: 'profile', url: () => '/profile', covers: { path: /^\/profile$/ }, heading: title('Profile details', 2) },
   ...profileTabs.map(
-    (tab): PageState => ({
+    ([tab, heading]): PageState => ({
       name: `profile ${tab}`,
       url: () => `/profile?tab=${tab}`,
       covers: { path: /^\/profile$/, query: { tab: new RegExp(`^${tab}$`), status: /^([a-z-]+)?$/ } },
+      heading,
     }),
   ),
-  { name: 'notifications', url: () => '/notifications', covers: { path: /^\/notifications$/ } },
+  { name: 'notifications', url: () => '/notifications', covers: { path: /^\/notifications$/ }, heading: title('Notifications') },
   {
     name: 'unread notifications',
     url: () => '/notifications?status=unread',
     covers: { path: /^\/notifications$/, query: { status: /^unread$/ } },
+    heading: title('Notifications'),
   },
-  { name: 'alert rules', url: () => '/notifications/alerts', covers: { path: /^\/notifications\/alerts$/ } },
-  { name: 'support', url: () => '/support', covers: { path: /^\/support$/ } },
+  { name: 'alert rules', url: () => '/notifications/alerts', covers: { path: /^\/notifications\/alerts$/ }, heading: title('Create alert rule', 2) },
+  { name: 'support', url: () => '/support', covers: { path: /^\/support$/ }, heading: title('Contact support') },
   {
     name: 'support about a request',
     url: (journey) => `/support?relatedRequestId=${journey.databaseId}`,
     covers: { path: /^\/support$/, query: { relatedRequestId: id } },
+    heading: title('Contact support'),
   },
   {
     name: 'api reference',
     url: () => '/reference',
     covers: { path: /^\/reference\/?$/ },
+    heading: region('Introduction'),
+    path: '/reference/',
     shell: false,
     data: async (page) => {
       await expect(page).toHaveTitle('TerraScale API reference');
@@ -257,21 +313,21 @@ export const dashboardStates: readonly PageState[] = [
     name: 'page not found',
     url: () => '/this-page-does-not-exist',
     covers: { path: /^\/this-page-does-not-exist$/ },
+    heading: title('We can’t find that page.'),
     status: 404,
     data: async (page) => {
       await expect(page).toHaveTitle('Page not found · TerraScale');
-      await heading(page, 'We can’t find that page.');
     },
   },
   {
     name: 'platform administration',
     url: () => '/admin',
     covers: { path: /^\/admin$/ },
+    heading: title('This request was not allowed'),
     status: 403,
     shell: false,
     data: async (page) => {
       await expect(page).toHaveTitle('This request was not allowed · TerraScale');
-      await heading(page, 'This request was not allowed');
     },
   },
 ];
