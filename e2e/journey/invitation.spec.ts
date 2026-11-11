@@ -31,6 +31,9 @@ test('a second user signs up on a phone, the Free plan refuses to invite them, a
   const ownerAudit = new Audit(ownerPage, info);
   ownerAudit.expectStatus(/^https:\/\/dash\.terrascale\.tech\/api\/v1\/access\/invitations(\?|$)/, 409);
   await ownerPage.goto(`${dash}/organization?tab=members`);
+  const refused = await ownerPage.request.post(`${dash}/api/v1/access/invitations?tab=invitations`, { form: { email, role: 'member' }, headers: { Accept: 'application/json' } });
+  expect(refused.status(), 'an invitation posted without its form token').toBe(400);
+  expect(await refused.json(), 'an invitation posted without its form token').toBe('Invalid form token.');
   await ownerPage.locator('#invite-email').fill(email);
   await ownerPage.locator('#invite-role').selectOption('member');
   await ownerPage.locator('#team-invite').locator('button[type=submit]').click();
