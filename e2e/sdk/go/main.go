@@ -177,7 +177,14 @@ func (r *runner) do(op operation) error {
 		}
 		return same(result.RowsAffected, op.RowsAffected, "rows affected")
 	case "sql.execute.statement":
-		return errors.New("v1.Database has no execute for a Statement value; sdk/SQL-API.md lists execute(statement)")
+		result, err := r.db.ExecuteStatement(ctx, v1.Statement{SQL: r.fill(op.SQL), Args: op.Args})
+		if err != nil {
+			return err
+		}
+		if err := same(result.RowsAffected, op.RowsAffected, "rows affected"); err != nil {
+			return err
+		}
+		return r.count(op.Check, op.CheckRows, "stored row")
 	case "sql.query":
 		rows, err := r.db.Query(ctx, r.fill(op.SQL))
 		if err != nil {

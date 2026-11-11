@@ -4,8 +4,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use terrascale::v1::{
-    new_id, Client, CreateDatabaseOptions, Database, Error, ManagedDatabase, ScopedKeyAccess,
-    ScopedKeyOptions, SqlRecord, SqlSession, SqlStatement, SqlStatementResult, SqlValue,
+    is_valid_id, new_id, Client, CreateDatabaseOptions, Database, Error, ManagedDatabase,
+    ScopedKeyAccess, ScopedKeyOptions, SqlRecord, SqlSession, SqlStatement, SqlStatementResult,
+    SqlValue,
 };
 
 type Outcome = Result<(), String>;
@@ -395,13 +396,11 @@ impl Runner {
                     .map_err(e)?;
                 same(records(&rows), &op["rows"], "conflict rows")
             }
-            "ids.new_validate" => {
-                let generated = new_id();
-                Err(format!(
-                    "the Rust SDK exports new_id ({} characters) but no id validation; v1::ids::valid_entity_id is crate-private and sdk/SQL-API.md lists validate",
-                    generated.len()
-                ))
-            }
+            "ids.new_validate" => same(
+                json!([is_valid_id(&new_id()), is_valid_id(&text(op, "invalid"))]),
+                &json!([true, false]),
+                "validation",
+            ),
             "agent.create_ttl" => {
                 let options = CreateDatabaseOptions {
                     ttl_seconds: op["ttlSeconds"].as_u64(),

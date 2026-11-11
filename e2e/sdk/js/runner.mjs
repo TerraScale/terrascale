@@ -1,14 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
-import { createTerraBaseClient, generateId, isValidId } from '../../../sdk/js/src/index.js';
+import { createTerraBaseClientFromEnvironment, generateId, isValidId } from '../../../sdk/js/src/index.js';
 
 const spec = JSON.parse(readFileSync(process.env.E2E_OPERATIONS, 'utf8'));
 const run = process.env.E2E_RUN_ID;
 const project = process.env.TERRASCALE_PROJECT_ID;
 const table = spec.table.replace('{sdk}', 'js').replace('{run}', run);
 const fill = (text) => text.replaceAll('{table}', table).replaceAll('{sdk}', 'js').replaceAll('{run}', run);
-const origin = 'https://api.terrascale.tech';
-const client = createTerraBaseClient({ baseUrl: origin, project, apiKey: process.env.TERRASCALE_API_KEY });
+const client = createTerraBaseClientFromEnvironment();
 const state = {};
 
 function check(condition, message) {
@@ -146,7 +145,7 @@ const operations = {
   },
   async 'agent.scoped_key'(op) {
     const scoped = await client.createScopedKey({ project, database: state.agent.id, access: op.access, ttlSeconds: op.ttlSeconds });
-    const narrow = createTerraBaseClient({ baseUrl: origin, project, apiKey: scoped.key });
+    const narrow = createTerraBaseClientFromEnvironment({ apiKey: scoped.key });
     await narrow.database(state.agent.id).execute(op.sql);
     same(await status(() => narrow.database(fill(op.outside)).execute(op.sql)), op.outsideStatus, 'outside its database');
     same(await status(() => narrow.createScopedKey({ project, database: state.agent.id, access: 'read' })), op.mintStatus, 'minting with a scoped key');
