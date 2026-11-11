@@ -1,7 +1,8 @@
 import type { Page } from '@playwright/test';
+import { deleteAccount } from '../support/account';
 import { test, expect, type Audit } from '../support/audit';
 import { branchAction, installAction, psql, sourceUrl, withoutPassword, workflowRun } from '../support/branch';
-import { databaseNames, type PaidJourney } from '../support/paid';
+import { databaseNames, stripeLog, type PaidJourney } from '../support/paid';
 import { runOperations, sdks } from '../support/sdk';
 import { shell } from '../support/shell';
 import { journey, setupFinished } from '../support/state';
@@ -67,5 +68,21 @@ test.describe('branch action', () => {
     expect(deleted, 'outputs of delete').toEqual({ name: created.name });
     expect(await rows(source, current.apiKey), 'rows of the source after delete').toEqual(['source']);
     await databaseList(page, audit, current, sources, 'after delete');
+  });
+});
+
+test.describe('teardown', () => {
+  test('the Pro owner deletes the account, which cancels the Stripe subscription, and a new sign-in is refused', async ({ page, audit, browser }, info) => {
+    test.setTimeout(120_000);
+    const current = journey<PaidJourney>();
+    await deleteAccount(page, audit, browser, info);
+    await expect
+      .poll(async () => (await stripeLog()).cancels.filter((cancel) => cancel.organization === current.organizationId).length, {
+        message: 'subscriptions of the Pro organization the Stripe stand-in cancelled once the deletion reconciler ran',
+        timeout: 75_000,
+        intervals: [500],
+      })
+      .toBe(1);
+    expect((await stripeLog()).unexpected, 'calls the Stripe stand-in answered with 404').toEqual([]);
   });
 });
