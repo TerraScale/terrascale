@@ -13,6 +13,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 {
     internal const string Cookie = "ts-dashboard-session";
     private const int MaxBrowserSessions = 1000;
+    private static readonly TimeSpan RenewBeforeExpiry = TimeSpan.FromSeconds(30);
 
     public async Task StartAsync(HttpContext context, SessionRecord record)
     {
@@ -200,7 +201,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
                 return null;
             }
 
-            if (record.ExpiresAt <= now || forceRefresh && record.AccessToken == accessOnEntry)
+            if (record.ExpiresAt <= now + RenewBeforeExpiry || forceRefresh && record.AccessToken == accessOnEntry)
             {
                 if (string.IsNullOrWhiteSpace(record.RefreshToken))
                 {
