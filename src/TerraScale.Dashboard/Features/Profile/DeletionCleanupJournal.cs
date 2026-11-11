@@ -68,7 +68,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     Id = proof.Id,
                     Scope = proof.Scope,
                     SubjectId = proof.SubjectId,
-                    OrganizationId = proof.OrganizationId,
+                    OrganizationId = proof.Scope == DeletionCleanupRow.Organization ? null : proof.OrganizationId,
                     CreatedAt = clock.GetUtcNow().UtcDateTime,
                 });
                 db.DeletionCleanupTargets.AddRange(entry.ProjectIds.Select(id => Target(proof.Id, DeletionCleanupTargetRow.Project, id)));
@@ -101,7 +101,7 @@ namespace TerraScale.Dashboard.Features.Profile
         private static Entry Read(DeletionCleanupRow row, IEnumerable<DeletionCleanupTargetRow> targets)
         {
             var kept = targets.ToLookup(target => target.Kind, StringComparer.Ordinal);
-            return new(new(row.Id, row.Scope, row.SubjectId, row.OrganizationId),
+            return new(new(row.Id, row.Scope, row.SubjectId, row.Scope == DeletionCleanupRow.Organization ? row.SubjectId : row.OrganizationId),
                 [.. kept[DeletionCleanupTargetRow.Project].Select(target => target.TargetId).Order(StringComparer.Ordinal)],
                 [.. kept[DeletionCleanupTargetRow.Customer].Select(target => target.TargetId).Order(StringComparer.Ordinal)]);
         }
