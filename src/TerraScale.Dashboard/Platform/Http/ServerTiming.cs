@@ -54,28 +54,25 @@ namespace TerraScale.Dashboard.Platform.Http
                 return read();
             }
 
+            var start = new Task<Task<T>>(read);
+            var task = start.Unwrap();
             lock (timing.gate)
             {
-                if (!publicMetadata && Volatile.Read(ref timing.pendingWrites) != 0)
+                if (publicMetadata || Volatile.Read(ref timing.pendingWrites) == 0)
                 {
-                    return read();
-                }
+                    var generation = publicMetadata ? -1 : Volatile.Read(ref timing.writes);
+                    if (timing.readTasks.TryGetValue(key, out var entry) && entry.Writes == generation &&
+                        entry.Task is Task<T> pending && !pending.IsFaulted && !pending.IsCanceled)
+                    {
+                        return pending;
+                    }
 
-                var generation = publicMetadata ? -1 : Volatile.Read(ref timing.writes);
-                if (timing.readTasks.TryGetValue(key, out var entry) && entry.Writes == generation &&
-                    entry.Task is Task<T> pending && !pending.IsFaulted && !pending.IsCanceled)
-                {
-                    return pending;
+                    timing.readTasks[key] = (generation, task);
                 }
+            }
 
-                var task = StartAsync();
-                timing.readTasks[key] = (generation, task);
-                return task;
-            }
-            async Task<T> StartAsync()
-            {
-                return await read();
-            }
+            start.RunSynchronously();
+            return task;
         }
 
         // Token grants change none of the account/permission/billing records the dashboard context reads.
