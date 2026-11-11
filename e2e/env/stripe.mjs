@@ -54,6 +54,10 @@ const api = [
     return { data: customers, has_more: false, next_page: null };
   }],
   ['GET', /^\/v1\/customers\/(cus_\w+)$/, (query, [customer]) => find('cus', customer)],
+  ['POST', /^\/v1\/customers\/(cus_\w+)$/, (form, [customer]) => {
+    const found = find('cus', customer);
+    return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
+  }],
   ['POST', /^\/v1\/checkout\/sessions$/, (form) => {
     const price = find('price', form.get('line_items[0][price]'));
     if (form.get('mode') !== 'subscription' || !price || form.get('line_items[0][quantity]') !== '1' || !find('cus', form.get('customer'))) return undefined;
@@ -62,13 +66,21 @@ const api = [
       metadata: fields(form, 'metadata'), mode: 'subscription', status: 'open', url: null,
     });
     session.url = `https://checkout.stripe.com/c/pay/${session.id}`;
-    checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url') });
+    checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url'), cancel: form.get('cancel_url') });
     return session;
   }, {}, { expires_at: within(hour / 2, 24 * hour) }],
   ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }],
   ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session)],
+  ['POST', /^\/v1\/checkout\/sessions\/(cs_test_\w+)\/expire$/, (form, [session]) => {
+    const found = find('cs', session);
+    return found?.status === 'open' ? Object.assign(found, { status: 'expired', url: null }) : found;
+  }],
   ['GET', /^\/v1\/subscriptions$/, (query) => list(owned('sub', query.get('customer'))), { customer: customerId, status: /^all$/ }],
   ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription)],
+  ['POST', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [subscription]) => {
+    const found = find('sub', subscription);
+    return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
+  }],
   ['DELETE', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [key]) => {
     const subscription = find('sub', key);
     if (subscription?.status === 'canceled') return { refused: 'A canceled subscription can only update its metadata and cancellation_details.' };
@@ -98,7 +110,7 @@ function complete(session) {
     items: list([{ current_period_end: end, current_period_start: start, price: structuredClone(price), quantity: 1 }]),
   });
   objects.get(session.customer).address = { city: 'Sao Paulo', country: 'BR', line1: 'Avenida Paulista 1000', line2: null, postal_code: '01310-100', state: 'SP' };
-  return Object.assign(session, { status: 'complete', subscription: subscription.id, url: null });
+  return Object.assign(session, { status: 'complete', payment_status: 'paid', subscription: subscription.id, url: null });
 }
 
 async function deliver(type, object) {
@@ -112,7 +124,7 @@ async function deliver(type, object) {
 function page(session) {
   const { price } = checkouts.get(session.id);
   const product = objects.get(price.product);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checkout · Stripe</title><link rel="icon" href="data:,"></head><body><main><h1>Subscribe to ${product.name}</h1><p>US$${(price.unit_amount / 100).toFixed(2)} per ${price.recurring.interval}, Visa ending in 4242</p><form method="post"><button type="submit">Subscribe</button></form></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checkout · Stripe</title><link rel="icon" href="data:,"></head><body><main><h1>Subscribe to ${product.name}</h1><p>US$${(price.unit_amount / 100).toFixed(2)} per ${price.recurring.interval}, Visa ending in 4242</p><form method="post"><button type="submit">Subscribe</button></form><a href="${checkouts.get(session.id).cancel}">Cancel</a></main></body></html>`;
 }
 
 function reply(response, status, body, headers = {}) {

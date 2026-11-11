@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Organizations
     public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
         OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
         BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null, string ProjectDraftId = "",
-        string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0, InvitationDraft? InviteDraft = null);
+        string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0, InvitationDraft? InviteDraft = null, string OrganizationDraftName = "", string OrganizationDraftPlan = "", string OrganizationDraftInterval = "");
 
     public static class OrganizationEndpoints
     {
@@ -44,7 +44,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             return slice;
         }
 
-        internal static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null, bool openCreateProject = false)
+        internal static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null, bool openCreateProject = false, string? wizardOverride = null)
         {
             if (context.Organization is not null && context.Role.Length == 0)
             {
@@ -58,24 +58,28 @@ namespace TerraScale.Dashboard.Features.Organizations
                 tab = "organization";
             }
 
-            var regionsRead = tab == "projects" || http.Request.Query["newOrganization"] == "project" || openCreateProject
+            var requestedWizard = wizardOverride ?? http.Request.Query["newOrganization"].ToString();
+            var regionsRead = tab == "projects" || requestedWizard == "project" || openCreateProject
                 ? placement.RegionsAsync(http.RequestAborted) : null;
             // The projects and billing tabs render no members, invitations, audit events or ownership transfer.
             var accessRead = context.Organization is not null && tab is not ("projects" or "billing")
                 ? http.RequestServices.GetRequiredService<IOrganizationAccess>().ReadAsync(context, http.RequestAborted) : null;
             IReadOnlyList<string> regions = regionsRead is null ? [] : await regionsRead;
             var access = accessRead is null ? null : await accessRead;
-            var wizard = http.Request.Query["newOrganization"].ToString();
+            var wizard = requestedWizard;
             if (wizard is not ("organization" or "payment" or "project"))
             {
                 wizard = "";
             }
 
-            if (wizard.Length > 0 && wizard != "organization")
+            var draft = (http.Items.TryGetValue(nameof(PendingOrganizationCheckout), out var pending) ? pending : null) as PendingOrganizationCheckout;
+            if (draft is not null)
             {
-                wizard = context.Organization?.Kind != "business" || context.Role != "owner"
-                    ? "organization"
-                    : !context.Organization.CanProvision(context.UserId) ? "payment" : "project";
+                wizard = "payment";
+            }
+            if (wizard == "project" && (context.Organization?.Kind != "business" || context.Role != "owner"))
+            {
+                wizard = "organization";
             }
             if (error.Length == 0 && http.Request.Query["error"].ToString() is { Length: > 0 and <= 500 } queryError)
             {
@@ -88,6 +92,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var pageWithoutDialog = wizard.Length > 0 ? "/organization" : openCreateProject ? "/organization?tab=projects" : null;
             return new(pageWithoutDialog is null ? shell : shell with { ReturnUrl = WorkspaceUrl.For(context, pageWithoutDialog) }, tab, regions, error,
                 openCreateProject, wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
+                OrganizationDraftName: draft?.Name ?? http.Request.Query["name"].ToString(), OrganizationDraftPlan: draft?.Plan ?? "", OrganizationDraftInterval: draft?.Interval ?? "",
                 Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "", RequireMfa: requireMfa,
                 Sso: tab == "sso" && context.CanManage ? await http.RequestServices.GetRequiredService<OrganizationSsoService>().ReadAsync(context, http.RequestAborted) : null);
         }
@@ -238,13 +243,11 @@ namespace TerraScale.Dashboard.Features.Organizations
 
             try
             {
-                var name = AccountService.ValidName(form["name"].ToString());
                 if (operation == "create")
                 {
-                    var organization = await accounts.CreateBusinessAsync(context.Session, name, http.RequestAborted);
-                    var selected = await accounts.GetContextAsync(context.Session, http.RequestAborted, organizationId: organization.Id);
-                    return HttpRedirects.SeeOther(WorkspaceUrl.For(selected, "/organization?tab=billing", replace: true));
+                    return await OrganizationWizard.NameStepAsync(http, context, placement, form["name"].ToString());
                 }
+                var name = AccountService.ValidName(form["name"].ToString());
                 var operations = http.RequestServices.GetRequiredService<OrganizationOperations>();
                 if (operation == "rename")
                 {

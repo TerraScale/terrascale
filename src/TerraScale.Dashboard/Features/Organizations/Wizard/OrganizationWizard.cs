@@ -1,99 +1,113 @@
+using RazorSlices;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Common.Validation;
 
-namespace TerraScale.Dashboard.Features.Organizations.Wizard
+namespace TerraScale.Dashboard.Features.Organizations.Wizard;
+
+public static class OrganizationWizard
 {
-    public static class OrganizationWizard
+    internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts,
+        IWorkspacePlacement placement, StripeBilling payments)
     {
-        internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts,
-            IWorkspacePlacement placement, StripeBilling payments)
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
-            {
-                return Results.Unauthorized();
-            }
-
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!Csrf.Validate(http, form))
-            {
-                return RequestError.FormExpired(http, "/organization", Results.StatusCode(403));
-            }
-
-            try
-            {
-                if (form["step"] == "organization")
-                {
-                    var org = await accounts.CreateBusinessAsync(context.Session, form["name"].ToString(), http.RequestAborted);
-                    context = await accounts.GetContextAsync(context.Session, http.RequestAborted, organizationId: org.Id);
-                    return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?newOrganization=payment&organizationId=" + Uri.EscapeDataString(org.Id), replace: true));
-                }
-                context = await SelectAsync(http, context, accounts, form["organizationID"].ToString());
-                if (context.Organization?.Kind != "business" || context.Role != "owner")
-                {
-                    throw new AccountAccessException("Business organization ownership is required.");
-                }
-
-                if (form["step"] == "payment-method")
-                {
-                    var plan = PlanCatalog.For(form["plan"].ToString());
-                    if (plan.PriceCents <= 0)
-                    {
-                        throw new OnboardingValidationException("Choose a paid plan for this business organization.");
-                    }
-
-                    var returnPath = WorkspaceUrl.For(context, "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(context.Organization.Id), replace: true);
-                    return HttpRedirects.SeeOther(await payments.StartCheckoutAsync(context, plan.Key, form["interval"].Count == 0 ? plan.CheckoutInterval : form["interval"].ToString(), returnPath, http.RequestAborted));
-                }
-                if (form["step"] != "project")
-                {
-                    throw new AccountAccessException("Choose an organization setup step.", 400);
-                }
-
-                if (!context.Organization.CanProvision(context.UserId))
-                {
-                    throw new AccountAccessException("Confirm this organization's billing before creating its first project.", 409);
-                }
-
-                if (context.Organization.Projects.Count > 0)
-                {
-                    return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
-                }
-
-                return await OrganizationEndpoints.MutateAsync(http, sessions, accounts, placement, "projects", scopedContext: context);
-            }
-            catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
-            {
-                var step = form["step"] == "payment-method" ? "payment" : form["step"] == "project" ? "project" : "organization";
-                return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?newOrganization=" + step + "&error=" + Uri.EscapeDataString(error.Message), replace: true));
-            }
+            return Results.Unauthorized();
         }
 
-        public static async Task<AccountContext> PrepareAsync(HttpContext http, AccountContext context, AccountService accounts)
+        var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+        if (!Csrf.Validate(http, form))
         {
-            if (http.Request.Query["newOrganization"] is not { Count: > 0 })
-            {
-                return context;
-            }
-
-            context = await SelectAsync(http, context, accounts, http.Request.Query["organizationId"].ToString());
-            if (http.Request.Query["payment"] == "success" && context.Role == "owner")
-            {
-                await http.RequestServices.GetRequiredService<StripeBilling>().ConfirmAsync(context, http.RequestAborted);
-                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
-            }
-            return context;
+            return RequestError.FormExpired(http, "/organization", Results.StatusCode(403));
         }
 
-        private static async Task<AccountContext> SelectAsync(HttpContext http, AccountContext context, AccountService accounts, string id)
+        try
         {
-            if (id.Length == 0 || id == context.Organization?.Id)
+            var name = AccountService.ValidName(form["name"].ToString());
+            if (form["step"] == "organization")
             {
-                return context;
+                return await NameStepAsync(http, context, placement, name);
             }
 
-            return await accounts.GetContextAsync(context.Session, http.RequestAborted, organizationId: id);
+            if (form["step"] == "payment-method")
+            {
+                var plan = PlanCatalog.For(form["plan"].ToString());
+                var interval = form["interval"].ToString() is { Length: > 0 } chosen ? chosen : plan.CheckoutInterval;
+                return HttpRedirects.SeeOther(await payments.StartOrganizationCheckoutAsync(context.Session, name, plan.Key, interval, http.RequestAborted));
+            }
+
+            if (form["step"] != "project")
+            {
+                throw new AccountAccessException("Choose an organization setup step.", 400);
+            }
+
+            context = await SelectAsync(http, context, accounts, form["organizationID"].ToString());
+            if (context.Organization?.Kind != "business" || context.Role != "owner")
+            {
+                throw new AccountAccessException("Business organization ownership is required.");
+            }
+
+            if (context.Organization.Projects.Count > 0)
+            {
+                return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
+            }
+
+            await http.RequestServices.GetRequiredService<OrganizationOperations>().CreateProjectAsync(context, name,
+                form["region"].ToString(), form["backupRegion"].ToString(),
+                [.. form["regions"].Select(value => value ?? "").Where(value => value.Length > 0)], http.RequestAborted);
+            return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
         }
+        catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
+        {
+            var step = form["step"] == "payment-method" ? "payment" : form["step"] == "project" ? "project" : "organization";
+            return await RenderAsync(http, context, placement, step, form["name"].ToString(), form["plan"].ToString(),
+                form["interval"].ToString(), error.Message, error is AccountAccessException access ? access.StatusCode : 422, form);
+        }
+    }
+
+    internal static async Task<IResult> NameStepAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string name)
+    {
+        try
+        {
+            return HttpRedirects.SeeOther("/organization?newOrganization=payment&name=" + Uri.EscapeDataString(AccountService.BusinessName(context, name)));
+        }
+        catch (AccountAccessException error)
+        {
+            return await RenderAsync(http, context, placement, "organization", name, error: error.Message, status: error.StatusCode);
+        }
+    }
+
+    private static async Task<RazorSlice> RenderAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string step, string name,
+        string plan = "", string interval = "", string error = "", int status = 200, IFormCollection? form = null)
+    {
+        var page = await OrganizationEndpoints.PageModelAsync(http, context, placement, error, wizardOverride: step);
+        var slice = OrganizationView.Create(page with
+        {
+            OpenCreateOrganization = true,
+            WizardStep = step,
+            OrganizationDraftName = step == "project" ? "" : name,
+            ProjectDraftName = step == "project" ? name : "",
+            OrganizationDraftPlan = plan,
+            OrganizationDraftInterval = interval,
+            ProjectDraftRegions = form is null ? null : [.. form["regions"].Select(value => value ?? "").Where(page.Regions.Contains)],
+            ProjectDraftPrimaryRegion = form?["region"].ToString() ?? "",
+            ProjectDraftBackupRegion = form?["backupRegion"].ToString() ?? ""
+        });
+        slice.StatusCode = status;
+        return slice;
+    }
+
+    public static Task<AccountContext> PrepareAsync(HttpContext http, AccountContext context, AccountService accounts)
+    {
+        return http.Request.Query["newOrganization"].Count > 0
+            ? SelectAsync(http, context, accounts, http.Request.Query["organizationId"].ToString())
+            : Task.FromResult(context);
+    }
+
+    private static async Task<AccountContext> SelectAsync(HttpContext http, AccountContext context, AccountService accounts, string id)
+    {
+        return id.Length == 0 || id == context.Organization?.Id ? context
+            : await accounts.GetContextAsync(context.Session, http.RequestAborted, organizationId: id);
     }
 }

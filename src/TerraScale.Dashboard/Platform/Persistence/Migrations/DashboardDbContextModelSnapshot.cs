@@ -985,6 +985,64 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.PendingOrganizationCheckout", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("CheckoutId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("checkout_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DraftId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("draft_id");
+
+                    b.Property<string>("Interval")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("interval");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Plan")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("CheckoutId")
+                        .IsUnique()
+                        .HasFilter("checkout_id <> ''");
+
+                    b.HasIndex("DraftId")
+                        .IsUnique();
+
+                    b.ToTable("pending_organization_checkouts", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_pending_organization_checkouts_id", "length(user_id) = 26 AND length(draft_id) = 26");
+
+                            t.HasCheckConstraint("ck_pending_organization_checkouts_name", "length(name) BETWEEN 1 AND 128");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.StripeCheckoutRow", b =>
                 {
                     b.Property<string>("Id")

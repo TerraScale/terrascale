@@ -15,11 +15,11 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
         public Task<TsAuthPlatformOrganization> CreateOrganizationAsync(
             string accessToken,
-            TsAuthPlatformName request,
+            TsAuthPlatformCreateOrganization request,
             CancellationToken cancellationToken = default)
         {
             return client.SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/terrascale/organizations",
-                request ?? throw new ArgumentNullException(nameof(request)), TsAuthIntegrationJsonContext.Default.TsAuthPlatformName,
+                request ?? throw new ArgumentNullException(nameof(request)), TsAuthIntegrationJsonContext.Default.TsAuthPlatformCreateOrganization,
                 TsAuthIntegrationJsonContext.Default.TsAuthPlatformOrganization,
                 TsAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
         }

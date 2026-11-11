@@ -89,6 +89,8 @@ Use your client's tool discovery (`tools/list`) for the current names, parameter
 accept `ttlHours`. With `pointInTime`, `fork_database` returns a running restore operation instead of waiting for the copy; poll `get_restore_status` for the new database. Backup and restore tools preserve the source database. See the complete
 [agent database workflow](/guides/agent-databases#agent-workflow), including scoped-key minting over an API key connection.
 
+`create_organization` starts billing checkout with `name`, `plan` (default `starter`) and `interval` (default `monthly`). It returns `status: "checkout_required"` and `checkoutUrl`. Open that URL and pay. No organization or membership exists before Stripe confirms payment. The next authenticated dashboard or MCP request completes creation automatically; `get_context` then lists the organization. Canceling checkout creates no organization.
+
 Creating or rotating an API key needs the dashboard: an unattended assistant call returns `step_up_required`, and you finish the action from the dashboard's **API keys** page, where rotating also asks for a fresh confirmation. Listing, restricting and revoking keys work from the assistant.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

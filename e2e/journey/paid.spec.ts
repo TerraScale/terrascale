@@ -105,3 +105,108 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
     databaseId, databaseName, databaseRegion: region, apiKeyName, apiKey, secondDatabaseId, secondDatabaseName,
   });
 });
+
+async function organizationOwner(page: Page, audit: import('../support/audit').Audit) {
+  const run = randomBytes(4).toString('hex');
+  const email = `organization-${run}@example.com`;
+  const password = randomBytes(24).toString('base64url');
+  saveSecret('organization-password', password);
+  await signUp(page, audit, email, password, 'organization owner');
+  await verify(page, email);
+  await onboard(page, audit, `Owner ${run}`, `Personal ${run}`, 'organization owner');
+  const deviceResponse = await page.request.post('https://auth.terrascale.tech/terrascale/oauth/device', {
+    form: { client_id: '00000000000000000000000007', scope: 'openid email profile' },
+  });
+  expect(deviceResponse.status()).toBe(200);
+  const device = await deviceResponse.json();
+  saveSecret('organization-device', device.device_code);
+  await page.goto(device.verification_uri_complete);
+  await audit.check('organization owner approves CLI access');
+  await page.locator('button[name=decision][value=approve]').click();
+  await expect(page.locator('[data-state=success]')).toBeVisible();
+  const tokenResponse = await page.request.post('https://auth.terrascale.tech/terrascale/oauth/token', {
+    form: { client_id: '00000000000000000000000007', grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: device.device_code },
+  });
+  expect(tokenResponse.status()).toBe(200);
+  const token = (await tokenResponse.json()).access_token as string;
+  saveSecret('organization-sign-in-token', token);
+  const headers = { authorization: `Bearer ${token}` };
+  const organizations = async () => {
+    const response = await page.request.get('https://auth.terrascale.tech/v1/terrascale/organizations', { headers });
+    expect(response.status()).toBe(200);
+    return (await response.json()).items as { id: string; name: string }[];
+  };
+  return { run, headers, organizations };
+}
+
+test('organization checkout creates nothing before payment and completes exactly once on authenticated return', async ({ page, audit }) => {
+  const owner = await organizationOwner(page, audit);
+  const before = await owner.organizations();
+  const name = `Confirmed ${owner.run}`;
+  await page.goto('/organization?newOrganization=organization');
+  const wizard = page.locator('#create-organization[open]');
+  const input = wizard.locator('input[name=name]');
+  await expect(input).toHaveAttribute('required', '');
+  await expect(input).toHaveAttribute('minlength', '1');
+  await expect(input).toHaveAttribute('maxlength', '128');
+  await expect(input).toHaveAttribute('pattern', /p\{L\}/);
+  await input.fill('!!!');
+  await wizard.locator('form').evaluate((form) => { (form as HTMLFormElement).noValidate = true; });
+  audit.expectStatus(/\/api\/v1\/dashboard\/organization\/new-organization(?:\?|$)/, 422);
+  await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await expect(wizard.getByRole('alert')).toContainText('Names need');
+  await expect(wizard.locator('input[name=name]')).toHaveValue('!!!');
+  await input.fill(name);
+  await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await expect(wizard.getByRole('heading', { name: 'Set up billing' })).toBeVisible();
+  expect(await owner.organizations()).toEqual(before);
+  await wizard.locator('input[name=plan][value=pro]').check();
+  await wizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  const checkoutId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+  expect(await owner.organizations()).toEqual(before);
+  await page.getByRole('button', { name: 'Subscribe', exact: true }).click();
+  await page.waitForURL((url) => url.origin === dash && url.pathname === '/organization' && url.searchParams.get('newOrganization') === 'project');
+  const created = (await owner.organizations()).filter((org) => org.name === name);
+  expect(created).toHaveLength(1);
+  const organization = created[0];
+  const again = await page.request.post('https://auth.terrascale.tech/v1/terrascale/organizations', {
+    headers: owner.headers, data: { name, idempotency_key: checkoutId },
+  });
+  expect(again.status()).toBe(201);
+  expect((await again.json()).id).toBe(organization.id);
+  await page.goto(`/billing/checkout/return?session_id=${checkoutId}`);
+  await page.goto(`/billing/checkout/return?session_id=${checkoutId}`);
+  expect((await owner.organizations()).filter((org) => org.name === name)).toEqual([organization]);
+  const members = await page.request.get(`https://auth.terrascale.tech/v1/terrascale/organizations/${organization.id}/members`, { headers: owner.headers });
+  expect(members.status()).toBe(200);
+  expect((await members.json()).items).toHaveLength(1);
+  const events = await page.request.get(`https://auth.terrascale.tech/v1/terrascale/organizations/${organization.id}/audit-events`, { headers: owner.headers });
+  expect(events.status()).toBe(200);
+  expect((await events.json()).items.filter((event: { action: string }) => event.action === 'organization.created')).toHaveLength(1);
+  await expect(page.locator('#create-organization[open]')).toBeVisible();
+  await audit.check('confirmed organization project step after repeated completion');
+  console.log('organization checkout: absent before payment; one organization, one owner membership and one creation audit after repeated completion and keyed auth create');
+});
+
+test('canceling organization checkout leaves no organization and preserves the wizard draft', async ({ page, audit }) => {
+  const owner = await organizationOwner(page, audit);
+  const before = await owner.organizations();
+  const name = `Canceled ${owner.run}`;
+  await page.goto('/organization?newOrganization=organization');
+  const wizard = page.locator('#create-organization[open]');
+  await wizard.locator('input[name=name]').fill(name);
+  await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await wizard.locator('input[name=plan][value=pro]').check();
+  await wizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  expect(await owner.organizations()).toEqual(before);
+  await page.getByRole('link', { name: 'Cancel', exact: true }).click();
+  await page.waitForURL((url) => url.origin === dash && url.searchParams.get('payment') === 'canceled');
+  await expect(wizard).toBeVisible();
+  await expect(wizard.locator('input[name=name]')).toHaveValue(name);
+  await expect(wizard.locator('input[name=plan][value=pro]')).toBeChecked();
+  expect(await owner.organizations()).toEqual(before);
+  await audit.check('canceled organization checkout keeps its draft and creates nothing');
+  console.log('organization checkout canceled: organization list unchanged; name and plan preserved in wizard');
+});

@@ -9,6 +9,7 @@ using TerraScale.TerraBase.Contracts;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Billing;
 namespace TerraScale.Dashboard.Common.Accounts
 {
     // ts-auth decides which organizations and projects exist and the caller's role
@@ -191,6 +192,11 @@ namespace TerraScale.Dashboard.Common.Accounts
         public async Task<AccountContext> GetContextAsync(SessionRecord session, CancellationToken cancellationToken,
             string? organizationId = null, string? projectId = null)
         {
+            if (requests.HttpContext is { } request)
+            {
+                await request.RequestServices.GetRequiredService<StripeBilling>().CompletePendingOrganizationAsync(session, request, cancellationToken);
+            }
+
             var loadedAt = ServerTiming.Now();
             // The account and ts-auth's organization list load together; a Personal organization this call just
             // created is listed again below, so the parallel list never hides it.
@@ -636,47 +642,43 @@ namespace TerraScale.Dashboard.Common.Accounts
             return context with { Account = selected, Loaded = null };
         }
 
-        public async Task<OrganizationRecord> CreateBusinessAsync(SessionRecord session, string name, CancellationToken cancellationToken)
+        internal async Task<OrganizationRecord> CompleteBusinessAsync(SessionRecord session, string name, string checkoutId, BillingPlan plan, bool paymentValid, CancellationToken cancellationToken)
         {
             name = ValidName(name);
-            var context = await GetContextAsync(session, cancellationToken);
-            var duplicate = context.Organizations.FirstOrDefault(org => org.OwnerUserId == session.UserId && org.Slug == Slug(name));
-            if (duplicate is not null)
-            {
-                if (duplicate.Kind == "business" && duplicate.BillingStatus == "billing_required")
-                {
-                    await plans.EnsurePublishedAsync(duplicate, cancellationToken);
-                    await SwitchOrganizationAsync(session, duplicate.Id, cancellationToken);
-                    return duplicate;
-                }
-                throw new AccountAccessException("You already own an organization with this name.", 409);
-            }
-            var live = await platform.CreateOrganizationAsync(session, name, cancellationToken);
+            var live = await platform.CreateOrganizationAsync(session, name, checkoutId, cancellationToken);
             var org = new OrganizationRecord
             {
                 Id = live.Id,
                 Name = live.Name,
                 Slug = Slug(live.Name),
                 Kind = "business",
-                PlanId = OrganizationRecord.StarterPlanId,
-                BillingStatus = "billing_required",
+                PlanId = plan.Id,
+                BillingStatus = paymentValid ? "active" : "billing_required",
+                PaymentMethodValidated = paymentValid,
                 OwnerUserId = session.UserId,
                 CreatedAt = live.CreatedAt,
                 Members = new() { [session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = live.CreatedAt } }
             };
-            // A context read between creation and this write stores the default business state; keep it.
             try { await organizationStore.CreateAsync(org, cancellationToken); }
             catch (DbUpdateConcurrencyException)
             {
                 var current = await organizationStore.FindAsync(org.Id, cancellationToken);
-                if (current is not { Erased: false })
-                {
-                    throw new AccountAccessException("Organization is unavailable.", 404);
-                }
+                org = current is { Erased: false } ? current.Organization : throw new AccountAccessException("Organization is unavailable.", 404);
             }
-            await plans.EnsurePublishedAsync(org, cancellationToken);
+
             await UpdateAccountAsync(session, account => { account.OrganizationIds.Add(org.Id); account.ActiveOrganizationId = org.Id; account.ActiveProjectId = ""; }, cancellationToken);
             return org;
+        }
+
+        internal static string BusinessName(AccountContext context, string name)
+        {
+            name = ValidName(name);
+            if (context.Organizations.Any(org => org.OwnerUserId == context.UserId && org.Slug == Slug(name)))
+            {
+                throw new AccountAccessException("You already own an organization with this name.", 409);
+            }
+
+            return name;
         }
 
         public static string ValidName(string name)

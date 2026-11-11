@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Features.Billing;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
@@ -63,13 +64,15 @@ namespace TerraScale.Dashboard.Platform.Mcp
             return new(selected.Account.ActiveOrganizationId, selected.Account.ActiveProjectId);
         }
 
-        [McpServerTool(Name = "create_organization", UseStructuredContent = true, Destructive = false, OpenWorld = false), Description("Create a business organization and select it for billing setup.")]
-        public async Task<DashboardMcpOrganization> CreateOrganization(string name)
+        public sealed record OrganizationCheckoutResult(string Status, string CheckoutUrl);
+
+        [McpServerTool(Name = "create_organization", UseStructuredContent = true, Destructive = false, OpenWorld = false), Description("Start checkout for a business organization. Creates no organization until payment is confirmed. Open the checkout URL; the organization appears on your next authenticated dashboard or MCP request after paying.")]
+        public async Task<OrganizationCheckoutResult> CreateOrganization(string name, string plan = "starter", string interval = "monthly")
         {
             var session = Account().Session;
-            var org = await accounts.CreateBusinessAsync(session, name, Cancellation);
-            var context = await accounts.GetContextAsync(session, Cancellation);
-            return OrganizationSummary(await AccountScope.RefreshAsync(accounts, context with { Organization = org, Project = null }, Cancellation));
+            var url = await http.HttpContext!.RequestServices.GetRequiredService<StripeBilling>()
+                .StartOrganizationCheckoutAsync(session, name, plan, interval, Cancellation);
+            return new("checkout_required", url);
         }
 
         private DashboardMcpOrganizationDetails OrganizationDetails(AccountContext context)

@@ -52,6 +52,8 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
 
     public DbSet<InvitationReservationRow> InvitationReservations => Set<InvitationReservationRow>();
 
+    public DbSet<PendingOrganizationCheckout> PendingOrganizationCheckouts => Set<PendingOrganizationCheckout>();
+
     public DbSet<BillingBinding> Billing => Set<BillingBinding>();
 
     public DbSet<StripeCustomerRow> StripeCustomers => Set<StripeCustomerRow>();
@@ -91,6 +93,7 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
         modelBuilder.ApplyConfiguration(new ProjectDatabaseRow.Configuration());
         modelBuilder.ApplyConfiguration(new AuditEventRow.Configuration());
         modelBuilder.ApplyConfiguration(new InvitationReservationRow.Configuration());
+        modelBuilder.ApplyConfiguration(new PendingOrganizationCheckout.Configuration());
         modelBuilder.ApplyConfiguration(new BillingBinding.Configuration());
         modelBuilder.ApplyConfiguration(new StripeCustomerRow.Configuration());
         modelBuilder.ApplyConfiguration(new StripeCheckoutRow.Configuration());

@@ -755,8 +755,8 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private static void ValidateCheckout(BillingBinding binding, Stripe.Checkout.Session checkout)
         {
-            if (binding.CheckoutId.Length > 0 && checkout.Id != binding.CheckoutId || checkout.CustomerId != binding.CustomerId || checkout.ClientReferenceId != binding.OrganizationId ||
-                checkout.Metadata.GetValueOrDefault("organization_id") != binding.OrganizationId ||
+            if (binding.CheckoutId.Length > 0 && checkout.Id != binding.CheckoutId || checkout.CustomerId != binding.CustomerId || !(checkout.ClientReferenceId == binding.OrganizationId && checkout.Metadata.GetValueOrDefault("organization_id") == binding.OrganizationId ||
+                  checkout.ClientReferenceId == binding.RequestId && checkout.Metadata.GetValueOrDefault("draft_id") == binding.RequestId) ||
                 checkout.Metadata.GetValueOrDefault("plan") != binding.Plan || checkout.Metadata.GetValueOrDefault("interval") != binding.Interval ||
                 checkout.Metadata.GetValueOrDefault("request_id") != binding.RequestId)
             {
