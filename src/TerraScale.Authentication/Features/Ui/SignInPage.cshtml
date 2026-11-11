@@ -166,20 +166,22 @@ else
 <div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.DifferentEmail</a><a href="@Model.Link("sign-up")">@Model.Copy.CreateAccount</a></div>
 break;
 case SignInStep.Continue:
-<a class="btn" href="@Model.Next">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn delayed-continue" href="@Model.Next">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignedIn:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@Model.Copy.SignedIn</p></div>
 break;
 case SignInStep.Sso:
-<div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">@Model.Copy.Change</a></div>
-<a class="btn" href="@Model.SsoUrl">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn delayed-continue" href="@Model.SsoUrl">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignedOut:
-<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg><p>@Model.Copy.SignedOut</p></div>
 @if (Model.ReturnTo is { } returnTo)
 {
-<a class="btn" href="@returnTo">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn delayed-continue" href="@returnTo">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+}
+else
+{
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg><p>@Model.Copy.SignedOut</p></div>
 }
 break;
 case SignInStep.SignOutConfirm:
@@ -289,11 +291,7 @@ else
 <div class="row"><a href="@Model.Link("reset")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.DifferentEmail</a></div>
 break;
 case SignInStep.ResetDone:
-@if (Model.AccountUrl is { } accountUrl)
-{
-<a class="btn secondary" href="@accountUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.BackToAccount</a>
-}
-<a class="btn" href="@Model.Link("sign-in")">@Model.Copy.SignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn delayed-continue" href="@Model.Link("sign-in")">@Model.Copy.SignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.DeviceEnter:
 <form method="get" action="/ui/@Model.Slug/device">
@@ -473,24 +471,15 @@ case SignInStep.NotFound:
 break;
 }
 @functions {
-    /// <inheritdoc />
     public HostedLayoutModel LayoutModel => new(Model.Title, Model.Nonce, Model.Theme.ThemeColor, Model.Theme.LogoUrl, Model.Theme.Name,
         Model.Theme.TitleSize, Model.Theme.FooterLinks?.Select(link => (link.Label, link.Url)).ToArray(), Model.Theme.DefaultTheme, Model.Slug,
-        Model.Theme.BackgroundColor, Model.Theme.TextColor, Model.Locale) { PublicOrigin = Model.PublicOrigin };
+        Model.Theme.BackgroundColor, Model.Theme.TextColor, Model.Locale) { PublicOrigin = Model.PublicOrigin, ContinueOnly = Model.Refresh is not null };
 
-    /// <inheritdoc />
     protected override Task ExecuteSectionAsync(string name)
     {
-        // A navigation, not a redirect from the form post: form-action 'self' governs redirects after a submission.
-        if (name == "head" && Model.Step == SignInStep.Continue)
+        if (name == "head" && Model.Refresh is { } refresh)
         {
-<meta http-equiv="refresh" content="0;url=@Model.Next">
-        }
-
-        // The client's validated post-logout URI, after a moment to read the page; the Continue link also goes there.
-        if (name == "head" && Model.Step == SignInStep.SignedOut && Model.ReturnTo is { } returnTo)
-        {
-<meta http-equiv="refresh" content="2;url=@returnTo">
+<meta http-equiv="refresh" content="0;url=@refresh">
         }
 
         return Task.CompletedTask;

@@ -92,6 +92,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The response's CSP nonce, set by <see cref="Render"/>.</summary>
     public string Nonce { get; init; } = string.Empty;
 
+    public string? Refresh { get; init; }
+
     public string Locale { get; init; } = AuthEmails.English;
 
     public string? UiLocales { get; init; }
@@ -229,6 +231,15 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         return $"/ui/{this.Slug}/{path}" + (query.Count == 0 ? string.Empty : "?" + string.Join("&", query));
     }
 
+    private static string? ContinueTo(SignInPageModel model) => model.Step switch
+    {
+        SignInStep.Continue => model.Next,
+        SignInStep.Sso => model.SsoUrl,
+        SignInStep.SignedOut => model.ReturnTo,
+        SignInStep.ResetDone => model.Link("sign-in"),
+        _ => null,
+    };
+
     /// <summary>Renders the page with the hosted-page security headers and a fresh nonce.</summary>
     public static IResult Render(HttpContext context, SignInPageModel model, int statusCode = StatusCodes.Status200OK)
     {
@@ -237,7 +248,13 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
         var uiLocales = context.Request.Query["ui_locales"].ToString();
-        var page = SignInPage.Create(model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = uiLocales.Length == 0 ? null : uiLocales });
+        var rendered = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = uiLocales.Length == 0 ? null : uiLocales, Refresh = ContinueTo(model) };
+        if (rendered.Refresh is { } refresh)
+        {
+            context.Response.Headers["Refresh"] = "0;url=" + refresh;
+        }
+
+        var page = SignInPage.Create(rendered);
         page.StatusCode = statusCode;
         return page;
     }
