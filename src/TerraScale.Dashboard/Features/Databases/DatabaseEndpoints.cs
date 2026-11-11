@@ -113,7 +113,7 @@ namespace TerraScale.Dashboard.Features.Databases
             }
             catch (Exception error) when (KnownFailure(error))
             {
-                return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null) : Failure(error);
+                return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null, ttlHours: form["ttlHours"].ToString()) : Failure(error);
             }
         }
 
@@ -188,7 +188,7 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
-            string error = "", bool openCreate = false, string name = "", int status = 200, string? homeRegion = null)
+            string error = "", bool openCreate = false, string name = "", int status = 200, string? homeRegion = null, string ttlHours = "")
         {
             var synced = await OptionalPanel.RunAsync(http, "database-sync", () => databases.SyncAsync(context, http.RequestAborted));
             var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
@@ -203,7 +203,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
             var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
             var metrics = await metricsRead;
-            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, HomeSelection = homeRegion, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." });
+            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, HomeSelection = homeRegion, TtlHours = ttlHours, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." });
             result.StatusCode = status;
             return result;
         }
