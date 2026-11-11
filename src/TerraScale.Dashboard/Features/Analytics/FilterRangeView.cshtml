@@ -1,0 +1,6 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.FilterControl>
+<form class="ts-filter-control ts-filter-range" id="@(Model.Id)-form" method="get" action="@Model.Action" data-on:submit="history.replaceState(null, '', location.pathname + '?' + new URLSearchParams(new FormData(el))); @@get(location.pathname, {contentType: 'form', retryMaxCount: 0})">
+    @foreach (var field in Model.Carried) { <input type="hidden" name="@field.Name" value="@field.Value" /> }
+    <input type="hidden" name="@Model.Name" value="@Model.Value" />
+    <nav class="ts-segmented" aria-label="@Model.Label" data-on:click="evt.target.closest('a') &amp;&amp; evt.button === 0 &amp;&amp; !evt.metaKey &amp;&amp; !evt.ctrlKey &amp;&amp; !evt.shiftKey &amp;&amp; !evt.altKey &amp;&amp; (evt.preventDefault(), el.previousElementSibling.value = evt.target.closest('a').dataset.value, el.closest('form').requestSubmit())">@foreach (var option in Model.Options) { <a class="ts-segment" href="@Model.Href(option)" data-value="@option.Value" aria-current="@(option.Value == Model.Value ? "page" : null)">@option.Label</a> }</nav>
+</form>

@@ -1,0 +1,23 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsPage>
+@using TerraScale.Dashboard.Features.Analytics
+@{
+    var selection = Model.Selection;
+    var project = new FilterField("project", selection.Context.Project!.Id);
+    var range = new FilterField("range", selection.Range);
+    var database = new FilterField("database", selection.DatabaseId);
+    var region = new FilterField("region", selection.Region);
+    FilterOption[] databases = [new("", "All databases"), .. selection.Context.Project.Databases.Values.OrderBy(item => item.Name, StringComparer.Ordinal).Select(item => new FilterOption(item.Id, item.Name))];
+    FilterOption[] regions = [new("", "All regions"), .. selection.Regions.Select(code => new FilterOption(code, code))];
+}
+<main id="analytics-page" class="ts-page ts-analytics" data-on:datastar-fetch="evt.detail.el.matches?.('.ts-filter-control') &amp;&amp; (evt.detail.type === 'started' ? ($_navPending = true) : evt.detail.type === 'finished' ? ($_navPending = false) : (evt.detail.type === 'error' || evt.detail.type === 'retries-failed') &amp;&amp; location.reload())"><header><h1>Analytics</h1></header>
+    <div class="ts-filters ts-filter-bar" role="search" aria-label="Filter analytics">
+        @(await RenderPartialAsync<FilterMenuView, FilterControl>(new("analytics-database", "Database", "/analytics", "database", selection.DatabaseId, databases, [project, range, region])))
+        @(await RenderPartialAsync<FilterMenuView, FilterControl>(new("analytics-region", "Region", "/analytics", "region", selection.Region, regions, [project, range, database])))
+        @if (selection.DatabaseId.Length > 0 || selection.Region.Length > 0) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@("/analytics?project=" + Uri.EscapeDataString(project.Value) + "&range=" + selection.Range)">Clear</a> }
+        @(await RenderPartialAsync<FilterRangeView, FilterControl>(new("analytics-range", "Range", "/analytics", "range", selection.Range, FilterControl.Ranges, [project, database, region])))
+    </div>
+    <p class="ts-meta ts-measurement-loading" role="status">Loading analytics measurements…</p>
+    @(await RenderPartialAsync<AnalyticsSummaryView, AnalyticsPage>(Model))
+    @if (Model.Totals is not null) { @(await RenderPartialAsync<AnalyticsRegionView, AnalyticsPage>(Model)) }
+    @if (Model.Totals is not null) { <div class="ts-grid ts-grid-2">@foreach (var chart in Model.Charts) { @(await RenderPartialAsync<AnalyticsChartView, AnalyticsChart>(chart)) }</div> }
+</main>

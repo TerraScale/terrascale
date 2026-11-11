@@ -8,32 +8,8 @@ namespace TerraScale.Dashboard.Features.Analytics
     public sealed record AnalyticsTotals(long Requests, long Errors, long Operations, long? StorageBytes, long ClientBytes,
         double? WorstP95Ms, IReadOnlyList<AnalyticsRegionRow> Regions);
     public sealed record AnalyticsRegionRow(string Code, string Flag, long Requests, double? WorstP95Ms);
-    public sealed record AnalyticsChart(string Title, AnalyticsLinePlot Plot, AnalyticsSelection Selection);
-    public sealed record AnalyticsPage(ShellModel Shell, AnalyticsSelection Selection, AnalyticsTotals? Totals, IReadOnlyList<AnalyticsChart> Charts, string Error = "", string Empty = "No analytics measurements for these filters.")
-    {
-        // OAuth2 client credentials: the client ID is the API key's prefix before its first underscore, the secret is the whole key.
-        public string PrometheusConfig => $"""
-        scrape_configs:
-          - job_name: terrascale
-            scheme: https
-            metrics_path: /v1/projects/{Selection.Context.Project!.Id}/metrics
-            static_configs:
-              - targets: [api.terrascale.tech]
-            oauth2:
-              # API key with databases:read
-              client_id: <API key up to its first _>
-              client_secret: <API key>
-              token_url: https://auth.terrascale.tech/terrascale/oauth/token
-        """;
-
-        public const string PrometheusMetrics = """
-        terrascale_database_requests_per_second{database,database_id,region}
-        terrascale_database_errors_per_second{database,database_id,region}
-        terrascale_database_operations_per_second{database,database_id,region,kind}
-        terrascale_database_latency_milliseconds{database,database_id,region,quantile}
-        terrascale_database_storage_bytes{database,database_id,region}
-        """;
-    }
+    public sealed record AnalyticsChart(string Title, AnalyticsLinePlot Plot);
+    public sealed record AnalyticsPage(ShellModel Shell, AnalyticsSelection Selection, AnalyticsTotals? Totals, IReadOnlyList<AnalyticsChart> Charts, string Error = "", string Empty = "No analytics measurements for these filters.");
 
     public sealed class AnalyticsService(IAnalyticsBackend backend)
     {
@@ -59,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Analytics
             }
             catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
                 error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-            { ServiceSloTelemetry.MarkFailure(error); return new(shell, selection, null, [], "Could not load analytics measurements. Apply the filters to retry."); }
+            { ServiceSloTelemetry.MarkFailure(error); return new(shell, selection, null, [], "Could not load analytics measurements. Reload the page to retry."); }
         }
 
         public static (AnalyticsTotals Totals, IReadOnlyList<AnalyticsChart> Charts) Build(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points)
@@ -168,13 +144,13 @@ namespace TerraScale.Dashboard.Features.Analytics
                 Add("Operations by type", [.. operations.Select(item => new AnalyticsSeries(item.Key, item.Value))]);
                 Add("Errors", new AnalyticsSeries("Errors", errors));
                 const string latencyTitle = "Approximate request latency percentiles (ms)";
-                charts.Add(new(latencyTitle, AnalyticsLinePlot.ForLatency(latencyTitle + ", " + selection.Range, selection.Range, starts, [.. latencies.Values]), selection));
+                charts.Add(new(latencyTitle, AnalyticsLinePlot.ForLatency(latencyTitle + ", " + selection.Range, selection.Range, starts, [.. latencies.Values])));
                 Add("Storage (bytes)", new AnalyticsSeries("Storage", storage, storageMissing));
                 Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent), new AnalyticsSeries("Received", received));
                 return charts;
                 void Add(string title, params AnalyticsSeries[] series)
                 {
-                    charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series), selection));
+                    charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series)));
                 }
             }
             void AddCounters(SortedDictionary<string, decimal[]> target, IReadOnlyDictionary<string, long> values, int index, ref long total)
