@@ -116,11 +116,10 @@ export class V1SqlSocket {
   get closed() { return this.#closed !== undefined; }
 
   /**
-   * @param {string} sql
    * @param {V1SqlArguments} [args]
    * @returns {Promise<V1SqlExecuteResult>}
    */
-  async execute(sql, args) {
+  async execute(/** @type {string | V1SqlStatement} */ sql, args) {
     const [result] = await this.batch([sqlStatement(sql, args)]);
     return /** @type {V1SqlExecuteResult} */ (result);
   }

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 bash scripts/install-govulncheck.sh
-scanner="$HOME/.cache/terrascale/govulncheck-v1.9.0-go1.27.3/govulncheck"
+scanner="$HOME/.cache/terrascale/govulncheck-v1.9.0-go$(tr -d '\n' < .go-version)/govulncheck"
 reports=$(mktemp -d)
 trap 'rm -rf "$reports"' EXIT
 git ls-files -z -- go.mod '**/go.mod' > "$reports/manifests"

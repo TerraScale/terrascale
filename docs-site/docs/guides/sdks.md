@@ -19,6 +19,8 @@ Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `
 
 A client retries a `serialization_conflict` with the same idempotency key. `commit_uncertain` means the write may have applied, so the caller checks the result before sending it again.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Query from your application
 
 <SdkQueryTabs />

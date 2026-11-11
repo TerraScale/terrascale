@@ -13,10 +13,10 @@ namespace TerraScale.Dashboard.Features.Auth
             return new(challenge.Proof, challenge.StepUpUrl, challenge.ExpiresAt);
         }
 
-        public Task<string?> ConsumeAsync(SessionRecord session, string proof, string purpose, string audience, string? operationReceipt, CancellationToken cancellationToken)
+        public Task<string?> ConsumeAsync(SessionRecord session, string proof, string purpose, string audience, string? operationReceipt, string? organizationId, CancellationToken cancellationToken)
         {
             return PlatformAsync(() => Client().Platform.ConsumeStepUpAsync(Bearer(session),
-                new TsAuthStepUpConsume(proof, purpose, audience, operationReceipt), cancellationToken));
+                new TsAuthStepUpConsume(proof, purpose, audience, operationReceipt, organizationId), cancellationToken));
         }
     }
 }

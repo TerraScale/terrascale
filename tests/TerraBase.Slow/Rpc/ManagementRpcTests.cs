@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
@@ -6,6 +9,14 @@ using MagicOnion;
 using MagicOnion.Client;
 using MagicOnion.Serialization.MessagePack;
 using MessagePack;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using TerraBase.Configuration;
+using TerraBase.Features.Regions;
+using TerraBase.Features.Replicas;
+using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Backups;
 using TerraScale.TerraBase.Contracts.Management;
@@ -95,6 +106,74 @@ public sealed class ManagementRpcTests
         await Assert.That(legacyPlan.Status).IsEqualTo(404);
         await Assert.That(allowances.GetProperty("items").ValueKind).IsEqualTo(JsonValueKind.Array);
         await Assert.That(userAllowances.Status).IsEqualTo(404);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task Dashboard_rpc_on_a_regional_follower_publishes_the_plan_and_creates_the_database_on_the_writer(CancellationToken token)
+    {
+        await using var nats = await JetStreamServer.StartAsync(token);
+        using var issuer = new TestIssuer();
+        var storage = new FakeS3();
+        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var directory = Directory.CreateTempSubdirectory("rpc-follower-").FullName;
+        using var reservation = new TcpListener(IPAddress.Any, 0);
+        reservation.Start();
+        var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+        reservation.Stop();
+        var peers = Path.Combine(directory, "peers");
+        await File.WriteAllTextAsync(peers, "gru-1 gru 127.0.0.2\ngru-2 gru 127.0.0.3\n", token);
+        try
+        {
+            await using var follower = await StartAsync("gru-2", "127.0.0.3");
+            await using var writer = await StartAsync("gru-1", "127.0.0.2");
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(writer.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(follower.Server.Services.GetRequiredService<RegionalOwners>().Find("gru")?.Node == "gru-1"), TimeSpan.FromSeconds(10));
+            await Assert.That(follower.Server.Services.GetRequiredService<RegionalOwners>().Writer).IsFalse();
+            using var channel = GrpcChannel.ForAddress(new Uri($"http://127.0.0.3:{port}"));
+            var organization = EntityIds.New().ToString();
+            var project = EntityIds.New().ToString();
+            using var plan = JsonDocument.Parse("""{"plan":"hobby"}""");
+            await Client<IPlatformService>(channel, null).SetOrganizationPlanAsync(organization, plan.RootElement);
+            var bearer = issuer.Mint(EntityIds.New().ToString(), descriptor =>
+            {
+                descriptor.Claims["org_id"] = organization;
+                descriptor.Claims["project_id"] = project;
+                descriptor.Claims["scope"] = "databases:write";
+            });
+
+            var created = await Client<IManagementService>(channel, bearer).CreateDatabaseAsync(project, new TerraBaseDatabasePlacement(Name: "orders", HomeRegion: "gru"));
+
+            await Assert.That((created.Name, created.ProjectId, created.HomeRegion)).IsEqualTo(("orders", project, "gru"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+
+        Task<ManagementApi> StartAsync(string node, string address) => ManagementApi.StartAsync(settings =>
+        {
+            settings["region"] = "gru";
+            settings["data-directory"] = Path.Combine(directory, node);
+            settings["master-key"] = masterKey;
+            storage.Configure(settings);
+        }, services =>
+        {
+            storage.Route(services);
+            var options = (TerraBaseOptions)services.Last(descriptor => descriptor.ServiceType == typeof(TerraBaseOptions)).ImplementationInstance!;
+            services.Replace(ServiceDescriptor.Singleton(options with { MachineId = node, PeersFile = peers, InternalPort = port, NatsUrl = nats.Url, NatsToken = nats.Token }));
+            services.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new ServingGru()));
+            services.Configure<KestrelServerOptions>(kestrel => kestrel.Listen(IPAddress.Parse(address), port, listener =>
+            {
+                listener.Protocols = HttpProtocols.Http2;
+                listener.UseTerraBaseListener(TerraBaseListener.Internal);
+            }));
+        }, sharedIssuer: issuer);
+    }
+
+    private sealed class ServingGru : IRegionCatalog
+    {
+        public ValueTask<IReadOnlyList<string>> ServingAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IReadOnlyList<string>>(["gru"]);
     }
 
     private static string Token(DatabaseApi api, string scopes) => api.Management.Issuer.Mint(api.Tenant.User, token =>

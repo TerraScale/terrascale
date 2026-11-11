@@ -16,6 +16,8 @@ Check `ts help <command>` for your installed release. Select a project with `-pr
 | `backup restore-at <db> <RFC3339> <new-db> [destination]` | Restores independently into a new database; requires permitted history and spare database capacity. |
 | `backup destination get/set/delete` | Project-wide customer destination metadata. Set reads one JSON object from stdin and requires `-yes`; delete requires consent. |
 
-Project deletion refuses a nonempty or unreadable database inventory before deletion. This preflight does not serialize concurrent database creation and does not promise tenant teardown or billing cleanup. Organization deletion requires an empty organization and appropriate role.
+Project deletion refuses a nonempty or unreadable database inventory before deletion. This preflight does not serialize concurrent database creation and does not promise tenant teardown or billing cleanup. Organization deletion requires an empty organization, the owner role and a fresh sign-in confirmation: after the typed ID, or `-yes`, which skips only that, the CLI prints the hosted confirmation URL and waits until you approve it with your password or an email code (plus two-factor when enrolled). If it is not approved within five minutes, the command fails with `step_up_required` and the organization is unchanged.
 
 For destination set, redirect a private file into `ts -yes backup destination set`. Input is at most 16 KiB: `endpoint`, `region`, `bucket`, `mode` (`both` or `customer`), `accessKeyId`, `secretKey`. Never put credentials in argv/logs; output contains only public metadata. Database-restricted keys cannot administer project destinations. Removing the destination preserves customer objects and resumes platform shipping.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

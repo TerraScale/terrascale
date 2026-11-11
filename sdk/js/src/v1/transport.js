@@ -22,6 +22,8 @@ const defaultMaximumResponseBytes = 64 * 1024 * 1024;
 // Validate header-safe credential syntax only; the producer validates JWT claims/signatures.
 // Retain C# keys; current project routes also authenticate project access JWTs.
 const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|tb_[A-Za-z0-9_-]{43})$/u;
+const publicBaseUrl = "https://api.terrascale.tech";
+const publicAuthOrigin = "https://auth.terrascale.tech";
 /**
  * Resolver input contains no credential. A successful URL is cached for this client/database.
  * @typedef {{ readonly project: string | undefined; readonly database?: string | undefined; readonly signal?: AbortSignal | undefined }} V1EndpointContext
@@ -112,6 +114,17 @@ function canonicalBaseUrl(raw) {
   return `${url.origin}${url.pathname.replace(/\/+$/u, "")}`;
 }
 
+function keyExchangeOrigin(/** @type {unknown} */ authBaseUrl, /** @type {string | undefined} */ base) {
+  if (authBaseUrl !== undefined) {
+    const url = requireServiceUrl(/** @type {string} */ (authBaseUrl), "authBaseUrl");
+    if (url.pathname !== "/" || url.search !== "") throw new TypeError("authBaseUrl must be a bare ts-auth origin without a path or query.");
+    return url.origin;
+  }
+  if (base !== publicBaseUrl)
+    throw new TypeError("Set authBaseUrl to the ts-auth that exchanges the apiKey: with a TerraBase origin other than https://api.terrascale.tech the key is not sent to production ts-auth.");
+  return publicAuthOrigin;
+}
+
 /** @param {unknown} token @returns {string} */
 function requireToken(token) {
   if (typeof token !== "string" || token.trim() !== token || !tokenPattern.test(token))
@@ -176,23 +189,26 @@ export class V1Transport {
   /** @type {SqlSocketConstructor | undefined} */
   #webSocket;
   #regionPin = "";
+  #authOrigin = "";
 
   /** @param {TerraBaseV1ClientConfig | (import("./system.js").TerraBaseSystemClientConfig & { project?: undefined; endpointResolver?: undefined })} config */
   constructor(config) {
     if (typeof config !== "object" || config === null) throw new TypeError("TerraBase v1 client config is required.");
     this.#project = config.project === undefined ? undefined : requireProject(config.project);
-    if ((config.baseUrl === undefined) === (config.endpointResolver === undefined))
-      throw new TypeError("Supply exactly one of baseUrl or endpointResolver.");
+    if (config.baseUrl !== undefined && config.endpointResolver !== undefined)
+      throw new TypeError("Supply at most one of baseUrl or endpointResolver.");
     if (config.endpointResolver !== undefined && typeof config.endpointResolver !== "function")
       throw new TypeError("endpointResolver must be a function.");
-    this.#resolver = config.endpointResolver ?? staticBaseUrlResolver(/** @type {string} */ (config.baseUrl));
+    this.#resolver = config.endpointResolver ?? staticBaseUrlResolver(config.baseUrl ?? publicBaseUrl);
     const apiKey = "apiKey" in config ? config.apiKey : undefined;
+    const authBaseUrl = "authBaseUrl" in config ? config.authBaseUrl : undefined;
     if (apiKey !== undefined) {
       if (config.token !== undefined) throw new TypeError("Supply exactly one of token or apiKey.");
       if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$/u.test(apiKey))
         throw new TypeError("apiKey must be a canonical ULID, underscore and 52 lowercase Base32 characters.");
+      this.#authOrigin = keyExchangeOrigin(authBaseUrl, config.endpointResolver === undefined ? canonicalBaseUrl(config.baseUrl ?? publicBaseUrl) : undefined);
       this.#apiKeyBasic = `Basic ${btoa(`${apiKey.slice(0, 26)}:${apiKey}`)}`;
-    }
+    } else if (authBaseUrl !== undefined) throw new TypeError("authBaseUrl exchanges an apiKey; set apiKey or remove authBaseUrl.");
     if (apiKey === undefined && (config.project !== undefined || config.token !== undefined) && typeof config.token !== "function")
       requireToken(config.token);
     if ("autoIdempotencyKey" in config || "maxRetries" in config || "resolver" in config)
@@ -351,7 +367,7 @@ export class V1Transport {
       init.body = new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } });
       init.duplex = "half";
     }
-    const response = await this.#fetch(`https://auth.terrascale.tech${path}`, init);
+    const response = await this.#fetch(`${this.#authOrigin}${path}`, init);
     const text = await this.readText(response, bounded, 64 * 1024);
     if (response.status !== (path.endsWith("scoped-keys") ? 201 : 200)) {
       const error = parseV1Error(response.status, response.headers, text);

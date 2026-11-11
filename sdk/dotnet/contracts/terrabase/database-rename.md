@@ -8,3 +8,5 @@ The name-only PATCH returns a managed database with optional nullable
 `previousName` and `conflictOf`. Other fields and error behavior are documented
 in `docs/database-rename.md`. The frozen older producer export is unchanged.
 HTTP fixtures prove transport parsing, not live availability or convergence.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

@@ -95,6 +95,7 @@ namespace TerraScale.TerraBase.Rpc
             await using var scope = scopes.CreateAsyncScope();
             var features = new FeatureCollection();
             features.Set<IHttpRequestFeature>(request);
+            features.Set<IHttpRequestBodyDetectionFeature>(new BodyDetection(request.Headers.ContentLength > 0));
             features.Set(response);
             features.Set(body);
             features.Set<IHttpRequestLifetimeFeature>(new HttpRequestLifetimeFeature { RequestAborted = call.CallContext.CancellationToken });
@@ -284,6 +285,11 @@ namespace TerraScale.TerraBase.Rpc
         private static string? Header(RestAnswer answer, string name)
         {
             return answer.Headers.TryGetValue(name, out var values) && values.Count == 1 ? values[0] : null;
+        }
+
+        private sealed class BodyDetection(bool canHaveBody) : IHttpRequestBodyDetectionFeature
+        {
+            public bool CanHaveBody => canHaveBody;
         }
     }
 }

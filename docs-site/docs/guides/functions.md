@@ -84,3 +84,5 @@ Add `"cron": "*/5 * * * *"` (UTC) to the deploy body to run on a schedule. Deplo
 | Request and response | 1 MiB each |
 | SQL | 256 `sql` calls per invocation |
 | Logs | 50 lines of 1 KiB per invocation |
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

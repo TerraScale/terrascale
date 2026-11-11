@@ -23,8 +23,9 @@ public static class TerraBaseDbContextOptionsBuilderExtensions
         }
 
         /// <summary>
-        /// Uses the database a connection string names: <c>Endpoint</c> or <c>Region</c>, <c>Project</c>, <c>Database</c>,
-        /// <c>ApiKey</c> and, with an <c>Endpoint</c> other than <c>https://api.terrascale.tech</c>, <c>AuthEndpoint</c>.
+        /// Uses the database a connection string names: <c>Project</c>, <c>Database</c>, <c>ApiKey</c> and optionally <c>Region</c>.
+        /// Without <c>Endpoint</c> and <c>AuthEndpoint</c> it uses <c>https://api.terrascale.tech</c>; an <c>Endpoint</c> other than
+        /// that also needs <c>AuthEndpoint</c>.
         /// </summary>
         /// <param name="connectionString">The connection string.</param>
         /// <param name="terraBaseOptionsAction">Configures EF Core's relational options.</param>

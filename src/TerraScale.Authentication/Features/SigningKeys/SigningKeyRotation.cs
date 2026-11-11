@@ -17,6 +17,7 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
         var retry = FirstBootstrapRetry;
         while (!await this.TryBootstrapAsync(stoppingToken).ConfigureAwait(false))
         {
+            schema.MarkBootstrapFailed();
             await Task.Delay(retry, stoppingToken).ConfigureAwait(false);
             retry = TimeSpan.FromTicks(Math.Min(retry.Ticks * 2, MaxBootstrapRetry.Ticks));
         }

@@ -60,6 +60,8 @@ Dollar-quoted strings (`$$…$$`) and `E'…'` escape strings are refused with `
 
 `SET terrascale.write` chooses where subsequent statements commit: `home` (the database's home region, for read-your-writes), `local` (the closest region, when it accepts local writes) or `auto` (the default). `SHOW terrascale.write_route` reports the route the last write took. See [multi-region writes and conflicts](/guides/multi-region-writes-and-conflicts).
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Prepared statements
 
 The extended protocol works: `Parse`/`Bind`/`Describe`/`Execute`/`Close`, with at most 256 named statements and 256 portals per session (`54000` past either). Untyped parameters are inferred from the statement's tables. Text result format always works; binary format works for the types the server encodes. `Execute` with a row limit (`maxRows`) answers `0A000`, so drivers that fetch in chunks must page with `LIMIT` instead.

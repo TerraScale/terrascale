@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 
             if (!Csrf.Validate(http, form))
             {
-                return Error("The form expired. Reload project invitations and try again.", 400);
+                return RequestError.FormExpired(http, "/project/invitations", Error("The form expired. Reload project invitations and try again.", 400));
             }
 
             if (form["invitationId"].Count != 1 || form["after"].Count > 1)

@@ -45,7 +45,7 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
                 throw StepUpFlow.Required();
             }
 
-            await stepUp.ConsumeAsync(context.Session, proof.Challenge.Proof, "create_pat", "ts-dashboard", null, cancellationToken);
+            await stepUp.ConsumeAsync(context.Session, proof.Challenge.Proof, "create_pat", "ts-dashboard", null, null, cancellationToken);
             credential = await sessions.CreateCredentialAsync(fresh, expiresAt, cancellationToken);
             return await StoreAsync(context.UserId, name, expiresAt, credential, null, cancellationToken);
         }
