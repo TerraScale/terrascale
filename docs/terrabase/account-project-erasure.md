@@ -9,6 +9,8 @@ A different closure id or organization conflicts. Account consent may upgrade th
 Each catalog holder advances bounded cleanup batches. Database unregister records the existing permanent
 purge authority and backup cleanup history. Project closure tracks those purges outside project state
 until their active-copy erasure receipts have been verified. Catalog absence alone is insufficient.
+The closure request itself deletes each tracked database's local files and destroys its backup keys before it
+answers, so acceptance does not wait for the next purge pass.
 An offline holder keeps closure pending. `200 accepted` requires every catalog holder's empty receipt;
 `202 pending` retains durable work. Backup and shared-history erasure keep their existing deadlines and
 completion evidence; this response does not certify that those retention lifecycles have finished.
