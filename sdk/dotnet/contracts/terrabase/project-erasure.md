@@ -28,3 +28,5 @@ The version 2 server patch is not available to this SDK suite; these tests do no
 prove producer integration, database purge or live erasure. The parent task owns
 the TerraBase implementation, integration evidence and producer pin after this
 SDK change merges.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

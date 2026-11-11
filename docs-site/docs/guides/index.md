@@ -32,4 +32,6 @@ Use the [quickstart](/getting-started/) to establish one working application con
 - [Single sign-on](/guides/single-sign-on): connect your identity provider over OIDC for a verified email domain (Team and Enterprise).
 - [Import data](/guides/import): load rows into a database with batched SQL statements.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 The [zero-configuration contract](/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.

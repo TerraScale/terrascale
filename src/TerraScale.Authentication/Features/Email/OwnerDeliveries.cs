@@ -19,7 +19,7 @@ public sealed class OwnerDeliveries(AuthData data, Users users, IEmailSender sen
         if (await this.ReadAsync(kind, key, cancellationToken).ConfigureAwait(false) is { Count: 0 })
         {
             var owners = await data.ReadAsync((db, token) => db.Memberships.Where(member => member.OrganizationId == organizationId && member.Role == Roles.Owner)
-                .Select(member => member.UserId).Take(MaxRecipients + 1).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+                .OrderBy(member => member.UserId).Select(member => member.UserId).Take(MaxRecipients + 1).ToListAsync(token), cancellationToken).ConfigureAwait(false);
             if (owners.Count > MaxRecipients)
             {
                 throw ApiException.Unavailable();

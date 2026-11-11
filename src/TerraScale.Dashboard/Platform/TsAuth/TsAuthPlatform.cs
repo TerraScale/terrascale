@@ -378,13 +378,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             string organizationId,
             string projectId,
             TsAuthPlatformCreateApiKey request,
-            string stepUpProof,
             CancellationToken cancellationToken = default)
         {
             return client.SendAuthenticatedJsonAsync(HttpMethod.Post, $"/v1/terrascale/organizations/{Id(organizationId)}/projects/{Id(projectId)}/api-keys",
                 request ?? throw new ArgumentNullException(nameof(request)), TsAuthIntegrationJsonContext.Default.TsAuthPlatformCreateApiKey,
                 TsAuthIntegrationJsonContext.Default.TsAuthPlatformApiKeySecret,
-                TsAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken, Proof(stepUpProof));
+                TsAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
         }
 
         public Task<TsAuthPlatformPage<TsAuthPlatformApiKey>> ListProjectApiKeysAsync(

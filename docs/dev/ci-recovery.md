@@ -57,3 +57,24 @@ Core service publication waits for the aggregate `test` job. When both services
 are selected, TerraBase must finish its rollout before ts-auth starts, so a
 failed TerraBase check cannot deploy only a new scope issuer. Auth-only runs
 continue after `test` when TerraBase was intentionally not selected.
+
+## Redeploy the sites
+
+The docs, landing and status sites deploy from `.github/workflows/sites.yml`
+(`Sites`), not from CI. To redeploy all three, dispatch it on `main`:
+
+```sh
+gh workflow run sites.yml --repo TerraScale/terrascale --ref main
+```
+
+`deploy-docs`, `deploy-landing` and `deploy-status` each wait for their site's
+lock, check out the tip of `main` when they start, build it and deploy it. A
+dispatch deploys that tip without checking its CI, as a push does: CI on the
+pull request checks a change before it reaches `main`. Each job then runs
+`scripts/ci/prove-worker-deploy.mjs`. It takes the version each Worker got from
+the deploy's own record and reads Cloudflare's records for it: the Worker's
+active deployment must serve that version at 100%, and the version's message
+must be the commit the job checked out. It never requests the public sites, so
+a new version still reaching Cloudflare's edge cannot fail it. To retry a
+failed site deploy, re-run its failed job with `gh run rerun <run id> --failed`;
+like every deploy job, the re-run checks out the tip of `main` when it starts.

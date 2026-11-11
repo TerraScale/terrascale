@@ -52,5 +52,5 @@ it in an argument.
 Remove the temporary workflow/public key in the old repo, delete its encrypted
 artifact, and remove the local temporary key directory after the handoff succeeds. Include the final old
 repo commits in the mirror bundle before deletion. Verify the monorepo
-`docs-deploy.yml` run and `https://docs.terrascale.tech/build-info.json` before
+`Sites` run's `deploy-docs` job and `https://docs.terrascale.tech/build-info.json` before
 retiring the old repository.

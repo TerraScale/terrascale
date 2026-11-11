@@ -29,20 +29,32 @@ func parseKeyRotation(args []string) (string, time.Duration, error) {
 	return args[0], grace, nil
 }
 
-var stepUpPollInterval = 5 * time.Second
+const stepUpPollInterval = 5 * time.Second
 
-func stepUp[T any](ctx context.Context, s *session, purpose, action string, operate func(*tsauth.User) (*T, error), diagnostics io.Writer) (*T, error) {
-	challenge, err := s.user.RequestStepUp(ctx, purpose)
+func stepUp[T any](ctx context.Context, signIn func(context.Context) (*tsauth.User, error), purpose, organization, action string, operate func(*tsauth.User) (*T, error), fail func(error) error, diagnostics io.Writer) (*T, error) {
+	u, err := signIn(ctx)
 	if err != nil {
-		return nil, keyOperationError(err, action, s)
+		return nil, err
+	}
+	var challenge *tsauth.StepUpBody
+	if organization == "" {
+		challenge, err = u.RequestStepUp(ctx, purpose)
+	} else {
+		challenge, err = u.RequestOrganizationStepUp(ctx, purpose, organization)
+	}
+	if err != nil {
+		return nil, fail(err)
 	}
 	if _, err := fmt.Fprintf(diagnostics, "%s needs a fresh sign-in confirmation.\nOpen %s\nand confirm with your password or an email code; waiting until %s (Ctrl+C cancels).\n",
 		action, challenge.StepUpURL, challenge.ExpiresAt.UTC().Format(time.RFC3339)); err != nil {
-		return nil, keyOutputError(err)
+		return nil, fail(err)
 	}
-	proof := s.user.WithStepUpProof(challenge.Proof)
 	for {
-		result, err := operate(proof)
+		u, err := signIn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		result, err := operate(u.WithStepUpProof(challenge.Proof))
 		if err == nil {
 			return result, nil
 		}
@@ -51,11 +63,11 @@ func stepUp[T any](ctx context.Context, s *session, purpose, action string, oper
 		}
 		var api *tsauth.APIError
 		if !errors.As(err, &api) || api.Code != tsauth.ErrStepUpRequired {
-			return nil, keyOperationError(err, action, s)
+			return nil, fail(err)
 		}
 		if time.Now().After(challenge.ExpiresAt) {
 			return nil, &cliError{code: string(api.Code), status: api.Status,
-				message: action + " was not confirmed before its deadline; run the command again for a fresh confirmation."}
+				message: action + " did not complete before its confirmation expired; run the command again for a fresh confirmation."}
 		}
 		timer := time.NewTimer(stepUpPollInterval)
 		select {
@@ -67,10 +79,10 @@ func stepUp[T any](ctx context.Context, s *session, purpose, action string, oper
 	}
 }
 
-func rotateKey(ctx context.Context, s *session, id string, grace time.Duration, out, diagnostics io.Writer) error {
-	key, err := stepUp(ctx, s, tsauth.StepUpRotateAPIKey, "Rotating API keys", func(u *tsauth.User) (*tsauth.CreatedAPIKey, error) {
+func rotateKey(ctx context.Context, s *session, signIn func(context.Context) (*tsauth.User, error), id string, grace time.Duration, out, diagnostics io.Writer) error {
+	key, err := stepUp(ctx, signIn, tsauth.StepUpRotateAPIKey, "", "Rotating API keys", func(u *tsauth.User) (*tsauth.CreatedAPIKey, error) {
 		return u.RotateAPIKey(ctx, s.org, s.project, id, grace)
-	}, diagnostics)
+	}, func(err error) error { return keyOperationError(err, "Rotating API keys", s) }, diagnostics)
 	if err != nil {
 		return err
 	}

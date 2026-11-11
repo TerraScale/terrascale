@@ -7,6 +7,8 @@ description: Run Dapper and ADO.NET against your TerraScale database through the
 
 The .NET SDK ships an ADO.NET provider: `TerraBaseDbConnection` wraps a `TerraBaseSqlDatabase` in a `DbConnection`, so every .NET tool built on ADO.NET works against your TerraScale database. Dapper accepts that connection directly. The SQL dialect is SQLite; everything the SQL API refuses (see [SQL](/concepts/sql)) is refused through the provider too.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Install
 
 The .NET SDK is not on NuGet yet; follow the [C# quickstart](/getting-started/csharp) to pack it into a local package folder, then add Dapper to your project:

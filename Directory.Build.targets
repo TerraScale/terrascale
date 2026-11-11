@@ -2,6 +2,10 @@
   <!-- Imported after every project file, so these rules can key on properties the
        projects set (UseTerraScaleEndpoints, IsTestProject) and the area flags of Directory.Build.props. -->
 
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
+    <Features>$(Features);runtime-async=on</Features>
+  </PropertyGroup>
+
   <!-- TerraScale.Endpoints (src/): opt in with <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>. Its generator
        is referenced as an analyzer only, so endpoint registration happens at compile time. -->
   <ItemGroup Condition="'$(UseTerraScaleEndpoints)' == 'true'">

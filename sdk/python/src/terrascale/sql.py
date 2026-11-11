@@ -57,6 +57,14 @@ def encode(value: Any) -> Any:
     raise TypeError(f"unsupported SQL argument type {type(value).__name__}")
 
 
+def statement(sql: str | Statement, args: Args) -> Statement:
+    if not isinstance(sql, Statement):
+        return Statement(sql, args)
+    if args is not None:
+        raise TypeError("a Statement carries its own arguments: pass Statement(sql, args) alone, or execute(sql, args)")
+    return sql
+
+
 def statements(items: Sequence[str | tuple[str, Args] | Statement]) -> list[dict[str, Any]]:
     if isinstance(items, (str, bytes)) or not 1 <= len(items) <= MAX_STATEMENTS:
         raise ValueError(f"a SQL request holds 1 to {MAX_STATEMENTS} statements")

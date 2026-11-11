@@ -19,11 +19,15 @@ public sealed class TerraBaseHealthClient
     private readonly TerraBaseConnection connection;
     private static readonly TerraBaseJsonContext Json = TerraBaseJsonContext.Wire;
 
-    /// <summary>Creates a probe client. Use TerraBaseHttp.CreateHandler to disable redirects and cookies; optional region pins the answering region.
+    /// <summary>Creates a probe client for <paramref name="baseAddress"/>, else the HttpClient's BaseAddress, else <c>https://api.terrascale.tech</c>.
+    /// Use TerraBaseHttp.CreateHandler to disable redirects and cookies; optional region pins the answering region.
     /// Default Authorization or Cookie headers are rejected before dispatch; use a separate credential-free HttpClient.</summary>
-    public TerraBaseHealthClient(HttpClient httpClient, Uri? baseAddress = null, string? region = null) =>
-        connection = new TerraBaseConnection(httpClient, baseAddress, null, null, "credential", TerraBaseConnection.RequestDeadline,
-            TerraBaseConnection.DefaultMaxResponseBytes, region: region, publicAnonymous: true);
+    public TerraBaseHealthClient(HttpClient httpClient, Uri? baseAddress = null, string? region = null)
+    {
+        ArgumentNullException.ThrowIfNull(httpClient);
+        connection = new TerraBaseConnection(httpClient, TerraBaseRegion.OriginOrPublic(baseAddress ?? httpClient.BaseAddress, null), null, null, "credential",
+            TerraBaseConnection.RequestDeadline, TerraBaseConnection.DefaultMaxResponseBytes, region: region, publicAnonymous: true);
+    }
 
     /// <summary>Reads process liveness without credentials.</summary>
     public Task<TerraBaseProbeResult> GetHealthAsync(CancellationToken cancellationToken = default) => ProbeAsync("/healthz", cancellationToken);

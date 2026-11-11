@@ -207,7 +207,7 @@ case SignInStep.SignUp:
 </div>
 <div class="field">
 <label for="sign-up-password">@Model.Copy.Password</label>
-<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="15" placeholder="@Model.Copy.NewPasswordPlaceholder" required aria-describedby="@Model.ErrorId">
+<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="10" placeholder="@Model.Copy.NewPasswordPlaceholder" required aria-describedby="@Model.ErrorId">
 </div>
 <button type="submit">@Model.Copy.CreateAccount</button>
 </form>
@@ -269,7 +269,7 @@ case SignInStep.ResetCode:
 </div>
 <div class="field">
 <label for="reset-password">@Model.Copy.NewPassword</label>
-<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="15" placeholder="@Model.Copy.NewPasswordPlaceholder" required aria-describedby="@Model.ErrorId">
+<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="10" placeholder="@Model.Copy.NewPasswordPlaceholder" required aria-describedby="@Model.ErrorId">
 </div>
 <p class="hint">@Model.Copy.SubSettingSignsOut</p>
 <button type="submit">@Model.Copy.SetNewPassword</button>

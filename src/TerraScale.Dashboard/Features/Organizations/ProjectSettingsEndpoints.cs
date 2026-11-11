@@ -35,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var name = form["name"].ToString();
             if (!Csrf.Validate(http, form))
             {
-                return Page(http, context, name, "The form expired. Reload project settings and try again.", 400);
+                return RequestError.FormExpired(http, "/project", Page(http, context, name, "The form expired. Reload project settings and try again.", 400));
             }
 
             try

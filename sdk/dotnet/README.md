@@ -211,7 +211,8 @@ deploys and invokes functions. `TerraBaseManagementClient` covers the Management
 organization, plans, projects (including close and erase), history erasure, members, invitations, ownership transfer,
 audit retention and audit events. Databases and branches are not management operations; they live on
 `TerraBaseDatabaseClient` above. `TerraBaseRegionsClient` reads the anonymous [serving-region catalog](contracts/terrabase/regions.md).
-`TerraBaseHealthClient` reads the anonymous health probes.
+`TerraBaseHealthClient` reads the anonymous health probes of its `baseAddress`, else the `HttpClient`'s `BaseAddress`,
+else `https://api.terrascale.tech`.
 
 ```csharp
 using TerraScale.DotNet.TerraBase;
@@ -310,7 +311,8 @@ are sent.
 
 Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Without `Region`, a request
 goes to `BaseAddress` (for example `https://api.terrascale.tech`) and
-carries no routing header. With `Region = "gru"` (a lowercase region id), every request is sent to
+carries no routing header; a `TerraBaseSqlClient` with an `ApiKey` and no `BaseAddress`, `EndpointResolver` or
+`AuthAddress` sends it to `https://api.terrascale.tech`. With `Region = "gru"` (a lowercase region id), every request is sent to
 `https://api.terrascale.tech` (unless `BaseAddress`/`EndpointResolver` is set) and pinned with
 `X-TerraScale-Region-Pin: gru`, so no other region serves it. A region that does not serve the request answers `421`,
 surfaced as `TerraBaseWrongRegionException`: `Region` is the region that answered, `HomeRegion` and `Regions` (from

@@ -111,7 +111,11 @@ func (*SQLProtocolError) Error() string {
 func (*SQLProtocolError) Is(target error) bool { return target == ErrCommitUncertain }
 
 func (d *Database) Execute(ctx context.Context, query string, args ...any) (*Result, error) {
-	out, err := d.Batch(ctx, []Statement{statementOf(query, args)})
+	return d.ExecuteStatement(ctx, statementOf(query, args))
+}
+
+func (d *Database) ExecuteStatement(ctx context.Context, statement Statement) (*Result, error) {
+	out, err := d.Batch(ctx, []Statement{statement})
 	if err != nil {
 		return nil, err
 	}

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"terrascale.tech/sdk/tsauth"
 	v1 "terrascale.tech/sdk/v1"
@@ -22,9 +21,6 @@ func initSession(t *testing.T) *session {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == "POST" && r.URL.Path == "/v1/terrascale/step-up":
-			_ = json.NewEncoder(w).Encode(tsauth.StepUpBody{Proof: initKeyID + ".fixture-proof",
-				StepUpURL: "http://" + r.Host + "/ui/terrascale/step-up/" + initKeyID, ExpiresAt: time.Now().Add(5 * time.Minute)})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/api-keys"):
 			var req tsauth.APIKeyRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)

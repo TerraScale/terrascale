@@ -23,7 +23,8 @@
       {"name": "proof", "type": "string", "nullable": false, "default": null},
       {"name": "purpose", "type": "string", "nullable": false, "default": null},
       {"name": "audience", "type": "string", "nullable": false, "default": null},
-      {"name": "operation_receipt", "type": "string", "nullable": true, "default": null}]},
+      {"name": "operation_receipt", "type": "string", "nullable": true, "default": null},
+      {"name": "organization_id", "type": "string", "nullable": true, "default": null}]},
     "NameRequest": {
       "sdk_type": "TerraScaleAuthPlatformName",
       "fields": [
