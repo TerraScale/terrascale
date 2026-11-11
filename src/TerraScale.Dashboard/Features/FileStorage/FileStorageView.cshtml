@@ -81,7 +81,7 @@ else
             <p>This permanently deletes the bucket. It must have no files.</p>
             <button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="delete-bucket">Delete bucket</button>
         </div></section>
-        @(await RenderPartialAsync<FileConfirmDialog, FileConfirmDialogModel>(new("delete-bucket", "/api/v1/dashboard/storage/delete-bucket", "Delete bucket: " + selected.Name, "This permanently deletes the bucket. It must have no files.", "Delete bucket", csrf, new Dictionary<string, string> { ["bucket"] = bucketId }, selected.Name, draft?.Dialog == "delete-bucket" ? draft.Error : null, draft?.Dialog == "delete-bucket" ? draft.Name : "")))
+        @(await RenderPartialAsync<FileConfirmDialog, FileConfirmDialogModel>(new("delete-bucket", "/api/v1/dashboard/storage/delete-bucket", "Delete bucket: " + selected.Name, "This permanently deletes the bucket. It must have no files.", "Delete bucket", csrf, new Dictionary<string, string> { ["bucket"] = bucketId }, draft?.Dialog == "delete-bucket" ? draft.Error : null)))
     }
     else if (listing?.Files is { } files)
     {
@@ -139,7 +139,7 @@ else
                         <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title ts-break" id="@("file-details-" + file.Id + "-title")">@file.Name</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@("file-details-" + file.Id)">@Icons.Render("X", 18)</button></header>
                         <dl class="ts-kv ts-files-details"><div><dt>ID</dt><dd class="ts-mono">@file.Id</dd></div><div><dt>Size</dt><dd>@(file.Size.ToString("N0", CultureInfo.InvariantCulture)) bytes</dd></div><div><dt>Type</dt><dd class="ts-mono">@file.ContentType</dd></div><div><dt>SHA-256</dt><dd class="ts-mono ts-break">@file.Sha256</dd></div><div><dt>Metadata</dt><dd><pre class="ts-code">@file.Metadata.GetRawText()</pre></dd></div></dl>
                     </div></dialog>
-                    @if (canWrite) { @(await RenderPartialAsync<FileConfirmDialog, FileConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file: " + file.Name, "This permanently deletes the file.", "Delete file", csrf, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id }, Error: draft?.Dialog == "delete-file-" + file.Id ? draft.Error : null))) }
+                    @if (canWrite) { @(await RenderPartialAsync<FileConfirmDialog, FileConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file: " + file.Name, "This permanently deletes the file.", "Delete file", csrf, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id }, draft?.Dialog == "delete-file-" + file.Id ? draft.Error : null))) }
                     </td>
                 </tr>
             }

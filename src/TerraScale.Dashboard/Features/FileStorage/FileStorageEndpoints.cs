@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
     public sealed record FileStoragePage(ShellModel Shell, FileStorageListing? Listing, DateTimeOffset Now, string? Error = null, FileStorageDraft? Draft = null, bool Settings = false);
     public sealed record FileStorageDraft(string Dialog, string Error, string Name, TerraBaseFileRules Rules);
     public sealed record FileConfirmDialogModel(string Id, string Action, string Title, string Consequence, string Button, string CsrfToken,
-        IReadOnlyDictionary<string, string> Fields, string? ConfirmationName = null, string? Error = null, string Typed = "");
+        IReadOnlyDictionary<string, string> Fields, string? Error = null);
     public sealed record FileRulesFormModel(string Prefix, TerraBaseFileRules Rules, bool Existing = false);
 
     public static class FileStorageEndpoints
@@ -51,7 +51,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                 switch (operation)
                 {
                     case "bucket": bucket = (await files.CreateBucketAsync(context, form["name"].ToString(), Rules(form), http.RequestAborted)).Id; break;
-                    case "delete-bucket": await files.DeleteBucketAsync(context, bucket, form["confirmName"].ToString(), http.RequestAborted); bucket = ""; break;
+                    case "delete-bucket": await files.DeleteBucketAsync(context, bucket, http.RequestAborted); bucket = ""; break;
                     case "rules": await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted); return HttpRedirects.SeeOther(BucketPath(bucket) + "&tab=settings");
                     case "upload":
                         using (var metadata = JsonDocument.Parse(form["metadata"].ToString()))
@@ -88,7 +88,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                 {
                     "bucket" => new("create-bucket", message, form["name"].ToString(), Rules(form)),
                     "rules" => new("", message, "", Rules(form)),
-                    "delete-bucket" => new("delete-bucket", message, form["confirmName"].ToString(), Rules(form)),
+                    "delete-bucket" => new("delete-bucket", message, "", Rules(form)),
                     "delete" => new("delete-file-" + file, message, "", Rules(form)),
                     _ => null
                 };

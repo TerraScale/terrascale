@@ -6,10 +6,6 @@
             <input type="hidden" name="_csrf" value="@Model.CsrfToken" />
             @foreach (var field in Model.Fields) { <input type="hidden" name="@field.Key" value="@field.Value" /> }
             @if (Model.Error is { } error) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@error</p></div> }
-            @if (Model.ConfirmationName is { } name)
-            {
-                <div class="ts-field"><label class="ts-label" for="@(Model.Id + "-name")">Type <span class="ts-mono">@name</span> to confirm</label><input class="ts-input ts-mono" id="@(Model.Id + "-name")" name="confirmName" value="@Model.Typed" required maxlength="63" pattern="@name" title="Type the exact bucket name." autocomplete="off" spellcheck="false" /></div>
-            }
             <div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="@Model.Id">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">@Model.Button</button></div>
         </form>
     </div>

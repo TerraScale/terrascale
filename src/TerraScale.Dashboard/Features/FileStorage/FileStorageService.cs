@@ -57,6 +57,13 @@ namespace TerraScale.Dashboard.Features.FileStorage
             _ = await client.SetFileBucketRulesAsync(project, bucket, rules);
         }
 
+        public async Task DeleteBucketAsync(AccountContext context, string bucket, CancellationToken token)
+        {
+            var (client, project) = await ProjectAsync(context, true, token);
+            ValidBucket(bucket);
+            await client.DeleteFileBucketAsync(project, bucket);
+        }
+
         public async Task DeleteBucketAsync(AccountContext context, string bucket, string confirmation, CancellationToken token)
         {
             var (client, project) = await ProjectAsync(context, true, token);

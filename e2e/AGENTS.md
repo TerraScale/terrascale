@@ -63,8 +63,7 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   its timeout. Inboxes are never deleted: a deleted address can be registered again by anyone, while the
   account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
   password and token are registered secrets. Errors name the "inbox provider".
-- Not run on production: the files flows of `interactions/files.spec.ts` (skipped there), because the browser may not
-  reach the object store's host on production. Through `onLocalStack`: the Cloudflare fallback count of `setup`, because production shows no
+- Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach
   `/account-deleted` by itself, without a click, within its timeout); the sign-up submission of the four `hosted`
