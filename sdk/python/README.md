@@ -29,8 +29,9 @@ print(db.query("SELECT * FROM notes"))
 ```
 
 The API key is exchanged with ts-auth (`https://auth.terrascale.tech`) for a
-short-lived project access token, cached and refreshed automatically. With a
-`base_url` other than `https://api.terrascale.tech`, pass `issuer=`, the ts-auth
+short-lived project access token, cached and refreshed automatically. A client
+that holds an API key (`api_key=` or `TERRASCALE_API_KEY`, also next to `token=`)
+and a `base_url` other than `https://api.terrascale.tech` needs `issuer=`, the ts-auth
 issuer that exchanges the key (for example `https://auth.example.com/terrascale`);
 without it the client raises `ValueError` before any request instead of sending
 the key to `https://auth.terrascale.tech`. Keep keys on your server and out of git. See [examples/quickstart.py](examples/quickstart.py).

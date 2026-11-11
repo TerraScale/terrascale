@@ -63,9 +63,9 @@ def _settings(api_key: str | None, project: str | None, token: Any, base_url: st
     url = httpx.URL(base)
     if url.scheme != "https" and not (url.scheme == "http" and url.host in ("localhost", "127.0.0.1", "::1")):
         raise ValueError("base_url must be an https URL")
-    if token is None and issuer is None and url != httpx.URL(_spec.DEFAULT_BASE_URL):
-        raise ValueError("set issuer to the ts-auth that exchanges the api_key: with a base_url other than "
-                         "https://api.terrascale.tech the key is not sent to production ts-auth")
+    if api_key and issuer is None and url != httpx.URL(_spec.DEFAULT_BASE_URL):
+        raise ValueError("set issuer to the ts-auth that exchanges the API key from api_key= or TERRASCALE_API_KEY: with a "
+                         "base_url other than https://api.terrascale.tech the key is not sent to production ts-auth")
     return api_key, project, base
 
 
