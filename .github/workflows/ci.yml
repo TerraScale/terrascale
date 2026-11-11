@@ -42,9 +42,6 @@ env:
   TS_AUTH_REVISION: ${{ github.sha }}
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   ASPNETCORE_HTTP_PORTS: ''
-  # Keep CallerFilePath fixture lookups on disk, as in Docker (which excludes .git).
-  # ContinuousIntegrationBuild and deterministic compilation remain enabled.
-  DeterministicSourcePaths: false
 
 jobs:
   # Runs on every event: a skipped job would skip "test".
