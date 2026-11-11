@@ -28,6 +28,10 @@ category: `Page timing <method> <route template or [unmatched]> <status>: <timin
 The timing starts with `app;dur=<total milliseconds>` and lists each upstream's
 calls and time when the request made any. Static files carry `[unmatched]`. The
 framework's request start and finish lines and per-step lines stay off.
+Each upstream call of such a request writes EventId 5, `Upstream timing <upstream>
+<host> <method> <operation> <status>: start <ms> ms, duration <ms> ms`, at
+Information when the call threw (status 0) or answered 401, 403, 429 or 500 and
+above, and at Debug otherwise.
 
 This change affects server diagnostics only; running-app screenshots and videos
 are not applicable because no visual flow changes. CSRF cookie `__Host-` prefix

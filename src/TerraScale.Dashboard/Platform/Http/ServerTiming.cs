@@ -206,11 +206,17 @@ namespace TerraScale.Dashboard.Platform.Http
                 }
                 var ended = timing.clock.Elapsed.TotalMilliseconds;
                 timing.Record("terrabase", started, ended);
-                if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(LogLevel.Debug))
+                var level = UpstreamLevel(status);
+                if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(level))
                 {
-                    logger.UpstreamTimingStartMsDurationMs("terrabase", "rpc", "RPC", operation, status, started, ended - started);
+                    logger.UpstreamTimingStartMsDurationMs(level, "terrabase", "rpc", "RPC", operation, status, started, ended - started);
                 }
             }
+        }
+
+        private static LogLevel UpstreamLevel(int status)
+        {
+            return status is 0 or 401 or 403 or 429 or >= 500 ? LogLevel.Information : LogLevel.Debug;
         }
 
         public static void BeginStateWrite()
@@ -264,10 +270,12 @@ namespace TerraScale.Dashboard.Platform.Http
                     timing.Record(upstream, started, ended);
                     // Only fixed operation names escape: no URL, query, token, record ID or customer name.
                     var operation = Operation(request.RequestUri);
-                    if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(LogLevel.Debug))
+                    var status = response is null ? 0 : (int)response.StatusCode;
+                    var level = UpstreamLevel(status);
+                    if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(level))
                     {
-                        logger.UpstreamTimingStartMsDurationMs(upstream, upstream == "other" ? "[other]" : request.RequestUri?.Host, SafeHttpLogging.Method(request.Method.Method), operation,
-                        response is null ? 0 : (int)response.StatusCode, started, ended - started);
+                        logger.UpstreamTimingStartMsDurationMs(level, upstream, upstream == "other" ? "[other]" : request.RequestUri?.Host, SafeHttpLogging.Method(request.Method.Method), operation,
+                        status, started, ended - started);
                     }
                 }
             }
