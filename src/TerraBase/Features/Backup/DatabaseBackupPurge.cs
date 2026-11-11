@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Text.Json.Serialization;
 using System.Text.Json;
+using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management;
@@ -171,22 +172,13 @@ internal sealed class DatabaseBackupPurge(
 
     internal async Task<DateTimeOffset?> ShredAsync(TenantContext database, CancellationToken token)
     {
-        var shredded = await ShredScopeAsync(database, token).ConfigureAwait(false);
-        if (shredded is null)
-        {
-            return null;
-        }
-
         string? after = null;
         do
         {
-            var page = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.ListAsync(transaction,
-                BackupCatalog.Records(database.OrganizationId), after, 100, ManagementJsonContext.Default.BackupRecord,
-                record => record.Id, token), token).ConfigureAwait(false);
-            foreach (var snapshot in page.Items.Where(record => record.ProjectId == database.ProjectId
-                && record.DatabaseId == database.DatabaseId))
+            var page = await catalog.ReadUncheckedAsync(transaction => UnshreddedSnapshotsAsync(transaction, database, after, token), token).ConfigureAwait(false);
+            foreach (var snapshot in page.Items)
             {
-                if (await ShredScopeAsync(snapshot.Storage(database.Plan), token).ConfigureAwait(false) is null)
+                if (await ShredScopeAsync(snapshot, token).ConfigureAwait(false) is null)
                 {
                     return null;
                 }
@@ -195,21 +187,24 @@ internal sealed class DatabaseBackupPurge(
         }
         while (after is not null);
 
-        var saved = await catalog.WriteDurableAsync(async transaction =>
+        return await ShredScopeAsync(database, token).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<ManagementPage<TenantContext>> UnshreddedSnapshotsAsync(IStorageTransaction transaction, TenantContext database, string? after, CancellationToken token)
+    {
+        var page = await SystemCatalog.ListAsync(transaction, BackupCatalog.Records(database.OrganizationId), after, 100,
+            ManagementJsonContext.Default.BackupRecord, record => record.Id, token).ConfigureAwait(false);
+        List<TenantContext> snapshots = [];
+        foreach (var snapshot in page.Items.Where(record => record.ProjectId == database.ProjectId && record.DatabaseId == database.DatabaseId))
         {
-            var progress = await SystemCatalog.GetAsync(transaction, ProgressKind, database.DatabaseId!,
-                BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false)
-                ?? new BackupPurgeProgress(shredded.Value, null, null, null, null);
-            await SystemCatalog.PutAsync(transaction, ProgressKind, database.DatabaseId!,
-                progress with { KeysShreddedAt = shredded }, BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false);
-            return true;
-        }, static _ => false, token).ConfigureAwait(false);
-        if (!saved)
-        {
-            return null;
+            if ((await SystemCatalog.GetAsync(transaction, ProgressKind, snapshot.Id, BackupPurgeJsonContext.Default.BackupPurgeProgress, token)
+                .ConfigureAwait(false))?.KeysShreddedAt is null)
+            {
+                snapshots.Add(snapshot.Storage(database.Plan));
+            }
         }
 
-        return shredded;
+        return new(snapshots, page.Next);
     }
 
     private async Task<DateTimeOffset?> ShredScopeAsync(TenantContext database, CancellationToken token)
@@ -231,7 +226,15 @@ internal sealed class DatabaseBackupPurge(
         }
 
         logger.ZLogInformation($"Backup keys of deleted database {database.DatabaseId:@Database} are destroyed");
-        return record.ShreddedAt;
+        return await catalog.WriteDurableAsync<DateTimeOffset?>(async transaction =>
+        {
+            var progress = await SystemCatalog.GetAsync(transaction, ProgressKind, database.DatabaseId!,
+                BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false)
+                ?? new BackupPurgeProgress(record.ShreddedAt, null, null, null, null);
+            await SystemCatalog.PutAsync(transaction, ProgressKind, database.DatabaseId!,
+                progress with { KeysShreddedAt = record.ShreddedAt }, BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false);
+            return record.ShreddedAt;
+        }, static _ => null, token).ConfigureAwait(false);
     }
 
     private async Task<BackupPurgeProgress> PurgeAsync(DatabasePurgeRecord job, BackupPurgeProgress progress, CancellationToken token)
