@@ -53,9 +53,12 @@ jobs:
         if: github.event_name == 'workflow_run'
         run: |
           latest=$(git for-each-ref --count=1 --sort=-v:refname --format='%(refname:short)' 'refs/tags/sdk/go/v0.0.*')
-          if git merge-base --is-ancestor "$latest" HEAD && ! git diff-tree --quiet -r "$latest" HEAD -- sdk/go scripts/sdk \
-            .github/workflows/sdk-release.yml ':(exclude,glob)**/AGENTS.md' ':(exclude,glob)**/CLAUDE.md'; then
-            echo due=true >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$latest" HEAD; then
+            git diff-tree --quiet -r "$latest" HEAD -- sdk/go scripts/sdk .github/workflows/sdk-release.yml \
+              ':(exclude,glob)**/AGENTS.md' ':(exclude,glob)**/CLAUDE.md' || echo due=true >> "$GITHUB_OUTPUT"
+          elif ! git merge-base --is-ancestor HEAD "$latest"; then
+            echo "::error::The newest Go tag $latest is neither an ancestor nor a descendant of $(git rev-parse HEAD); no Go release can follow it until it is deleted or moved onto main."
+            exit 1
           fi
 
   go:

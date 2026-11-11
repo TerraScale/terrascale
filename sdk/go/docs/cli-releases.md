@@ -51,7 +51,9 @@ step and no deploy switch. The path is:
 2. When that `CI` run of the push succeeds, it starts the `SDK Release` workflow
    (`.github/workflows/sdk-release.yml`) for the same commit. Its `go-due` job stops
    unless the newest `sdk/go/v0.0.X` tag is an ancestor of the commit and the release
-   inputs changed since that tag. A red `CI` run starts no release; its changes ship
+   inputs changed since that tag. A commit older than that tag ends green; when the tag
+   is neither an ancestor nor a descendant of the commit (pushed off `main`), the job
+   fails with an error that names it. A red `CI` run starts no release; its changes ship
    with the next green main commit. The `go` job runs one at a time. It first repeats
    the `go-due` check against the tags as they are when it starts, and ends green without
    building or tagging when it no longer holds: a release that ran while it waited
