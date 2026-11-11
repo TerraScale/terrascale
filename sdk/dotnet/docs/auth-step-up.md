@@ -12,11 +12,17 @@ sign-in alone does not approve the proof; auth requires fresh credentials and an
 
 Supported pairs are `delete_account` with `ts-auth` or `ts-dashboard`, `create_pat`
 with `ts-dashboard`, and `delete_organization`, `start_ownership_transfer`,
-`create_api_key`, `rotate_api_key`, `create_oauth_client`
+`change_plan`, `create_api_key`, `rotate_api_key`, `create_oauth_client`,
+`update_oauth_client`, `rotate_oauth_client`, `change_email`, `add_passkey`,
+`enroll_totp`, `delete_passkey`, `create_webhook_endpoint` and `rotate_webhook_secret`
 with `ts-auth`. For auth operations, pass the approved proof to the required
-`stepUpProof` argument on API-key create/rotate,
-ownership-transfer start, `auth.Projects.CreateClientAsync`,
-or `auth.Platform.DeleteAccountWithProofAsync`. The two organization proofs bind the exact organization: pass its id as `OrganizationId` when minting. Organization deletion is one call:
+`stepUpProof` argument on API-key rotate, ownership-transfer start,
+`auth.Projects.CreateClientAsync`, `UpdateProjectClientAsync` and `RotateProjectClientSecretAsync`,
+`auth.Platform.RequestEmailChangeAsync` or `auth.Platform.DeleteAccountWithProofAsync`.
+API-key creation consumes no proof: `CreateOrganizationApiKeyAsync` and `CreateProjectApiKeyAsync`
+still take a `stepUpProof` and send it, and ts-auth creates the key without checking it.
+The three organization proofs, `delete_organization`, `start_ownership_transfer` and `change_plan`,
+bind the exact organization: pass its id as `OrganizationId` when minting. Organization deletion is one call:
 pass the approved, unconsumed proof to `auth.Platform.DeleteOrganizationAsync(accessToken, organizationId, proof)`.
 It consumes the proof at `POST /v1/terrascale/step-up/consume` for that organization, then sends the
 organization `DELETE` with the same proof, which ts-auth spends; never consume the proof first. A refused
