@@ -35,7 +35,10 @@ public sealed partial class StripeBilling
             return false;
         }
 
-        await CancelDraftSubscriptionAsync(client, subscriptionId, cancellationToken);
+        if (!await CancelDraftSubscriptionAsync(client, subscriptionId, cancellationToken))
+        {
+            return false;
+        }
 
         var refunded = false;
         await foreach (var invoice in client.V1.Invoices.ListAutoPagingAsync(
@@ -69,7 +72,7 @@ public sealed partial class StripeBilling
         return refunded;
     }
 
-    private static async Task CancelDraftSubscriptionAsync(StripeClient client, string subscriptionId, CancellationToken cancellationToken)
+    private static async Task<bool> CancelDraftSubscriptionAsync(StripeClient client, string subscriptionId, CancellationToken cancellationToken)
     {
         try
         {
@@ -91,8 +94,10 @@ public sealed partial class StripeBilling
         }
         catch (StripeException error) when (MissingStripeObject(error))
         {
-            return;
+            return false;
         }
+
+        return true;
     }
 
     private static async Task RefundDraftPaymentAsync(StripeClient client, InvoicePayment payment, CancellationToken cancellationToken)
