@@ -48,22 +48,22 @@ internal sealed partial class EngineManagementService
                 return;
             }
 
-            try
+            if (!database.Dropped)
             {
-                if (!database.Dropped)
+                try
                 {
                     await DropLocalAsync(database.Storage, token).ConfigureAwait(false);
                 }
-
-                if (!database.Shredded)
+                catch (Exception error) when (!token.IsCancellationRequested)
                 {
-                    _ = await shredding.Value.DestroyAsync(database.Storage, until, token).ConfigureAwait(false);
+                    _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "active_cleanup"));
+                    logger.ZLogWarning(error, $"Deleting the files of database {database.Storage.DatabaseId:@Database} of closing project {project:@Project} failed; the next pass tries again");
                 }
             }
-            catch (Exception error) when (!token.IsCancellationRequested)
+
+            if (!database.Shredded)
             {
-                _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "active_cleanup"));
-                logger.ZLogWarning(error, $"Erasing database {database.Storage.DatabaseId:@Database} of closing project {project:@Project} failed; the next pass tries again");
+                _ = await shredding.Value.DestroyAsync(database.Storage, until, token).ConfigureAwait(false);
             }
         }
     }

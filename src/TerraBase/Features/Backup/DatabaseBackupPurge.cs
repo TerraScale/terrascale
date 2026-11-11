@@ -141,6 +141,7 @@ internal sealed class DatabaseBackupPurge(
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             _failures.Add(1, new KeyValuePair<string, object?>("reason", "key_shred_unavailable"));
+            logger.ZLogWarning($"Shredding the backup keys of deleted database {database.DatabaseId:@Database} failed; the erasure pass retries");
             return false;
         }
     }
