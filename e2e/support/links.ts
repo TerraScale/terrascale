@@ -9,6 +9,8 @@ const chartWindows = new Set(['range', 'reads', 'writes', 'storage', 'latency'])
 const journeyPages: readonly PagePattern[] = [
   { path: /^\/onboarding$/ },
   { path: /^\/account-deleted$/ },
+  { path: /^\/profile$/, query: { tab: /^access-tokens$/, status: /^token-revoked$/ } },
+  { path: /^\/profile$/, query: { tab: /^profile$/, status: /^profile-saved$/ } },
 ];
 
 const hostedPages: readonly RegExp[] = [
@@ -19,7 +21,7 @@ const hostedPages: readonly RegExp[] = [
   /^\/ui\/terrascale\/step-up\/[^/]+$/,
 ];
 
-export const excludedPages: readonly { path: RegExp; reason: string }[] = [
+const excludedPages: readonly { path: RegExp; reason: string }[] = [
   { path: /^\/(login|register)$/, reason: 'redirects to the hosted sign-in or sign-up page' },
   { path: /^\/logout$/, reason: 'sign-out: ends the session' },
   { path: /^\/login\/callback$/, reason: 'OIDC callback: redirect only' },

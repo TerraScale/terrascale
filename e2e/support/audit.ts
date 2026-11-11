@@ -5,6 +5,7 @@ import { stackHosts } from './stack';
 import { saveCookies } from './state';
 
 const wcag = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
+const reportedConsole: ReadonlySet<string> = new Set(['error', 'warning', 'assert']);
 const secrets = 'input[type=password], .ts-apikeys-secret-value, #access-token-secret';
 
 type Expected = { url: RegExp; status: number; seen: number; logged: number };
@@ -21,7 +22,7 @@ export class Audit {
     private readonly info: TestInfo,
   ) {
     page.on('console', (message) => {
-      if (message.type() !== 'error' && message.type() !== 'warning') return;
+      if (!reportedConsole.has(message.type())) return;
       if (this.expectedLoadFailure(message.text(), message.location().url)) return;
       this.problems.push(`console ${message.type()}: ${message.text()} at ${message.location().url}`);
     });
@@ -126,7 +127,7 @@ async function links(page: Page): Promise<Link[]> {
   });
 }
 
-export async function guard(context: BrowserContext): Promise<void> {
+async function guard(context: BrowserContext): Promise<void> {
   await context.route(
     (url) => url.protocol.startsWith('http') && !stackHosts.has(url.hostname),
     (route) => route.abort('blockedbyclient'),

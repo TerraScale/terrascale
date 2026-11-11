@@ -23,10 +23,6 @@ export async function nextMail(address: string, seen: number): Promise<Mail> {
   return { from: message.From.Address, subject: message.Subject, text: message.Text };
 }
 
-export async function mailCount(address: string): Promise<number> {
-  return (await search(address)).length;
-}
-
 export async function cloudflareSendCount(): Promise<number> {
   const response = await fetch(`${cloudflareSink}/messages`);
   expect(response.status).toBe(200);

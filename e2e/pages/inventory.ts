@@ -335,7 +335,7 @@ export const dashboardStates: readonly PageState[] = [
     ([tab, heading]): PageState => ({
       name: `profile ${tab}`,
       url: () => `/profile?tab=${tab}`,
-      covers: { path: /^\/profile$/, query: { tab: new RegExp(`^${tab}$`), status: /^([a-z-]+)?$/ } },
+      covers: { path: /^\/profile$/, query: { tab: new RegExp(`^${tab}$`) } },
       heading,
     }),
   ),
@@ -373,7 +373,7 @@ export const dashboardStates: readonly PageState[] = [
   {
     name: 'account deletion status without a receipt',
     url: () => '/account-deletion',
-    covers: { path: /^\/account-deletion$/, query: { retry: /^[0-9]*$/ } },
+    covers: { path: /^\/account-deletion$/ },
     heading: title('Deletion status needs attention'),
     status: 403,
     shell: false,
