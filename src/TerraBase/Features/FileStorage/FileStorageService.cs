@@ -1,4 +1,5 @@
 using Amazon.S3;
+using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -14,16 +15,18 @@ using TerraBase.Primitives;
 namespace TerraBase.Features.FileStorage;
 
 internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine engine, IFileObjectStore objects,
-    IStorageQuota quota, TerraBaseOptions options, TimeProvider time, ICatalogGate gate, ILogger<FileStorageService> logger)
+    IStorageQuota quota, TerraBaseOptions options, TimeProvider time, ICatalogGate gate, FileErasure erasure, ILogger<FileStorageService> logger)
     : BackgroundService, IFileStorage
 {
     private const int ListPage = 50;
     private const int MaxListScan = 1000;
     private static readonly Forbidden Denied = new("the bucket rules deny this operation", "access_denied");
     private static readonly NotFound Missing = new("the bucket or file does not exist");
+    private static readonly Conflict LiveFiles = new("delete the bucket's files and let uploads in progress complete or expire before deleting the bucket");
     private static readonly Action<ILogger, Exception?> CleanupIncomplete = LoggerMessage.Define(
         LogLevel.Warning, new EventId(1, "FileCleanupIncomplete"), "File storage cleanup could not finish; it will retry");
     private static readonly Unavailable Busy = new("file storage is unavailable; retry");
+    private static readonly TimeSpan BucketErasureBudget = TimeSpan.FromSeconds(10);
     private string? _kindAfter;
     private string? _fileAfter;
     private string? _sweepKind;
@@ -125,21 +128,49 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         }, static error => error, cancellationToken);
     }
 
-    public ValueTask<FileStorageResult> DeleteBucketAsync(string bucket, CancellationToken cancellationToken) =>
-        !Admin ? ValueTask.FromResult<FileStorageResult>(Denied) : catalog.WriteAsync<FileStorageResult>(async transaction =>
+    public async ValueTask<FileStorageResult> DeleteBucketAsync(string bucket, CancellationToken cancellationToken)
+    {
+        if (!Admin)
         {
-            if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is null)
+            return Denied;
+        }
+        var found = await catalog.ReadAsync<FileStorageResult>(async transaction =>
+            await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is { } saved ? saved : Missing, static error => error, cancellationToken).ConfigureAwait(false);
+        if (found is not FileBucket definition)
+        {
+            return found;
+        }
+        BucketPurge purged;
+        try
+        {
+            purged = await erasure.PurgeBucketAsync(new(Access.OrganizationId, Access.ProjectId), definition,
+                async (transaction, token) => await BucketAsync(transaction, bucket, token).ConfigureAwait(false) is not null,
+                heldOnly: true, time.GetUtcNow() + BucketErasureBudget, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (StoreFailure(error)) { return Busy; }
+        return purged switch
+        {
+            BucketPurge.Emptied => await catalog.WriteAsync<FileStorageResult>(async transaction =>
             {
-                return Missing;
-            }
-            if (await SystemCatalog.AnyAsync(transaction, Files(bucket), cancellationToken).ConfigureAwait(false))
-            {
-                return new Conflict("delete the files and wait for upload cleanup before deleting the bucket");
-            }
-            _ = await transaction.DropKindAsync(Files(bucket), cancellationToken).ConfigureAwait(false);
-            await transaction.DeleteAsync(Buckets, bucket, cancellationToken).ConfigureAwait(false);
-            return new Done();
-        }, static error => error, cancellationToken);
+                if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is null)
+                {
+                    return Missing;
+                }
+                if (await SystemCatalog.AnyAsync(transaction, Files(bucket), cancellationToken).ConfigureAwait(false))
+                {
+                    return LiveFiles;
+                }
+                _ = await transaction.DropKindAsync(Files(bucket), cancellationToken).ConfigureAwait(false);
+                await transaction.DeleteAsync(Buckets, bucket, cancellationToken).ConfigureAwait(false);
+                return new Done();
+            }, static error => error, cancellationToken).ConfigureAwait(false),
+            BucketPurge.Live => LiveFiles,
+            BucketPurge.Unfenced => Missing,
+            BucketPurge.Spent => new Unavailable("the bucket's deleted files are still being erased; retry"),
+            BucketPurge.Unavailable => Busy,
+            _ => throw new UnreachableException(),
+        };
+    }
 
     public async ValueTask<FileStorageResult> CreateUploadAsync(string bucket, CreateFileUploadRequest request, CancellationToken cancellationToken)
     {
@@ -231,7 +262,8 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         {
             var currentBucket = await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false);
             var current = await FileAsync(transaction, bucket, file, cancellationToken).ConfigureAwait(false);
-            if (currentBucket is null || current is null || current.Status == "deleted")
+            if (currentBucket is null || current is null || current.Status == "deleted"
+                || await ProjectClosure.IsClosedAsync(transaction, Access.ProjectId, cancellationToken).ConfigureAwait(false))
             {
                 return Missing;
             }
@@ -350,18 +382,23 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         return checksum is { Length: 44 } && Convert.TryFromBase64String(checksum, bytes, out var written) && written == 32;
     }
 
-    private static bool StoreFailure(Exception error) => error is AmazonS3Exception or HttpRequestException or IOException;
+    internal static bool StoreFailure(Exception error) => error is AmazonS3Exception or HttpRequestException or IOException;
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
+        Task.WhenAll(
+            RunEveryAsync(TimeSpan.FromSeconds(30), SweepAsync, stoppingToken),
+            RunEveryAsync(TimeSpan.FromSeconds(5), erasure.PurgeLateObjectsAsync, stoppingToken));
+
+    private async Task RunEveryAsync(TimeSpan period, Func<CancellationToken, ValueTask> pass, CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), time);
+        using var timer = new PeriodicTimer(period, time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
             if (!gate.IsOpen)
             {
                 continue;
             }
-            try { await SweepAsync(stoppingToken).ConfigureAwait(false); }
+            try { await pass(stoppingToken).ConfigureAwait(false); }
             catch (Exception error) when (StoreFailure(error) || error is QueryCapacityException)
             {
                 CleanupIncomplete(logger, null);

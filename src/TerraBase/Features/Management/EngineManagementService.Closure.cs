@@ -1,6 +1,7 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.FileStorage;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
@@ -21,7 +22,9 @@ internal sealed partial class EngineManagementService
             return result;
         }
 
-        await EraseClosingDatabasesAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var until = time.GetUtcNow() + ErasureBudget;
+        await EraseClosingDatabasesAsync(projectId, until, cancellationToken).ConfigureAwait(false);
+        await EraseClosingFilesAsync(projectId, until, cancellationToken).ConfigureAwait(false);
         string? scanned = null;
         while (true)
         {
@@ -108,7 +111,7 @@ internal sealed partial class EngineManagementService
         !await CatalogTables.HasDatabasesAsync(transaction, projectId, cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, ProjectBackupDestinations.Kind(projectId), cancellationToken).ConfigureAwait(false)
-        && !await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);
+        && !await AnyAsync(transaction, FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);
 
     internal static HashSet<string> CatalogHolders(string machineId) =>
         new([machineId], StringComparer.Ordinal);
@@ -192,6 +195,7 @@ internal sealed partial class EngineManagementService
                     continue;
                 }
 
+                await EraseClosingFilesAsync(record.ProjectId, time.GetUtcNow() + ErasureBudget, cancellationToken).ConfigureAwait(false);
                 _ = await WriteAsync<Done>(async transaction =>
                 {
                     await RefreshClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);

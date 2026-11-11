@@ -1,6 +1,7 @@
 using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
+using TerraBase.Features.FileStorage;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
@@ -14,9 +15,8 @@ internal sealed partial class EngineManagementService
 {
     private static readonly TimeSpan ErasureBudget = TimeSpan.FromSeconds(10);
 
-    private async ValueTask EraseClosingDatabasesAsync(string project, CancellationToken token)
+    private async ValueTask EraseClosingDatabasesAsync(string project, DateTimeOffset until, CancellationToken token)
     {
-        var until = time.GetUtcNow() + ErasureBudget;
         var pending = await ReadAsync<IReadOnlyList<ClosingDatabase>>(async transaction =>
         {
             var tracked = await transaction.ListAsync(ProjectClosure.Purges(project), null, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
@@ -69,6 +69,24 @@ internal sealed partial class EngineManagementService
     }
 
     private sealed record ClosingDatabase(TenantContext Storage, bool Dropped, bool Shredded);
+
+    private async ValueTask EraseClosingFilesAsync(string project, DateTimeOffset until, CancellationToken token)
+    {
+        if (await ReadAsync(transaction => FileErasureOrganizationAsync(transaction, project, token), static _ => null, token).ConfigureAwait(false) is { } organization)
+        {
+            _ = await fileErasure.Value.EraseAsync(new ProjectFiles(organization, project),
+                async (transaction, cancellationToken) => await FileErasureOrganizationAsync(transaction, project, cancellationToken).ConfigureAwait(false) == organization,
+                until, token).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask<string?> FileErasureOrganizationAsync(IStorageTransaction transaction, string project, CancellationToken token) =>
+        await GetAsync(transaction, ProjectClosure.Kind, project, ManagementJsonContext.Default.ProjectClosureRecord, token).ConfigureAwait(false) is { FormatVersion: 2 } closure
+        && closure.ProjectId == project
+        && await CatalogTables.ProjectOrganizationAsync(transaction, project, token).ConfigureAwait(false) == closure.AuthorityOrganizationId
+        && await IsProjectRegisteredAsync(transaction, project, closure.AuthorityOrganizationId, token).ConfigureAwait(false)
+            ? closure.AuthorityOrganizationId
+            : null;
 
     private async ValueTask<bool> EraseProjectBatchAsync(IStorageTransaction transaction, ProjectClosureRecord closure, CancellationToken token)
     {
