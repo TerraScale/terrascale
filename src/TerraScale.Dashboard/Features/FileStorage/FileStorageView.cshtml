@@ -1,114 +1,178 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.FileStoragePage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
+@using System.Globalization
+@using Microsoft.AspNetCore.Html
 @using TerraScale.Dashboard.Features.FileStorage
 @using TerraScale.TerraBase.Contracts.FileStorage
 @inject AssetUrls Assets
 @{
     var canWrite = Model.Shell.Context.CanWriteProjectData;
-    var selectedId = Model.Listing?.BucketId;
-    var selected = Model.Listing?.Buckets.Items.FirstOrDefault(bucket => bucket.Id == selectedId);
-    var culture = System.Globalization.CultureInfo.InvariantCulture;
+    var csrf = Model.Shell.CsrfToken;
+    var listing = Model.Listing;
+    var bucketId = listing?.BucketId;
+    var selected = listing?.Buckets.Items.FirstOrDefault(bucket => bucket.Id == bucketId);
+    var draft = Model.Draft;
     var defaults = new TerraBaseFileRules("/userId", new(true, false, []), new(true, false, []));
 }
-<main class="ts-page" data-project-id="@Model.Shell.Context.Project?.Id" data-organization-id="@Model.Shell.Context.Organization?.Id">
-    <header><h1>Files</h1></header>
-    @if (Model.Error is { } error)
+<main class="ts-page ts-files" data-project-id="@Model.Shell.Context.Project?.Id" data-organization-id="@Model.Shell.Context.Organization?.Id">
+@if (bucketId is null)
+{
+    <div class="ts-files-header"><h1>Files</h1>@if (canWrite && listing is not null) { <div class="ts-page-actions"><button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>Create bucket</span></button></div> }</div>
+    @if (Model.Error is { } error) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@error</p><a class="ts-link" href="/storage">Reload files</a></div> }
+    @if (listing is not null)
     {
-        <div class="ts-alert ts-alert-danger" role="alert"><p>@error</p><a class="ts-link" href="/storage">Reload files</a></div>
-    }
-    @if (Model.Listing is { } listing)
-    {
-        <section class="ts-card" aria-label="File buckets"><div class="ts-card-head"><h2 class="ts-card-title">Buckets</h2></div>
-            @if (listing.Buckets.Items.Count == 0)
+        <section class="ts-card ts-card-flush" aria-labelledby="buckets-title"><header class="ts-card-head"><h2 class="ts-card-title" id="buckets-title">Buckets</h2></header><div class="ts-card-body">
+        @if (listing.Buckets.Items.Count == 0)
+        {
+            <div class="ts-empty" role="status"><p class="ts-empty-title">No buckets yet.</p>@if (canWrite) { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>Create bucket</span></button> }</div>
+        }
+        else
+        {
+            <div class="ts-table-wrap"><table class="ts-table ts-table-stacked ts-files-table"><thead><tr><th scope="col">Name</th><th scope="col">Read</th><th scope="col">Write</th><th scope="col">Region</th><th scope="col">Created</th></tr></thead><tbody>
+            @foreach (var bucket in listing.Buckets.Items)
             {
-                <div class="ts-empty"><p class="ts-empty-title">No buckets yet</p></div>
+                <tr>
+                    <td><a class="ts-files-name" href="@FileStorageEndpoints.BucketPath(bucket.Id)"><span class="ts-files-icon" data-kind="bucket" aria-hidden="true">@Icons.Render("FolderOpen", 18)</span><span class="ts-strong ts-truncate">@bucket.Name</span></a></td>
+                    <td data-label="Read">@Grants(bucket.Rules.Read)</td>
+                    <td data-label="Write">@Grants(bucket.Rules.Write)</td>
+                    <td data-label="Region"><span class="ts-badge ts-badge-neutral ts-mono">@bucket.Region</span></td>
+                    <td data-label="Created">@Time(Created(bucket.Id))</td>
+                </tr>
             }
-            else
-            {
-                <div class="ts-table-wrap"><table class="ts-table"><thead><tr><th>Bucket</th><th>Region</th><th>Owner field</th></tr></thead><tbody>
-                @foreach (var bucket in listing.Buckets.Items)
-                {
-                    <tr><td><a class="ts-link" href="@BucketUrl(bucket.Id, listing.BucketAfter)" aria-current="@(bucket.Id == listing.BucketId ? "page" : null)">@bucket.Name</a></td><td>@bucket.Region</td><td><code>@(bucket.Rules.Owner ?? "None")</code></td></tr>
-                }
-                </tbody></table></div>
-            }
-            @if (listing.Buckets.Next is { } nextBucket)
-            {
-                <div class="ts-card-body"><a class="ts-link" href="@("/storage?bucketAfter=" + Uri.EscapeDataString(nextBucket))">More buckets</a></div>
-            }
-        </section>
+            </tbody></table></div>
+        }
+        @if (listing.Buckets.Next is { } nextBucket) { <div class="ts-files-more"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@("/storage?bucketAfter=" + Uri.EscapeDataString(nextBucket))">More buckets</a></div> }
+        </div></section>
         @if (canWrite)
         {
-            <details class="ts-card ts-card-boxed"><summary class="ts-card-head">Create bucket</summary><div class="ts-card-body">
-                <form method="post" action="/api/v1/dashboard/storage/bucket" class="ts-form">
-                    <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-                    <div class="ts-field"><label class="ts-label" for="bucket-name">Bucket name</label><input class="ts-input" id="bucket-name" name="name" required maxlength="63" placeholder="avatars" /></div>
-                    @(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("new-bucket", defaults)))
-                    <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Create bucket</button></div>
+            var open = draft?.Dialog == "create-bucket";
+            <dialog id="create-bucket" class="ts-dialog ts-files-dialog" closedby="any" aria-labelledby="create-bucket-title" data-init="@(open ? "el.showModal()" : "void 0")"><div class="ts-dialog-content">
+                <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="create-bucket-title">New bucket</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="create-bucket">@Icons.Render("X", 18)</button></header>
+                <form method="post" action="/api/v1/dashboard/storage/bucket" class="ts-form" data-submit-once>
+                    <input type="hidden" name="_csrf" value="@csrf" />
+                    @if (open) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@draft!.Error</p></div> }
+                    <div class="ts-field"><label class="ts-label" for="bucket-name">Name</label><input class="ts-input ts-mono" id="bucket-name" name="name" value="@(open ? draft!.Name : "")" required minlength="1" maxlength="63" pattern="@TerraScale.Dashboard.Common.Databases.DatabaseService.NameInputPattern" title="Start with a lowercase letter and use up to 63 lowercase letters, digits, underscores or hyphens." placeholder="avatars" autocomplete="off" spellcheck="false" autofocus /></div>
+                    @(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("new-bucket", open ? draft!.Rules : defaults)))
+                    <div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="create-bucket">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Plus", 16)<span>Create bucket</span></button></div>
                 </form>
-            </div></details>
-        }
-        @if (listing.BucketId is { } bucketId && listing.Files is { } files)
-        {
-            <section class="ts-card" aria-label="Stored files"><div class="ts-card-head"><h2 class="ts-card-title">@(selected?.Name ?? "Selected bucket")</h2></div>
-                @if (files.Items.Count == 0)
-                {
-                    <div class="ts-empty"><p class="ts-empty-title">No completed files</p></div>
-                }
-                else
-                {
-                    <div class="ts-table-wrap"><table class="ts-table"><thead><tr><th>Name</th><th>Size</th><th>Type</th><th>Actions</th></tr></thead><tbody>
-                    @foreach (var file in files.Items)
-                    {
-                        <tr><td><span class="ts-strong">@file.Name</span><details><summary>Metadata</summary><pre><code>@file.Metadata.GetRawText()</code></pre></details></td><td class="ts-num">@file.Size.ToString("N0", culture) bytes</td><td>@file.ContentType</td><td>
-                            <form method="post" action="/api/v1/dashboard/storage/download" target="_blank" rel="noopener"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-btn ts-btn-ghost" type="submit" aria-label="@("Download " + file.Name + " (opens in a new tab)")">Download</button></form>
-                            @if (canWrite)
-                            {
-                                @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file", file.Name, Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id }, Description: "This permanently deletes the file.")))
-                            }
-                        </td></tr>
-                    }
-                    </tbody></table></div>
-                }
-                @if (files.Next is { } next)
-                {
-                    <div class="ts-card-body"><a class="ts-link" href="@(BucketUrl(bucketId, listing.BucketAfter) + "&after=" + Uri.EscapeDataString(next))">More files</a></div>
-                }
-            </section>
-            @if (canWrite)
-            {
-                <section class="ts-card ts-card-boxed" aria-label="Upload file"><div class="ts-card-head"><h2 class="ts-card-title">Upload file</h2></div><div class="ts-card-body">
-                    <form class="ts-form" method="post" action="/api/v1/dashboard/storage/upload" data-file-upload>
-                        <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" />
-                        <div class="ts-field"><label class="ts-label" for="storage-file">File</label><input class="ts-input" type="file" id="storage-file" name="file" required /></div>
-                        <div class="ts-field"><label class="ts-label" for="file-metadata">Metadata</label><textarea class="ts-input" id="file-metadata" name="metadata" rows="4" maxlength="16384" required>{}</textarea></div>
-                        <p class="ts-meta" role="status" aria-live="polite" data-file-status></p>
-                        <noscript><p class="ts-meta">Uploading requires JavaScript to compute the file checksum.</p></noscript>
-                        <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Upload file</button></div>
-                    </form>
-                </div></section>
-                @if (selected is not null)
-                {
-                    <details class="ts-card ts-card-boxed"><summary class="ts-card-head">Bucket access rules</summary><div class="ts-card-body"><form class="ts-form" method="post" action="/api/v1/dashboard/storage/rules">
-                        <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" />
-                        @(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("existing-bucket", selected.Rules, true)))
-                        <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save rules</button></div>
-                    </form></div></details>
-                }
-                @if (selected is not null)
-                {
-                    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-bucket-" + bucketId, "/api/v1/dashboard/storage/delete-bucket", "Delete empty bucket", selected.Name, Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["bucketAfter"] = listing.BucketAfter ?? "" }, selected.Name, "This permanently deletes the bucket.")))
-                }
-            }
-        }
-        @if (!canWrite)
-        {
-            <p class="ts-meta">Uploading and bucket changes require write access.</p>
+            </div></dialog>
         }
     }
+}
+else
+{
+    var name = selected?.Name ?? "Bucket";
+    <a class="ts-files-back" href="/storage">@Icons.Render("ArrowLeft", 16)<span>Files</span></a>
+    <div class="ts-files-header"><div class="ts-files-title"><span class="ts-files-icon ts-files-icon-lg" data-kind="bucket" aria-hidden="true">@Icons.Render("FolderOpen", 22)</span><h1 class="ts-truncate">@name</h1>@if (selected is not null) { <span class="ts-badge ts-badge-neutral ts-mono">@selected.Region</span> }</div></div>
+    <nav class="ts-tabs" aria-label="Bucket sections"><a class="ts-tab" href="@FileStorageEndpoints.BucketPath(bucketId)" aria-current="@(Model.Settings ? null : "page")">Files</a>@if (canWrite && selected is not null) { <a class="ts-tab" href="@(FileStorageEndpoints.BucketPath(bucketId) + "&tab=settings")" aria-current="@(Model.Settings ? "page" : null)">Settings</a> }</nav>
+    @if (Model.Error is { } error) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@error</p><a class="ts-link" href="@FileStorageEndpoints.BucketPath(bucketId)">Reload bucket</a></div> }
+    @if (Model.Settings && canWrite && selected is not null)
+    {
+        var rulesError = draft?.Dialog == "" ? draft.Error : null;
+        <section class="ts-card" aria-labelledby="bucket-rules-title"><header class="ts-card-head"><h2 class="ts-card-title" id="bucket-rules-title">Access rules</h2></header><div class="ts-card-body">
+            <form class="ts-form" method="post" action="/api/v1/dashboard/storage/rules" data-submit-once>
+                <input type="hidden" name="_csrf" value="@csrf" /><input type="hidden" name="bucket" value="@bucketId" />
+                @if (rulesError is not null) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@rulesError</p></div> }
+                @(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("existing-bucket", rulesError is null ? selected.Rules : draft!.Rules with { Owner = selected.Rules.Owner }, true)))
+                <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save rules</button></div>
+            </form>
+        </div></section>
+        <section class="ts-card ts-files-danger" aria-labelledby="delete-bucket-heading"><header class="ts-card-head"><h2 class="ts-card-title" id="delete-bucket-heading">Delete bucket</h2></header><div class="ts-card-body ts-files-danger-body">
+            <p>This permanently deletes the bucket. It must have no files.</p>
+            <button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="delete-bucket">Delete bucket</button>
+        </div></section>
+        @(await RenderPartialAsync<FileConfirmDialog, FileConfirmDialogModel>(new("delete-bucket", "/api/v1/dashboard/storage/delete-bucket", "Delete bucket: " + selected.Name, "This permanently deletes the bucket. It must have no files.", "Delete bucket", csrf, new Dictionary<string, string> { ["bucket"] = bucketId }, selected.Name, draft?.Dialog == "delete-bucket" ? draft.Error : null, draft?.Dialog == "delete-bucket" ? draft.Name : "")))
+    }
+    else if (listing?.Files is { } files)
+    {
+        @if (canWrite)
+        {
+            <section class="ts-files-upload" aria-label="Upload files" data-upload data-action="/api/v1/dashboard/storage/upload" data-bucket="@bucketId" data-csrf="@csrf">
+                <input class="ts-files-input" type="file" multiple tabindex="-1" aria-hidden="true" data-upload-input />
+                <div class="ts-files-drop" data-upload-zone>
+                    <span class="ts-files-drop-icon" aria-hidden="true">@Icons.Render("Upload", 22)</span>
+                    <p class="ts-files-drop-title">Drop files here or <button class="ts-files-browse" type="button" data-upload-browse>browse</button></p>
+                </div>
+                <details class="ts-files-metadata"><summary>Metadata</summary><textarea class="ts-input ts-mono" id="upload-metadata" aria-label="Metadata for the next uploads" rows="3" maxlength="16384" required spellcheck="false" autocomplete="off" placeholder="{&quot;userId&quot;: &quot;user_123&quot;}" data-upload-metadata>{}</textarea></details>
+                <ul class="ts-files-queue" aria-label="Uploads" data-upload-queue hidden></ul>
+                <div class="ts-files-queue-actions" data-upload-actions hidden><button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-upload-clear>Clear finished</button></div>
+                <p class="ts-sr-only" role="status" aria-live="polite" data-upload-status></p>
+                <noscript><p class="ts-meta">Uploading needs JavaScript to compute each file's checksum.</p></noscript>
+                <template data-upload-row>
+                    <li class="ts-files-item" data-state="queued">
+                        <span class="ts-files-icon" aria-hidden="true">@Icons.Render("FileText", 18)</span>
+                        <div class="ts-files-item-main">
+                            <div class="ts-files-item-line"><span class="ts-strong ts-truncate" data-name></span><span class="ts-meta ts-files-item-size" data-size></span></div>
+                            <progress class="ts-files-progress" max="100" value="0" data-progress></progress>
+                            <p class="ts-files-item-status" data-status></p>
+                        </div>
+                        <span class="ts-files-item-mark" data-mark="done" aria-hidden="true">@Icons.Render("CircleCheck", 18)</span>
+                        <span class="ts-files-item-mark" data-mark="failed" aria-hidden="true">@Icons.Render("CircleAlert", 18)</span>
+                        <button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-retry>@Icons.Render("RotateCw", 14)<span>Retry</span></button>
+                        <button class="ts-icon-btn" type="button" data-remove>@Icons.Render("X", 16)</button>
+                    </li>
+                </template>
+            </section>
+        }
+        <section class="ts-card ts-card-flush" id="bucket-files" aria-label="Files in @name"><div class="ts-card-body">
+        @if (files.Items.Count == 0)
+        {
+            <div class="ts-empty" role="status"><p class="ts-empty-title">No files yet.</p>@if (canWrite) { <button class="ts-btn ts-btn-primary" type="button" data-upload-browse>@Icons.Render("Upload", 16)<span>Upload files</span></button> }</div>
+        }
+        else
+        {
+            <div class="ts-table-wrap"><table class="ts-table ts-table-stacked ts-files-table"><thead><tr><th scope="col">Name</th><th scope="col" class="ts-num">Size</th><th scope="col">Type</th><th scope="col">Uploaded</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>
+            @foreach (var file in files.Items.OrderByDescending(file => file.Id, StringComparer.Ordinal))
+            {
+                var (icon, kind) = Kind(file.ContentType);
+                <tr data-file-id="@file.Id">
+                    <td><span class="ts-files-name"><span class="ts-files-icon" data-kind="@kind" aria-hidden="true">@Icons.Render(icon, 18)</span><span class="ts-strong ts-truncate" title="@file.Name">@file.Name</span></span></td>
+                    <td class="ts-num" data-label="Size" title="@(file.Size.ToString("N0", CultureInfo.InvariantCulture) + " bytes")">@MetricFormat.Bytes(file.Size)</td>
+                    <td class="ts-files-type" data-label="Type"><span class="ts-mono ts-truncate">@file.ContentType</span></td>
+                    <td data-label="Uploaded">@Time(Created(file.Id))</td>
+                    <td class="ts-table-actions"><div class="ts-row ts-files-actions">
+                        <button class="ts-icon-btn" type="button" command="show-modal" commandfor="@("file-details-" + file.Id)" aria-label="@("Details: " + file.Name)" title="Details">@Icons.Render("Info", 16)</button>
+                        <form method="post" action="/api/v1/dashboard/storage/download" data-download><input type="hidden" name="_csrf" value="@csrf" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-icon-btn" type="submit" aria-label="@("Download " + file.Name)" title="Download">@Icons.Render("Download", 16)</button></form>
+                        @if (canWrite) { <button class="ts-icon-btn ts-files-delete" type="button" command="show-modal" commandfor="@("delete-file-" + file.Id)" aria-label="@("Delete " + file.Name)" title="Delete">@Icons.Render("X", 16)</button> }
+                    </div>
+                    <dialog id="@("file-details-" + file.Id)" class="ts-dialog ts-files-dialog" closedby="any" aria-labelledby="@("file-details-" + file.Id + "-title")"><div class="ts-dialog-content">
+                        <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title ts-break" id="@("file-details-" + file.Id + "-title")">@file.Name</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@("file-details-" + file.Id)">@Icons.Render("X", 18)</button></header>
+                        <dl class="ts-kv ts-files-details"><div><dt>ID</dt><dd class="ts-mono">@file.Id</dd></div><div><dt>Size</dt><dd>@(file.Size.ToString("N0", CultureInfo.InvariantCulture)) bytes</dd></div><div><dt>Type</dt><dd class="ts-mono">@file.ContentType</dd></div><div><dt>SHA-256</dt><dd class="ts-mono ts-break">@file.Sha256</dd></div><div><dt>Metadata</dt><dd><pre class="ts-code">@file.Metadata.GetRawText()</pre></dd></div></dl>
+                    </div></dialog>
+                    @if (canWrite) { @(await RenderPartialAsync<FileConfirmDialog, FileConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file: " + file.Name, "This permanently deletes the file.", "Delete file", csrf, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id }, Error: draft?.Dialog == "delete-file-" + file.Id ? draft.Error : null))) }
+                    </td>
+                </tr>
+            }
+            </tbody></table></div>
+        }
+        @if (files.Next is { } next) { <div class="ts-files-more"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(FileStorageEndpoints.BucketPath(bucketId) + "&after=" + Uri.EscapeDataString(next))">More files</a></div> }
+        </div></section>
+    }
+}
 </main>
 <script type="module" src="@Assets.Url("js/file-storage.js")" nonce="@Model.Shell.Nonce"></script>
 @functions {
     public ShellModel LayoutModel => Model.Shell;
-    private static string BucketUrl(string bucket, string? after) => "/storage?bucket=" + Uri.EscapeDataString(bucket) + (after is null ? "" : "&bucketAfter=" + Uri.EscapeDataString(after));
+
+    private static DateTimeOffset? Created(string id) => NUlid.Ulid.TryParse(id, out var ulid) ? ulid.Time : null;
+
+    private IHtmlContent Time(DateTimeOffset? at) => at is { } value
+        ? new HtmlString("<time datetime=\"" + value.ToString("O", CultureInfo.InvariantCulture) + "\" title=\"" + TerraScale.Dashboard.Features.Backups.BackupHealth.Utc(value) + "\">" + TerraScale.Dashboard.Features.Backups.BackupHealth.Relative(value, Model.Now) + "</time>")
+        : new HtmlString("<span class=\"ts-meta\">—</span>");
+
+    private static string Grants(TerraBaseFilePolicy policy)
+    {
+        string[] grants = [.. policy.Owner ? ["File owner"] : Array.Empty<string>(), .. policy.Public ? ["Authenticated users"] : Array.Empty<string>(), .. policy.Roles];
+        return grants.Length == 0 ? "Project members" : string.Join(", ", grants);
+    }
+
+    private static (string Icon, string Kind) Kind(string contentType) => contentType.ToLowerInvariant() switch
+    {
+        "application/json" or "application/ld+json" or "application/xml" or "text/xml" or "application/javascript" or "text/javascript" or "text/css" or "text/html" => ("FileJson", "code"),
+        "text/csv" or "text/tab-separated-values" or "application/vnd.ms-excel" or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" or "application/x-sqlite3" or "application/vnd.sqlite3" => ("Table", "data"),
+        "application/zip" or "application/gzip" or "application/x-gzip" or "application/x-tar" or "application/x-7z-compressed" or "application/vnd.rar" or "application/zstd" => ("Archive", "archive"),
+        var type when type.StartsWith("image/", StringComparison.Ordinal) => ("Eye", "image"),
+        var type when type.StartsWith("video/", StringComparison.Ordinal) || type.StartsWith("audio/", StringComparison.Ordinal) => ("Play", "media"),
+        _ => ("FileText", "document")
+    };
 }
