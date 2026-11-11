@@ -20,9 +20,10 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 JS/TS, Python and Rust also read `TERRASCALE_PROJECT_ID`; .NET and Go take the project per database. Only .NET reads
 `TERRASCALE_REGION`. Without `TERRASCALE_BASE_URL` every SDK sends to `https://api.terrascale.tech`.
 
-An API key is exchanged at `https://auth.terrascale.tech` only while the client sends to `https://api.terrascale.tech`.
-With any other TerraBase origin, or an endpoint resolver, every SDK refuses to build an API-key client, before any
-request, unless the caller names the ts-auth that exchanges the key:
+A client built from an API key (`ApiKey`, `apiKey`, `Config.APIKey`, `api_key`, `for_project_api_key`) sends the key to
+`https://auth.terrascale.tech` unless the caller names another ts-auth. With a TerraBase origin other than
+`https://api.terrascale.tech`, or an endpoint resolver, every SDK refuses to build such a client, before any request,
+unless the caller names the ts-auth that exchanges the key:
 
 | .NET | JS/TS | Go | Python | Rust |
 |---|---|---|---|---|
@@ -30,6 +31,9 @@ request, unless the caller names the ts-auth that exchanges the key:
 
 The environment clients take no such variable: with another `TERRASCALE_BASE_URL`, pass the option (JS/TS overrides,
 Python `issuer=`); .NET, Go and Rust refuse.
+
+A token source built separately (Go `tsauth.NewAPIKeySource`, Python `APIKeyTokenSource`) sends the key to the issuer
+it is given, `https://auth.terrascale.tech/terrascale` by default, whatever origin the client that uses it sends to.
 
 ## Databases for agents
 

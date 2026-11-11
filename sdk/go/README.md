@@ -28,8 +28,9 @@ use them only with that revision's contracts. Releases remain `0.0.X`.
 
 ## Zero-configuration operating contract
 
-The SDK has no regional discovery or failover. Auth calls go to the fixed
-global origin `https://auth.terrascale.tech`, the default API origin is
+The SDK has no regional discovery or failover. Auth calls go to the default
+origin `https://auth.terrascale.tech` unless the caller names another ts-auth
+(`Config.TSAuthBaseURL`, or `Issuer` in `tsauth`), the default API origin is
 `https://api.terrascale.tech`, and ts-orch on OCI handles routing. No region
 activation, endpoint pinning or manual secret copying belongs in setup.
 Customer tenant/project scope and authorized access credentials remain required.
@@ -405,10 +406,10 @@ for applications that sign users in with the redirect flow, as the dashboard
 does for single sign-on: the authorization code with PKCE, verified ID tokens,
 refresh, userinfo, RFC 7009 revocation and RP-initiated logout. Customer auth
 instance/issuer trust and exact registered callbacks remain explicit security
-boundaries. ts-auth calls go to one fixed global origin, `https://auth.terrascale.tech`,
+boundaries. ts-auth calls go to the default origin, `https://auth.terrascale.tech`,
 and every tenant issues from `https://auth.terrascale.tech/<slug>`. There is no
-regional discovery or failover. `TSAuthBaseURL` overrides the origin only for
-dev and test deployments; an issuer must be that origin plus the slug.
+regional discovery or failover. `Config.TSAuthBaseURL` names the ts-auth origin
+of another deployment; an issuer must be that origin plus the slug.
 The supported platform management API, API-key tokens and device flow are in
 `terrascale.tech/sdk/tsauth`. Retired headless methods are described below.
 
@@ -560,7 +561,10 @@ with full-jitter backoff or `Retry-After` inside its 30-second budget; other
 failures are returned and not cached. `Invalidate(token)` drops a token a
 resource server refused. It satisfies `v1.TokenSource`. Errors from the token
 endpoint are `*tsauth.Error{Status, Code, Description, RetryAfter, RequestID}`. The issuer defaults to
-`https://auth.terrascale.tech/terrascale`.
+`https://auth.terrascale.tech/terrascale`. When a `v1` client with a `BaseURL` other
+than `https://api.terrascale.tech` or a `Resolver` uses the source, `APIKeyConfig.Issuer`
+must name that deployment's ts-auth issuer: the client does not check where a
+`TokenSource` sends the key.
 
 ```go
 tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID})

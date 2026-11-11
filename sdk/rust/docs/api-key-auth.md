@@ -3,7 +3,7 @@
 Build with `Client::for_project_api_key(project_id, api_key).build()?`, reading credentials from your application's secret storage. The constructor validates locally; the first authenticated operation exchanges the key.
 `Client::for_project` and `Client::builder` still accept static, already exchanged bearer tokens. Static credentials are not refreshed.
 
-Keys go only to `https://auth.terrascale.tech/terrascale/oauth/token` while requests go to `https://api.terrascale.tech`, with or without `.endpoint("https://api.terrascale.tech")`; redirects are never followed. With any other `.endpoint`, `build()` refuses an API key unless `.auth_base_url(origin)` names the bare ts-auth origin that exchanges it, so the key never reaches production ts-auth for another deployment.
+Keys go only to ts-auth, `https://auth.terrascale.tech/terrascale/oauth/token` and, for `create_scoped_key`, `https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys`, while requests go to `https://api.terrascale.tech`, with or without `.endpoint("https://api.terrascale.tech")`; redirects are never followed. With any other `.endpoint`, `build()` refuses an API key unless `.auth_base_url(origin)` names the bare ts-auth origin that exchanges it, so the key never reaches production ts-auth for another deployment.
 Exchange uses HTTP Basic with the key's ULID as client ID and its full value as password. The form contains `grant_type=client_credentials` and `project`; omitting scope inherits the key's grant.
 Data endpoints receive only bearer tokens, and data routes retain their selected project scope. Never log credentials.
 
