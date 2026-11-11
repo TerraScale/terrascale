@@ -20,7 +20,4 @@ New saved queries use ULIDs. Saved-query links work with and without a selected
 table. Database-specific queries are listed and restored only in their original database;
 project templates remain available across the project. No stored records are rewritten and no migration is introduced.
 
-Run and check coverage lives in `SqlCheckJourneyTests` and
-`SqlRunReceiptJourneyTests`.
-
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

@@ -4,8 +4,8 @@ The dashboard serves a session-authenticated integration API at
 `https://dash.terrascale.tech`. Its [interactive reference](https://dash.terrascale.tech/reference/)
 and [OpenAPI specification](https://dash.terrascale.tech/openapi/integration.json)
 cover the explicitly annotated integration routes. The committed snapshot is
-`contracts/dashboard/integration.openapi.json`; it is checked against the running
-application in `IntegrationContractJourneyTests`.
+`contracts/dashboard/integration.openapi.json`, updated with each contract change;
+no CI step compares it with the running application.
 
 ## Authentication and requests
 

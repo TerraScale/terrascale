@@ -18,6 +18,6 @@ Tenant-state tombstones and collected-state floors remain required independently
 
 Bucket rollback or replay of the external authority itself is outside this proof. A per-machine anchor must remain outside the restored volume. There is no operator bypass.
 
-The existing `DatabasePurgeTests.A_stale_live_catalog_row_cannot_serve_restore_adopt_or_place_a_purged_database` exercises permanent database authority against replayed catalog rows. `AntiEntropyGcTests.Collected_documents_stay_absent_when_two_healthy_replicas_pull_a_stale_peer` covers deleted records before and after restart; the collecting-writer race test covers replay queued across table. These protections remain separate from startup anchor admission.
+Permanent database authority against replayed catalog rows and the absence of collected records before and after restart remain separate from startup anchor admission.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

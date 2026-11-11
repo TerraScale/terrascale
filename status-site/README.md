@@ -91,7 +91,7 @@ nice -n 19 npm run db:bootstrap:local
 nice -n 19 npm run dev
 ```
 
-Admin authorization uses signed HTTP fakes in tests. Live sign-in uses the registered production callback; see [admin authorization](docs/admin-oidc.md).
+Live sign-in uses the registered production callback; see [admin authorization](docs/admin-oidc.md).
 
 The dev server listens on every interface (reachable over the tailnet) and reloads on change. The local D1 database lives under `.wrangler/state`. Arm the coordinator (and roll up samples) with `curl 'http://localhost:5173/cdn-cgi/handler/scheduled'`; rounds then run every 30 seconds.
 

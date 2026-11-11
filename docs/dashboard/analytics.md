@@ -47,7 +47,7 @@ build a dictionary from platform data with `ToDictionary` or `Add`, and never pa
 straight to BCL calls that throw `ArgumentException` (`Enum.Parse`, range-checked arithmetic, `Uri`
 and date constructors): check first with `TryAdd`, `TryParse` or an explicit range test, and
 reject the response. A repeated counter in the project analytics once made the whole Databases
-page answer 500 with only `ArgumentException` in the log (`DatabaseListJourneyTests`).
+page answer 500 with only `ArgumentException` in the log.
 
 The Databases page loads its optional parts through `OptionalPanel`
 (`src/TerraScale.Dashboard/Platform/Http/OptionalPanel.cs`): the list's TerraBase sync and
@@ -87,9 +87,6 @@ default body bound. The bound applies to both the declared content length and
 bytes actually streamed, under the existing five-second deadline. Authentication
 and discovery envelopes retain their shared 64 KiB limit. This permits full
 database-region series without treating normal dense responses as unavailable.
-
-Analytics has no dedicated dashboard test; tenant-scope refusal is covered by
-`ReportingJourneyTests` and `UsageBackendContractTests`.
 
 Historical: the Go application left its `core.MetricsReader` unset because the
 ts-go pin lacked these methods, and read region latency through ts-go

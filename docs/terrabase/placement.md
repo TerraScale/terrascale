@@ -77,8 +77,8 @@ TTL expiry) at A answers `409 move_in_progress`; once the move settles, the dele
 
 The pause lasts from step 2 to step 4: one incremental pull, an empty pull, the copy of the database into its new file and
 two catalog writes. The copy grows with the database size. The move logs `catch_up_ms`, `pause_ms` and `total_ms`, and
-records `terrabase.placement.move.pause` (ms). In `HomeMoveTests` (two nodes on one host, a small table under REST
-writes) a move took 512 ms: 227 ms catch-up and a 276 ms write pause.
+records `terrabase.placement.move.pause` (ms). A measured move (two nodes on one host, a small table under REST
+writes) took 512 ms: 227 ms catch-up and a 276 ms write pause.
 
 All-regions placement remains authoritative when a lease observation carries an empty explicit replica list.
 Catalog discovery, following, revision notices, replica status and home sessions use the all-regions membership

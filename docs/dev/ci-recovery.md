@@ -46,7 +46,6 @@ gh workflow run images-ghcr.yml --repo TerraScale/terrascale --ref main
 
 Inspect the CI and Images run URLs and the final live readiness revision before
 reporting recovery. A successful dispatch request alone is not deployment proof.
-The focused gate regression fixtures live in `scripts/dashboard/ci/release-gate-test.py`.
 
 Use the controlled missed-push drill to prove recovery
 without a push CI run and record the exact revision and deployment evidence.

@@ -18,11 +18,5 @@ deletion proof, as described in [Account deletion completion](account-deletion-c
 No API, storage format, dependency or configuration changes are required here.
 Deploy the corresponding ts-auth and TerraBase erasure support before this change.
 
-`AccountDeletionJourneyTests` creates a database, table and record through
-HTTP before confirming deletion, then checks ts-auth's sole-organization removal,
-retained shared organizations and dashboard account/token/session cleanup. Its
-test-only providers verify delegation, not physical erasure across live replicas
-or backup expiry; those require ts-auth/TerraBase integration evidence.
-
 A push stream that returns NATS error 10074 is not retried, because the stream
 wants more replicas than the cluster has.

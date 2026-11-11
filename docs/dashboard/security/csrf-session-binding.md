@@ -12,4 +12,4 @@ anonymous forms such as MCP OAuth consent.
 
 A proof is valid only for the session it was rendered for: signing in, signing
 out or a different session invalidates it. Exact `Origin` and `Sec-Fetch-Site`
-checks still run first. Integration coverage: `CsrfBindingJourneyTests`.
+checks still run first.

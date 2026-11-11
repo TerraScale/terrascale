@@ -39,8 +39,8 @@ scripts/vendor/update-turso-driver.sh v0.8.3 --commit   # pristine import commit
 ```
 
 Then update the native source/checksum pins to the same version, restore (`make restore`, which
-rewrites `locks/`), build and run `make terrabase-check` and the driver tests, and redo `SECURITY-AUDIT.md` (the
-provenance, package, vulnerability, license and patch checks) for the new tag. Without `--commit` the script only
+rewrites `locks/`), build (`make terrabase-build`; the pull request's journey then runs TerraBase on the new driver),
+and redo `SECURITY-AUDIT.md` (the provenance, package, vulnerability, license and patch checks) for the new tag. Without `--commit` the script only
 changes the working tree. Re-importing the current tag must leave no diff.
 
 A patch that no longer applies stops the script with conflict markers in the working tree: resolve them, commit, and
@@ -56,4 +56,4 @@ git format-patch -1 HEAD --relative=src/vendor/Turso.Data.Sqlite --start-number 
 git add src/vendor/Turso.Data.Sqlite/patches && git commit --amend --no-edit
 ```
 
-Patch 0015 allows wrapping connections returned directly by `TursoSyncDatabase.ConnectAsync`. Their connection string is local even though they own a sync database. Ordinary local connections remain refused. RegionShapeTailTests exercises this wrapper through the regional shape HTTP surface.
+Patch 0015 allows wrapping connections returned directly by `TursoSyncDatabase.ConnectAsync`. Their connection string is local even though they own a sync database. Ordinary local connections remain refused.

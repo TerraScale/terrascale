@@ -60,16 +60,11 @@ To validate several inputs, switch over a tuple: `(Validation error, _) => …, 
 2. **Discarded result:** TB0001 from `src/TerraBase.Analyzers`, an analyzer-only reference that is not
    in the binary. It fires on a statement that drops a union value, a `Task`/`ValueTask` of one, a `?.` call
    or a `ConfigureAwait` of either, including `await service.DeleteAsync(...);`. Write `_ = …` to discard on purpose.
-   `make analyzer-check` compiles the native-union fixture in `src/TerraBase.Analyzers.BuildCheck` and
-   checks the expected diagnostics for direct, awaited, configured, nullable, constrained-generic and derived-task
-   results; assigned values and explicit `_ =` statements are negative controls.
 3. **Throwing expected failures:** `BannedSymbols.txt` forbids every constructor overload of
    `BadHttpRequestException` through RS0030, including aliases and target-typed `new(...)`. The obsolete
    `ApiException` type and its middleware bridge are removed; that type is banned too. The migration
    allowlist and regex build target are gone. Framework-created `BadHttpRequestException` values are still
-   caught at the HTTP boundary and mapped to the error envelope. `make analyzer-check` also verifies
-   RS0030 for all four overloads through an alias and for target-typed construction; catching the framework
-   type is its negative control.
+   caught at the HTTP boundary and mapped to the error envelope.
 
 Exceptions remain for bugs and broken invariants (`InvalidOperationException`, `ArgumentOutOfRangeException`,
 `UnreachableException`), for startup configuration errors (`TerraBaseConfigurationException`, exit code 2), and

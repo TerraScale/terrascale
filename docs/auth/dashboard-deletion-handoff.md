@@ -21,4 +21,4 @@ The optional persisted `DeletionJob.DashboardVerifiedAt` defaults to null. Deliv
 
 This is an additive private API, storage-field and auth-owned table change. Provisioning and readiness require the new cursor table. It introduces no migration, alternate store, authentication bypass or physical-erasure guarantee for dashboard-owned data. Auth and dashboard each retain ownership of their own data.
 
-Queries retain the SQL execution and result-byte limits. The retained integration coverage must verify bounded traversal, progress across restart, malformed candidates, unchanged source JSON/versions and acknowledgement of only the exact verified proof.
+Queries retain the SQL execution and result-byte limits.

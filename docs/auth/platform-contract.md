@@ -11,7 +11,7 @@ umbrella `AGENTS.md`, "Service ownership"). This guide is the contract that
 TerraBase (TS-589), the SDKs (ts-go TS-590, ts-dotnet TS-591, ts-js TS-592,
 ts-cli TS-600) and ts-dashboard (TS-599) build on. The machine-readable
 contract is [`platform-api.openapi.yaml`](platform-api.openapi.yaml)
-(`make openapi-check` lints it).
+(`make auth-openapi-check` lints it).
 
 Status: contract v1.1, 2026-10-06: v1 plus the TS-597 decisions (the
 `usage:read` and `billing:*` scopes, project suspension, platform
