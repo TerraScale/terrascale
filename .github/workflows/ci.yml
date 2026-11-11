@@ -146,6 +146,7 @@ jobs:
               - .github/workflows/ci.yml
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
+              - landing-site/static/{pricing,regions}.json
               - Makefile
               - .github/workflows/ci.yml
             landing:

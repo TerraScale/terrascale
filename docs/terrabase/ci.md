@@ -29,7 +29,10 @@ check: it fails when any job it needs failed or was cancelled, and a skipped job
 - `dashboard` (`dashboard-ci.yml`) builds the dashboard solution in Release and runs its lint set.
 - `sdk` runs `make sdk-<sdk>-check` for each changed SDK: a locked install or restore and a build or type check.
   `sdk-release.yml` and `scripts/sdk` select no SDK: the checks never read them.
-- `docs` checks its generated pages (`npm run check`) and builds the docs site; `landing` and `status` build theirs.
+- `docs` (`make docs-build`) compares `docs-site/data/canonical/{pricing,regions}.json` with the same commit's
+  `landing-site/static/` files, checks its generated pages (the `--check` modes of `generate-pricing.mjs`,
+  `generate-llms.mjs` and `i18n-sync.mjs`) and builds the docs site, with no request to production; `landing` and
+  `status` build theirs.
 - `journey` (`journey.yml`) builds TerraBase, ts-auth and the dashboard from the commit and runs the journey in `e2e/`
   against them, unless every changed file is Markdown or under `docs/`, `docs-site/`, `landing-site/` (other than
   `landing-site/static/pricing.json`) or `status-site/`, or is a file the journey never reads: another workflow,
