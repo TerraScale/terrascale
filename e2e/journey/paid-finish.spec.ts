@@ -20,7 +20,7 @@ test.beforeAll(({}, info) => {
 
 async function databaseList(page: Page, audit: Audit, current: PaidJourney, names: string[], label: string): Promise<void> {
   await page.goto('/databases');
-  await expect.poll(async () => (await databaseNames(page).allInnerTexts()).sort(), { message: `the database list ${label}` }).toEqual([...names].sort());
+  expect((await databaseNames(page).allInnerTexts()).sort(), `the database list ${label}`).toEqual([...names].sort());
   await shell(page, current);
   await audit.check(`databases ${label}`);
 }
