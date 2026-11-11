@@ -89,6 +89,6 @@ Use your client's tool discovery (`tools/list`) for the current names, parameter
 accept `ttlHours`. With `pointInTime`, `fork_database` returns a running restore operation instead of waiting for the copy; poll `get_restore_status` for the new database. Backup and restore tools preserve the source database. See the complete
 [agent database workflow](/guides/agent-databases#agent-workflow), including scoped-key minting over an API key connection.
 
-Rotating an API key requires a fresh dashboard confirmation: an unattended assistant call returns `step_up_required`, and you finish the rotation from the dashboard's **API keys** page. Listing, creating, restricting and revoking keys work from the assistant; `create_api_key` returns the new secret once.
+Creating or rotating an API key needs the dashboard: an unattended assistant call returns `step_up_required`, and you finish the action from the dashboard's **API keys** page, where rotating also asks for a fresh confirmation. Listing, restricting and revoking keys work from the assistant.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

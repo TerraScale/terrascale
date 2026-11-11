@@ -75,6 +75,35 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key))).IsEqualTo((401, "invalid_client"));
     }
 
+    [Test]
+    public async Task The_21st_key_a_user_creates_within_the_hour_answers_429_with_retry_after()
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var (_, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("frank"));
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = await oidc.CreateProjectAsync(token, organization, "Production");
+        var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
+
+        for (var created = 1; created <= 20; created++)
+        {
+            using var response = await CreateAsync($"key {created}");
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        using var limited = await CreateAsync("one too many");
+        await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        await Assert.That(await OidcHarness.EnvelopeCodeAsync(limited)).IsEqualTo("rate_limited");
+        await Assert.That(limited.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(3600 - clock.GetUtcNow().ToUnixTimeSeconds() % 3600));
+
+        async Task<HttpResponseMessage> CreateAsync(string name)
+        {
+            using var create = new HttpRequestMessage(HttpMethod.Post, keys) { Content = JsonContent.Create(new { name, scopes = ReadWrite }) };
+            create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            return await oidc.Client.SendAsync(create);
+        }
+    }
+
     private Task<OidcHarness> StartAsync() => OidcHarness.StartSharedManagementAsync(fixture);
 
     private static async Task<(int Status, string? Error)> TokenErrorAsync(Task<HttpResponseMessage> call)

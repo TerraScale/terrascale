@@ -101,7 +101,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(key, result.Key);
         }
 
-        private TsAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
+        internal TsAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
         {
             if (!context.CanManageKeys)
             {

@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using TUnit.Assertions.Enums;
 using TerraScale.Dashboard.E2E.Features.Databases;
 using TerraScale.Dashboard.Features.ApiKeys;
+using TerraScale.Dashboard.Features.Auth;
 using Microsoft.AspNetCore.Builder;
 
 namespace TerraScale.Dashboard.E2E.Features.Data
@@ -167,6 +168,10 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                     .EnumerateArray().Single(item => item.GetProperty("keyId").GetString() == keyId);
             await Assert.That(DateTimeOffset.Parse(mcpKey.GetProperty("previousSecretExpiresAt").GetString()!, System.Globalization.CultureInfo.InvariantCulture))
                 .IsGreaterThanOrEqualTo(before);
+            var mcpCreate = (await HttpJourney.McpAsync(client, secret, "tools/call", new
+            { name = "create_api_key", arguments = new { name = "Assistant", scopes = SqlScopes } })).GetProperty("result");
+            await Assert.That(mcpCreate.GetProperty("isError").GetBoolean()).IsTrue();
+            await Assert.That(mcpCreate.GetProperty("content")[0].GetProperty("text").GetString()).IsEqualTo(StepUpFlow.Required().Message);
 
             using (var refused = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/rotate", new()
             { ["_csrf"] = csrf, ["keyId"] = keyId, ["previousSecretTtl"] = "0" }))

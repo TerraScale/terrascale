@@ -6,6 +6,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Security;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 using ZLogger;
@@ -32,7 +33,7 @@ public static class TerraBaseScopes
     };
 }
 
-public sealed partial class ApiKeys(AuthData data, Credentials credentials, StepUpProofs proofs, PlatformDirectory directory, TimeProvider clock, ILogger<ApiKeys> logger)
+public sealed partial class ApiKeys(AuthData data, Credentials credentials, StepUpProofs proofs, PlatformDirectory directory, AttemptLimiter limiter, TimeProvider clock, ILogger<ApiKeys> logger)
 {
     public static readonly TimeSpan MaxPreviousSecretTtl = TimeSpan.FromDays(1);
 
@@ -88,8 +89,17 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
 
     public static bool IsDatabaseId(string? value) => PlatformDirectory.IsId(value);
 
-    public Task<(ApiKeyRecord Key, string Secret)> CreateAsync(UserRecord caller, string organizationId, string? projectId, string name, IReadOnlyList<string> scopes, string? database, DateTimeOffset? expiresAt, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken) =>
-        directory.CommitAsync(async () =>
+    public const int CreationsPerUserPerHour = 20;
+
+    public async Task<(ApiKeyRecord Key, string Secret)> CreateAsync(UserRecord caller, string organizationId, string? projectId, string name, IReadOnlyList<string> scopes, string? database, DateTimeOffset? expiresAt, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        if (await limiter.AcquireAsync(Instance, "api-key-create", caller.Id, CreationsPerUserPerHour, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            throw ApiException.RateLimited("Too many API keys created; retry after the Retry-After delay.", wait);
+        }
+
+        return await directory.CommitAsync(async () =>
         {
             var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
@@ -107,7 +117,8 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
 
             operations.Add(directory.Audit(organizationId, caller.Id, "api_key.created", id, string.Join(' ', scopes)));
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(operations, (key, secret));
-        }, cancellationToken);
+        }, cancellationToken).ConfigureAwait(false);
+    }
 
     public const int ScopedKeysPerMinute = 600;
 

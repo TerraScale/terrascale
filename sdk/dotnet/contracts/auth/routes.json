@@ -464,6 +464,7 @@
         401,
         403,
         404,
+        429,
         503
       ],
       "security": "platform_user_sign_in_bearer",
@@ -573,6 +574,7 @@
         401,
         403,
         404,
+        429,
         503
       ],
       "security": "platform_user_sign_in_bearer",

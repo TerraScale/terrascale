@@ -73,7 +73,8 @@ public sealed class CreateOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
     public override void Configure()
     {
         Post($"{Organization}/api-keys");
-        this.Describe("create_organization_api_key", "Create an organization API key", "Needs admin. The key reaches every project of the organization, one project per token. The key string is answered once.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
+        this.Describe("create_organization_api_key", "Create an organization API key", "Needs admin. The key reaches every project of the organization, one project per token. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
+        Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
     /// <inheritdoc />
@@ -157,7 +158,8 @@ public sealed class CreateProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
     public override void Configure()
     {
         Post($"{Project}/api-keys");
-        this.Describe("create_project_api_key", "Create a project API key", "Needs the project's member role; scopes must be within the caller's. The key string is answered once.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
+        this.Describe("create_project_api_key", "Create a project API key", "Needs the project's member role; scopes must be within the caller's. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
+        Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
     /// <inheritdoc />

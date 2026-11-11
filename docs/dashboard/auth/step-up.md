@@ -25,9 +25,10 @@ purpose-bound `ts-auth` proof through the SDK in
 proof is organization-bound and never leaves the dashboard: the owner's exact
 posted plan change or undo replays from the single-use intent after approval,
 re-checking the owner role and re-validating the plan before any Stripe call.
-API-key creation sends no proof: the CSRF-checked form, its API and the MCP
-`create_api_key` tool create the key at once, and ts-auth binds the new secret
-to its creator's account authentication state. Other API/MCP
+API-key creation sends no proof: the CSRF-checked form and its API create the
+key at once, and ts-auth binds the new secret to its creator's account
+authentication state. The MCP `create_api_key` tool validates its input and
+answers `step_up_required`, so an assistant leaves creation to the dashboard. Other API/MCP
 credential mutations without hosted confirmation receive an actionable refusal;
 they do not get an unattended credential issuance path.
 
