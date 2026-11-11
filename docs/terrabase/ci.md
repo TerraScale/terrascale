@@ -8,8 +8,9 @@ check: it fails when any job it needs failed or was cancelled, and a skipped job
 
 - `changes` picks the jobs from the changed paths, and each filter lists only the files its job reads: from
   `sdk/dotnet`, ts-auth and the dashboard take its build files, `src/` and the embedded
-  `contracts/auth/error-codes.json`; from `src/vendor`, `terrabase` takes no Markdown or patch, and from
-  `scripts/vendor` only the two native-library scripts (`AGENTS.md` and `CLAUDE.md` files select none).
+  `contracts/auth/error-codes.json`; from `src/vendor`, `terrabase` takes no Markdown or patch, from `scripts/vendor`
+  only the two native-library scripts, and from `benchmark/` only the storage-engine pin file those scripts read.
+  `AGENTS.md` and `CLAUDE.md` files select none.
 - Every job that builds or lints checks out the merge commit GitHub prepares, as the journey does.
 - `checks` runs the policy checks: the legacy-name scan (fail mode), actionlint with shellcheck on the workflows,
   merged EF Core migrations stay unchanged while their project exists (`scripts/ci/migrations-frozen.py`), the
@@ -32,8 +33,8 @@ check: it fails when any job it needs failed or was cancelled, and a skipped job
 - `journey` (`journey.yml`) builds TerraBase, ts-auth and the dashboard from the commit and runs the journey in `e2e/`
   against them, unless every changed file is Markdown or under `docs/`, `docs-site/`, `landing-site/` (other than
   `landing-site/static/pricing.json`) or `status-site/`, or is a file the journey never reads: another workflow,
-  anything under `benchmark/`, `aspire/` or `ops/`, a script its builds never run, a solution file, `Dockerfile` or a
-  root dotfile (the `journey` filter of `ci.yml` lists them).
+  anything under `benchmark/` but that storage-engine pin file, anything under `aspire/` or `ops/`, a script its builds
+  never run, a solution file, `Dockerfile` or a root dotfile (the `journey` filter of `ci.yml` lists them).
 - `test` passes only when `changes`, `checks` and every selected leg (`libs`, `auth`, `terrabase`, `dashboard`,
   `sdk`) passed. It runs when a leg or a release is selected or when `changes` or `checks` failed.
 

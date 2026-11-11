@@ -123,6 +123,7 @@ jobs:
               - Dockerfile
               - src/vendor/**/!(*.md|*.patch)
               - scripts/vendor/{download,verify}-turso-native.sh
+              - benchmark/turso-sync-host/turso-pin.env
               - terrabase.slnf
               - scripts/ci/image-payloads.sh
               - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
@@ -184,7 +185,8 @@ jobs:
               - '!**/*.md'
               - '!.github/**/!(ci.yml|journey.yml)'
               - '!scripts/**/!(check-stripe-dependency.py|download-turso-native.sh|verify-turso-native.sh)'
-              - '!{aspire,benchmark,ops}/**'
+              - '!benchmark/**/!(turso-pin.env)'
+              - '!{aspire,ops}/**'
               - '!{.dockerignore,.gitignore,.legacy-scan-mode,.mcp.json,Dockerfile,TerraScale.slnx,*.slnf,dotnet-tools.json}'
       - id: areas
         env:
