@@ -14,9 +14,12 @@ Supported pairs are `delete_account` with `ts-auth` or `ts-dashboard`, `create_p
 with `ts-dashboard`, and `delete_organization`, `start_ownership_transfer`,
 `create_api_key`, `rotate_api_key`, `create_oauth_client`
 with `ts-auth`. For auth operations, pass the approved proof to the required
-`stepUpProof` argument on API-key create/rotate, organization deletion,
+`stepUpProof` argument on API-key create/rotate,
 ownership-transfer start, `auth.Projects.CreateClientAsync`,
-or `auth.Platform.DeleteAccountWithProofAsync`. The two organization proofs bind the exact organization: pass its id as `OrganizationId` when minting. The SDK sends it only as
+or `auth.Platform.DeleteAccountWithProofAsync`. The two organization proofs bind the exact organization: pass its id as `OrganizationId` when minting. Organization deletion first consumes its approved proof with
+`auth.Platform.ConsumeStepUpAsync(accessToken, new(proof, "delete_organization", "ts-auth"))`
+(204; the SDK returns null), then passes the same consumed proof to `DeleteOrganizationAsync`
+before the proof expires; the delete spends it. The SDK sends a proof only as
 `X-TerraScale-Step-Up-Proof`. The old proof-free account deletion method is removed;
 the receipt overload remains for an authorized deletion continuation.
 

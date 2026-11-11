@@ -18,7 +18,7 @@ Supported pairs are `delete_account` with `ts-dashboard` or `ts-auth`,
 `start_ownership_transfer`, `change_plan`, `create_api_key`, `rotate_api_key`,
 `create_oauth_client`, `update_oauth_client`, `rotate_oauth_client`,
 `create_webhook_endpoint`, `rotate_webhook_secret`,
-`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). Organization deletion and starting an ownership transfer consume their proof exactly like API-key rotation, and their proofs additionally bind the exact `organization_id`: the minting request carries it and consumption refuses a proof minted for another organization. Dashboard plan changes consume their `change_plan/ts-auth` proof single-use at the step-up consume endpoint for the signed-in user before any Stripe effect; the dashboard binds the resume to the organization the proof was minted for through its one-use encrypted, organization-pinned intent. The hosted page identifies the operation
+`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). Starting an ownership transfer consumes its proof exactly like API-key rotation. Organization deletion and ownership-transfer proofs additionally bind the exact `organization_id`: the minting request carries it and consumption refuses a proof minted for another organization. Organization deletion consumes its `delete_organization/ts-auth` proof at the step-up consume endpoint before any other effect, then the organization `DELETE` requires that consumed proof in `X-TerraScale-Step-Up-Proof` for the same organization, account and authentication state before the proof's deadline, and spends it; a retry needs a new proof. Dashboard plan changes consume their `change_plan/ts-auth` proof single-use at the step-up consume endpoint for the signed-in user before any Stripe effect; the dashboard binds the resume to the organization the proof was minted for through its one-use encrypted, organization-pinned intent. The hosted page identifies the operation
 and account. It requires a fresh password, or one explicitly requested email
 code for a passwordless account, followed by a fresh active MFA factor.
 Opening the page sends no email. An attempt requests at most one code and uses
@@ -34,8 +34,9 @@ wrong-audience and replayed proofs fail with 403 `step_up_required`.
 
 Auth-owned operations receive `X-TerraScale-Step-Up-Proof` and consume it before
 mutation. The dashboard calls `POST /v1/terrascale/step-up/consume` with
-`{proof,purpose,audience,operation_receipt}` before issuing a PAT or performing
-any account-deletion side effect. PAT consumption returns 204. Deletion
+`{proof,purpose,audience,operation_receipt}` before issuing a PAT, changing a
+plan, or performing any organization- or account-deletion side effect. PAT,
+plan-change and organization-deletion consumption return 204. Account-deletion
 consumption returns 200 with a separate `operation_grant` bearer capability only
 after consumption completes before the proof's deadline. These
 mutations must never be automatically retried after an ambiguous response.

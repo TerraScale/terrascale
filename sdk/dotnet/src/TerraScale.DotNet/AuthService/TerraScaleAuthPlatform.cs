@@ -59,7 +59,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOrganization,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
-    /// <summary>delete_organization: DELETE /v1/terrascale/organizations/{organization}. Requires a fresh purpose-bound ts-auth proof.</summary>
+    /// <summary>delete_organization: DELETE /v1/terrascale/organizations/{organization}. Requires the organization's delete_organization/ts-auth proof, consumed first with ConsumeStepUpAsync; the delete spends it.</summary>
     public Task DeleteOrganizationAsync(
         string accessToken,
         string organizationId,

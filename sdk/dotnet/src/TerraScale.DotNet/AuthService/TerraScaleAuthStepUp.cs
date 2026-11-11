@@ -55,8 +55,8 @@ public sealed partial class TerraScaleAuthPlatformClient
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthStepUp,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, 16 * 1024, cancellationToken);
 
-    /// <summary>Consumes a dashboard proof once before side effects. Returns null for PAT (204), or the deletion
-    /// operation_grant (200) to retain with the receipt. A lost/rejected response never authorizes continuation.</summary>
+    /// <summary>Consumes a proof once before side effects. Returns null for create_pat, change_plan and delete_organization (204),
+    /// or the account-deletion operation_grant (200) to retain with the receipt. A lost/rejected response never authorizes continuation.</summary>
     public async Task<string?> ConsumeStepUpAsync(string accessToken, TerraScaleAuthStepUpConsume request,
         CancellationToken cancellationToken = default)
     {

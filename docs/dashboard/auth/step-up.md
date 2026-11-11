@@ -25,6 +25,12 @@ purpose-bound `ts-auth` proof through the SDK in
 proof is organization-bound and never leaves the dashboard: the owner's exact
 posted plan change or undo replays from the single-use intent after approval,
 re-checking the owner role and re-validating the plan before any Stripe call.
+Organization deletion consumes its organization-bound `delete_organization/ts-auth`
+proof first, after re-checking the owner and the typed name; only then does the
+dashboard set the deletion mark, end billing and delete the projects, and its
+final organization `DELETE` sends the same consumed proof, which ts-auth spends.
+A missing, unapproved, expired or replayed proof changes nothing; an interrupted
+deletion is finished by starting it again with a new confirmation.
 API-key creation sends no proof: the CSRF-checked form and its API create the
 key at once, and ts-auth binds the new secret to its creator's account
 authentication state. The MCP `create_api_key` tool validates its input and

@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
-    public sealed class OrganizationLifecycleService(OrganizationStore organizations, AccountService accounts, ITsAuthPlatform platform, StripeBilling billing, TimeProvider time)
+    public sealed class OrganizationLifecycleService(OrganizationStore organizations, AccountService accounts, ITsAuthPlatform platform, IAuthStepUpGateway stepUp, StripeBilling billing, TimeProvider time)
     {
         public async Task LeaveAsync(AccountContext context, CancellationToken cancellationToken)
         {
@@ -29,7 +29,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         // Completes on the owner's confirmed request. An organization already marked by the earlier
         // deletion request reaches the same path, so its owner can finish it.
-        public async Task DeleteAsync(AccountContext context, string confirmation, CancellationToken cancellationToken, string? stepUpProof = null)
+        public async Task DeleteAsync(AccountContext context, string confirmation, string stepUpProof, CancellationToken cancellationToken)
         {
             context = await FreshAsync(context, cancellationToken);
             var org = context.Organization!;
@@ -42,6 +42,8 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 throw new AccountAccessException("Type the organization name to confirm deletion.", 422);
             }
+
+            await stepUp.ConsumeAsync(context.Session, stepUpProof, "delete_organization", "ts-auth", null, cancellationToken);
             // The mark stops new projects and billing changes while the deletion runs.
             await accounts.UpdateOrganizationAsync(context, current =>
             {
@@ -68,8 +70,6 @@ namespace TerraScale.Dashboard.Features.Organizations
                 current.DeletionRequested = true;
                 current.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "organization.deletion_requested", current.Name, "organization", time.GetUtcNow()));
             }, cancellationToken);
-            // The fresh owner, exact name and persisted deletion mark authorize
-            // recovery even when an interrupted Checkout never published its ID.
             await billing.EndSubscriptionAsync(org.Id, cancellationToken, authorizedDeletionPreflight: true);
             // ts-auth refuses an organization that still has projects; a 404 is a delete an interrupted request already made.
             foreach (var projectId in org.Projects.Keys)
@@ -83,7 +83,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 }
                 catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
             }
-            try { await platform.DeleteOrganizationAsync(context.Session, org.Id, stepUpProof ?? throw new AccountAccessException("A fresh confirmation is required.", 403, "step_up_required"), cancellationToken); }
+            try { await platform.DeleteOrganizationAsync(context.Session, org.Id, stepUpProof, cancellationToken); }
             catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
             await ProjectAfterRemovalAsync(context, true, cancellationToken);
             await ForgetAsync(context, cancellationToken);
