@@ -17,7 +17,7 @@
                 { <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@back">Open the form again</a> }
                 else
                 {
-                    if (Model.Heading == "Something went wrong on our side" && HttpContext?.Request.Method == "GET")
+                    if (Model.Status == StatusCodes.Status500InternalServerError && HttpContext?.Request.Method == "GET")
                     { <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="">Try again</a> }
                     <a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/">Back to dashboard</a>
                     <a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/login">Sign in again</a>
