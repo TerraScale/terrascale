@@ -84,3 +84,27 @@ All-regions placement remains authoritative when a lease observation carries an 
 Catalog discovery, following, revision notices, replica status and home sessions use the all-regions membership
 rule; revision notices go to the currently discovered peer regions. This preserves replication after a home move
 and automatically includes newly serving regions. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
+## Region-set API prerequisite (batch db4a5ba7, C18)
+
+The proposed `regions` request needs durable membership order: responses must retain the order regions were added,
+and removing the writer must select the remaining region that has held the database longest. This contract is not
+implemented yet. The current catalog cannot establish that order:
+
+- `CatalogTables` stores only `(database_id, region)` for replicas, deletes and reinserts those rows on each placement
+  write, and reads them ordered by region id. It records no per-region membership time or ordinal.
+- `DatabasePlacement` and `ReplicaCatalogEntry` carry the current writer, replica ids, placement version and
+  all-regions membership, without membership history.
+- `HomeMoves.MoveAsync` and `CompleteHomeMoveAsync` sort the membership after promotion. The target adopts a
+  `DatabasePlacement` from `HomePromoteRequest`; it receives no independent membership-order metadata.
+
+The existing move can promote a selected replica, but composing it alone cannot preserve the proposed age-based
+selection and response ordering across subsequent moves or restarts. A new local JSON record, like database TTL
+metadata, does not itself require a SQLite schema change, but also does not add that metadata to the existing
+promotion or replica catalog contracts. Alphabetical order is not evidence of how long a region held the database.
+
+Before C18 implementation resumes, decide how durable membership order reaches the promoted writer and how existing
+memberships acquire an initial order when their historical order was never recorded. One option is a separately
+reviewed engine change that persists and propagates membership order, with an explicit initialization policy for
+existing databases. Another is to amend the proposed contract to permit deterministic region-id ordering instead of
+historical age. The public API, existing move protocol and storage version remain unchanged by this investigation.
