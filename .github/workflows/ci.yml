@@ -42,9 +42,6 @@ env:
   TS_AUTH_REVISION: ${{ github.sha }}
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   ASPNETCORE_HTTP_PORTS: ''
-  # Keep CallerFilePath fixture lookups on disk, as in Docker (which excludes .git).
-  # ContinuousIntegrationBuild and deterministic compilation remain enabled.
-  DeterministicSourcePaths: false
 
 jobs:
   # Runs on every event: a skipped job would skip "test".
@@ -81,9 +78,6 @@ jobs:
           filters: |
             shared: &shared
               - .github/workflows/ci.yml
-              - .github/actions/**
-              - Dockerfile
-              - .dockerignore
               - Makefile
               - Directory.*
               - global.json
@@ -95,69 +89,72 @@ jobs:
               - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
             # Each area lists only inputs its own projects build.
             dotnet-sdk: &dotnet-sdk
-              - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/dotnet/Directory.*
+              - sdk/dotnet/NuGet.config
+              - sdk/dotnet/BannedSymbols.txt
+              - sdk/dotnet/contracts/auth/error-codes.json
+              - sdk/dotnet/src/**/!(AGENTS.md|CLAUDE.md)
             libs:
               - *shared
               - libs.slnf
               - benchmark/dotnet/TerraScale.Endpoints.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
               - benchmark/dotnet/TerraScale.Logging.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/ci/image-payloads.sh
             auth:
               - *shared
               - *dotnet-sdk
+              - Dockerfile
               - scripts/ci/image-payloads.sh
               - auth.slnf
               - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
               - docs/auth/*.yaml
-              - scripts/auth/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/auth/{check-nuget-vulnerabilities{,.lib}.cs,export-openapi.sh,packages.lock.json}
+              - scripts/efcore/check-design-host.py
             auth-server:
               - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
               # TerraBase's RPC surface and the contracts it implements.
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
-              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
+              - src/vendor/**/!(*.md|*.patch)
             # What ts-auth runs against TerraBase: its own code and the SDK it calls TerraBase with.
             auth-client:
               - *dotnet-sdk
               - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
             terrabase:
               - *shared
-              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/vendor/**/!(AGENTS.md|CLAUDE.md)
+              - .github/actions/**
+              - Dockerfile
+              - src/vendor/**/!(*.md|*.patch)
+              - scripts/vendor/{download,verify}-turso-native.sh
+              - benchmark/turso-sync-host/turso-pin.env
               - terrabase.slnf
               - scripts/ci/image-payloads.sh
               - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
               - landing-site/static/pricing.json
-              - scripts/terrabase/!(AGENTS.md|CLAUDE.md)
-              - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-dotnet-*.yml
+              - Makefile
               - .github/workflows/ci.yml
             sdk-go:
               - sdk/go/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-go-*.yml
+              - Makefile
               - .github/workflows/ci.yml
             sdk-js:
               - sdk/js/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-js-*.yml
+              - Makefile
               - .github/workflows/ci.yml
             sdk-python:
               - sdk/python/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-python-*.yml
+              - Makefile
               - .github/workflows/ci.yml
             sdk-rust:
               - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-rust-*.yml
+              - Makefile
               - .github/workflows/ci.yml
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
+              - landing-site/static/{pricing,regions}.json
               - Makefile
               - .github/workflows/ci.yml
-              - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.Dashboard/sdk-versions.json
-              - src/TerraScale.Dashboard/Features/Home/SdkVersions.cs
-              - sdk/go/README.md
             landing:
               - landing-site/**/!(AGENTS.md|CLAUDE.md)
               - .github/workflows/ci.yml
@@ -169,18 +166,18 @@ jobs:
               - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.Endpoints/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/dashboard/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/dashboard/{Makefile,TerraScale.Dashboard.slnx,check-simple-ui.py,check-stripe-dependency.py,verify-sdk.py}
+              - scripts/dashboard/ci/format.sh
+              - scripts/efcore/check-design-host.py
               - scripts/ci/release-only.sh
-              - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - *dotnet-sdk
               - Directory.*
               - .editorconfig
               - BannedSymbols.txt
               - global.json
               - NuGet.config
               - Makefile
-              - .github/actions/**/!(AGENTS.md|CLAUDE.md)
               - .github/workflows/dashboard-ci.yml
-              - .github/workflows/images-ghcr.yml
               - .github/workflows/ci.yml
       - id: journey
         if: github.event_name == 'pull_request'
@@ -194,18 +191,22 @@ jobs:
               - '!status-site/**'
               - '!docs/**'
               - '!**/*.md'
+              - '!.github/**/!(ci.yml|journey.yml)'
+              - '!scripts/**/!(check-stripe-dependency.py|download-turso-native.sh|verify-turso-native.sh)'
+              - '!benchmark/**/!(turso-pin.env)'
+              - '!{aspire,ops}/**'
+              - '!{.dockerignore,.gitignore,.legacy-scan-mode,.mcp.json,Dockerfile,TerraScale.slnx,*.slnf,dotnet-tools.json}'
       - id: areas
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
         run: |
           echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
+          echo "dotnet=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
           # A push changing both TerraBase's server and what ts-auth calls it with releases TerraBase first (scope
           # skew, 2026-11-04); every other push releases both services in parallel. Dispatches keep the order.
           ordered=$(jq 'index("auth-server") != null and index("auth-client") != null' <<< "$CHANGES")
           [[ $GITHUB_EVENT_NAME != workflow_dispatch ]] || ordered=true
           echo "ordered=$ordered" >> "$GITHUB_OUTPUT"
-          [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
-          echo "dotnet=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
           echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
   checks:
@@ -371,17 +372,9 @@ jobs:
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: terrascale/global.json
-      # Restore the pinned native libraries from the Actions cache before make verifies them: with the
-      # pins unchanged the release-CDN download is skipped entirely, so a CDN outage cannot fail every area.
-      - &turso-native-cache
-        name: Cached pinned Turso native libraries
-        uses: ./terrascale/.github/actions/turso-native-cache
-        with:
-          dir: terrascale
-      - &locked-restore
-        name: Locked restore and pinned native libraries
+      - name: Locked restore
         working-directory: terrascale
-        run: make restore turso-native
+        run: make restore SOLUTION=libs.slnf
       - name: Checked build, whitespace and style
         working-directory: terrascale
         run: |
@@ -397,8 +390,9 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
-      - *turso-native-cache
-      - *locked-restore
+      - name: Locked restore
+        working-directory: terrascale
+        run: make restore SOLUTION=auth.slnf
       - name: Checked build, whitespace, NuGet audit and OpenAPI contract
         working-directory: terrascale
         run: |
@@ -414,16 +408,21 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
-      - *turso-native-cache
-      - *locked-restore
-      - name: Checked build and whitespace
+      - name: Cached pinned Turso native libraries
+        uses: ./terrascale/.github/actions/turso-native-cache
+        with:
+          dir: terrascale
+      - name: Locked restore and pinned native libraries
+        working-directory: terrascale
+        run: make restore turso-native SOLUTION=terrabase.slnf
+      - name: Whitespace
+        working-directory: terrascale
+        run: make -o restore fmt-check SOLUTION=terrabase.slnf CONFIGURATION=Release
+      - name: Checked release publish keeps the natives inside the single file
         working-directory: terrascale
         run: |
-          make -o restore fmt-check terrabase-build SOLUTION=terrabase.slnf CONFIGURATION=Release
+          make -o turso-native terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/terrabase-publish"
           scripts/ci/release-only.sh
-      - name: Release publish keeps the natives inside the single file
-        working-directory: terrascale
-        run: make -o turso-native terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/terrabase-publish"
 
   main:
     needs: [changes, terrabase, test]
@@ -560,6 +559,10 @@ jobs:
       # ts-orch accepts this job's OIDC token to release the pinned digest.
       id-token: write
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -576,15 +579,10 @@ jobs:
           image="ghcr.io/terrascale/terrabase@${ARM64}"
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
-          test -n "$tag"
-          gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
-          curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
-          chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
+          bash scripts/ci/fetch-ts-orch.sh "${RUNNER_TEMP}/ts-orch"
           status=0
-          for i in $(jq -r 'keys[]' "${RUNNER_TEMP}/regions.json"); do
-            jq -c "[.[$i]]" "${RUNNER_TEMP}/regions.json" > "${RUNNER_TEMP}/region.json"
+          for i in $(jq -r 'keys[]' "${RUNNER_TEMP}/ts-orch/regions.json"); do
+            jq -c "[.[$i]]" "${RUNNER_TEMP}/ts-orch/regions.json" > "${RUNNER_TEMP}/region.json"
             echo "Region $(jq -r '.[0].region' "${RUNNER_TEMP}/region.json")" | tee -a "$GITHUB_STEP_SUMMARY"
             out=$("${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service terrabase \
               --image "$image" --regions "${RUNNER_TEMP}/region.json" 2>&1) || status=1
@@ -675,7 +673,6 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         if: matrix.area == 'sdk-dotnet'
@@ -713,7 +710,6 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:

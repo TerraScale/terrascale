@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""Select the dashboard revision to release: the newest qualified main commit.
-
-The release token's sha claim must equal the image's revision label, so a
-revision can only be released by a push run of that revision, or a dispatch
-started while it is the real main head. Later unrelated pushes do not block
-push or dispatch releases:
-
-  release <sha>  exit 0 and print true when <sha> is the newest qualified,
-                 not-failed main commit and it is newer than live. Its own
-                 Images run (with Dashboard Fast) qualifies it: CI may still run.
-  heal           after CI completes, rerun its Images run, or dispatch Images
-                 on main if GitHub missed the push and it is still the head.
-"""
 import functools
 import json
 import os
@@ -28,18 +15,14 @@ def gh(*args):
     return json.loads(subprocess.check_output(['gh', *args], text=True))
 
 
-# A dashboard commit qualifies once its own Images run exists and its Dashboard Fast has not
-# failed: that job gates its release, so the gate never waits for CI to finish. A failed release
-# step keeps the commit qualified, so heal and reruns retry it instead of falling back to an
-# older commit.
 @functools.cache
 def qualified(sha):
     runs = images_runs(sha)
     return bool(runs) and not all(run['status'] == 'completed' and run['conclusion'] != 'success'
-                                  and dashboard_fast_failed(run) for run in runs)
+                                  and test_failed(run) for run in runs)
 
 
-def dashboard_fast_failed(run):
+def test_failed(run):
     pages = gh('api', '--paginate', '--slurp',
                f'repos/{REPO}/actions/runs/{run["databaseId"]}/jobs?filter=latest&per_page=100')
     return any(job['name'].startswith('test') and job['conclusion'] not in ('success', 'skipped', None)

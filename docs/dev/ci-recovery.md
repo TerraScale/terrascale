@@ -19,6 +19,12 @@ publish from their own Release build and release only from the real main ref.
 
 Dashboard release requires that revision's own push or dispatch Images run,
 whose `test` job (`dashboard-ci.yml`) builds and checks the application it releases.
+A commit qualifies as soon as it has such a run, unless every one of them completed
+with a failed `test` job: its push run releases it without waiting for CI to finish,
+and only a failed CI run skips it (`qualified` and `target` in
+`scripts/dashboard/ci/release-gate.py`). A run that failed only in its release step
+keeps the commit qualified, so heal and re-runs retry that commit instead of falling
+back to an older one.
 The Images gate accepts push CI after the complete run and its required `test`
 job succeed. Normal dispatch additionally requires successful `main` and
 `main-auth-ordered` jobs. Those main-ref-only service jobs prevent a branch or tag

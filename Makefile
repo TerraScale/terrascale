@@ -71,7 +71,7 @@ libs-nativeaot-check: restore
 auth-restore:
 	dotnet restore auth.slnf --locked-mode
 
-auth-build: auth-restore turso-native
+auth-build: auth-restore
 	dotnet build auth.slnf --configuration $(CONFIGURATION) --no-restore --nologo -m
 
 auth-audit: auth-restore
@@ -161,7 +161,10 @@ sdk-rust-check:
 
 .PHONY: docs-build
 docs-build:
-	cd docs-site && npm ci --no-audit --no-fund && npm run build
+	cmp docs-site/data/canonical/pricing.json landing-site/static/pricing.json
+	cmp docs-site/data/canonical/regions.json landing-site/static/regions.json
+	cd docs-site && npm ci --no-audit --no-fund && node scripts/generate-pricing.mjs --check && node scripts/generate-llms.mjs --check \
+		&& node scripts/i18n-sync.mjs --check && npm run build
 .PHONY: dashboard-build dashboard-lint dashboard-check
 dashboard-build:
 	$(MAKE) -f scripts/dashboard/Makefile build

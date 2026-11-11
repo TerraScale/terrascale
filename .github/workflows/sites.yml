@@ -118,7 +118,7 @@ jobs:
       - name: Install dependencies
         working-directory: landing-site
         run: npm ci --no-audit --no-fund
-      - name: Run tests and validate the static build
+      - name: Validate the static build
         working-directory: landing-site
         run: npm run build
       - name: Deploy static assets
