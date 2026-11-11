@@ -44,9 +44,10 @@ never for a pull request: once after the last release of each commit (the rule i
   `E2E_TARGET=production`, the state (`.state/production`, emptied first), the runners (`.state/sdk`) and the system
   CA bundle itself;
 - asks mail.tm for an active domain before the first request to production ("inbox provider … production was not
-  contacted" when it cannot), records both `/readyz` answers in `production-report/readyz.txt`, then runs the projects
-  of both pull-request shards but the paid flow (179 tests). A new project runs against production only once it is
-  added there; `paid`, `paid-invitation` and `paid-finish` stay local because they pay through the Stripe stand-in.
+  contacted" when it cannot), records both `/readyz` answers in `production-report/readyz.txt`, runs the projects of
+  both pull-request shards but the paid flow (179 tests), and records both answers again after the suite. A new
+  project runs against production only once it is added there; `paid`, `paid-invitation` and `paid-finish` stay
+  local because they pay through the Stripe stand-in.
 
 What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 
@@ -80,11 +81,14 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 
 A failed run opens the `Production journey failure` issue (found by its exact title in the REST list of open issues)
 with the run link, the trigger and suite commit, both `/readyz` versions, one `Cause:` line when the run knows it
-("inbox provider" when mail.tm failed first, "no report" when the run stopped before or during the suite, or the
-suite's own error such as its global timeout), every failed test by name and the first ten with their page and error
+("inbox provider" when mail.tm failed first, "not ready" when a `/readyz` failed, "no report" when the run stopped
+before or during the suite, or the suite's own error such as its global timeout), every failed test by name and the first ten with their page and error
 (from `report.json`), or the last lines it printed when there is no `report.json`; the text stops under GitHub's
 65,536 characters. While the issue is open, a failed run replaces its body and comments only when the failed tests
-or the cause changed, naming the tests newly failing and fixed. The next green run closes it. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
+or the cause changed, naming the tests newly failing and fixed. The next green run closes it. A run during which a
+`/readyz` version changed, because a newer release rolled out under it, neither opens, updates nor closes the issue:
+its job summary says so, and the newer release's own run follows. Only the dashboard's version names a commit;
+ts-auth's names its package version, so a ts-auth rollout during a run goes unseen. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
 then `bash e2e/env/production.sh`; each run makes three production accounts.
 
 ## Stages

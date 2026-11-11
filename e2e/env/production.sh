@@ -47,20 +47,23 @@ served() {
   local service body
   for service in dash auth; do
     body=$(curl -fsS --max-time 15 "https://$service.terrascale.tech/readyz") || {
-      echo "production: https://$service.terrascale.tech/readyz is not ready"
+      echo "production: https://$service.terrascale.tech/readyz is not ready $1 the suite"
       return 4
     }
-    echo "$service.terrascale.tech/readyz $body" | tee -a "$report/readyz.txt"
+    echo "$1 $service.terrascale.tech/readyz $body" | tee -a "$report/readyz.txt"
   done
 }
 
 journey() {
+  local status=0
   isolated
   inbox
-  served
+  served before
   cd "$e2e"
   E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" E2E_INBOX_DOMAIN="$domain" \
-    npx playwright test "${projects[@]/#/--project=}"
+    npx playwright test "${projects[@]/#/--project=}" || status=$?
+  served after
+  return "$status"
 }
 
 export SSL_CERT_FILE=$ca

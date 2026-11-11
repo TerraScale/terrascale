@@ -186,10 +186,12 @@ jobs:
         with:
           name: production-journey-report
           path: production-report
-      - name: Write the issue text
+      - id: text
+        name: Write the issue text
         run: |
           set -euo pipefail
           report=production-report
+          changed=""
           {
             if [ "$RESULT" = success ]; then
               echo "The production journey passed: $RUN"
@@ -203,14 +205,21 @@ jobs:
               echo "Cause: no report: the run stopped before or during the suite (setup, timeout, cancel or scrub). Read the job log."
             else
               if [ -s "$report/readyz.txt" ]; then
+                readings=$(jq -R -s '[split("\n")[] | capture("^(?<reading>\\S+) (?<url>\\S+) (?<body>.*)$") | {reading, url} + (.body | fromjson | {version, status})]' "$report/readyz.txt")
                 echo "Production served:"
-                jq -R -r 'capture("^(?<url>\\S+) (?<body>.*)$") | "- \(.url): version \((.body | fromjson).version // "none"), status \((.body | fromjson).status // "none")"' "$report/readyz.txt"
+                jq -r '.[] | select(.reading == "before") | "- \(.url): version \(.version // "none"), status \(.status // "none")"' <<< "$readings"
+                changed=$(jq -r '(map(select(.reading == "after")) | INDEX(.url)) as $after
+                  | [.[] | select(.reading == "before" and $after[.url] != null and $after[.url].version != .version)
+                    | "\(.url) \(.version // "none") before the suite, \($after[.url].version // "none") after it"] | join("; ")' <<< "$readings")
               else
                 echo "Production served: not read, the run stopped before /readyz."
               fi
               echo
               if grep -q '^inbox provider mail.tm: .*production was not contacted' "$report/list.txt"; then
                 echo "Cause: the inbox provider (mail.tm) failed before the first request to production. Production was not tested; this is not a production failure."
+                echo
+              elif grep -q '^production: .* is not ready' "$report/list.txt"; then
+                echo "Cause: $(grep -m1 '^production: .* is not ready' "$report/list.txt")."
                 echo
               elif grep -q 'Error: inbox provider mail.tm' "$report/list.txt"; then
                 echo "Cause: the inbox provider (mail.tm) refused or failed a request during the run; read those errors below before you look at production."
@@ -251,7 +260,12 @@ jobs:
             mv capped.md issue.md
           fi
           cat issue.md
+          if [ -n "$changed" ]; then
+            echo "Production changed during the run ($changed): this run neither opens, updates nor closes the issue; the run of the newer release follows." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Open, update or close the issue
+        if: steps.text.outputs.changed != 'true'
         run: |
           set -euo pipefail
           export LC_ALL=C
