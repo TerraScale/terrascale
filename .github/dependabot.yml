@@ -4,7 +4,6 @@ updates:
     directories:
       - /
       - /src/**
-      - /tests/**
       - /benchmark/**
       - /aspire/**
       - /sdk/dotnet/**

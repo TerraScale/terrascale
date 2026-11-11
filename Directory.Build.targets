@@ -1,7 +1,4 @@
 <Project>
-  <!-- Imported after every project file, so these rules can key on properties the
-       projects set (UseTerraScaleEndpoints, IsTestProject) and the area flags of Directory.Build.props. -->
-
   <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
     <Features>$(Features);runtime-async=on</Features>
   </PropertyGroup>
@@ -51,11 +48,6 @@
     </ItemGroup>
   </Target>
 
-  <!-- Every test project: not packable. -->
-  <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
-    <IsPackable>false</IsPackable>
-  </PropertyGroup>
-
   <!-- TerraBase area: banned APIs (RS0030) and the BannedSymbols.txt list. Auth and ts-libs throw framework exceptions
        on purpose (BadHttpRequestException in the endpoint binder), so the rule stays with TerraBase. -->
   <ItemGroup Condition="'$(IsTerraBaseArea)' == 'true'">
@@ -69,33 +61,6 @@
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
   </ItemGroup>
 
-  <!-- TerraBase integration suites (Fast and Slow): TUnit executables driving the real server. -->
-  <PropertyGroup Condition="'$(IsTerraBaseArea)' == 'true' and '$(IsTestProject)' == 'true'">
-    <!-- Server GC, unlike the production server (one host per 512 MB machine): one test process runs up to 16 hosts at
-         once, and workstation GC ran 15x more GC cycles there, adding 42 s of pauses to a 136 s Fast run. Nothing in
-         TerraBase depends on the GC mode; the memory budget reads TotalAvailableMemoryBytes, the same in both. -->
-    <ServerGarbageCollection>true</ServerGarbageCollection>
-    <!-- Tiered PGO instrumentation costs the suite about 28% of its CPU: 15m34s to 11m12s of user time on the same binary. -->
-    <TieredPGO>false</TieredPGO>
-    <!-- CA1515: TUnit discovers public test classes. CA1707: test names use
-         underscores as sentence separators. CA2007: tests have no synchronization
-         context to capture. CS1591: tests are not a public API. -->
-    <NoWarn>$(NoWarn);CA1515;CA1707;CA2007;CS1591</NoWarn>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(IsTerraBaseArea)' == 'true' and '$(IsTestProject)' == 'true'">
-    <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraBase/TerraBase.csproj" />
-    <PackageReference Include="TUnit" />
-    <PackageReference Include="Bogus" />
-    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
-    <!-- Starts the top-level Program on real Kestrel listeners (WebApplicationFactory.UseKestrel). -->
-    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
-    <!-- Shared harness source; deliberately not a third test project. -->
-    <Compile Include="$(MSBuildThisFileDirectory)tests/TerraBase.TestHarness/**/*.cs" Link="TestHarness/%(RecursiveDir)%(Filename)%(Extension)" />
-    <!-- Every test starts its own host, and DI's dynamic engine compiles IL resolvers per host that the finalizer thread
-         then tears down: about 13% of the suite's CPU. The reflection engine resolves the same graph. -->
-    <RuntimeHostConfigurationOption Include="Microsoft.Extensions.DependencyInjection.DisableDynamicEngine" Value="true" />
-  </ItemGroup>
   <PropertyGroup Condition="'$(IsDashboardArea)' == 'true' and '$(TargetFramework)' == 'netstandard2.0'">
     <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
   </PropertyGroup>

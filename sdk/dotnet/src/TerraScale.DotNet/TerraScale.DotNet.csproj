@@ -23,7 +23,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="TerraScale.DotNet.Tests" />
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
     <EmbeddedResource Include="../../contracts/auth/error-codes.json" LogicalName="TerraScale.DotNet.Auth.error-codes.json" />
     <None Include="../../contracts/auth/**/*" Pack="true" PackagePath="contracts/auth/%(RecursiveDir)%(Filename)%(Extension)" />

@@ -18,7 +18,6 @@ public static class LoggingBuilderExtensions
     public static ILoggingBuilder AddTerraScaleLogging(this ILoggingBuilder builder, string service, params (string Category, LogLevel Level)[] levels) =>
         builder.AddTerraScaleLogging(service, null, Environment.GetEnvironmentVariable, TimeProvider.System, levels);
 
-    // Tests and benchmarks pass their own writer, environment and clock through InternalsVisibleTo. Null means Console.Out.
     internal static ILoggingBuilder AddTerraScaleLogging(
         this ILoggingBuilder builder,
         string service,

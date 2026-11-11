@@ -6,5 +6,5 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     [JsonSerializable(typeof(TsAuthJwkSet))]
     [JsonSerializable(typeof(TsAuthJwk))]
     [JsonSerializable(typeof(TsAuthUserInfo))]
-    internal partial class TsAuthJsonContext : JsonSerializerContext;
+    internal sealed partial class TsAuthJsonContext : JsonSerializerContext;
 }

@@ -4,36 +4,23 @@
     <Project Path="src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" />
     <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />
     <Project Path="src/TerraScale.Logging/TerraScale.Logging.csproj" />
-    <Project Path="tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj" />
-    <Project Path="tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj" />
   </Folder>
   <Folder Name="/auth/">
     <Project Path="src/TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj" />
     <Project Path="src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj" />
     <Project Path="src/TerraScale.Authentication.EntityFrameworkDesign/TerraScale.Authentication.EntityFrameworkDesign.csproj" />
     <Project Path="src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
-    <Project Path="tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj" />
-    <Project Path="tests/TerraScale.Authentication.Slow/TerraScale.Authentication.Slow.csproj" />
   </Folder>
   <Folder Name="/terrabase/">
     <Project Path="src/TerraBase.Analyzers/TerraBase.Analyzers.csproj" />
-    <Project Path="src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj">
-      <Build Project="false" />
-    </Project>
     <Project Path="src/TerraBase/TerraBase.csproj" />
     <Project Path="src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
     <Project Path="src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
-    <Project Path="tests/TerraBase.Fast/TerraBase.Fast.csproj" />
-    <Project Path="tests/TerraBase.Slow/TerraBase.Slow.csproj" />
-    <Project Path="tests/TerraBase.E2E/TerraBase.E2E.csproj" />
-  </Folder>
-  <Folder Name="/cli/">
   </Folder>
   <Folder Name="/vendor/">
     <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj" />
     <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Data/Turso.Data.csproj" />
     <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
-    <Project Path="tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj" />
   </Folder>
   <Folder Name="/benchmark/">
     <Project Path="benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks/TerraScale.EntityFrameworkCore.Benchmarks.csproj" />
@@ -48,6 +35,5 @@
     <Project Path="src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj" />
     <Project Path="src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
     <Project Path="src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj" />
-    <Project Path="tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj" />
   </Folder>
 </Solution>

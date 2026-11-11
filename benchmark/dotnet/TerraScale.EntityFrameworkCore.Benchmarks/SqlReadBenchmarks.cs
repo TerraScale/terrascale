@@ -6,7 +6,6 @@ using BenchmarkDotNet.Attributes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using TerraScale.DotNet.TerraBase;
-using TerraScale.EntityFrameworkCore.Tests;
 
 namespace TerraScale.EntityFrameworkCore.Benchmarks;
 

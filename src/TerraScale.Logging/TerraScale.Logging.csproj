@@ -23,9 +23,6 @@
     <None Include="README.md" Pack="true" PackagePath="\" />
     <PackageReference Include="ZLogger" />
     <PackageReference Include="ZString" />
-    <InternalsVisibleTo Include="TerraScale.Logging.Tests" />
     <InternalsVisibleTo Include="TerraScale.Logging.Benchmarks" />
-    <!-- ts-auth's console logging test passes its own writer instead of replacing the process-wide Console.Out. -->
-    <InternalsVisibleTo Include="TerraScale.Authentication.Fast" />
   </ItemGroup>
 </Project>

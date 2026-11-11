@@ -17,9 +17,7 @@ trim_trailing_whitespace = false
 [Makefile]
 indent_style = tab
 
-# TerraBase, and the tests of its vendored SQL driver: the strictest style, enforced in the build
-# (EnforceCodeStyleInBuild) with warnings as errors.
-[{src/TerraBase*,tests/TerraBase*,tests/Turso.Data.Sqlite.Tests}/**.cs]
+[src/TerraBase*/**.cs]
 csharp_style_namespace_declarations = file_scoped:error
 csharp_style_var_for_built_in_types = true:error
 csharp_style_var_when_type_is_apparent = true:error
@@ -32,8 +30,7 @@ dotnet_style_qualification_for_field = false:suggestion
 dotnet_style_prefer_conditional_expression_over_return = true:suggestion
 csharp_prefer_braces = true:error
 
-# ts-libs (TerraScale.Endpoints, TerraScale.Logging and their tests and benchmarks): style stays out of the build.
-[{src,tests,benchmark/dotnet}/TerraScale.{Endpoints,Logging}*/**.cs]
+[{src,benchmark/dotnet}/TerraScale.{Endpoints,Logging}*/**.cs]
 # One statement per line, braces on their own line.
 csharp_preserve_single_line_statements = false
 csharp_preserve_single_line_blocks = true
@@ -49,7 +46,7 @@ csharp_using_directive_placement = outside_namespace:suggestion
 csharp_style_namespace_declarations = file_scoped:suggestion
 
 # ts-auth (and its scripts): SDK 11 turns these on by default. ts-auth built on SDK 10, where they were not enforced; they stay off here.
-[{src/TerraScale.Authentication*,tests/TerraScale.Authentication*,scripts/auth}/**.cs]
+[{src/TerraScale.Authentication*,scripts/auth}/**.cs]
 dotnet_diagnostic.CA2026.severity = silent
 dotnet_diagnostic.CA2027.severity = silent
 dotnet_diagnostic.IDE0005.severity = silent
