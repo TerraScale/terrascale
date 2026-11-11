@@ -1,3 +1,4 @@
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Platform;
 using TerraBase.Tenancy;
@@ -50,6 +51,13 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         var placement = new DatabasePlacement(options.Region, [], 1);
         foreach (var (name, database) in PlatformDatabases.Databases)
         {
+            var refused = await ReadAsync<EnsurePlatformResult>(transaction => PlatformRefusalAsync(transaction, name, database, cancellationToken), static error => error,
+                cancellationToken).ConfigureAwait(false);
+            if (refused is not Done)
+            {
+                return refused;
+            }
+
             var added = await AddDatabaseAsync(
                 PlatformDatabases.OrganizationId,
                 async transaction => await OrganizationProjectAsync(transaction, PlatformDatabases.OrganizationId, database.ProjectId, cancellationToken)
@@ -79,4 +87,12 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         return new Done();
     }
 
+    private static async ValueTask<EnsurePlatformResult> PlatformRefusalAsync(
+        IStorageTransaction transaction, string name, (string Id, string ProjectId) database, CancellationToken cancellationToken) =>
+        await IsProjectClosedAsync(transaction, database.ProjectId, cancellationToken).ConfigureAwait(false)
+            ? new Conflict("a platform project is closed", "platform_project_closed")
+            : await CatalogTables.DatabaseNamedAsync(transaction, database.ProjectId, name, cancellationToken).ConfigureAwait(false) is null
+                && await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false)
+                ? new Conflict("a platform database id is permanently deleted", "platform_database_purged")
+                : new Done();
 }
