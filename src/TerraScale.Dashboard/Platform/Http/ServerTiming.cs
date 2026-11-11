@@ -54,8 +54,7 @@ namespace TerraScale.Dashboard.Platform.Http
                 return read();
             }
 
-            var start = new Task<Task<T>>(read);
-            var task = start.Unwrap();
+            (Task<Task<T>> Cold, Task<T> Shared)? registered = null;
             lock (timing.gate)
             {
                 if (publicMetadata || Volatile.Read(ref timing.pendingWrites) == 0)
@@ -67,12 +66,20 @@ namespace TerraScale.Dashboard.Platform.Http
                         return pending;
                     }
 
-                    timing.readTasks[key] = (generation, task);
+                    var cold = new Task<Task<T>>(read);
+                    var shared = cold.Unwrap();
+                    timing.readTasks[key] = (generation, shared);
+                    registered = (cold, shared);
                 }
             }
 
-            start.RunSynchronously();
-            return task;
+            if (registered is not { } started)
+            {
+                return read();
+            }
+
+            started.Cold.RunSynchronously();
+            return started.Shared;
         }
 
         // Token grants change none of the account/permission/billing records the dashboard context reads.
