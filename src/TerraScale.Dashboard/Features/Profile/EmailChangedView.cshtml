@@ -1,6 +1,10 @@
 @inherits RazorSlice<TerraScale.Dashboard.Common.UI.DocumentModel>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
-<main class="ts-login"><div class="ts-login-column"><section class="ts-login-panel"><div class="ts-login-stack">
+<main class="ts-login">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column"><section class="ts-login-panel"><div class="ts-login-stack">
     <h1 class="ts-auth-title">Sign-in email changed</h1>
     <p class="ts-auth-subtitle" role="status">All sessions have ended. Sign in again with your new email address.</p>
     <a class="ts-btn ts-btn-primary ts-btn-block" href="/login?returnTo=%2Fprofile">Sign in with your new email</a>

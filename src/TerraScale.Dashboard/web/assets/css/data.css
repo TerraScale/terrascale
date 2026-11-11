@@ -139,6 +139,11 @@
   .ts-table-stacked .ts-table-actions > .ts-row {
     justify-content: flex-start;
   }
+
+  .ts-table-stacked td[data-label]::before {
+    content: attr(data-label) " " / "";
+    color: var(--ts-ink-2);
+  }
 }
 
 
