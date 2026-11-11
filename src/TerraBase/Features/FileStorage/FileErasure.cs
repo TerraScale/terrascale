@@ -1,6 +1,5 @@
 using TerraBase.Engine;
 using TerraBase.Features.Management;
-using ZLogger;
 
 namespace TerraBase.Features.FileStorage;
 
@@ -24,7 +23,7 @@ internal interface IProjectFileErasure
     ValueTask<bool> EraseAsync(ProjectFiles project, FileErasureFence fenced, DateTimeOffset until, CancellationToken cancellationToken);
 }
 
-internal sealed class FileErasure(SystemCatalog catalog, IFileObjectStore objects, TimeProvider time, ILogger<FileErasure> logger) : IProjectFileErasure
+internal sealed class FileErasure(SystemCatalog catalog, IFileObjectStore objects, TimeProvider time) : IProjectFileErasure
 {
     internal const string Purges = "file_object_purges";
     internal static readonly TimeSpan UploadMargin = TimeSpan.FromMinutes(1);
@@ -37,46 +36,38 @@ internal sealed class FileErasure(SystemCatalog catalog, IFileObjectStore object
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(fenced);
         var buckets = FileStorageUsage.Buckets(project.ProjectId);
-        try
+        while (true)
         {
-            while (true)
+            var next = await catalog.ReadAsync<NextBucket>(async transaction =>
+                await fenced(transaction, cancellationToken).ConfigureAwait(false)
+                    ? new(true, (await SystemCatalog.ListAsync(transaction, buckets, null, 1, FileStorageJsonContext.Default.FileBucket, bucket => bucket.Id, cancellationToken).ConfigureAwait(false)).Items is [var first, ..] ? first : null)
+                    : new(false, null), static _ => new(false, null), cancellationToken).ConfigureAwait(false);
+            if (next.Bucket is not { } bucket)
             {
-                var next = await catalog.ReadAsync<NextBucket>(async transaction =>
-                    await fenced(transaction, cancellationToken).ConfigureAwait(false)
-                        ? new(true, (await SystemCatalog.ListAsync(transaction, buckets, null, 1, FileStorageJsonContext.Default.FileBucket, bucket => bucket.Id, cancellationToken).ConfigureAwait(false)).Items is [var first, ..] ? first : null)
-                        : new(false, null), static _ => new(false, null), cancellationToken).ConfigureAwait(false);
-                if (next.Bucket is not { } bucket)
-                {
-                    return next.Fenced;
-                }
-
-                if (await PurgeBucketAsync(project, bucket, fenced, heldOnly: false, until, cancellationToken).ConfigureAwait(false) != BucketPurge.Emptied)
-                {
-                    return false;
-                }
-
-                var files = FileStorageUsage.Files(project.OrganizationId, project.ProjectId, bucket.Id);
-                if (!await catalog.WriteAsync<bool>(async transaction =>
-                    {
-                        if (!await fenced(transaction, cancellationToken).ConfigureAwait(false)
-                            || await SystemCatalog.AnyAsync(transaction, files, cancellationToken).ConfigureAwait(false))
-                        {
-                            return false;
-                        }
-
-                        _ = await transaction.DropKindAsync(files, cancellationToken).ConfigureAwait(false);
-                        _ = await transaction.DeleteAsync(buckets, bucket.Id, cancellationToken).ConfigureAwait(false);
-                        return true;
-                    }, static _ => false, cancellationToken).ConfigureAwait(false))
-                {
-                    return false;
-                }
+                return next.Fenced;
             }
-        }
-        catch (Exception error) when (FileStorageService.StoreFailure(error) && !cancellationToken.IsCancellationRequested)
-        {
-            logger.ZLogWarning(error, $"Erasing the file objects of closing project {project.ProjectId:@Project} failed ({error.GetType().Name:@Error}); the next pass tries again");
-            return false;
+
+            if (await PurgeBucketAsync(project, bucket, fenced, heldOnly: false, until, cancellationToken).ConfigureAwait(false) != BucketPurge.Emptied)
+            {
+                return false;
+            }
+
+            var files = FileStorageUsage.Files(project.OrganizationId, project.ProjectId, bucket.Id);
+            if (!await catalog.WriteAsync<bool>(async transaction =>
+                {
+                    if (!await fenced(transaction, cancellationToken).ConfigureAwait(false)
+                        || await SystemCatalog.AnyAsync(transaction, files, cancellationToken).ConfigureAwait(false))
+                    {
+                        return false;
+                    }
+
+                    _ = await transaction.DropKindAsync(files, cancellationToken).ConfigureAwait(false);
+                    _ = await transaction.DeleteAsync(buckets, bucket.Id, cancellationToken).ConfigureAwait(false);
+                    return true;
+                }, static _ => false, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
         }
     }
 

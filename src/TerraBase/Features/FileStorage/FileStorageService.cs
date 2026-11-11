@@ -382,7 +382,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         return checksum is { Length: 44 } && Convert.TryFromBase64String(checksum, bytes, out var written) && written == 32;
     }
 
-    internal static bool StoreFailure(Exception error) => error is AmazonS3Exception or HttpRequestException or IOException;
+    private static bool StoreFailure(Exception error) => error is AmazonS3Exception or HttpRequestException or IOException;
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
         Task.WhenAll(

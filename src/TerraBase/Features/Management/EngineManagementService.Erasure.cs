@@ -72,11 +72,21 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask EraseClosingFilesAsync(string project, DateTimeOffset until, CancellationToken token)
     {
-        if (await ReadAsync(transaction => FileErasureOrganizationAsync(transaction, project, token), static _ => null, token).ConfigureAwait(false) is { } organization)
+        if (await ReadAsync(transaction => FileErasureOrganizationAsync(transaction, project, token), static _ => null, token).ConfigureAwait(false) is not { } organization)
+        {
+            return;
+        }
+
+        try
         {
             _ = await fileErasure.Value.EraseAsync(new ProjectFiles(organization, project),
                 async (transaction, cancellationToken) => await FileErasureOrganizationAsync(transaction, project, cancellationToken).ConfigureAwait(false) == organization,
                 until, token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!token.IsCancellationRequested)
+        {
+            _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "file_cleanup"));
+            logger.ZLogWarning(error, $"Erasing the file buckets of closing project {project:@Project} failed; the next pass tries again");
         }
     }
 
