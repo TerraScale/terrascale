@@ -5,6 +5,7 @@ use ulid::Ulid;
 
 use super::errors::{Error, Result};
 
+#[must_use]
 pub fn is_valid_id(id: &str) -> bool {
     id.len() == 26
         && id.as_bytes()[0] <= b'7'
