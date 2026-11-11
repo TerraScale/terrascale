@@ -1,11 +1,12 @@
 # Sensitive dashboard operations
 
 Account deletion, personal access token issuance (including MCP OAuth's 90-day
-PAT), API-key creation and rotation, OAuth client creation, and billing plan
+PAT), API-key rotation, OAuth client creation, and billing plan
 changes with their undo
 require hosted confirmation at ts-auth. Confirmation uses password or email
 verification and enrolled MFA. A recent OIDC login alone does not authorize an
 operation. PAT issuance still creates its own independent OIDC grant afterward.
+API-key creation needs no confirmation.
 
 The dashboard keeps the opaque purpose/audience proof inside encrypted TerraBase
 `auth-flows` state. The browser receives only the hosted confirmation URL and an
@@ -18,13 +19,15 @@ unavailable service) gets the dashboard's error page with the reason; API
 callers get problem JSON.
 
 The dashboard consumes `create_pat/ts-dashboard` immediately before storing the
-independent credential. API-key and OAuth-client operations send their
+independent credential. API-key rotation and OAuth-client operations send their
 purpose-bound `ts-auth` proof through the SDK in
 `X-TerraScale-Step-Up-Proof` to the owning service. A `change_plan/ts-auth`
 proof is organization-bound and never leaves the dashboard: the owner's exact
 posted plan change or undo replays from the single-use intent after approval,
 re-checking the owner role and re-validating the plan before any Stripe call.
-API/MCP
+API-key creation sends no proof: the CSRF-checked form, its API and the MCP
+`create_api_key` tool create the key at once, and ts-auth binds the new secret
+to its creator's account authentication state. Other API/MCP
 credential mutations without hosted confirmation receive an actionable refusal;
 they do not get an unattended credential issuance path.
 

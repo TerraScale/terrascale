@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(credentials, page.NextCursor, page.HasMore, limit);
         }
 
-        [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a project API key from the dashboard after hosted confirmation. Unattended MCP calls return step_up_required. The dashboard reveals the secret once. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires the organization owner/admin role or this project's member role.")]
+        [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a project API key. The secret is returned once. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires the organization owner/admin role or this project's member role.")]
         public Task<ProjectApiKeySecret> CreateApiKey(string name,
             [Description(ApiKeyService.ScopeDescription)] string[] scopes,
             string databaseId = "", int expiresInDays = 0, string[]? allowedCidrs = null, string? organizationId = null, string? projectId = null)

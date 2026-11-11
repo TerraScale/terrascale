@@ -85,17 +85,12 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return [.. result.OrderBy(key => key.Name, StringComparer.Ordinal)];
         }
 
-        public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken, string stepUpProof = "")
+        public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
         {
             var request = PrepareCreate(context, kind, name, databaseId, scopes, expiresInDays, allowedCidrs);
             var scope = DatabaseService.Scope(context);
-            if (string.IsNullOrEmpty(stepUpProof))
-            {
-                throw StepUpFlow.Required();
-            }
-
             var result = await ProtectedAsync(() => Client().CreateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId,
-                request, stepUpProof, cancellationToken));
+                request, cancellationToken));
             var key = Map(context, result.ApiKey);
             if (key.Name != request.Name || key.DatabaseId != request.Database || key.ExpiresAt != request.ExpiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(request.Scopes!.Order(StringComparer.Ordinal)) ||
                 !SameCidrs(request.AllowedCidrs!, key.AllowedCidrs!) || string.IsNullOrEmpty(result.Key))
@@ -106,7 +101,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(key, result.Key);
         }
 
-        internal TsAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
+        private TsAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
         {
             if (!context.CanManageKeys)
             {

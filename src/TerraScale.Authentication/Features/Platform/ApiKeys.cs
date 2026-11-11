@@ -101,7 +101,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             var (id, secret) = Generate();
             var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt, allowedCidrs)
             {
-                SecretBindings = caller.StepUpBindings,
+                SecretBindings = [Credentials.UserState(caller.Id, caller.AuthStamp!)],
             };
             List<Change> operations = [.. await this.RequirementsAsync(caller, cancellationToken).ConfigureAwait(false), .. authority.Assertions, Change.Insert(key)];
 
@@ -177,6 +177,11 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     public Task<(ApiKeyRecord Key, string Secret)> RotateAsync(UserRecord caller, string organizationId, string? projectId, string keyId, TimeSpan previousTtl, CancellationToken cancellationToken) =>
         directory.CommitAsync(async () =>
         {
+            if (caller.StepUpBindings.Count == 0)
+            {
+                throw StepUpProofs.Required();
+            }
+
             var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
@@ -213,8 +218,6 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             return null;
         }
 
-        // A secret issued before fresh-proof lineage existed has none to lose and keeps working; every secret issued since
-        // carries its lineage (CreateAsync and RotateAsync refuse a caller without one), so only those can lose it.
         var current = key.SecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.SecretBindings, cancellationToken).ConfigureAwait(false);
         var previous = key.PreviousSecretHash is not null && key.PreviousSecretExpiresAt > clock.GetUtcNow()
             && (key.PreviousSecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.PreviousSecretBindings, cancellationToken).ConfigureAwait(false));
@@ -347,11 +350,6 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
         if (caller.InstanceId != Instance)
         {
             throw PlatformDirectory.Forbidden();
-        }
-
-        if (caller.StepUpBindings.Count == 0)
-        {
-            throw StepUpProofs.Required();
         }
 
         if (!await credentials.AreCurrentAsync(Instance, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))

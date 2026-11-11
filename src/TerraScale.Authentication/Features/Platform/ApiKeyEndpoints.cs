@@ -262,7 +262,6 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         }
 
         var cidrs = ApiKeys.NormalizeCidrs(body.AllowedCidrs) ?? throw InvalidCidrs();
-        caller = await this.HttpContext.RequestServices.GetRequiredService<StepUpProofs>().ConsumeHeaderAsync(caller, this.HttpContext.Request, "create_api_key", null, cancellationToken);
         var (key, secret) = await keys.CreateAsync(caller, this.RouteId("organization"), this.ProjectId(), name, scopes, body.Database, body.ExpiresAt, cidrs, cancellationToken);
         return Results.Json(new ApiKeySecretBody(this.Map(key, null), secret), PlatformApiJson.Default.ApiKeySecretBody, statusCode: StatusCodes.Status201Created);
     }
