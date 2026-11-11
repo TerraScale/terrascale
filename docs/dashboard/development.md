@@ -55,8 +55,11 @@ Normal main CI dispatches qualify through the same required quality gate; native
 maintenance cannot qualify. See [CI recovery](../dev/ci-recovery.md).
 
 Lint checks that the committed stylesheet matches `web/assets` and
-`Features/**/*.css`, then verifies SDK package provenance and the formatting of the
-application.
+`Features/**/*.css`, runs the simple-UI check, verifies SDK package provenance and
+checks the whitespace of the solution's C# files with `dotnet format whitespace`, which
+compiles nothing; a pull request checks only its changed C# files unless it changes a
+build file or the check itself. Analyzer findings fail the Release build, the job's only
+compile, which runs first with warnings as errors.
 
 `audit-stripe` runs the read-only Stripe.net report using the Stripe keys from
 the dashboard's OCI Vault secret files ([secrets](identity-descriptor.md)); it accepts no
