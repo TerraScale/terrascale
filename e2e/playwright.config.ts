@@ -11,6 +11,7 @@ export default defineConfig({
   retries: 0,
   workers: 6,
   timeout: 60_000 + mailWait,
+  globalTimeout: production ? 25 * 60_000 : 0,
   expect: { timeout: 20_000 },
   reporter: production ? [['list'], ['json', { outputFile: 'production-report/report.json' }]] : [['list'], ['html', { open: 'never' }]],
   globalTeardown: './support/teardown.ts',

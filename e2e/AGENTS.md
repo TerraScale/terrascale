@@ -69,7 +69,12 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   host, with a fresh home and no extra CA.
 - Evidence: no trace, video or screenshot. The run writes `production-report/list.txt` (everything it printed, with
   the list reporter), `report.json` (JSON reporter) and `readyz.txt`; each audited page adds a `url` annotation and
-  the SDK runners print their output. `env/scrub.py` redacts them before they upload.
+  the SDK runners print their output. Playwright ends a run that reaches 25 minutes (`globalTimeout`, under the
+  step's 30), so a slow run still writes `report.json`. A timeout or a cancel signals only the step's shell, so the
+  scrub step first kills every process that carries the job's `RUNNER_TRACKING_ID` (the runner marks with it all a
+  job starts, and kills them itself only when the job ends) and every process those started (Chromium overwrites its
+  environment), until none is left; then `env/scrub.py` redacts the files, and they upload only when that step
+  succeeded.
 - Accounts: a run signs up three users (`setup`, `desktop-setup`, `invitation`); its last steps delete the two
   owners, the invitation's second user stays.
 
@@ -205,10 +210,11 @@ SHA-256 to its archive's.
   they use them, and the branch action's connection URL and scoped key are registered the moment the test reads them
   from `GITHUB_OUTPUT`. Before anything uploads, `env/scrub.py` replaces each value, raw, URL-encoded and
   JSON-escaped, with `[redacted]` in every file, inside zip archives and inside the report's embedded zip, then checks
-  none is left; a file it cannot rewrite is deleted and named, and the step fails, so nothing uploads. Once the
-  namespace step has passed, Stop runs before the scrub, even after a timeout or a cancel, and ends every process
-  inside, so nothing the suite started writes after the scrub lists its files. Text is redacted; pixels are not
-  scanned: screenshots mask the secret fields by selector and videos are off. The 6-digit codes are not redacted
+  none is left; a file it cannot rewrite is deleted and named, and the step fails, so nothing uploads. On a pull
+  request, once the namespace step has passed, Stop runs before the scrub, even after a timeout or a cancel, and ends
+  every process inside, so nothing the suite started writes after the scrub lists its files; on production the scrub
+  step ends them itself ("The production target"). Text is redacted; pixels are not scanned: screenshots mask the
+  secret fields by selector and videos are off. The 6-digit codes are not redacted
   (single use, under 16 characters). Every secret of a PR run is generated in that run and dies with the VM: `ci.yml`
   passes no secret to `journey.yml`, which grants `contents: read` only, checks out with `persist-credentials: false`
   and uses no repository secret. Never print a secret.

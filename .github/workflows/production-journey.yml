@@ -116,13 +116,33 @@ jobs:
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
         run: bash e2e/env/production.sh
       - id: scrub
-        name: Redact every generated secret from the files that upload
+        name: End every process of this job, then redact every generated secret from the files that upload
         if: always()
+        timeout-minutes: 5
         run: |
+          : "${RUNNER_TRACKING_ID:?the runner marks every process of this job with RUNNER_TRACKING_ID}"
+          suite() {
+            local environ pid tracked=()
+            for environ in /proc/[0-9]*/environ; do
+              pid=${environ//[!0-9]/}
+              if [ "$pid" != $$ ] && [ "$pid" != "$BASHPID" ] && grep -qsxzF "RUNNER_TRACKING_ID=$RUNNER_TRACKING_ID" "$environ"; then tracked+=("$pid"); fi
+            done
+            ps -e -o pid=,ppid= | awk -v tracked="${tracked[*]}" '
+              BEGIN { n = split(tracked, roots, " "); for (i = 1; i <= n; i++) inside[roots[i]] = 1 }
+              { parent[$1] = $2 }
+              END {
+                do { grew = 0; for (p in parent) if (!(p in inside) && (parent[p] in inside)) { inside[p] = 1; grew = 1 } } while (grew)
+                for (p in inside) if (p in parent) print p
+              }'
+          }
+          while mapfile -t left < <(suite) && [ ${#left[@]} -gt 0 ]; do
+            ps -o pid=,comm= -p "${left[*]}" || true
+            kill -KILL "${left[@]}" 2> /dev/null || true
+          done
           python3 e2e/env/scrub.py e2e/.state/production e2e/production-report
           if [ -f e2e/production-report/list.txt ]; then echo "report=true" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && steps.scrub.outputs.report == 'true'
+        if: always() && steps.scrub.outcome == 'success' && steps.scrub.outputs.report == 'true'
         with:
           name: production-journey-report
           path: e2e/production-report
