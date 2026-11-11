@@ -16,9 +16,18 @@ def migration_folders(revision):
     }
 
 
-def frozen(path, folders):
+def project_folders(revision):
+    return {
+        str(path.parent)
+        for path in map(PurePosixPath, git("ls-tree", "-r", "--name-only", revision).splitlines())
+        if path.suffix == ".csproj"
+    }
+
+
+def frozen(path, folders, projects):
     path = PurePosixPath(path)
-    return str(path.parent) in folders and not path.name.endswith("ModelSnapshot.cs")
+    return (str(path.parent) in folders and not path.name.endswith("ModelSnapshot.cs")
+            and any(str(parent) in projects for parent in path.parents))
 
 
 def main():
@@ -26,11 +35,12 @@ def main():
         raise SystemExit("usage: migrations-frozen.py <base-revision>")
     base = sys.argv[1]
     folders = migration_folders(base)
+    projects = project_folders("HEAD")
     changes = git("diff", "--name-status", "--find-renames", base, "HEAD").splitlines()
     violations = []
     for line in changes:
         status, *paths = line.split("\t")
-        if status[0] in "MDRT" and frozen(paths[0], folders):
+        if status[0] in "MDRT" and frozen(paths[0], folders, projects):
             violations.append(f"{status[0]} {' -> '.join(paths)}")
     if violations:
         print("A merged EF Core migration is immutable: never edit, rename or delete it; add a new migration instead.")
