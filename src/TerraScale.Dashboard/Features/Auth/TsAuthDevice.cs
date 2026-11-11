@@ -113,7 +113,8 @@ namespace TerraScale.Dashboard.Features.Auth
                 throw new SignInRejectedException();
             }
 
-            return new(user.Subject, email, email, access, string.IsNullOrWhiteSpace(refresh) ? previous?.RefreshToken : refresh, time.GetUtcNow().AddSeconds(expiresIn));
+            return new(user.Subject, email, email, access, string.IsNullOrWhiteSpace(refresh) ? previous?.RefreshToken : refresh,
+                AccessTokenExpiry(access, TrustedIssuer((await MetadataAsync(Client(), cancellationToken)).Issuer), await SigningKeysAsync(Client(), cancellationToken)));
         }
 
         private async Task<CliAnswer> CliPostAsync(string endpoint, Dictionary<string, string> form, CancellationToken cancellationToken)
