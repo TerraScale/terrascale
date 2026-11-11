@@ -59,15 +59,22 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOrganization,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
-    /// <summary>delete_organization: DELETE /v1/terrascale/organizations/{organization}. Requires the organization's delete_organization/ts-auth proof, consumed first with ConsumeStepUpAsync; the delete spends it.</summary>
-    public Task DeleteOrganizationAsync(
+    /// <summary>delete_organization: consumes the organization's approved delete_organization/ts-auth proof with POST /v1/terrascale/step-up/consume for this organization,
+    /// then sends DELETE /v1/terrascale/organizations/{organization} with the same proof, which ts-auth spends. One call: pass the approved proof unconsumed, never consume it first.
+    /// A refused or failed consume sends no DELETE. Neither request is retried; a later attempt needs a new proof.</summary>
+    public async Task DeleteOrganizationAsync(
         string accessToken,
         string organizationId,
         string stepUpProof,
-        CancellationToken cancellationToken = default) =>
-        client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, $"/v1/terrascale/organizations/{Id(organizationId)}",
+        CancellationToken cancellationToken = default)
+    {
+        var organization = Id(organizationId);
+        var proof = Proof(stepUpProof);
+        await ConsumeStepUpAsync(accessToken, new(proof, "delete_organization", "ts-auth", null, organization), cancellationToken).ConfigureAwait(false);
+        await client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, $"/v1/terrascale/organizations/{organization}",
             null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
-            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken, Proof(stepUpProof));
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken, proof).ConfigureAwait(false);
+    }
 
     /// <summary>list_members: GET /v1/terrascale/organizations/{organization}/members.</summary>
     public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformMember>> ListMembersAsync(

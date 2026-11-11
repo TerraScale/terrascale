@@ -15,7 +15,13 @@ Drizzle's `sqlite-proxy` driver expects, mapped from a root database handle's
 `deleteOrganization` and `startOwnershipTransfer` now require
 `options.stepUpProof` and send it as `X-TerraScale-Step-Up-Proof`, matching the
 purpose-bound, organization-bound proofs ts-auth requires since #1341. The proof
-is single-use and these mutations are never retried.
+is single-use and these mutations are never retried. `deleteOrganization` first
+consumes the proof at `POST /v1/terrascale/step-up/consume` for its organization
+and sends the `DELETE` with the same proof only after that answers 204; a refused
+consume returns its error and sends no `DELETE`. Pass the approved proof
+unconsumed. Published versions before this release cannot delete an
+organization: ts-auth refuses an organization `DELETE` whose proof was not
+consumed first.
 
 TerraScale is SQL-only. The JSON data API is removed without a replacement shim,
 with its handles, `db.transaction()`, filters and queries, shapes and replicas,
