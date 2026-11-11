@@ -153,7 +153,7 @@ test('organization checkout creates nothing before payment and completes exactly
   await expect(input).toHaveAttribute('maxlength', '128');
   await expect(input).toHaveAttribute('pattern', /p\{L\}/);
   await input.fill('!!!');
-  await wizard.locator('form').evaluate((form) => { (form as HTMLFormElement).noValidate = true; });
+  await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).evaluate((button) => { (button as HTMLButtonElement).formNoValidate = true; });
   audit.expectStatus(/\/api\/v1\/dashboard\/organization\/new-organization(?:\?|$)/, 422);
   await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
   await expect(wizard.getByRole('alert')).toContainText('Names need');
