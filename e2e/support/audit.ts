@@ -14,6 +14,8 @@ export class Audit {
   private problems: string[] = [];
   private readonly expected: Expected[] = [];
   private readonly inflight = new Map<Request, number>();
+  private readonly downloads = new Set<string>();
+  private failed: { url: string; error: string }[] = [];
   private generation = 0;
   private lastActivity = Date.now();
 
@@ -27,7 +29,8 @@ export class Audit {
       this.problems.push(`console ${message.type()}: ${message.text()} at ${message.location().url}`);
     });
     page.on('pageerror', (error) => this.problems.push(`uncaught page error: ${error.message}`));
-    page.on('requestfailed', (request) => this.problems.push(`request failed: ${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}`));
+    page.on('requestfailed', (request) => this.failed.push({ url: request.url(), error: `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}` }));
+    page.on('download', (download) => this.downloads.add(download.url()));
     page.on('response', (response) => this.response(response));
     page.on('request', (request) => this.started(request));
     page.on('requestfinished', (request) => this.ended(request));
@@ -94,17 +97,24 @@ export class Audit {
         contentType: 'image/png',
       });
     }
-    const problems = [...this.problems.splice(0), ...found];
+    const problems = [...this.problems.splice(0), ...this.failures(), ...found];
     expect(problems, `${name} at ${page.url()}`).toEqual([]);
   }
 
   async finish(): Promise<void> {
     if (!this.page.isClosed()) await this.quiet();
-    expect(this.problems.splice(0), 'after the last audited state').toEqual([]);
+    expect([...this.problems.splice(0), ...this.failures()], 'after the last audited state').toEqual([]);
     for (const expected of this.expected) {
       expect(expected.seen, `HTTP ${expected.status} for ${expected.url}`).toBe(1);
       expect(expected.logged, `console lines for the expected HTTP ${expected.status} of ${expected.url}`).toBeLessThanOrEqual(expected.seen);
     }
+  }
+
+  private failures(): string[] {
+    return this.failed
+      .splice(0)
+      .filter((failure) => !(this.downloads.has(failure.url) && failure.error.endsWith(' net::ERR_ABORTED')))
+      .map((failure) => `request failed: ${failure.error}`);
   }
 
   private expectedLoadFailure(text: string, url: string): boolean {

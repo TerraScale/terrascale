@@ -2,8 +2,8 @@
 
 Playwright Test (TypeScript) that drives the real services built from the commit under test: TerraBase, ts-auth
 and the dashboard behind an edge that serves the production host names (Caddy for HTTPS, a PostgreSQL TLS edge for
-`pg.terrascale.tech`), a per-run CA, Mailpit as the SMTP server, a Cloudflare send-API sink that must stay empty and a
-Stripe stand-in for the API and Checkout. CI runs it through `.github/workflows/journey.yml` on the
+`pg.terrascale.tech`), a per-run CA, Mailpit as the SMTP server, a Cloudflare send-API sink that must stay empty, a
+Stripe stand-in for the API and Checkout and an R2 stand-in for customer file storage. CI runs it through `.github/workflows/journey.yml` on the
 merge commit GitHub tests for a pull request, unless every file the pull request changes is a `*.md` file or sits
 under `docs/`, `docs-site/`, `status-site/` or `landing-site/` other than `landing-site/static/pricing.json` (the
 `journey` filter of `.github/workflows/ci.yml`). Pushes to `main` and dispatches of `CI` never run it on a local stack;
@@ -63,7 +63,8 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   its timeout. Inboxes are never deleted: a deleted address can be registered again by anyone, while the
   account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
   password and token are registered secrets. Errors name the "inbox provider".
-- Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
+- Not run on production: the files flows of `interactions/files.spec.ts` (skipped there), because the browser may not
+  reach the object store's host on production. Through `onLocalStack`: the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach
   `/account-deleted` by itself, without a click, within its timeout); the sign-up submission of the four `hosted`
@@ -207,7 +208,12 @@ SHA-256 to its archive's.
 
 - Real services only: never fake our own code; only third parties are stood in for (Mailpit for SMTP, a sink for
   Cloudflare's send API, `env/stripe.mjs` for Stripe's API and Checkout page: in-memory customers, sessions and
-  subscriptions, the run's `STRIPE_SECRET_KEY` required, webhooks signed with the run's `STRIPE_WEBHOOK_SECRET`). The
+  subscriptions, the run's `STRIPE_SECRET_KEY` required, webhooks signed with the run's `STRIPE_WEBHOOK_SECRET`;
+  `env/r2.mjs` for Cloudflare R2 behind `journey.r2.cloudflarestorage.com`, TerraBase's customer file store: in-memory
+  objects of the `terrascale-<region>-files` bucket, every request signed with SigV4 by the run's key pair in
+  `$E2E_STATE/r2`, presigned or in its headers, an upload refused unless its body matches its
+  `x-amz-checksum-sha256`, and CORS for the dashboard's origin only. A request it refuses for any other reason than a
+  checksum or a missing object is a line in its `unexpected` list, which fails the run when it ends). The
   edge stands in for the ts-orch edge: Caddy for HTTPS and `env/pg-edge.mjs` for PostgreSQL on
   `pg.terrascale.tech:5432` (`SSLRequest`, TLS with the edge certificate, then TerraBase's listener). One exclusion:
   our status site (`status-site/`, Cloudflare Workers on D1) does not run here, so the edge answers
@@ -218,7 +224,8 @@ SHA-256 to its archive's.
   violation or an uncovered same-origin link. What passes on purpose: the other console types (`log`, `debug`,
   `info`, `dir`, `dirxml`, `table`, `trace`, `clear`, the group, profile, count and time types), a status below 400,
   and a status a test expects for its own page with `audit.expectStatus`, matched by URL and status whatever the
-  order of its response and console events, and seen exactly once. Not checked: links to another origin than the
+  order of its response and console events, and seen exactly once. A navigation that becomes a download ends in `net::ERR_ABORTED` for the
+  download's own URL; that one failure passes, because the browser hands the response to the download. Not checked: links to another origin than the
   page's own, every link on the MCP and platform origins, popups, WebSocket frames, lazy-loaded and SVG images,
   overflow inside an element, and axe's best-practice rules and incomplete results.
 - No retries, no fixed sleeps, no `waitForTimeout`: every wait ends on a condition. The SDK stage's pacing waits are
