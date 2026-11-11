@@ -90,12 +90,15 @@ export class Audit {
   async finish(): Promise<void> {
     if (!this.page.isClosed()) await this.quiet();
     expect(this.problems.splice(0), 'after the last audited state').toEqual([]);
-    for (const expected of this.expected) expect(expected.seen, `HTTP ${expected.status} for ${expected.url}`).toBe(1);
+    for (const expected of this.expected) {
+      expect(expected.seen, `HTTP ${expected.status} for ${expected.url}`).toBe(1);
+      expect(expected.logged, `console lines for the expected HTTP ${expected.status} of ${expected.url}`).toBeLessThanOrEqual(expected.seen);
+    }
   }
 
   private expectedLoadFailure(text: string, url: string): boolean {
     const status = /^Failed to load resource: the server responded with a status of (\d{3}) /.exec(text)?.[1];
-    const expected = this.expected.find((candidate) => String(candidate.status) === status && candidate.url.test(url) && candidate.logged < candidate.seen);
+    const expected = this.expected.find((candidate) => String(candidate.status) === status && candidate.url.test(url));
     if (!expected) return false;
     expected.logged += 1;
     return true;
