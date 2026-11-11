@@ -96,6 +96,11 @@ namespace TerraScale.Dashboard.Features.Billing
                 }, Idempotent("customer-" + binding.RequestId), cancellationToken);
                 binding = await UpdateAsync(org.Id, current =>
                 {
+                    if (current.RequestId != binding.RequestId)
+                    {
+                        throw new IOException("Checkout reservation changed.");
+                    }
+
                     if (current.CustomerId.Length != 0 && current.CustomerId != customer.Id)
                     {
                         throw new IOException("Billing customer changed.");
@@ -153,9 +158,9 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             var checkout = await client.V1.Checkout.Sessions.CreateAsync(options,
                 Idempotent("checkout-" + binding.RequestId), cancellationToken);
-            ValidateCheckout(binding, checkout);
             try
             {
+                ValidateCheckout(binding, checkout);
                 binding = await UpdateAsync(org.Id, current =>
                 {
                     if (current.RequestId != binding.RequestId || current.CustomerId != checkout.CustomerId)
