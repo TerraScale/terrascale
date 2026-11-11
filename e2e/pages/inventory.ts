@@ -103,17 +103,17 @@ const tabStates: Record<string, PagePattern['query']> = {
   tables: { table: /^[A-Za-z0-9_]*$/ },
 };
 
-const authSections: [string, string, Identity][] = [
-  ['overview', 'Overview', title('Project authentication', 2)],
-  ['users', 'Users', title('Authentication: Users')],
-  ['sessions', 'Sessions', title('Authentication: Sessions')],
-  ['sign-in', 'Sign-in methods', title('Authentication: Sign-in methods')],
-  ['social', 'Social sign-in', title('Authentication: Social sign-in')],
-  ['configuration', 'Configuration', title('Authentication: Configuration')],
-  ['clients', 'OAuth applications', title('Authentication: OAuth applications')],
-  ['webhooks', 'Webhooks', title('Authentication: Webhooks')],
-  ['branding', 'Branding', title('Authentication: Branding')],
-  ['danger', 'Danger zone', title('Authentication: Danger zone')],
+const authSections: [string, string][] = [
+  ['overview', 'Overview'],
+  ['users', 'Users'],
+  ['sessions', 'Sessions'],
+  ['sign-in', 'Sign-in methods'],
+  ['social', 'Social sign-in'],
+  ['configuration', 'Configuration'],
+  ['clients', 'OAuth applications'],
+  ['webhooks', 'Webhooks'],
+  ['branding', 'Branding'],
+  ['danger', 'Danger zone'],
 ];
 
 const organizationTabs: [string, Identity][] = [
@@ -236,11 +236,11 @@ export const dashboardStates: readonly PageState[] = [
   },
   { name: 'authentication', url: () => '/auth', covers: { path: /^\/auth$/ }, heading: title('Project authentication', 2) },
   ...authSections.map(
-    ([section, label, heading]): PageState => ({
+    ([section, label]): PageState => ({
       name: `authentication ${label.toLowerCase()}`,
       url: () => `/auth/${section}`,
       covers: { path: new RegExp(`^/auth/${section}$`) },
-      heading,
+      heading: section === 'overview' ? title('Project authentication', 2) : title(`Authentication: ${label}`),
     }),
   ),
   {
