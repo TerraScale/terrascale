@@ -35,6 +35,7 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
         });
     }
 
+    public bool Configured => _client is not null;
     private AmazonS3Client Client => _client ?? throw new IOException("file object storage credentials are unavailable");
     private static string Bucket(string region) => "terrascale-" + region + "-files";
 
@@ -94,10 +95,29 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
             return Convert.ToBase64String(hash) == file.Sha256;
         }
         catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound) { return false; }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested) { throw Unanswered(error); }
     }
 
-    public async ValueTask DeleteAsync(string region, string key, CancellationToken cancellationToken) =>
-        _ = await Client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
+    public async ValueTask DeleteAsync(string region, string key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _ = await Client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested) { throw Unanswered(error); }
+    }
+
+    public async ValueTask<FileObjectListing> ListAsync(string region, string prefix, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await Client.ListObjectsV2Async(new ListObjectsV2Request { BucketName = Bucket(region), Prefix = prefix }, cancellationToken).ConfigureAwait(false);
+            return new([.. (response.S3Objects ?? []).Select(stored => stored.Key)], response.IsTruncated == true);
+        }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested) { throw Unanswered(error); }
+    }
+
+    private static IOException Unanswered(OperationCanceledException error) => new("the object store did not answer in time", error);
 
     public void Dispose() => _client?.Dispose();
 }
