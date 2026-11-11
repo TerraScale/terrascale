@@ -20,7 +20,7 @@ concurrency:
 jobs:
   tests:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -69,7 +69,7 @@ jobs:
   autorelease:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.tests.outputs.eligible == 'true'
     needs: tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: write
