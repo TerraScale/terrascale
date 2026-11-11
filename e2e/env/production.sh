@@ -5,6 +5,7 @@ state=$e2e/.state/production
 report=$e2e/production-report
 ca=/etc/ssl/certs/ca-certificates.crt
 projects=(pages-desktop pages-mobile hosted interactions invitation)
+domain=
 
 refuse() {
   echo "production.sh refuses to run: $1"
@@ -31,11 +32,15 @@ inbox() {
     echo "inbox provider mail.tm: GET /domains failed; production was not contacted"
     return 3
   }
-  jq -e 'any(.[]; .isActive and (.isPrivate | not))' <<< "$domains" > /dev/null || {
+  domain=$(jq -r 'first(.[] | select(.isActive and (.isPrivate | not) and (.domain | test("^[a-z0-9.-]+$"))) | .domain)' <<< "$domains") || {
+    echo "inbox provider mail.tm: GET /domains answered no domain list; production was not contacted"
+    return 3
+  }
+  [ -n "$domain" ] || {
     echo "inbox provider mail.tm: GET /domains lists no active public domain; production was not contacted"
     return 3
   }
-  echo "inbox provider mail.tm: $(jq -r '[.[] | select(.isActive and (.isPrivate | not)) | .domain] | join(" ")' <<< "$domains")"
+  echo "inbox provider mail.tm: $domain"
 }
 
 served() {
@@ -54,7 +59,7 @@ journey() {
   inbox
   served
   cd "$e2e"
-  E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" \
+  E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" E2E_INBOX_DOMAIN="$domain" \
     npx playwright test "${projects[@]/#/--project=}"
 }
 
