@@ -72,5 +72,5 @@ jobs:
           version="${{ steps.qualified.outputs.version }}"
           gh release create "${{ steps.rev.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --target "${{ steps.rev.outputs.sha }}" --title "TerraScale Go $version" \
-            --notes "CLI and module release built and tested in CI at ${{ steps.rev.outputs.sha }}." \
+            --notes "CLI and module release built and qualified in CI at ${{ steps.rev.outputs.sha }}." \
             ./*.tar.gz ./*.zip checksums.txt ts.rb install.sh
