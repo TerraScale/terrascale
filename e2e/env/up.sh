@@ -34,6 +34,8 @@ start() {
   echo $! > "$pids/$name.pid"
 }
 
+boot_seconds=90
+
 ready() {
   local name=$1
   shift
@@ -42,14 +44,19 @@ ready() {
   until "$@" > /dev/null 2>&1; do
     if ! kill -0 "$pid" 2> /dev/null; then
       echo "$name exited before it was ready" >&2
-      tail -n 60 "$logs/$name.log" >&2
+      tail -n 40 "$logs/$name.log" >&2
+      return 1
+    fi
+    if [ "$SECONDS" -ge "$boot_seconds" ]; then
+      echo "$name is not ready $boot_seconds s after the boot started" >&2
+      tail -n 40 "$logs/$name.log" >&2
       return 1
     fi
     sleep 0.1
   done
 }
 
-edge_serves() { test "$(curl -s -o /dev/null -w '%{http_code}' --cacert "$trust" https://status.terrascale.tech/)" = 404; }
+edge_serves() { test "$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' --cacert "$trust" https://status.terrascale.tech/)" = 404; }
 
 start mailpit "$tools/mailpit" --listen 127.0.0.1:8025 --smtp 127.0.0.1:587 \
   --smtp-tls-cert "$pki/edge.pem" --smtp-tls-key "$pki/edge.key" --smtp-require-starttls --smtp-auth-accept-any \
@@ -62,7 +69,7 @@ start terrabase env DOTNET_ENVIRONMENT=Development TERRABASE_DATA_DIRECTORY="$st
   TERRABASE_AUTH_ISSUER=https://auth.terrascale.tech/terrascale TERRABASE_AUTH_AUDIENCE=https://api.terrascale.tech \
   TERRABASE_PEER_SECRET="$peer_secret" TERRABASE_MASTER_KEY="$terrabase_master_key" \
   dotnet "$build/terrabase/terrabase.dll"
-ready terrabase curl -fsS http://127.0.0.1:8080/readyz
+ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz
 
 auth=(TS_AUTH_TERRABASE_URL=http://127.0.0.1:8081 TS_AUTH_LISTEN=http://127.0.0.1:8090 TS_AUTH_METRICS_LISTEN=http://127.0.0.1:9092
   TS_AUTH_DASHBOARD_REDIRECT_URIS=https://dash.terrascale.tech/login/callback
@@ -78,10 +85,10 @@ start dashboard env TS_AUTH_DASHBOARD_CLIENT_SECRET="$client_secret" TS_DASHBOAR
   TS_DASHBOARD_TERRABASE_URL=http://127.0.0.1:8081 TS_REGION=gru TS_NODE=journey-1 \
   dotnet "$build/dashboard/TerraScale.Dashboard.dll" --environment Production --urls http://127.0.0.1:8085 --contentRoot "$build/dashboard"
 
-ready mailpit curl -fsS http://127.0.0.1:8025/readyz
-ready cloudflare-sink curl -fsS http://127.0.0.1:8026/messages
+ready mailpit curl -fsS --max-time 2 http://127.0.0.1:8025/readyz
+ready cloudflare-sink curl -fsS --max-time 2 http://127.0.0.1:8026/messages
 ready caddy edge_serves
-ready ts-auth curl -fsS http://127.0.0.1:8090/readyz
-ready dashboard curl -fsS --cacert "$trust" https://dash.terrascale.tech/readyz
+ready ts-auth curl -fsS --max-time 2 http://127.0.0.1:8090/readyz
+ready dashboard curl -fsS --max-time 2 --cacert "$trust" https://dash.terrascale.tech/readyz
 curl -fsS --cacert "$trust" https://dash.terrascale.tech/readyz
 echo

@@ -126,7 +126,7 @@ jobs:
           - shard: phone and flows
             projects: --project pages-mobile --project hosted --project interactions --project invitation
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 25
     permissions:
       contents: read
     env:
@@ -199,12 +199,14 @@ jobs:
           bash e2e/env/pki.sh
           bash e2e/env/install-runner.sh
       - name: Boot the stack
+        timeout-minutes: 3
         env:
           SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
         run: |
           bash e2e/env/up.sh
           while read -r secret; do echo "::add-mask::$secret"; done < "$E2E_STATE/secrets"
       - name: Journey
+        timeout-minutes: 15
         working-directory: e2e
         env:
           SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
@@ -227,7 +229,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: failure()
+        if: failure() || cancelled()
         with:
           name: journey-evidence-${{ strategy.job-index }}
           path: |
