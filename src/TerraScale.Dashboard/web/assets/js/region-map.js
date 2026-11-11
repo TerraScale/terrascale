@@ -11,6 +11,7 @@ for (const field of document.querySelectorAll('[data-region-map]')) {
   const summary = field.querySelector('[data-region-summary]');
   const error = field.querySelector('[data-region-error]');
   const nodes = new Map([...field.querySelectorAll('button[data-region]')].map(node => [node.dataset.region, node]));
+  const placed = [...field.querySelectorAll('.ts-region-map button[data-region]')].map(node => node.dataset.region);
   const order = [...nodes].filter(([, node]) => node.getAttribute('aria-pressed') === 'true').map(([code]) => code);
   const drawn = new Map();
   let sequence = 0;
@@ -22,7 +23,7 @@ for (const field of document.querySelectorAll('[data-region-map]')) {
 
   const arc = (from, to) => {
     const [[x1, y1], [x2, y2]] = [point(from), point(to)];
-    const [cx, cy] = [...nodes.keys()].map(point).reduce(([x, y], [px, py]) => [x + px / nodes.size, y + py / nodes.size], [0, 0]);
+    const [cx, cy] = placed.map(point).reduce(([x, y], [px, py]) => [x + px / placed.length, y + py / placed.length], [0, 0]);
     const length = Math.hypot(x2 - x1, y2 - y1);
     const [mx, my] = [(x1 + x2) / 2, (y1 + y2) / 2];
     let [nx, ny] = [(y1 - y2) / length, (x2 - x1) / length];
@@ -73,7 +74,8 @@ for (const field of document.querySelectorAll('[data-region-map]')) {
       return [separator, name];
     }));
     if (order.length > 0) error.hidden = true;
-    const pairs = new Map(order.flatMap((from, index) => order.slice(index + 1).map(to => [[from, to].sort().join(' '), [from, to]])));
+    const linked = order.filter(code => placed.includes(code));
+    const pairs = new Map(linked.flatMap((from, index) => linked.slice(index + 1).map(to => [[from, to].sort().join(' '), [from, to]])));
     for (const [key, group] of drawn) {
       if (pairs.has(key)) continue;
       drawn.delete(key);

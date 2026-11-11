@@ -233,7 +233,7 @@ namespace TerraScale.Dashboard.Features.Backups
                         return Results.BadRequest("Invalid form token.");
                     }
 
-                    var page = new WholeDatabaseRecoveryPage(ShellModel.For(http, context, "Point-in-time recovery"), database,
+                    var page = new WholeDatabaseRecoveryPage(ShellModel.For(http, context, database.Name + " · Point-in-time recovery"), database,
                         form?["destination"].ToString() ?? http.Request.Query["destination"].FirstOrDefault() ?? "platform",
                         form?["point"].ToString() ?? "", form?["name"].ToString() ?? "", form?["confirmName"].ToString() ?? "",
                         ConfirmDatabase: form?["confirmDatabase"].ToString() ?? "");
