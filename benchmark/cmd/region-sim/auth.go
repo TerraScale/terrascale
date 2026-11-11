@@ -22,11 +22,6 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// Test-only ts-auth stand-in. Real ts-auth cannot approve a device code without a browser session and an emailed
-// passcode, and stores its state in TerraBase, so the harness serves the subset of the platform contract the ts CLI and
-// TerraBase use: OIDC discovery and JWKS, the device grant (auto-approved), refresh and token exchange, and the
-// organization/project calls of `ts projects create`. Tokens mirror tests/TerraBase.TestHarness/TestIssuer.cs:
-// ES256 with a kid, typ at+jwt, a ULID sub, project_id/org_id/scope for project tokens.
 const (
 	cliClientID    = "00000000000000000000000007"
 	publicIssuer   = "https://" + authHost + "/terrascale"
