@@ -76,6 +76,7 @@
                 <button class="ts-btn ts-btn-ghost" type="button" data-on:click="@@get('/notifications/dialog', {retryMaxCount: 0})">Retry</button>
                 <a class="ts-btn ts-btn-ghost" href="/notifications">Open inbox</a>
             </div>
+            <div class="ts-skeleton ts-skeleton-table" aria-hidden="true" hidden data-attr:hidden="!$_notificationsPending"></div>
             <div id="ts-notifications-body" aria-busy="false" data-attr:aria-busy="$_notificationsPending ? 'true' : 'false'" data-show="!$_notificationsPending &amp;&amp; $_notificationsLoaded"></div>
         </div>
     </dialog>

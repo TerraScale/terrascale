@@ -1,6 +1,3 @@
-/* Fonts, reset, page defaults, accessibility helpers, and the
-   navigation progress bar. */
-
 /* Self-hosted variable Geist. "swap" shows the system face until the file
    arrives, so text is never invisible. */
 @font-face {
@@ -67,7 +64,6 @@ h1,
 h2,
 h3,
 h4 {
-  font-family: var(--ts-font-display);
   font-weight: var(--ts-heading-weight);
   line-height: var(--ts-lh-tight);
   letter-spacing: var(--ts-heading-tracking);
@@ -87,8 +83,7 @@ a {
 
 /* Controls and navigation have their own shape or placement as a link cue. */
 a:is(.ts-btn, .ts-icon-btn, .ts-segment, .ts-tab, .ts-menu-item,
-     .ts-nav-link, .ts-subnav-link, .ts-sidebar-brand, .ts-status-link,
-     .ts-db-region, .ts-idp-email-kind) {
+     .ts-nav-link, .ts-sidebar-brand, .ts-db-region, .ts-idp-email-kind) {
   text-decoration: none;
 }
 
@@ -118,7 +113,7 @@ hr {
 }
 
 :focus-visible {
-  outline: 2px solid var(--ts-focus);
+  outline: var(--ts-ring);
   outline-offset: 2px;
 }
 
@@ -157,26 +152,6 @@ hr {
 
 .ts-skip-link:focus {
   transform: none;
-}
-
-/* Navigation activity: Datastar sets body.ts-nav-pending while the next
-   page loads (see Common/UI/Slices/ShellDocument.cshtml). Reveal the bar in the
-   first paint after the click. A flat pulse shows an
-   ongoing wait without implying a measured completion percentage. */
-body.ts-nav-pending::before {
-  content: "";
-  position: fixed;
-  inset: 0 0 auto;
-  z-index: var(--ts-z-progress);
-  height: 5px;
-  background: var(--ts-accent);
-  opacity: 1;
-  pointer-events: none;
-  animation: ts-progress-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes ts-progress-pulse {
-  50% { background-color: var(--ts-accent-fill-hover); }
 }
 
 @keyframes ts-pop-in {
