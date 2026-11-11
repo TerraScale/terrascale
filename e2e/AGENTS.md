@@ -39,7 +39,8 @@ namespace, no stack, no argument and no URL to set. `.github/workflows/productio
 never for a pull request: once after the last release of each commit (the rule is in the root `AGENTS.md`), daily at
 13:23 UTC and on dispatch, one run at a time. It is not a gate. `production.sh`:
 
-- refuses to run when an `E2E_*`, `TERRASCALE_*`, `NODE_EXTRA_CA_CERTS` or proxy variable is set, or when a
+- refuses to run when an `E2E_*`, `TERRASCALE_*`, `PW_*`, `PLAYWRIGHT_*`, `NODE_EXTRA_CA_CERTS`, `NODE_OPTIONS`,
+  `NODE_TLS_REJECT_UNAUTHORIZED`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE` or proxy variable is set, or when a
   `*.terrascale.tech` name of `env/hostnames` resolves to a loopback address (the namespace of `local.sh`); it sets
   `E2E_TARGET=production`, the state (`.state/production`, emptied first), the runners (`.state/sdk`) and the system
   CA bundle itself;
@@ -81,6 +82,9 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   succeeded.
 - Accounts: a run signs up three users (`setup`, `desktop-setup`, `invitation`); its last steps delete the two
   owners, the invitation's second user stays.
+
+The workflow fetches only `uv` of the pinned tools (`env/tools.sh uv`): production starts no Caddy, no Mailpit and no
+branch action. `env/local.sh` refuses to run when `E2E_TARGET` is set, before it builds anything.
 
 A failed run opens the `Production journey failure` issue (found by its exact title in the REST list of open issues)
 with the run link, the trigger and suite commit, both `/readyz` versions, one `Cause:` line when the run knows it

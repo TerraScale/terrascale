@@ -1,4 +1,5 @@
 set -euo pipefail
+[ -z "${E2E_TARGET+set}" ] || { echo "local.sh refuses to run: E2E_TARGET is set; it runs the local target only, and env/production.sh is the only way to production" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 e2e=$(dirname "$here")
 repo=$(dirname "$e2e")

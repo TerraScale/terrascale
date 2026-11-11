@@ -15,7 +15,7 @@ refuse() {
 
 isolated() {
   local preset
-  preset=$(env | sed -n -E 's/^(E2E_[A-Z_]*|TERRASCALE_[A-Z_]*|NODE_EXTRA_CA_CERTS|[Hh][Tt][Tt][Pp][Ss]?_[Pp][Rr][Oo][Xx][Yy]|[Aa][Ll][Ll]_[Pp][Rr][Oo][Xx][Yy])=.*/\1/p' | sort | paste -sd ' ' -)
+  preset=$(env | sed -n -E 's/^(E2E_[A-Z_]*|TERRASCALE_[A-Z_]*|PW_[A-Z_]*|PLAYWRIGHT_[A-Z_]*|NODE_EXTRA_CA_CERTS|NODE_OPTIONS|NODE_TLS_REJECT_UNAUTHORIZED|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE|[Hh][Tt][Tt][Pp][Ss]?_[Pp][Rr][Oo][Xx][Yy]|[Aa][Ll][Ll]_[Pp][Rr][Oo][Xx][Yy])=.*/\1/p' | sort | paste -sd ' ' -)
   [ -z "$preset" ] || refuse "$preset set; the production target chooses its own state, hosts and trust"
   local host address
   while read -r host; do

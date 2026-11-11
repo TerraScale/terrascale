@@ -117,7 +117,7 @@ jobs:
           DOTNET_NOLOGO: 1
         run: |
           (cd sdk/rust && rustup toolchain install)
-          bash env/tools.sh
+          bash env/tools.sh uv
           bash sdk/build.sh rust > "$RUNNER_TEMP/rust-runner.log" 2>&1 &
           rust=$!
           for sdk in dotnet go python js; do bash sdk/build.sh "$sdk"; done
@@ -205,7 +205,7 @@ jobs:
               echo "Cause: no report: the run stopped before or during the suite (setup, timeout, cancel or scrub). Read the job log."
             else
               if [ -s "$report/readyz.txt" ]; then
-                readings=$(jq -R -s '[split("\n")[] | capture("^(?<reading>\\S+) (?<url>\\S+) (?<body>.*)$") | {reading, url} + (.body | fromjson | {version, status})]' "$report/readyz.txt")
+                readings=$(jq -R -s '[split("\n")[] | capture("^(?<reading>\\S+) (?<url>\\S+) (?<body>.*)$") | {reading, url} + (try (.body | fromjson | {version, status}) catch {})]' "$report/readyz.txt")
                 echo "Production served:"
                 jq -r '.[] | select(.reading == "before") | "- \(.url): version \(.version // "none"), status \(.status // "none")"' <<< "$readings"
                 changed=$(jq -r '(map(select(.reading == "after")) | INDEX(.url)) as $after
