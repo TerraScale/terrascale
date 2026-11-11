@@ -77,22 +77,16 @@ public sealed partial class StripeBilling
                 ["interval"] = draft.Interval,
                 ["request_id"] = draft.DraftId
             };
-            checkout = await client.V1.Checkout.Sessions.CreateAsync(new()
-            {
-                Customer = customer.Id,
-                ClientReferenceId = draft.DraftId,
-                Metadata = metadata,
-                Mode = "subscription",
-                LineItems = [new() { Price = price.Id, Quantity = 1 }],
-                PaymentMethodCollection = "always",
-                BillingAddressCollection = "required",
-                TaxIdCollection = new() { Enabled = true },
-                CustomerUpdate = new() { Address = "auto", Name = "auto" },
-                SubscriptionData = new() { Metadata = metadata },
-                SuccessUrl = Origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}",
-                CancelUrl = Origin + "/organization?newOrganization=payment&payment=canceled",
-                ExpiresAt = DateTime.SpecifyKind(draft.CreatedAt, DateTimeKind.Utc) + CheckoutLifetime
-            }, Idempotent("organization-checkout-" + draft.DraftId), cancellationToken);
+            var options = CheckoutOptions(plan);
+            options.Customer = customer.Id;
+            options.ClientReferenceId = draft.DraftId;
+            options.Metadata = metadata;
+            options.LineItems = [new() { Price = price.Id, Quantity = 1 }];
+            options.SubscriptionData = new() { Metadata = metadata };
+            options.SuccessUrl = Origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}";
+            options.CancelUrl = Origin + "/organization?newOrganization=payment&payment=canceled";
+            options.ExpiresAt = DateTime.SpecifyKind(draft.CreatedAt, DateTimeKind.Utc) + CheckoutLifetime;
+            checkout = await client.V1.Checkout.Sessions.CreateAsync(options, Idempotent("organization-checkout-" + draft.DraftId), cancellationToken);
             draft.CheckoutId = checkout.Id;
             if (!await storage.ReplaceAsync(draft, cancellationToken))
             {

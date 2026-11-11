@@ -134,26 +134,17 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 throw new OnboardingValidationException("This checkout expired. Start a new checkout.");
             }
-            var options = new Stripe.Checkout.SessionCreateOptions
-            {
-                Customer = binding.CustomerId,
-                ClientReferenceId = org.Id,
-                Metadata = metadata,
-                SuccessUrl = Origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}",
-                CancelUrl = Origin + returnPath + (returnPath.Contains('?') ? "&" : "?") + "payment=canceled&plan=" + Uri.EscapeDataString(plan.Key),
-                Mode = plan.PriceCents == 0 ? "setup" : "subscription",
-                BillingAddressCollection = "required",
-                ExpiresAt = (binding.StartedAt + CheckoutLifetime).UtcDateTime
-            };
+            var options = CheckoutOptions(plan);
+            options.Customer = binding.CustomerId;
+            options.ClientReferenceId = org.Id;
+            options.Metadata = metadata;
+            options.SuccessUrl = Origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}";
+            options.CancelUrl = Origin + returnPath + (returnPath.Contains('?') ? "&" : "?") + "payment=canceled&plan=" + Uri.EscapeDataString(plan.Key);
+            options.ExpiresAt = (binding.StartedAt + CheckoutLifetime).UtcDateTime;
             if (plan.PriceCents > 0)
             {
                 var price = await PriceAsync(client, plan, interval, cancellationToken);
                 options.LineItems = [new() { Price = price.Id, Quantity = 1 }];
-                options.PaymentMethodCollection = "always";
-                // Invoices carry the customer's name, address and tax IDs. Stripe Tax (automatic_tax) stays off: the account's
-                // country is not eligible yet, and Stripe refuses every Checkout Session that asks for it (docs/billing/stripe-tax-handoff.md).
-                options.TaxIdCollection = new() { Enabled = true };
-                options.CustomerUpdate = new() { Address = "auto", Name = "auto" };
                 options.SubscriptionData = new() { Metadata = metadata, TrialPeriodDays = binding.TrialUsed || plan.TrialDays == 0 ? null : plan.TrialDays };
             }
             var checkout = await client.V1.Checkout.Sessions.CreateAsync(options,
@@ -751,6 +742,23 @@ namespace TerraScale.Dashboard.Features.Billing
         private static RequestOptions Idempotent(string key)
         {
             return new() { IdempotencyKey = "TerraScale.Dashboard/" + key };
+        }
+
+        private static Stripe.Checkout.SessionCreateOptions CheckoutOptions(BillingPlan plan)
+        {
+            var options = new Stripe.Checkout.SessionCreateOptions
+            {
+                Mode = plan.PriceCents == 0 ? "setup" : "subscription",
+                BillingAddressCollection = "required"
+            };
+            if (plan.PriceCents > 0)
+            {
+                options.PaymentMethodCollection = "always";
+                options.TaxIdCollection = new() { Enabled = true };
+                options.CustomerUpdate = new() { Address = "auto", Name = "auto" };
+            }
+
+            return options;
         }
 
         private static void ValidateCheckout(BillingBinding binding, Stripe.Checkout.Session checkout)
