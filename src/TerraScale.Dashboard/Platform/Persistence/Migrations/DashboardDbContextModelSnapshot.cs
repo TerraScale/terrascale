@@ -1017,6 +1017,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 
                     b.Property<string>("Plan")
                         .IsRequired()
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT")
                         .HasColumnName("plan");
 
@@ -1044,7 +1045,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_pending_organization_checkouts_name", "length(name) BETWEEN 1 AND 128");
 
-                            t.HasCheckConstraint("ck_pending_organization_checkouts_plan", "plan IN ('starter', 'pro', 'team')");
+                            t.HasCheckConstraint("ck_pending_organization_checkouts_plan", "length(plan) BETWEEN 1 AND 128");
                         });
                 });
 

@@ -82,10 +82,12 @@ public sealed class DeletionCleanup(
         }
     }
 
+    private static readonly TimeSpan OrganizationMarkerLifetime = TimeSpan.FromHours(24);
+
     public async Task RunHistoryOnceAsync(CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
-        var jobs = await data.ReadAsync((db, token) => db.DeletionJobs.Where(job => job.NextAttemptAt <= now && job.AuthLogicalVerifiedAt != null && (job.Scope != "organization" || job.HistoryCompletedAt == null)
+        var jobs = await data.ReadAsync((db, token) => db.DeletionJobs.Where(job => job.NextAttemptAt <= now && job.AuthLogicalVerifiedAt != null
                 && (job.HistoryCompletedAt == null || job.DashboardVerifiedAt != null || job.InstanceId != PlatformDirectory.Instance))
             .OrderBy(job => job.NextAttemptAt).Take(BatchSize).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
         foreach (var rowData in jobs)
@@ -99,6 +101,7 @@ public sealed class DeletionCleanup(
             if (job.HistoryCompletedAt is not null)
             {
                 if (clock.GetUtcNow() >= job.FenceExpiresAt
+                    && (job.Scope != "organization" || clock.GetUtcNow() >= job.HistoryCompletedAt + OrganizationMarkerLifetime)
                     && (job.InstanceId != PlatformDirectory.Instance || job.DashboardVerifiedAt is not null))
                 {
                     _ = await data.SaveAsync(Change.Delete(rowData), cancellationToken).ConfigureAwait(false);
@@ -110,7 +113,8 @@ public sealed class DeletionCleanup(
             var finished = clock.GetUtcNow();
             var updated = job with
             {
-                NextAttemptAt = job.FenceExpiresAt!.Value,
+                NextAttemptAt = job.Scope == "organization" && finished + OrganizationMarkerLifetime > job.FenceExpiresAt!.Value
+                    ? finished + OrganizationMarkerLifetime : job.FenceExpiresAt!.Value,
                 HistoryStatus = "complete",
                 HistoryCompletedAt = finished,
             };

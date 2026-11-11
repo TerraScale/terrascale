@@ -17,7 +17,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     version = table.Column<string>(type: "TEXT", nullable: false),
                     draft_id = table.Column<string>(type: "TEXT", nullable: false),
                     name = table.Column<string>(type: "TEXT", nullable: false),
-                    plan = table.Column<string>(type: "TEXT", nullable: false),
+                    plan = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     interval = table.Column<string>(type: "TEXT", nullable: false),
                     checkout_id = table.Column<string>(type: "TEXT", nullable: false),
                     created_at = table.Column<DateTime>(type: "TEXT", nullable: false)
@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     table.PrimaryKey("PK_pending_organization_checkouts", x => x.user_id);
                     table.CheckConstraint("ck_pending_organization_checkouts_id", "length(user_id) = 26 AND length(draft_id) = 26");
                     table.CheckConstraint("ck_pending_organization_checkouts_name", "length(name) BETWEEN 1 AND 128");
-                    table.CheckConstraint("ck_pending_organization_checkouts_plan", "plan IN ('starter', 'pro', 'team')");
+                    table.CheckConstraint("ck_pending_organization_checkouts_plan", "length(plan) BETWEEN 1 AND 128");
                     table.CheckConstraint("ck_pending_organization_checkouts_interval", "interval IN ('monthly', 'annual')");
                     table.CheckConstraint("ck_pending_organization_checkouts_checkout", "length(checkout_id) > 0");
                 });

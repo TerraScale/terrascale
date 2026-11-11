@@ -19,9 +19,9 @@ internal static class OrganizationCheckoutNavigation
         && http.Request.Headers.Accept.Any(value => value?.Contains("text/html", StringComparison.OrdinalIgnoreCase) == true)
         && (!http.Request.Headers.TryGetValue("Sec-Fetch-Dest", out var destination) || destination == "document");
 
-    public static async Task RefusedAsync(HttpContext http, string userId, string message)
+    public static async Task RefusedAsync(HttpContext http, string userId, string message, CancellationToken cancellationToken)
     {
-        var credentials = await http.RequestServices.GetRequiredService<IDashboardIdentity>().ReadAsync(http.RequestAborted);
+        var credentials = await http.RequestServices.GetRequiredService<IDashboardIdentity>().ReadAsync(cancellationToken);
         var bytes = Encoding.UTF8.GetBytes(message);
         var nonce = RandomNumberGenerator.GetBytes(12);
         var ciphertext = new byte[bytes.Length];
@@ -72,12 +72,21 @@ public sealed partial class StripeBilling
         return completion;
     }
 
-    private Task<OrganizationCheckoutCompletion> ResumeOrganizationCoreAsync(SessionRecord session, HttpContext http)
+    private static readonly TimeSpan OrganizationCompletionDeadline = TimeSpan.FromSeconds(5);
+
+    private async Task<OrganizationCheckoutCompletion> ResumeOrganizationCoreAsync(SessionRecord session, HttpContext http)
     {
-        var name = "Organization";
-        return OptionalPanel.LoadAsync(http, "organization checkout", async () =>
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(http.RequestAborted);
+        if (http.Request.Path != "/billing/checkout/return")
         {
-            var draft = await PendingOrganizationAsync(session.UserId, http.RequestAborted);
+            deadline.CancelAfter(OrganizationCompletionDeadline);
+        }
+
+        var cancellationToken = deadline.Token;
+        var name = "Organization";
+        return await OptionalPanel.LoadAsync(http, "organization checkout", async () =>
+        {
+            var draft = await PendingOrganizationAsync(session.UserId, cancellationToken);
             if (draft is null || http.Request.Path == "/billing/checkout/return" && http.Request.Query["session_id"] != draft.CheckoutId)
             {
                 return new OrganizationCheckoutCompletion();
@@ -86,13 +95,17 @@ public sealed partial class StripeBilling
             name = draft.Name;
             try
             {
-                return new OrganizationCheckoutCompletion(await CompletePendingOrganizationAsync(session, http, http.RequestAborted));
+                return new OrganizationCheckoutCompletion(await CompletePendingOrganizationAsync(session, http, cancellationToken));
             }
             catch (Exception error) when (error is OrganizationCheckoutRefusedException or AccountAccessException { Code: "organization_deleted" })
             {
-                await RemovePendingOrganizationAsync(draft, http.RequestAborted);
-                await OrganizationCheckoutNavigation.RefusedAsync(http, session.UserId, error.Message);
-                return new OrganizationCheckoutCompletion(Notice: error.Message);
+                var refunded = await CancelDraftPaymentAsync(draft, cancellationToken);
+                return await RefuseOrganizationAsync(http, draft, error.Message + (refunded ? " Your payment was refunded." : ""), cancellationToken);
+            }
+            catch (StripeException error) when (PermanentStripeFailure(error))
+            {
+                var refunded = await CancelDraftPaymentAsync(draft, cancellationToken);
+                return await RefuseOrganizationAsync(http, draft, "Organization checkout is unavailable. Start again." + (refunded ? " Your payment was refunded." : ""), cancellationToken);
             }
         }, () => new OrganizationCheckoutCompletion(Notice: name + " isn't ready yet.", Retry: true));
     }
@@ -143,35 +156,32 @@ public sealed partial class StripeBilling
         }
     }
 
-    internal async Task CancelPendingOrganizationAsync(string userId, CancellationToken cancellationToken)
+    private async Task<OrganizationCheckoutCompletion> RefuseOrganizationAsync(HttpContext http, PendingOrganizationCheckout draft, string message, CancellationToken cancellationToken)
     {
-        if (await PendingOrganizationAsync(userId, cancellationToken) is not { } draft)
-        {
-            return;
-        }
-
-        await ExpireDraftCheckoutAsync(draft.CheckoutId, cancellationToken);
-        var client = await ClientAsync(cancellationToken);
-        var checkout = await client.V1.Checkout.Sessions.GetAsync(draft.CheckoutId, cancellationToken: cancellationToken);
-        if (checkout.SubscriptionId is { Length: > 0 } subscriptionId)
-        {
-            var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId, cancellationToken: cancellationToken);
-            if (subscription.Status != "canceled")
-            {
-                try
-                {
-                    await client.V1.Subscriptions.CancelAsync(subscriptionId, cancellationToken: cancellationToken);
-                }
-                catch (StripeException error) when (error.HttpStatusCode == HttpStatusCode.BadRequest)
-                {
-                    if ((await client.V1.Subscriptions.GetAsync(subscriptionId, cancellationToken: cancellationToken)).Status != "canceled")
-                    {
-                        throw;
-                    }
-                }
-            }
-        }
-
+        await OrganizationCheckoutNavigation.RefusedAsync(http, draft.UserId, message, cancellationToken);
         await RemovePendingOrganizationAsync(draft, cancellationToken);
+        return new OrganizationCheckoutCompletion(Notice: message);
+    }
+
+    internal static bool MissingStripeObject(StripeException error) =>
+        error.HttpStatusCode == HttpStatusCode.NotFound || error.StripeError?.Code == "resource_missing";
+
+    private static bool PermanentStripeFailure(StripeException error) =>
+        (int)error.HttpStatusCode is >= 400 and < 500 and not (408 or 409 or 429)
+        && (MissingStripeObject(error) || error.StripeError?.Type == "invalid_request_error");
+
+    internal static bool TransientStripeFailure(StripeException error) =>
+        (int)error.HttpStatusCode is 0 or 408 or 409 or 429 or >= 500;
+
+    internal async Task<bool> CancelPendingOrganizationAsync(string userId, string? draftId, CancellationToken cancellationToken)
+    {
+        if (await PendingOrganizationAsync(userId, cancellationToken) is not { } draft || draftId is not null && draft.DraftId != draftId)
+        {
+            return false;
+        }
+
+        var refunded = await CancelDraftPaymentAsync(draft, cancellationToken);
+        await RemovePendingOrganizationAsync(draft, cancellationToken);
+        return refunded;
     }
 }

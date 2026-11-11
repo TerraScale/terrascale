@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using StripeException = Stripe.StripeException;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using Microsoft.EntityFrameworkCore;
@@ -97,7 +98,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow().AddDays(15));
                 await WriteOperationAsync(http, storage, identity, operation);
                 persisted = true;
-                await billing.CancelPendingOrganizationAsync(context.UserId, cancellationToken);
+                await billing.CancelPendingOrganizationAsync(context.UserId, null, cancellationToken);
                 try
                 {
                     if (!await platform.DeleteAccountAsync(context.Session, operation.Receipt, operation.Authorization, cancellationToken))
@@ -151,11 +152,8 @@ namespace TerraScale.Dashboard.Features.Profile
         {
             try
             {
-                await billing.CancelPendingOrganizationAsync(operation.Session.UserId, http.RequestAborted);
                 bool completed;
                 try { completed = await platform.AccountDeletionCompletedAsync(operation.Receipt, http.RequestAborted); }
-                // An unknown receipt has no accepted durable auth job. Its saved grant
-                // may have been revoked since confirmation; never spend it on Stripe.
                 catch (AccountAccessException error) when (error.StatusCode == 404)
                 {
                     await DropAsync(storage, Key(http), http.RequestAborted);
@@ -163,6 +161,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     return Results.Problem(StepUpFlow.Required().Message, statusCode: 403,
                         extensions: new Dictionary<string, object?> { ["code"] = "step_up_required" });
                 }
+                await billing.CancelPendingOrganizationAsync(operation.Session.UserId, null, http.RequestAborted);
                 return completed ? await CompleteAsync(http, sessions, platform, storage, tokens, billing, operation) : HttpRedirects.SeeOther("/account-deletion");
             }
             catch (AccountAccessException error)
@@ -345,6 +344,7 @@ namespace TerraScale.Dashboard.Features.Profile
         private static bool Transient(Exception error, HttpContext http)
         {
             return error is HttpRequestException or IOException or TimeoutException ||
+                error is StripeException stripe && StripeBilling.TransientStripeFailure(stripe) ||
             error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested;
         }
     }

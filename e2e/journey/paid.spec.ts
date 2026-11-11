@@ -211,11 +211,17 @@ test('organization checkout creates nothing before payment and completes exactly
   await page.goto(paid.headers().location);
   await expect(page.locator('#organization-checkout-notice')).toContainText("The payment didn't go through.");
   await expect(page.locator('#organization-checkout-notice')).toHaveAttribute('role', 'status');
+  await expect(page.locator('#organization-checkout-notice')).toContainText('Your payment was refunded.');
+  const refusedLog = await stripeLog();
+  expect(refusedLog.cancels.filter((entry) => entry.subscription === paidSession.subscription)).toHaveLength(1);
+  const refunds = refusedLog.refunds.filter((entry) => entry.subscription === paidSession.subscription);
+  expect(refunds).toHaveLength(1);
+  expect(refunds[0].amount).toBe(2000);
   expect((await owner.organizations()).filter((org) => org.name === canceledName)).toHaveLength(0);
   await audit.check('payment canceled before return creates no organization');
   await page.reload();
   await expect(page.locator('#organization-checkout-notice')).toHaveCount(0);
-  console.log('organization checkout: subscription canceled before return; no organization; payment refusal displayed once');
+  console.log('organization checkout: subscription canceled before return; cancel and full refund recorded; no organization; payment refusal displayed once');
 
 });
 
@@ -238,5 +244,14 @@ test('canceling organization checkout leaves no organization and preserves the w
   await expect(wizard.locator('input[name=plan][value=pro]')).toBeChecked();
   expect(await owner.organizations()).toEqual(before);
   await audit.check('canceled organization checkout keeps its draft and creates nothing');
-  console.log('organization checkout canceled: organization list unchanged; name and plan preserved in wizard');
+  await wizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  await page.goto('/organization?newOrganization=organization');
+  await expect(wizard.getByRole('button', { name: 'Cancel pending checkout', exact: true })).toBeVisible();
+  await wizard.getByRole('button', { name: 'Cancel pending checkout', exact: true }).click();
+  await expect(wizard.locator('input[name=name]')).toHaveValue(name);
+  await expect(wizard.locator('input[name=plan][value=pro]')).toBeChecked();
+  expect(await owner.organizations()).toEqual(before);
+  await audit.check('pending checkout canceled from organization wizard');
+  console.log('organization checkout canceled: organization list unchanged; name and plan preserved in wizard; own pending checkout canceled from wizard');
 });

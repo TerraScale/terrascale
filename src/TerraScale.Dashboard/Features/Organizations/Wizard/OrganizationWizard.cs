@@ -1,4 +1,5 @@
 using RazorSlices;
+using StripeException = Stripe.StripeException;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Common.Validation;
@@ -24,6 +25,20 @@ public static class OrganizationWizard
 
         try
         {
+            if (form["step"] == "cancel-checkout")
+            {
+                var draft = await payments.PendingOrganizationAsync(context.UserId, http.RequestAborted);
+                if (draft is not null && form["draft_id"] == draft.DraftId)
+                {
+                    if (await payments.CancelPendingOrganizationAsync(context.UserId, draft.DraftId, http.RequestAborted))
+                    {
+                        await OrganizationCheckoutNavigation.RefusedAsync(http, context.UserId, "Organization checkout canceled. Your payment was refunded.", http.RequestAborted);
+                    }
+                    http.Items[nameof(PendingOrganizationCheckout)] = draft;
+                }
+                return OrganizationView.Create(await OrganizationEndpoints.PageModelAsync(http, context, placement, wizardOverride: "payment"));
+            }
+
             var name = AccountService.ValidName(form["name"].ToString());
             if (form["step"] == "organization")
             {
@@ -58,11 +73,13 @@ public static class OrganizationWizard
                 [.. form["regions"].Select(value => value ?? "").Where(value => value.Length > 0)], http.RequestAborted);
             return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
         }
-        catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
+        catch (Exception error) when (error is AccountAccessException or OnboardingValidationException or StripeException or HttpRequestException or IOException or OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
         {
-            var step = form["step"] == "payment-method" ? "payment" : form["step"] == "project" ? "project" : "organization";
+            var step = form["step"].ToString() is "payment-method" or "cancel-checkout" ? "payment" : form["step"] == "project" ? "project" : "organization";
             return await RenderAsync(http, context, placement, step, form["name"].ToString(), form["plan"].ToString(),
-                form["interval"].ToString(), error.Message, error is AccountAccessException access ? access.StatusCode : 422, form);
+                form["interval"].ToString(), error is StripeException or HttpRequestException or IOException or OperationCanceledException
+                    ? "Checkout could not be updated. Try again." : error.Message,
+                error is AccountAccessException access ? access.StatusCode : error is OnboardingValidationException ? 422 : 503, form);
         }
     }
 

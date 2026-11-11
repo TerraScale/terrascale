@@ -7,7 +7,7 @@ const endpoint = 'https://dash.terrascale.tech/api/v1/billing/stripe/webhook';
 const objects = new Map();
 const checkouts = new Map();
 const replays = new Map();
-const log = { calls: [], events: [], cancels: [], unexpected: [] };
+const log = { calls: [], events: [], cancels: [], refunds: [], unexpected: [] };
 
 const now = () => Math.floor(Date.now() / 1000);
 const hour = 3600;
@@ -88,7 +88,16 @@ const api = [
     log.cancels.push({ subscription: subscription.id, customer: subscription.customer, organization: subscription.metadata.organization_id });
     return Object.assign(subscription, { status: 'canceled' });
   }],
-  ['GET', /^\/v1\/invoices$/, (query) => list(owned('in', query.get('customer'))), { customer: customerId }],
+  ['GET', /^\/v1\/invoices$/, (query) => list(owned('in', query.get('customer')).filter((invoice) => (!query.has('subscription') || invoice.parent.subscription_details.subscription === query.get('subscription')) && (!query.has('status') || invoice.status === query.get('status')))), { customer: customerId }],
+  ['GET', /^\/v1\/invoice_payments$/, (query) => list([...objects.values()].filter((payment) => payment.id.startsWith('inpay_') && payment.invoice === query.get('invoice') && payment.status === query.get('status'))), { invoice: /^in_\w+$/, status: /^paid$/ }],
+  ['GET', /^\/v1\/refunds$/, (query) => list([...objects.values()].filter((refund) => refund.id.startsWith('re_') && refund.payment_intent === query.get('payment_intent'))), { payment_intent: /^pi_\w+$/ }],
+  ['POST', /^\/v1\/refunds$/, (form) => {
+    const payment = find('pi', form.get('payment_intent'));
+    if (!payment || Number(form.get('amount')) !== payment.amount) return undefined;
+    const refund = store({ id: id('re'), amount: payment.amount, payment_intent: payment.id, status: 'succeeded' });
+    log.refunds.push({ payment: payment.id, subscription: payment.subscription, amount: refund.amount });
+    return refund;
+  }, { payment_intent: /^pi_\w+$/ }],
   ['GET', /^\/v1\/invoiceitems$/, () => list([]), { customer: customerId }],
 ];
 
@@ -100,13 +109,16 @@ function complete(session) {
   const end = Math.floor(renewal.getTime() / 1000);
   const method = store({ id: id('pm'), card: { brand: 'visa', exp_month: 12, exp_year: 2034, last4: '4242' }, customer: session.customer, type: 'card' });
   const invoice = id('in');
+  const subscriptionId = id('sub');
+  const payment = store({ id: id('pi'), amount: price.unit_amount, subscription: subscriptionId });
+  store({ id: id('inpay'), invoice, status: 'paid', amount_paid: price.unit_amount, payment: { type: 'payment_intent', payment_intent: payment.id } });
   store({
-    id: invoice, amount_due: price.unit_amount, amount_remaining: 0, created: start, currency: 'usd', customer: session.customer,
+    id: invoice, amount_paid: price.unit_amount, parent: { type: 'subscription_details', subscription_details: { subscription: subscriptionId } }, amount_due: price.unit_amount, amount_remaining: 0, created: start, currency: 'usd', customer: session.customer,
     hosted_invoice_url: `https://invoice.stripe.com/i/${invoice}`, invoice_pdf: `https://pay.stripe.com/invoice/${invoice}/pdf`,
     lines: list([{ period: { end, start } }]), number: `${randomBytes(4).toString('hex').toUpperCase()}-0001`, period_end: start, period_start: start, status: 'paid',
   });
   const subscription = store({
-    id: id('sub'), customer: session.customer, default_payment_method: method.id, metadata, status: 'active',
+    id: subscriptionId, customer: session.customer, default_payment_method: method.id, metadata, status: 'active',
     items: list([{ current_period_end: end, current_period_start: start, price: structuredClone(price), quantity: 1 }]),
   });
   objects.get(session.customer).address = { city: 'Sao Paulo', country: 'BR', line1: 'Avenida Paulista 1000', line2: null, postal_code: '01310-100', state: 'SP' };

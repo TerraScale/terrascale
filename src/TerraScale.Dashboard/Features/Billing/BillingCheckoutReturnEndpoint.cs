@@ -21,14 +21,13 @@ namespace TerraScale.Dashboard.Features.Billing
                 return AccountEndpoints.LoginRedirect(http);
             }
 
-            var completion = await billing.ResumeOrganizationAsync(context.Session, http);
-            if (completion.OrganizationId is { } organizationId)
+            var draft = await billing.PendingOrganizationAsync(context.Session.UserId, cancellationToken);
+            if (draft is not null && http.Request.Query["session_id"] == draft.CheckoutId)
             {
-                return HttpRedirects.SeeOther("/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organizationId));
-            }
-            if (completion.Notice.Length > 0 || await billing.PendingOrganizationAsync(context.Session.UserId, cancellationToken) is not null)
-            {
-                return HttpRedirects.SeeOther("/organization");
+                var completion = await billing.ResumeOrganizationAsync(context.Session, http);
+                return HttpRedirects.SeeOther(completion.OrganizationId is { } organizationId
+                    ? "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organizationId)
+                    : "/organization");
             }
 
             try { return HttpRedirects.SeeOther(await billing.CheckoutReturnAsync(context, http.Request.Query["session_id"].ToString(), http.RequestAborted)); }

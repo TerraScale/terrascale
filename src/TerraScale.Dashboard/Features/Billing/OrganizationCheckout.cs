@@ -13,7 +13,7 @@ public sealed partial class StripeBilling
     {
         name = AccountService.BusinessName(await accounts.GetContextAsync(session, cancellationToken), name);
         var plan = PlanCatalog.For(planKey);
-        if (plan.PriceCents <= 0 || !plan.SupportsInterval(interval))
+        if (plan.Key.Length is 0 or > 128 || plan.PriceCents <= 0 || !plan.SupportsInterval(interval))
         {
             throw new OnboardingValidationException("Choose a paid plan and its published billing interval.");
         }
@@ -51,7 +51,7 @@ public sealed partial class StripeBilling
 
         if (draft.Name != name || draft.Plan != plan.Key || draft.Interval != interval)
         {
-            throw new OnboardingValidationException("Finish or cancel the current organization checkout first.");
+            throw new OnboardingValidationException("Cancel the pending checkout in the organization setup wizard before starting another.");
         }
 
         var checkout = await DraftCheckoutAsync(session, draft, cancellationToken);
@@ -147,11 +147,10 @@ public sealed partial class StripeBilling
                 request.Items[nameof(PendingOrganizationCheckout)] = draft;
             }
 
-            await RemovePendingOrganizationAsync(draft, cancellationToken);
-            return null;
+            throw new OrganizationCheckoutRefusedException(canceled ? "Organization checkout canceled." : "Organization checkout expired. Start again.");
         }
 
-        if (checkout.Status != "complete" || checkout.PaymentStatus != "paid")
+        if (checkout.Status != "complete")
         {
             return null;
         }
@@ -163,6 +162,16 @@ public sealed partial class StripeBilling
 
         var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId,
             new() { Expand = ["items.data.price.product", "default_payment_method", "customer"] }, cancellationToken: cancellationToken);
+        if (checkout.PaymentStatus != "paid")
+        {
+            if (subscription.Status is "incomplete_expired" or "canceled")
+            {
+                throw new OrganizationCheckoutRefusedException("The payment didn't go through. Start organization setup again.");
+            }
+
+            return null;
+        }
+
         var item = subscription.Items.Data.Count == 1 ? subscription.Items.Data[0] : null;
         var effective = item is { Quantity: 1 } ? EffectivePlan(item.Price) : null;
         if (subscription.CustomerId != customerId || subscription.Metadata.GetValueOrDefault("draft_id") != draft.DraftId ||

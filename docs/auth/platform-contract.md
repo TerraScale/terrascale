@@ -194,7 +194,7 @@ Errors use the `{"error":{"code","message"}}` envelope: `400 invalid_request`,
 `closure_conflict`, `binding_conflict` or `organization_deleted`, and
 `503 temporarily_unavailable`. Messages never echo input.
 
-Organization creation accepts an optional caller-scoped idempotency key. A replay returns the same live organization without adding membership or audit records. A deleted or closing organization ID is refused with 409 organization_deleted; organization deletion ledger rows remain as tombstones after cleanup.
+Organization creation accepts an optional caller-scoped idempotency key. A replay returns the same live organization without adding membership or audit records. A deleted or closing organization ID is refused with 409 organization_deleted; finished organization deletion ledger rows remain refusal markers for at least 24 hours after history completion, then follow the existing credential fence and dashboard-verification cleanup rules.
 
 ## 5. API keys
 

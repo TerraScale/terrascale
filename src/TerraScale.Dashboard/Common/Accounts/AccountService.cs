@@ -661,7 +661,15 @@ namespace TerraScale.Dashboard.Common.Accounts
                 org = current is { Erased: false } ? current.Organization : throw new AccountAccessException("Organization is unavailable.", 404);
             }
 
-            await UpdateAccountAsync(session, account => { account.OrganizationIds.Add(org.Id); account.ActiveOrganizationId = org.Id; account.ActiveProjectId = ""; }, cancellationToken);
+            await UpdateAccountAsync(session, account =>
+            {
+                if (!account.OrganizationIds.Contains(org.Id))
+                {
+                    account.OrganizationIds.Add(org.Id);
+                }
+                account.ActiveOrganizationId = org.Id;
+                account.ActiveProjectId = "";
+            }, cancellationToken);
             return org;
         }
 

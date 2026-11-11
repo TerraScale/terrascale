@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Organizations
     public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
         OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
         BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null, string ProjectDraftId = "",
-        string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0, InvitationDraft? InviteDraft = null, string OrganizationDraftName = "", string OrganizationDraftPlan = "", string OrganizationDraftInterval = "", string CheckoutNotice = "", bool CheckoutRetry = false);
+        string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0, InvitationDraft? InviteDraft = null, string OrganizationDraftName = "", string OrganizationDraftPlan = "", string OrganizationDraftInterval = "", string CheckoutNotice = "", bool CheckoutRetry = false, string PendingCheckoutDraftId = "");
 
     public static class OrganizationEndpoints
     {
@@ -77,6 +77,13 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 wizard = "payment";
             }
+            var activeDraft = wizard is "organization" or "payment"
+                ? await http.RequestServices.GetRequiredService<StripeBilling>().PendingOrganizationAsync(context.UserId, http.RequestAborted) : null;
+            if (activeDraft is not null)
+            {
+                wizard = "payment";
+            }
+            var wizardDraft = activeDraft ?? draft;
             if (wizard == "project" && (context.Organization?.Kind != "business" || context.Role != "owner"))
             {
                 wizard = "organization";
@@ -93,7 +100,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var pageWithoutDialog = wizard.Length > 0 ? "/organization" : openCreateProject ? "/organization?tab=projects" : null;
             return new(pageWithoutDialog is null ? shell : shell with { ReturnUrl = WorkspaceUrl.For(context, pageWithoutDialog) }, tab, regions, error,
                 openCreateProject, wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: draft is not null, CheckoutNotice: checkoutNotice?.Notice ?? "", CheckoutRetry: checkoutNotice?.Retry == true,
-                OrganizationDraftName: draft?.Name ?? http.Request.Query["name"].ToString(), OrganizationDraftPlan: draft?.Plan ?? "", OrganizationDraftInterval: draft?.Interval ?? "",
+                PendingCheckoutDraftId: activeDraft?.DraftId ?? "", OrganizationDraftName: wizardDraft?.Name ?? http.Request.Query["name"].ToString(), OrganizationDraftPlan: wizardDraft?.Plan ?? "", OrganizationDraftInterval: wizardDraft?.Interval ?? "",
                 Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "", RequireMfa: requireMfa,
                 Sso: tab == "sso" && context.CanManage ? await http.RequestServices.GetRequiredService<OrganizationSsoService>().ReadAsync(context, http.RequestAborted) : null);
         }
