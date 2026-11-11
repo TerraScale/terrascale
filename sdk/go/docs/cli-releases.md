@@ -52,7 +52,10 @@ step and no deploy switch. The path is:
    (`.github/workflows/sdk-release.yml`) for the same commit. Its `go-due` job stops
    unless the newest `sdk/go/v0.0.X` tag is an ancestor of the commit and the release
    inputs changed since that tag. A red `CI` run starts no release; its changes ship
-   with the next green main commit. The `go` job, one at a time, then runs
+   with the next green main commit. The `go` job runs one at a time. It first repeats
+   the `go-due` check against the tags as they are when it starts, and ends green without
+   building or tagging when it no longer holds: a release that ran while it waited
+   already shipped these inputs or a newer commit. Then it runs
    `python3 scripts/sdk/build-release.py go`: the release gates, all six GoReleaser
    targets (version = highest existing `sdk/go/v0.0.X` tag + 1) and
    `python3 scripts/check-release.py`. It creates the `sdk/go/v0.0.X` tag on that exact

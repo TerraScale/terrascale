@@ -47,8 +47,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           sparse-checkout: .github
-      - id: due
+      - &go-release-due
+        id: due
         name: Compare the Go release inputs with the newest Go tag
+        if: github.event_name == 'workflow_run'
         run: |
           latest=$(git for-each-ref --count=1 --sort=-v:refname --format='%(refname:short)' 'refs/tags/sdk/go/v0.0.*')
           if git merge-base --is-ancestor "$latest" HEAD && ! git diff-tree --quiet -r "$latest" HEAD -- sdk/go scripts/sdk \
@@ -77,6 +79,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || inputs.tag || github.ref }}
           persist-credentials: false
           fetch-depth: 0
+      - *go-release-due
       - name: Validate the versioned main tag
         if: github.event_name != 'workflow_run'
         env:
@@ -85,14 +88,18 @@ jobs:
           [[ "$TAG" =~ ^sdk/go/v0\.0\.(0|[1-9][0-9]*)$ ]]
           git merge-base --is-ancestor HEAD origin/main
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        if: github.event_name != 'workflow_run' || steps.due.outputs.due == 'true'
         with:
           install: false
       - name: Install the pinned Go toolchains and GoReleaser
+        if: github.event_name != 'workflow_run' || steps.due.outputs.due == 'true'
         run: mise install "go@$(cat sdk/go/.go-version)" go@1.25.0 goreleaser@2.19.0
       - name: Build the release artifacts with their release gates
         id: qualified
+        if: github.event_name != 'workflow_run' || steps.due.outputs.due == 'true'
         run: python3 scripts/sdk/build-release.py go "$RUNNER_TEMP/qualified"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name != 'workflow_run' || steps.due.outputs.due == 'true'
         with:
           name: go
           path: ${{ runner.temp }}/qualified
@@ -100,6 +107,7 @@ jobs:
           retention-days: 1
       - name: Tag the built revision
         id: tag
+        if: github.event_name != 'workflow_run' || steps.due.outputs.due == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
