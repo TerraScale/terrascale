@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Primitives;
 using TerraScale.Dashboard.Common.Accounts;
+using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Features.AuthenticationManagement;
 using TerraScale.Dashboard.Features.Organizations;
@@ -155,7 +156,6 @@ namespace TerraScale.Dashboard.Features.Auth
                     "change_email" => await EmailChange.SubmitAsync(http, sessions, accounts, services.GetRequiredService<IAuthEmailChangeGateway>(), false),
                     "delete_account" => await AccountDeletion.DeleteAsync(http, sessions, accounts, services.GetRequiredService<ITsAuthPlatform>(), services.GetRequiredService<IDbContextFactory<DashboardDbContext>>(), services.GetRequiredService<AccessTokens>(), services.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>(), services.GetRequiredService<TerraScale.Dashboard.Platform.Persistence.IDashboardIdentity>()),
                     "create_pat" => await AuthEndpoints.AuthorizeAsync(http, "/profile?tab=access-tokens", intent.Form.GetValueOrDefault("name")?.SingleOrDefault() ?? "", intent.Mcp is null ? int.Parse(intent.Form["expiresInDays"].Single(), System.Globalization.CultureInfo.InvariantCulture) : 0, mcp: intent.Mcp, stepUp: intent),
-                    "create_api_key" => await CreateDashboardCredentialEndpoint.CreateAsync(http, "api-key", sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "rotate_api_key" => await RotateDashboardCredentialEndpoint.RotateAsync(http, sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "create_oauth_client" => await AuthenticationConsole.PostAsync(http, "clients", sessions, accounts, services.GetRequiredService<ITsAuthProjects>()),
                     "update_oauth_client" or "rotate_oauth_client" or "create_webhook_endpoint" or "rotate_webhook_secret" => await AuthenticationConsole.PostAsync(http,
@@ -170,9 +170,16 @@ namespace TerraScale.Dashboard.Features.Auth
                     _ => throw Required()
                 };
             }
-            catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode, extensions: new Dictionary<string, object?> { ["code"] = error.Code }); }
+            catch (AccountAccessException error) { return Refused(http, error.StatusCode, error.Message, error.Code); }
             catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException)
-            { return Results.Problem("Confirmation could not finish. Start the action again; no new action will be authorized automatically.", statusCode: 503); }
+            { return Refused(http, 503, "Confirmation could not finish. Start the action again; no new action will be authorized automatically."); }
+        }
+
+        private static IResult Refused(HttpContext http, int status, string detail, string? code = null)
+        {
+            return RequestError.WantsJson(http)
+                ? Results.Problem(detail, statusCode: status, extensions: code is null ? null : new Dictionary<string, object?> { ["code"] = code })
+                : RequestError.Response(http, status, detail);
         }
 
         private static string ScopeQuery(HttpContext http, AccountContext context)

@@ -85,17 +85,12 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return [.. result.OrderBy(key => key.Name, StringComparer.Ordinal)];
         }
 
-        public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken, string stepUpProof = "")
+        public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
         {
             var request = PrepareCreate(context, kind, name, databaseId, scopes, expiresInDays, allowedCidrs);
             var scope = DatabaseService.Scope(context);
-            if (string.IsNullOrEmpty(stepUpProof))
-            {
-                throw StepUpFlow.Required();
-            }
-
             var result = await ProtectedAsync(() => Client().CreateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId,
-                request, stepUpProof, cancellationToken));
+                request, cancellationToken));
             var key = Map(context, result.ApiKey);
             if (key.Name != request.Name || key.DatabaseId != request.Database || key.ExpiresAt != request.ExpiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(request.Scopes!.Order(StringComparer.Ordinal)) ||
                 !SameCidrs(request.AllowedCidrs!, key.AllowedCidrs!) || string.IsNullOrEmpty(result.Key))
@@ -494,9 +489,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public bool HasMore => NextCursor is not null;
     }
 
-    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
+    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
     {
-        private static readonly string[] FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
+        public static readonly IReadOnlyList<string> FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
         public string Warning { get; init; } = "";
         public bool ViewerOnly { get; init; }
         public string DraftKeyCidrs { get; init; } = "";
@@ -520,9 +515,14 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var query = string.Join('&', values.Where(value => !string.IsNullOrEmpty(value.Value)).Select(value => System.Net.WebUtility.UrlEncode(value.Key) + "=" + System.Net.WebUtility.UrlEncode(value.Value)));
             return query.Length == 0 ? path : path + "?" + query;
         }
+        public static bool FullAccess(IReadOnlyCollection<string> scopes)
+        {
+            return FullAccessScopes.All(scopes.Contains);
+        }
+
         public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
         {
-            if (FullAccessScopes.All(key.Scopes.Contains))
+            if (FullAccess(key.Scopes))
             {
                 return ("Full-access key", "rose", "ShieldAlert");
             }

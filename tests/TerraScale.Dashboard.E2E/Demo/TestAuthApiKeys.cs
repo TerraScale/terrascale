@@ -278,11 +278,6 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
             if (keyId.Length == 0 && request.Method == HttpMethod.Post)
             {
-                if (!await ConfirmAsync("create_api_key"))
-                {
-                    return Error(HttpStatusCode.Forbidden, "step_up_required");
-                }
-
                 Interlocked.Increment(ref createdKeys);
                 if (!manage)
                 {

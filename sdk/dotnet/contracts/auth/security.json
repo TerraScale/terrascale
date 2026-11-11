@@ -42,7 +42,7 @@
     "provenance": "step-up-provenance.json",
     "purpose_audiences": {"delete_account": ["ts-auth", "ts-dashboard"], "create_pat": ["ts-dashboard"], "create_api_key": ["ts-auth"], "rotate_api_key": ["ts-auth"], "create_oauth_client": ["ts-auth"]},
     "consume": "ts-dashboard only; delete_account requires operation_receipt and returns 200 {operation_grant} only after final proof deadline check; create_pat forbids receipt and returns 204",
-    "proof_header": "X-TerraScale-Step-Up-Proof; fresh single-use ts-auth proof for account deletion, API-key create/rotate and Projects.CreateClientAsync",
+    "proof_header": "X-TerraScale-Step-Up-Proof; fresh single-use ts-auth proof for account deletion, API-key rotate and Projects.CreateClientAsync; API-key create ignores it",
     "deletion_receipt": "Exact receipt PLUS X-TerraScale-Deletion-Authorization from successful dashboard consume or first auth deletion replace proof only for that account/epoch/state/fresh-bindings continuation for 15 days. Receipt alone reads status only; late rejection or lost acknowledgement never releases a grant",
     "retry": "Never retry consume or credential mutation automatically, including on lost responses"
   },

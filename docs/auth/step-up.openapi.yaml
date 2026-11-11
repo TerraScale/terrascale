@@ -63,8 +63,10 @@ paths:
         with current account state and primary credential lineage. PAT consumption returns 204.
         A late or failed consume exposes no grant. After an uncertain response, start with BOTH a fresh
         proof and a new random receipt; the old receipt hash may already be reserved. Never retry automatically.
-        Auth-owned key create/rotate and OAuth-client creation consume their respective ts-auth proof
+        Auth-owned key rotation and OAuth-client creation consume their respective ts-auth proof
         through X-TerraScale-Step-Up-Proof at the mutation endpoint, rather than this endpoint.
+        API-key creation, at ts-auth and in the dashboard, needs only the signed-in session (the dashboard
+        form also its CSRF token) and consumes no proof.
       requestBody:
         required: true
         content:

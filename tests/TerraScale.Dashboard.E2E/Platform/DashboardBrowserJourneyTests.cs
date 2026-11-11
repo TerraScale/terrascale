@@ -114,7 +114,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await Assert.That(await page.Locator("#key-database").InputValueAsync()).IsEqualTo(databaseId);
                     await Assert.That(await page.Locator("#create-key input[name=\"scopes\"][value=\"sql:read\"]").IsCheckedAsync()).IsTrue();
                     await Assert.That(await page.Locator("#create-key input[name=\"scopes\"][value=\"databases:read\"]").IsCheckedAsync()).IsFalse();
-                    await BrowserAudit.SubmitConfirmedAsync(page, fixture.Origin, () => page.Locator("#create-key form").GetByRole(AriaRole.Button, new() { Name = "Create key", Exact = true }).ClickAsync());
+                    await page.Locator("#create-key form").GetByRole(AriaRole.Button, new() { Name = "Create key", Exact = true }).ClickAsync();
                     var keySecret = page.Locator(".ts-apikeys-secret-value");
                     await keySecret.WaitForAsync();
                     var issuedKey = await keySecret.InnerTextAsync();

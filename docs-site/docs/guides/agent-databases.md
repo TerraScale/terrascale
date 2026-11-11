@@ -18,7 +18,7 @@ Requests below use `https://api.terrascale.tech`, with `Authorization: Bearer <t
 
 Connect to `https://mcp.terrascale.tech/` using a project API key with
 `databases:read databases:write sql:read sql:write`. Create the parent key in
-[the dashboard](https://dash.terrascale.tech/api-keys) and complete its hosted confirmation once.
+[the dashboard](https://dash.terrascale.tech/api-keys).
 The key stays in your client's environment; never put it in a prompt or commit it in configuration.
 
 Enter it in your terminal without recording its value in shell history:
