@@ -26,7 +26,7 @@ jobs:
         with:
           dotnet-version: |
             10.0.401
-            11.0.100-rc.3.26522.148
+            11.0.100
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         if: inputs.area != 'sdk-dotnet'
         with:
