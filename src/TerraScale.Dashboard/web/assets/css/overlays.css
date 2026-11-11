@@ -19,7 +19,6 @@ details.ts-menu > .ts-menu-panel {
   top: calc(100% + var(--ts-s1));
   z-index: var(--ts-z-dropdown);
   display: grid;
-  gap: 2px;
   width: max-content;
   min-width: 14rem;
   max-width: min(90vw, 22rem);
@@ -74,7 +73,7 @@ details.ts-menu-up > .ts-menu-panel {
 
 .ts-menu-item:hover,
 .ts-menu-item:focus-visible {
-  background: var(--ts-line);
+  background: var(--ts-hover);
   color: var(--ts-ink);
   text-decoration: none;
 }
@@ -87,13 +86,15 @@ details.ts-menu-up > .ts-menu-panel {
 
 .ts-menu-item[aria-current="true"],
 .ts-menu-item[aria-current="page"] {
-  background: var(--ts-line);
+  background: var(--ts-selected);
   color: var(--ts-ink);
   font-weight: 500;
 }
 
 .ts-menu-item > svg {
   flex: none;
+  width: var(--ts-s4);
+  height: var(--ts-s4);
   color: var(--ts-ink-3);
   transition: color var(--ts-fast) var(--ts-ease);
 }
@@ -216,7 +217,7 @@ dialog.ts-dialog::backdrop {
 .ts-tip::after {
   content: attr(data-tip);
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + var(--ts-s2));
   left: 50%;
   z-index: var(--ts-z-tooltip);
   padding: var(--ts-s1) var(--ts-s2);
@@ -352,7 +353,7 @@ dialog.ts-dialog::backdrop {
 
 /* The ring hugs the hub, clear of its flag and label. */
 .ts-region-map[data-select-id] button.ts-region-node:focus-visible {
-  outline: 2px solid var(--ts-focus);
+  outline: var(--ts-ring);
   outline-offset: -6px;
   border-radius: 50%;
 }

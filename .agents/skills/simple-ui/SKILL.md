@@ -32,6 +32,22 @@ description: TerraScale UI standard — simple purpose, architecture, design and
 - Prefer native elements and existing components over new abstractions.
 - Dashboard lint rejects the removed helper classes (`ts-hint`, `ts-card-description`, `ts-empty-detail`, `ts-stat-detail`, `ts-eyebrow`); do not reintroduce them under new names.
 
+## Tokens
+
+Dashboard styles use the tokens in `src/TerraScale.Dashboard/web/assets/css/tokens.css`; no raw hex, and no raw px where a token fits.
+
+- Spacing, 4px grid: `--ts-s1` 4, `s2` 8, `s3` 12, `s4` 16, `s5` 20, `s6` 24, `s8` 32, `s10` 40, `s12` 48, `s16` 64. Icon to label `s2`; between controls `s2` or `s3`; card padding `s5`; between sections `s6` to `s10`. Space siblings with `gap`, never margins.
+- Radius: `--ts-radius-sm` 4 (badges, tiles, inner items), `--ts-radius` 6 (controls, rows, menu items), `--ts-radius-lg` 10 (cards, menus), `--ts-radius-xl` 14 (dialogs), `--ts-radius-pill`.
+- Type: `--ts-fs-xs` 12 (meta, badges), `sm` 13 (secondary, menus), `md` 14 (body), `lg` 16, `xl` 20 (card and dialog titles), `2xl` 24, `3xl` 32 (page titles, figures). Uppercase mono labels use the five `--ts-label-*` tokens together. Code and figures use `--ts-font-mono` with `tabular-nums`.
+- Sizes: controls are `--ts-control-h-sm` 32, `--ts-control-h` 36 or `--ts-control-h-lg` 40 tall. Icons are 16px in a row and 14px for a trailing chevron or arrow. Table rows are 48px, their header 36px.
+- Surfaces, darkest first: `--ts-canvas` (page), `--ts-surface` (cards, inputs), `--ts-surface-2` (menus, dialogs), `--ts-surface-3` (tiles, tracks). Row fills: `--ts-hover` on hover, `--ts-selected` for the current item.
+- Lines: `--ts-line` (dividers, card borders), `--ts-line-strong` (overlays), `--ts-control-line` (inputs and outlined buttons; it keeps 3:1). No shadows.
+- Text: `--ts-ink` (primary), `--ts-ink-2` (secondary), `--ts-ink-3` (labels, placeholders). Links `--ts-link`.
+- Accent: `--ts-accent` fills with `--ts-on-accent` text; `--ts-accent-soft` tints. Status: `--ts-success`, `--ts-warning`, `--ts-severe`, `--ts-danger`, `--ts-info`; solid danger buttons use `--ts-danger-solid`. Charts take `--ts-chart-1` to `--ts-chart-5` in order.
+- Focus: `outline: var(--ts-ring)` with a 2px offset, or a negative offset inside menus and tabs.
+- Motion: `--ts-fast` for hover and focus, `--ts-base` for panels, `--ts-loop` for loops, all with `--ts-ease`.
+- Loading (`loading.css`): buttons get their spinner from `button-loading.js`; elsewhere use `.ts-spinner` inline, `.ts-skeleton` (`.ts-skeleton-table`, `.ts-skeleton-chart`) for content that loads later, and `.ts-progress` for steps. Loading visuals appear after `--ts-fast`, so a fast load shows nothing, and they never change the layout. Keep `aria-busy` and `role="status"`.
+
 ## Proof
 
 - Before/after screenshots of every changed page, shown in your T3 thread (repo rule in `AGENTS.md`). How:

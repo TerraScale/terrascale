@@ -40,7 +40,7 @@
 }
 
 .ts-btn:focus-visible {
-  outline: 2px solid var(--ts-focus);
+  outline: var(--ts-ring);
   outline-offset: 2px;
 }
 
@@ -62,24 +62,6 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 .ts-btn-primary {
   background: var(--ts-primary);
   color: var(--ts-on-primary);
-}
-
-.ts-btn.ts-btn-loading {
-  cursor: progress;
-  opacity: 0.7;
-}
-
-.ts-btn-loading > .ts-btn-idle-icon {
-  display: none;
-}
-
-.ts-btn-spinner {
-  flex: none;
-  animation: ts-button-spin 800ms linear infinite;
-}
-
-@keyframes ts-button-spin {
-  to { transform: rotate(360deg); }
 }
 
 .ts-btn-primary:hover {
@@ -180,7 +162,7 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 .ts-field {
   display: grid;
   align-content: start;
-  gap: 6px;
+  gap: var(--ts-s2);
   min-width: 0;
 }
 
@@ -206,7 +188,7 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
   background: var(--ts-surface);
   color: var(--ts-ink);
   font-size: var(--ts-fs-md);
-  transition: border-color var(--ts-fast) var(--ts-ease);
+  transition: border-color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
 }
 
 textarea.ts-input {
@@ -237,6 +219,7 @@ textarea.ts-input {
 .ts-input[aria-invalid="true"],
 .ts-input:user-invalid {
   border-color: var(--ts-danger);
+  outline-color: var(--ts-danger);
 }
 
 .ts-input:disabled,
@@ -257,9 +240,9 @@ textarea.ts-input {
 select.ts-input,
 .ts-select {
   appearance: none;
-  padding-right: 34px;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23858ea3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-position: right 10px center;
+  padding-right: calc(var(--ts-s3) + var(--ts-s4) + var(--ts-s2));
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right var(--ts-s3) center;
   background-repeat: no-repeat;
   cursor: pointer;
 }
@@ -340,10 +323,10 @@ summary.ts-select::-webkit-details-marker {
 input[type="checkbox"],
 input[type="radio"] {
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: var(--ts-s4);
+  height: var(--ts-s4);
   margin: 0;
-  accent-color: var(--ts-accent-fill);
+  accent-color: var(--ts-accent);
 }
 
 /* Shared switch for settings and database actions. */
@@ -542,6 +525,10 @@ legend {
 .ts-segment[aria-current="page"] {
   background: var(--ts-surface-3);
   color: var(--ts-ink);
+}
+
+.ts-segment:focus-visible {
+  outline-offset: 0;
 }
 
 .ts-segment-note {
