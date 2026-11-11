@@ -25,7 +25,7 @@
     <!-- CS1591: TerraBase is a server, not a library, and its code carries no comments (user rule 2026-10-29: "do not
          comment the code"). The documentation file stays generated because IDE0005 needs it in the build. -->
     <NoWarn Condition="'$(IsTerraBaseArea)' == 'true'">$(NoWarn);CS1591</NoWarn>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantGlobalization Condition="'$(IsLibsArea)' != 'true'">true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
     <!-- The pinned compiler retains invalid Razor generator state across shared compilations. -->
     <UseSharedCompilation>false</UseSharedCompilation>
