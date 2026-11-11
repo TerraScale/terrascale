@@ -14,7 +14,8 @@ These still fail closed with `503` and `Retry-After: 2`:
 
 - a rejected storage credential or another non-transient error;
 - a damaged stored bucket;
-- persistent write contention;
+- persistent write contention on a cooldown or token bucket (fixed windows charge with one conditional increment and
+  never contend, see [token bursts](token-bursts.md));
 - a full in-memory store (100,000 buckets, idle ones dropped after an hour);
 - lockout-notice claims, which decide whether to send mail.
 

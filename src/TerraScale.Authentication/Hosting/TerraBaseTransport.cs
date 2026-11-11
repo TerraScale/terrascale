@@ -33,6 +33,7 @@ public static class TerraBaseTransport
         }
         handler.KeepAlivePingDelay = TimeSpan.FromSeconds(5);
         handler.KeepAlivePingTimeout = TimeSpan.FromSeconds(5);
+        handler.EnableMultipleHttp2Connections = true;
         handler.ConnectCallback = async (context, cancellationToken) =>
         {
             var tried = new HashSet<IPEndPoint>();

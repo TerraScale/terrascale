@@ -306,10 +306,12 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             }
 
             var current = components[this.regionIndex];
-            var bucket = new AttemptBucket(effective, current?.Value.Window == effective ? checked(current.Value.Used + 1) : 1);
+            var own = current?.Value.Window == effective ? current.Value.Used : 0;
             if (current is null
-                ? await source.TryCreateAsync(instanceId, key, bucket, cancellationToken)
-                : await source.TryReplaceAsync(instanceId, key, bucket, current.Version, cancellationToken))
+                ? await source.TryCreateAsync(instanceId, key, new AttemptBucket(effective, 1), cancellationToken)
+                : cooldown
+                    ? await source.TryReplaceAsync(instanceId, key, new AttemptBucket(effective, checked(own + 1)), current.Version, cancellationToken)
+                    : await source.TryChargeAsync(instanceId, key, effective, (int)(maximum - (used - own)), cancellationToken))
             {
                 return null;
             }
