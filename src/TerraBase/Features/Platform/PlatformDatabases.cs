@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Catalog;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -57,12 +58,13 @@ public interface IPlatformCatalog
     ValueTask<EnsurePlatformResult> EnsurePlatformAsync(CancellationToken cancellationToken);
 }
 
-internal sealed class PlatformSeed(IPlatformCatalog catalog, PlatformSeedProgress progress, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
+internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, PlatformSeedProgress progress, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
 {
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await gate.Opened.WaitAsync(stoppingToken).ConfigureAwait(false);
         string? failure = null;
         while (!stoppingToken.IsCancellationRequested)
         {
