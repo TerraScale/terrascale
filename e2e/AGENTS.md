@@ -78,10 +78,13 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 - Accounts: a run signs up three users (`setup`, `desktop-setup`, `invitation`); its last steps delete the two
   owners, the invitation's second user stays.
 
-A failed run opens the `Production journey failure` issue, or comments on the open one, with the run link, the trigger
-and suite commit, both `/readyz` versions, each failed test with its page and error (from `report.json`), or the last
-lines it printed when the suite did not start, and "inbox provider" when mail.tm failed first. The next green run
-closes it. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
+A failed run opens the `Production journey failure` issue (found by its exact title in the REST list of open issues)
+with the run link, the trigger and suite commit, both `/readyz` versions, one `Cause:` line when the run knows it
+("inbox provider" when mail.tm failed first, "no report" when the run stopped before or during the suite, or the
+suite's own error such as its global timeout), every failed test by name and the first ten with their page and error
+(from `report.json`), or the last lines it printed when there is no `report.json`; the text stops under GitHub's
+65,536 characters. While the issue is open, a failed run replaces its body and comments only when the failed tests
+or the cause changed, naming the tests newly failing and fixed. The next green run closes it. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
 then `bash e2e/env/production.sh`; each run makes three production accounts.
 
 ## Stages

@@ -8,8 +8,9 @@ Provider acceptance alone cannot pass it, and it does not tell which provider se
 
 `.github/workflows/production-journey.yml` runs it after every release and daily at 13:23 UTC; it is not a merge or
 release gate. Each run sends three authentication emails (the two owners and the invitation's second user, each to its
-own inbox). A failure opens or comments on the `Production journey failure` issue with the run link and the failing
-step, and the next green run closes it. When mail.tm fails before the first request to production, the run says
+own inbox). A failure opens the `Production journey failure` issue with the run link and the failing
+step, or replaces the body of the open one (with a short comment when the failed tests or the cause changed), and the
+next green run closes it. When mail.tm fails before the first request to production, the run says
 "inbox provider" and production was not contacted.
 
 The inboxes stay on mail.tm, so nobody can register an address again while an account a run leaves behind still uses

@@ -186,7 +186,7 @@ jobs:
             echo "Trigger: $TRIGGER. Suite: $COMMIT."
             echo
             if [ ! -f "$report/list.txt" ]; then
-              echo "The run stopped before e2e/env/production.sh started (checkout, toolchain or runner build): read the job log."
+              echo "Cause: no report: the run stopped before or during the suite (setup, timeout, cancel or scrub). Read the job log."
             else
               if [ -s "$report/readyz.txt" ]; then
                 echo "Production served:"
@@ -201,10 +201,19 @@ jobs:
               elif grep -q 'Error: inbox provider mail.tm' "$report/list.txt"; then
                 echo "Cause: the inbox provider (mail.tm) refused or failed a request during the run; read those errors below before you look at production."
                 echo
+              elif [ ! -f "$report/report.json" ]; then
+                echo "Cause: no report: the run stopped before or during the suite (timeout, cancel or a refused start)."
+                echo
+              elif jq -e '.errors | length > 0' "$report/report.json" > /dev/null; then
+                jq -r '"Cause: \(.errors[0].message | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | split("\n")[0])."' "$report/report.json"
+                echo
               fi
               if [ -f "$report/report.json" ]; then
                 jq -r '.stats | "Tests: \(.expected) passed, \(.unexpected) failed, \(.flaky) flaky, \(.skipped) did not run, in \(.duration / 1000 | floor) s."' "$report/report.json"
                 echo
+                jq -r '[.suites | .. | objects | select(has("specs")) | .specs[] as $spec | $spec.tests[]
+                  | select(.status == "unexpected" or .status == "flaky") | "- \(.projectName) › \($spec.file) › \($spec.title)"]
+                  | if length > 0 then "Failed tests:\n\(join("\n"))\n" else empty end' "$report/report.json"
                 jq -r '[.suites | .. | objects | select(has("specs")) | .specs[] as $spec | $spec.tests[]
                   | select(.status == "unexpected" or .status == "flaky") | .results[-1] as $result
                   | "### \(.projectName) › \($spec.file):\($spec.line) › \($spec.title)\n\n"
@@ -213,7 +222,7 @@ jobs:
                       | join("\n\n") | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | split("\n") | .[:40] | join("\n")) + "\n````\n"]
                   | .[:10] | join("\n")' "$report/report.json"
               else
-                echo "The suite did not start. The last lines the run printed:"
+                echo "The last lines the run printed:"
                 echo
                 echo '````'
                 tail -n 30 "$report/list.txt"
@@ -221,15 +230,38 @@ jobs:
               fi
             fi
           } > issue.md
+          if [ "$(wc -c < issue.md)" -gt 60000 ]; then
+            head -c 60000 issue.md | sed '$d' > capped.md
+            if [ $(($(grep -c '^````$' capped.md) % 2)) -eq 1 ]; then echo '````' >> capped.md; fi
+            printf '\n%s\n' "The text stops here, under the 65,536 characters GitHub allows; the artifact of the run has the whole report." >> capped.md
+            mv capped.md issue.md
+          fi
           cat issue.md
       - name: Open, update or close the issue
         run: |
           set -euo pipefail
-          open=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")
+          export LC_ALL=C
+          gh api --paginate "repos/$GH_REPO/issues?state=open&per_page=100" --jq '.[] | select(.title == env.TITLE and .pull_request == null) | {number, body}' > open.json
+          open=$(jq -rs 'min_by(.number).number // empty' open.json)
           if [ "$RESULT" = success ]; then
             if [ -n "$open" ]; then gh issue close "$open" --comment "$(cat issue.md)"; fi
-          elif [ -n "$open" ]; then
-            gh issue comment "$open" --body-file issue.md
-          else
+          elif [ -z "$open" ]; then
             gh issue create --title "$TITLE" --body-file issue.md
+          else
+            jq -rs 'min_by(.number).body // "" | gsub("\r"; "")' open.json > replaced.md
+            gh issue edit "$open" --body-file issue.md
+            tests() { sed -n '/^Failed tests:$/,/^$/s/^- //p' "$1" | sort; }
+            causes() { sed -n 's/^Cause: //p' "$1" | sort; }
+            {
+              if grep -q '^Tests: ' replaced.md && grep -q '^Tests: ' issue.md; then
+                comm -13 <(tests replaced.md) <(tests issue.md) | sed 's/^/- newly failing: /'
+                comm -23 <(tests replaced.md) <(tests issue.md) | sed 's/^/- fixed: /'
+              fi
+              comm -23 <(causes replaced.md) <(causes issue.md) | sed 's/^/- cause before: /'
+              comm -13 <(causes replaced.md) <(causes issue.md) | sed 's/^/- cause now: /'
+            } > change.md
+            if [ -s change.md ]; then
+              { echo "$RUN changed the result; the issue body now holds it."; echo; cat change.md; } > comment.md
+              gh issue comment "$open" --body-file comment.md
+            fi
           fi
