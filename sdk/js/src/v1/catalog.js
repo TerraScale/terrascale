@@ -18,12 +18,11 @@ import { stringifyExactJson } from "./json.js";
  * @property {string | null} branchedFrom Source database ULID, or null.
  * @property {string} createdAt ISO date-time returned by the producer.
  * @property {string} region The region that answered.
- * @property {string} homeRegion The one region that stores and serves the database.
- * @property {readonly string[]} replicaRegions Sorted regions holding read replicas.
- * @property {boolean} allRegions Whether every serving region holds a replica.
+ * @property {readonly string[]} regions Every region that holds the database, sorted by region id. The order has no meaning.
+ * @property {boolean} allRegions Whether every serving region holds the database.
  * @property {string | null | undefined} [expiresAt] RFC 3339 expiry, or null without a TTL.
  */
-/** @typedef {{ readonly name: string; readonly homeRegion?: string | null | undefined; readonly replicaRegions?: readonly string[] | undefined; readonly allRegions?: boolean | undefined; readonly ttlSeconds?: number | undefined }} V1DatabaseCreateRequest */
+/** @typedef {{ readonly name: string; readonly regions?: readonly string[] | undefined; readonly allRegions?: boolean | undefined; readonly ttlSeconds?: number | undefined }} V1DatabaseCreateRequest */
 /** @typedef {{ readonly name: string }} V1DatabaseBranchRequest */
 /** @typedef {{ readonly after?: string | undefined; readonly limit?: number | undefined }} V1DatabaseListRequest */
 /** @typedef {{ readonly items: readonly V1ManagedDatabase[]; readonly next: string | null }} V1DatabasePage */
@@ -50,15 +49,17 @@ export function region(value) {
   return value;
 }
 
-/** @param {{ readonly replicaRegions?: unknown; readonly allRegions?: unknown }} placement @returns {{ replicaRegions?: string[]; allRegions?: boolean }} */
+/** @param {{ readonly regions?: unknown; readonly allRegions?: unknown }} placement @returns {{ regions?: string[]; allRegions?: boolean }} */
 export function requirePlacement(placement) {
-  if (placement.replicaRegions !== undefined && placement.allRegions !== undefined)
-    throw new TypeError("Supply replicaRegions or allRegions, not both.");
+  if (placement.regions !== undefined && placement.allRegions !== undefined)
+    throw new TypeError("Supply regions or allRegions, not both.");
   if (placement.allRegions !== undefined && typeof placement.allRegions !== "boolean")
     throw new TypeError("allRegions must be a boolean.");
-  if (placement.replicaRegions === undefined) return placement.allRegions === undefined ? {} : { allRegions: placement.allRegions };
-  if (!Array.isArray(placement.replicaRegions)) throw new TypeError("replicaRegions must be an array of regions.");
-  return { replicaRegions: placement.replicaRegions.map(region) };
+  if (placement.regions === undefined) return placement.allRegions === undefined ? {} : { allRegions: placement.allRegions };
+  if (!Array.isArray(placement.regions) || placement.regions.length === 0) throw new TypeError("regions must be an array of at least one region.");
+  const regions = placement.regions.map(region);
+  if (new Set(regions).size !== regions.length) throw new TypeError("regions must not contain duplicates.");
+  return { regions };
 }
 
 /** @param {JsonValue | undefined} value @returns {V1ManagedDatabase} */
@@ -73,8 +74,8 @@ export function decodeManagedDatabase(value) {
     id: requireId(raw.id, "Database ID"), projectId: requireId(raw.projectId, "Project ID"),
     name: requireName("database", raw.name),
     branchedFrom: raw.branchedFrom === null ? null : requireId(raw.branchedFrom, "Source database ID"),
-    createdAt, region: region(raw.region), homeRegion: region(raw.homeRegion),
-    replicaRegions: Object.freeze(raw.replicaRegions === undefined ? [] : array(raw.replicaRegions, "database replicaRegions").map(region)),
+    createdAt, region: region(raw.region),
+    regions: Object.freeze((raw.regions === undefined ? [] : array(raw.regions, "database regions").map(region)).toSorted()),
     allRegions: raw.allRegions === undefined ? false : boolean(raw.allRegions, "database allRegions"),
     ...(raw.previousName === undefined ? {} : { previousName: raw.previousName === null ? null : requireName("database", raw.previousName) }),
     ...(raw.conflictOf === undefined ? {} : { conflictOf: raw.conflictOf === null ? null : requireId(raw.conflictOf, "Conflict database ID") }),
@@ -89,19 +90,17 @@ export class V1Databases {
   constructor(transport) { this.#transport = transport; Object.freeze(this); }
 
   /**
-   * Creates a database in homeRegion, or the called region when omitted.
+   * Creates a database in the named regions, or the called region when omitted.
    * @param {V1DatabaseCreateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>}
    */
   async create(request, options = {}) {
-    members(request, ["name", "homeRegion", "replicaRegions", "allRegions", "ttlSeconds"]);
+    members(request, ["name", "regions", "allRegions", "ttlSeconds"]);
     const placement = requirePlacement(request);
     if (request.ttlSeconds !== undefined) requireTtlSeconds(request.ttlSeconds);
     mutationOptions(options);
     const name = requireName("database", request.name);
-    if (request.homeRegion !== undefined && request.homeRegion !== null) region(request.homeRegion);
     const response = await this.#transport.call("createDatabase", { database: name }, {
       body: stringifyExactJson({ name,
-        ...(request.homeRegion === undefined ? {} : { homeRegion: request.homeRegion }),
         ...placement,
         ...(request.ttlSeconds === undefined ? {} : { ttlSeconds: request.ttlSeconds }),
       }, "database create"), signal: options.signal,

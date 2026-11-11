@@ -105,18 +105,19 @@ for these methods has not run; this evidence does not establish deployed TTL del
 ## Placement
 
 ```js
-const db = await client.createDatabase(project, "orders", { homeRegion: "gru", replicaRegions: ["sjc"] });
-await client.setDatabasePlacement(project, db.id, { replicaRegions: ["sjc", "fra"] });
+const db = await client.createDatabase(project, "orders", { regions: ["gru", "sjc"] });
+await client.setDatabasePlacement(project, db.id, { regions: ["fra", "gru", "sjc"] });
 ```
 
-Databases carry `homeRegion`, `replicaRegions` and `allRegions`. `setDatabasePlacement` takes exactly one of
-`replicaRegions` or `allRegions`. `moveDatabaseHome` waits for the move without a client timeout and resends only on
-`503 move_unresolved` (at most 5 times, after `Retry-After` or 1 s). Encoding and decoding are covered by the
+Every region that holds a database is equal. Databases carry `regions` (every region that holds it, sorted by region
+id; the order has no meaning) and `allRegions`. `createDatabase` and `setDatabasePlacement` take `regions` (at least
+one, no duplicates) or `allRegions`, and not both. TerraBase picks which region writes and moves that on its own when
+the set changes. `db.regions` reads each region's pull progress; an entry's `role` is `writer` for the region that
+commits writes. Encoding and decoding are covered by the
 [recorded placement fixtures](../dotnet/contracts/terrabase/placement/); live producer qualification has not run.
 
-All-regions placement (`allRegions`) keeps a replica in every serving region, including regions added later;
-`moveDatabaseHome` moves the home to a replica region, and `db.regions` reads the home region and home-observed
-replica pull progress. These ship from the next published release; the current npm release predates them.
+All-regions placement (`allRegions`) holds the database in every serving region, including regions added later.
+These ship from the next published release; the current npm release predates them.
 
 ## Atlas and endpoint selection
 
@@ -195,15 +196,15 @@ On a server, `createTerraBaseClientFromEnvironment(overrides?)` reads `TERRASCAL
 `https://api.terrascale.tech`; passing both `baseUrl` and `endpointResolver` is refused. With a
 `TERRASCALE_BASE_URL` other than `https://api.terrascale.tech`, pass `authBaseUrl` in the overrides.
 
-`client.databases.create({ name })` uses the called region as the home; `homeRegion` selects another serving region.
+`client.databases.create({ name })` uses the called region; `regions` names the regions that hold the database.
 
-A database has one home region and can have replicas in other serving regions.
-A replica region can accept a local SQL REST write; the home applies it. The server forwards a timed-out local publish with TerraBase-Publish-Id set to the same transaction id and the home applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has. The default
-`TerraScale-Durability` is `local`. REST reads can use a ready local replica. Replicas are eventually
-consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
-preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
-placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
-serving region; otherwise set an explicit replica-region list.
+Every region that holds a database is equal.
+A region can accept a local SQL REST write; TerraBase applies it once. The server forwards a timed-out local publish with TerraBase-Publish-Id set to the same transaction id and applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more copies than the cluster has. The default
+`TerraScale-Durability` is `local`. REST reads can use a ready local region. Copies are eventually
+consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
+preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
+placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
+serving region; otherwise set an explicit region list.
 
 The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
 storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data

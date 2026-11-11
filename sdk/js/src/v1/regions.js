@@ -5,7 +5,7 @@ import { list, numeric, optional, record, text } from "./management-decode.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
 
-const replicaStatus = record({ region: region, lagMs: optional(numeric), lastPulledAt: optional(text),
+const replicaStatus = record({ region: region, role: optional(text), lagMs: optional(numeric), lastPulledAt: optional(text),
   lastVerified: optional(text), revision: optional(text) });
 const databaseRegions = record({ databaseId: requireId, homeRegion: region, observedAt: text, replicas: list(replicaStatus) });
 /** @typedef {ReturnType<typeof databaseRegions>} V1DatabaseRegions */
