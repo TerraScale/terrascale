@@ -64,6 +64,7 @@ jobs:
       landing: ${{ steps.filter.outputs.landing }}
       status: ${{ steps.filter.outputs.status }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
+      journey: ${{ steps.journey.outputs.journey }}
     steps:
       # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
       - if: github.event_name != 'pull_request'
@@ -140,6 +141,7 @@ jobs:
               - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
               - tests/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
+              - landing-site/static/pricing.json
               - scripts/terrabase/!(AGENTS.md|CLAUDE.md)
               - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
             sdk-dotnet:
@@ -201,6 +203,18 @@ jobs:
               - .github/workflows/dashboard-ci.yml
               - .github/workflows/images-ghcr.yml
               - .github/workflows/ci.yml
+      - id: journey
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            journey:
+              - '!docs-site/**'
+              - '!landing-site/**/!(pricing.json)'
+              - '!status-site/**'
+              - '!docs/**'
+              - '!**/*.md'
       - id: areas
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
@@ -738,10 +752,15 @@ jobs:
           npm run lint
           npm run build
 
+  journey:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true'
+    uses: ./.github/workflows/journey.yml
+
   all-green:
     name: all-green
     if: always()
-    needs: [changes, checks, libs, auth, terrabase, dashboard, sdk, docs, landing, status, test]
+    needs: [changes, checks, libs, auth, terrabase, dashboard, sdk, docs, landing, status, journey, test]
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:
