@@ -13,17 +13,18 @@ mount --bind "$ns/nsswitch.conf" /etc/nsswitch.conf
 if [ -d /run/nscd ]; then mount --bind "$ns/empty" /run/nscd; fi
 mount --bind "$ns/ca-certificates.crt" /etc/ssl/certs/ca-certificates.crt
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+boot() { bash "$here/up.sh" || { status=$?; bash "$here/down.sh"; exit "$status"; }; }
 case ${1:?run or hold} in
   run)
     shift
-    bash "$here/up.sh"
+    boot
     status=0
     "$@" || status=$?
     bash "$here/down.sh"
     exit "$status"
     ;;
   hold)
-    bash "$here/up.sh"
+    boot
     mkfifo "$ns/stop"
     touch "$ns/ready"
     read -r _ < "$ns/stop"
