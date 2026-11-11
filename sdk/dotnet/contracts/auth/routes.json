@@ -122,7 +122,7 @@
         503
       ],
       "security": "platform_user_sign_in_bearer",
-      "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "delete_organization", "audience": "ts-auth", "required": true, "organization_bound": true, "provenance": "step-up-provenance.json"},
+      "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "delete_organization", "audience": "ts-auth", "required": true, "organization_bound": true, "consume_first": "consume_step_up", "provenance": "step-up-provenance.json"},
       "request_media_type": null,
       "response_media_type": null,
       "pagination": null,

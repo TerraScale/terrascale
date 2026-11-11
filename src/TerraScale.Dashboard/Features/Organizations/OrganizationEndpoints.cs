@@ -198,7 +198,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                         return await StepUpFlow.StartAsync(http, context, "delete_organization", "ts-auth", boundOrganizationId: context.Organization.Id);
                     }
 
-                    await lifecycle.DeleteAsync(context, form["confirmation"].ToString(), http.RequestAborted, intent.Challenge.Proof);
+                    await lifecycle.DeleteAsync(context, form["confirmation"].ToString(), intent.Challenge.Proof, http.RequestAborted);
                 }
                 // Leaving or deleting moves the account to another organization.
                 if (operation is "leave" or "delete" || operation == "delete-project" && context.Project?.Id == projectId)

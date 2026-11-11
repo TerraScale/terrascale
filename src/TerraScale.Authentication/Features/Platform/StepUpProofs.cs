@@ -27,7 +27,8 @@ public sealed record ConsumeStepUpRequest(
     [property: JsonPropertyName("proof")] string Proof,
     [property: JsonPropertyName("purpose")] string Purpose,
     [property: JsonPropertyName("audience")] string Audience,
-    [property: JsonPropertyName("operation_receipt")] string? OperationReceipt = null)
+    [property: JsonPropertyName("operation_receipt")] string? OperationReceipt = null,
+    [property: JsonPropertyName("organization_id")] string? OrganizationId = null)
 {
     public override string ToString() => nameof(ConsumeStepUpRequest);
 }
@@ -197,6 +198,37 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         }
 
         return await this.ConsumeAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, "delete_account", "ts-auth", receiptHash, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<UserRecord> DeleteOrganizationAsync(UserRecord caller, HttpRequest request, string organizationId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Headers[Header] is not [string { Length: 70 } proof] || proof[26] != '.' || !PlatformDirectory.IsId(proof[..26]))
+        {
+            throw Required();
+        }
+
+        var id = proof[..26];
+        var current = await data.ReadAsync((db, token) => db.StepUpProofs.Where(row => row.Id == id).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        if (current?.Value is not { Consumed: true, Approved: true, PrimaryVerified: true, Purpose: "delete_organization", Audience: "ts-auth", Bindings: { Count: > 0 } bindings } record
+            || record.InstanceId != caller.InstanceId || record.UserId != caller.Id || record.Id != id
+            || record.AuthEpoch != caller.AuthEpoch || record.AuthStamp != caller.AuthStamp || record.OrganizationId != organizationId
+            || !Tokens.FixedTimeEquals(record.TokenHash, Tokens.Sha256Hex(proof))
+            || record.ExpiresAt <= clock.GetUtcNow())
+        {
+            throw Required();
+        }
+
+        var verified = Merge(caller, bindings);
+        if (await this.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements
+            || !await data.SaveAsync([.. requirements, Change.Delete(current)], cancellationToken).ConfigureAwait(false)
+            || record.ExpiresAt <= clock.GetUtcNow())
+        {
+            throw Required();
+        }
+
+        return verified;
     }
 
     private static UserRecord Merge(UserRecord caller, IReadOnlyList<CredentialBinding> fresh)

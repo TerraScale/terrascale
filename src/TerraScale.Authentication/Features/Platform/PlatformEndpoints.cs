@@ -262,13 +262,13 @@ public sealed class DeleteOrganizationEndpoint(PlatformDirectory platform, Platf
     public override void Configure()
     {
         Delete(Organization);
-        this.Describe("delete_organization", "Delete an organization", "Needs the owner role and a fresh delete_organization/ts-auth X-TerraScale-Step-Up-Proof. 409 not_empty while it has projects. Logically removes the auth organization and durably retries its remaining auth records. This response does not certify physical erasure or other services' data.", "Organizations", null, StatusCodes.Status204NoContent, null, conflict: true);
+        this.Describe("delete_organization", "Delete an organization", "Needs the owner role and, in X-TerraScale-Step-Up-Proof, this organization's delete_organization/ts-auth proof that POST /v1/terrascale/step-up/consume already consumed for the same account and state, before the proof's five-minute deadline. The delete spends the proof first, so any retry needs a new proof. 409 not_empty while it has projects. Logically removes the auth organization and durably retries its remaining auth records. This response does not certify physical erasure or other services' data.", "Organizations", null, StatusCodes.Status204NoContent, null, conflict: true);
     }
 
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "delete_organization", this.RouteId("organization"), cancellationToken);
+        caller = await proofs.DeleteOrganizationAsync(caller, this.HttpContext.Request, this.RouteId("organization"), cancellationToken);
         await platform.DeleteOrganizationAsync(caller.Id, this.RouteId("organization"), cancellationToken);
         return Results.NoContent();
     }

@@ -22,9 +22,20 @@ The dashboard consumes `create_pat/ts-dashboard` immediately before storing the
 independent credential. API-key rotation and OAuth-client operations send their
 purpose-bound `ts-auth` proof through the SDK in
 `X-TerraScale-Step-Up-Proof` to the owning service. A `change_plan/ts-auth`
-proof is organization-bound and never leaves the dashboard: the owner's exact
-posted plan change or undo replays from the single-use intent after approval,
-re-checking the owner role and re-validating the plan before any Stripe call.
+proof is organization-bound: the owner's exact posted plan change or undo replays
+from the single-use intent after approval and consumes the proof at ts-auth for
+the intent's organization, re-checking the owner role and re-validating the plan
+before any Stripe call.
+Organization deletion consumes its organization-bound `delete_organization/ts-auth`
+proof first, naming the organization it is about to delete, after re-checking the
+owner and the typed name; only then does the dashboard set the deletion mark, end
+billing and delete the projects, and its final organization `DELETE` sends the
+same consumed proof, which ts-auth spends. A missing, unapproved, expired or
+replayed proof, or one minted for another organization, changes nothing. When
+ts-auth cannot check the confirmation (an error or no answer), nothing starts: the
+danger tab, or the dashboard's error page if ts-auth cannot serve that tab either,
+asks the owner to start the deletion again; an interrupted deletion is finished by
+starting it again with a new confirmation.
 API-key creation sends no proof: the CSRF-checked form and its API create the
 key at once, and ts-auth binds the new secret to its creator's account
 authentication state. The MCP `create_api_key` tool validates its input and

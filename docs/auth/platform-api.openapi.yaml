@@ -119,7 +119,7 @@ paths:
       operationId: delete_organization
       tags: [Organizations]
       summary: Delete an organization
-      description: Needs the owner role and a fresh delete_organization/ts-auth X-TerraScale-Step-Up-Proof. 409 not_empty while it has projects. Deletes its members, invitations, transfer, organization API keys and audit events.
+      description: Needs the owner role and, in X-TerraScale-Step-Up-Proof, this organization's delete_organization/ts-auth proof that POST /v1/terrascale/step-up/consume already consumed for the same account and authentication state, before the proof's five-minute deadline. The delete spends the proof first, so any retry needs a new proof. 409 not_empty while it has projects. Deletes its members, invitations, transfer, organization API keys and audit events.
       responses:
         '204': { description: 'Deleted.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
