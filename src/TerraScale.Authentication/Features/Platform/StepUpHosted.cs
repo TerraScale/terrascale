@@ -113,7 +113,9 @@ internal static class StepUpHosted
 
         if (record.Approved)
         {
-            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Continue, "terrascale", Next: record.ReturnUri));
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers["Refresh"] = "0;url=" + record.ReturnUri;
+            return Results.Content("", "text/html");
         }
 
         var nonce = BrowserSecurity.NewNonce();
