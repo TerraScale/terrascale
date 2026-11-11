@@ -29,7 +29,6 @@ internal sealed class TerraBaseConnection
     private const int MaxResponseBytesLimit = 1024 * 1024 * 1024;
     private const int MaxSecretLength = 4096;
     private static readonly TimeSpan MaxRequestTimeout = TimeSpan.FromMinutes(10);
-    private static readonly IPNetwork NetBirdNetwork = IPNetwork.Parse("100.64.0.0/10");
 
     private readonly HttpClient http;
     private readonly ITerraBaseEndpointResolver endpointResolver;
@@ -523,23 +522,5 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    internal static Uri Origin(Uri? baseAddress) => Origin(baseAddress, nameof(baseAddress), "BaseAddress", "a TerraBase client listener");
-
-    internal static Uri Origin(Uri? baseAddress, string parameter, string label, string service)
-    {
-        if (baseAddress is not { IsAbsoluteUri: true } || !(baseAddress.Scheme == Uri.UriSchemeHttps || (baseAddress.Scheme == Uri.UriSchemeHttp && IsPrivate(baseAddress)))
-            || baseAddress.UserInfo.Length != 0 || baseAddress.Query.Length != 0 || baseAddress.Fragment.Length != 0
-            || baseAddress.AbsolutePath != "/")
-        {
-            throw new ArgumentException(
-                $"{label} must be the HTTPS origin of {service} (plain HTTP only for NetBird 100.64.0.0/10 addresses or loopback), without credentials, path, query or fragment.", parameter);
-        }
-
-        return baseAddress;
-    }
-
-    // DNS suffixes do not prove private routing; allow only NetBird address literals and loopback.
-    private static bool IsPrivate(Uri address) =>
-        address.IsLoopback || IPAddress.TryParse(address.IdnHost, out var ip)
-            && ip.AddressFamily == AddressFamily.InterNetwork && NetBirdNetwork.Contains(ip);
+    internal static Uri Origin(Uri? baseAddress) => TerraScaleOrigin.Parse(baseAddress, "BaseAddress", nameof(baseAddress), TerraScaleService.Api, netBird: true);
 }

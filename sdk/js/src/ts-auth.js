@@ -2547,7 +2547,6 @@ export class TsAuthClient {
     }
     const slug = validateInstanceSlug(config?.instanceSlug);
     this.#http = new TsAuthHttp(config);
-    requireBareOrigin(this.#http.config.apiBaseUrl);
     this.users = new TsAuthUsersClient(this.#http, slug);
     this.sessions = new TsAuthSessionsClient(this.#http, slug);
     this.apiKeys = new TsAuthApiKeysClient(this.#http, slug);
@@ -2574,29 +2573,6 @@ export class TsAuthClient {
  */
 export function createTsAuthClient(config) {
   return new TsAuthClient(config);
-}
-
-/**
- * Mirrors the ts-auth service rule: the deployment origin is a bare origin.
- * A path, query, or fragment would be silently rewritten or dropped by URL
- * composition, so it is a construction error instead.
- * @param {string} apiBaseUrl
- * @returns {void}
- */
-function requireBareOrigin(apiBaseUrl) {
-  /** @type {URL} */
-  let url;
-  try {
-    url = new URL(apiBaseUrl);
-  } catch {
-    // Malformed URLs keep their request-time transport failure.
-    return;
-  }
-  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
-    throw new TypeError(
-      "The ts-auth apiBaseUrl must be a bare origin without a path, query, or fragment.",
-    );
-  }
 }
 
 /**

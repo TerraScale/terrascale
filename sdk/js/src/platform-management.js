@@ -1,7 +1,7 @@
 import { TsAuthHttp } from "./http.js";
 import { err } from "./result.js";
 import { requireId } from "./ids.js";
-import { requireServiceUrl } from "./v1/transport.js";
+import { authService, serviceOrigin } from "./origin.js";
 import { organizationRole, projectRole, scope, instant, organization, project, member, projectMember, apiKey, keySecret,
   invitation, invitationCreated, invitationLookup, acceptedInvitation, ownershipTransfer, ssoConnection, auditEvent,
   accountMfa, linkedProviders, deletionHistory, endUserToken, page, empty } from "./platform-management-decode.js";
@@ -178,10 +178,9 @@ function invitationToken(request) {
  * @param {(value: unknown) => string} [credential]
  */
 function platformCaller(config, provider, credential = signInToken) {
-  const origin = requireServiceUrl(config.apiBaseUrl, "apiBaseUrl");
-  if (origin.pathname !== "/" || origin.search !== "") throw new TypeError("apiBaseUrl must be a bare auth origin.");
+  const apiBaseUrl = serviceOrigin(config.apiBaseUrl, "apiBaseUrl", authService);
   if (provider !== undefined && typeof provider !== "function") credential(provider);
-  const base = { apiBaseUrl: origin.origin, ...(config.fetch === undefined ? {} : { fetch: config.fetch }) };
+  const base = { apiBaseUrl, ...(config.fetch === undefined ? {} : { fetch: config.fetch }) };
   // Validate the shared transport's origin policy before the first request.
   new TsAuthHttp(base);
 

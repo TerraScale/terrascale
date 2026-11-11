@@ -1,7 +1,7 @@
 //! Isolated ts-auth credentials and bounded read retries.
 
 use crate::error::{Error, ErrorKind, Result};
-use crate::regions::normalize_base_url;
+use crate::origin::{service_origin, AUTH};
 
 #[derive(Clone)]
 pub struct ClientConfig {
@@ -110,7 +110,13 @@ impl ClientConfigBuilder {
         let auth_base_url = self
             .auth_base_url
             .as_deref()
-            .map(normalize_base_url)
+            .map(|raw| {
+                service_origin(raw, "auth_base_url", &AUTH)
+                    .map(|url| url.origin().ascii_serialization())
+                    .map_err(|message| {
+                        Error::new(ErrorKind::Validation, "invalid_auth_base_url", message)
+                    })
+            })
             .transpose()?;
         Ok(ClientConfig {
             auth_base_url,

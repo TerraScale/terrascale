@@ -14,10 +14,6 @@ import (
 	"unicode"
 )
 
-// publicAuthBaseURL is the fixed global ts-auth origin. Every tenant issues
-// from https://auth.terrascale.tech/<slug>.
-const publicAuthBaseURL = "https://auth.terrascale.tech"
-
 // TSAuthClient calls a hosted ts-auth deployment's OpenID Connect provider
 // for an application that signs users in with the redirect flow (authorization
 // code with PKCE). Call Instance with the tenant slug. The platform management
@@ -30,11 +26,7 @@ func (t *TSAuthClient) Instance(slug string) (*TSAuthInstanceClient, error) {
 	if err := tsAuthValidateSlug(slug); err != nil {
 		return nil, err
 	}
-	base, err := tsAuthResolveBase(t.c.cfg)
-	if err != nil {
-		return nil, err
-	}
-	i := &TSAuthInstanceClient{c: t.c, slug: slug, base: base}
+	i := &TSAuthInstanceClient{c: t.c, slug: slug, base: t.c.cfg.TSAuthBaseURL}
 	i.OIDC = &TSAuthOIDCClient{i: i}
 	return i, nil
 }
@@ -63,15 +55,6 @@ func tsAuthNoRedirectClient(client *http.Client) *http.Client {
 	copy := *client
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &copy
-}
-
-// tsAuthResolveBase picks the ts-auth origin: the global auth host, unless
-// TSAuthBaseURL overrides it for a dev or test deployment.
-func tsAuthResolveBase(cfg Config) (string, error) {
-	if cfg.TSAuthBaseURL == "" {
-		return publicAuthBaseURL, nil
-	}
-	return resolveServiceBase(cfg.TSAuthBaseURL, "ts_auth_base_url", true)
 }
 
 // tsAuthAnySuccess accepts any 2xx answer without touching the body: the

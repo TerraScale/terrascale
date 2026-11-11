@@ -24,6 +24,14 @@ key; `createScopedKey` uses the same origin. `authBaseUrl` without `apiKey` is
 refused. Earlier versions sent the key to `https://auth.terrascale.tech` for
 every TerraBase origin.
 
+`baseUrl`, `authBaseUrl` and the identity clients' `apiBaseUrl` follow the origin
+rule every SDK shares (`sdk/SQL-API.md`): https, or http only for `localhost`,
+`127.0.0.0/8` and `[::1]` (no longer `*.localhost`, or `*.test` next to a custom
+`fetch`); no user info, query, fragment or path, where a `baseUrl` path prefix
+was kept before; and a `terrascale.tech` host only for its own service, so
+`authBaseUrl` refuses `api.terrascale.tech` and its regional hosts. The client
+throws a `TypeError` when it is built.
+
 `execute` on a database, on a SQL session and inside `transaction` also takes
 one `{ sql, args }` or `{ sql, named }` statement value. Arguments next to a
 statement value, or any other value, are refused with a `TypeError` before

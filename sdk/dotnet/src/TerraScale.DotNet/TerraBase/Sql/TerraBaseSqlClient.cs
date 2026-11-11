@@ -92,7 +92,7 @@ public sealed partial class TerraBaseSqlClient
 
     private static Uri AuthOrigin(TerraBaseSqlClientOptions options) => options switch
     {
-        { AuthAddress: { } auth } => TerraBaseConnection.Origin(auth, nameof(options), nameof(options.AuthAddress), "ts-auth"),
+        { AuthAddress: { } auth } => TerraScaleOrigin.Parse(auth, nameof(options.AuthAddress), nameof(options), TerraScaleService.Auth, netBird: true),
         { EndpointResolver: null, BaseAddress: null } => TerraScaleApiKeyTokens.ProductionOrigin,
         { EndpointResolver: null, BaseAddress: { } address } when address == TerraBaseRegion.PublicOrigin => TerraScaleApiKeyTokens.ProductionOrigin,
         _ => throw new ArgumentException(

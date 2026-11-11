@@ -3,13 +3,14 @@ clients, plus the retry rule."""
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import random
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -23,6 +24,65 @@ USER_AGENT_PREFIX = "terrascale-python/"
 REGION_PIN = "X-TerraScale-Region-Pin"
 MAX_ATTEMPTS = 4
 MAX_BACKOFF = 30.0
+API_SERVICE = ("api.terrascale.tech", True, "the TerraBase API")
+AUTH_SERVICE = ("auth.terrascale.tech", False, "ts-auth")
+DEFAULT_ISSUER = "https://auth.terrascale.tech/terrascale"
+
+
+def loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _serves(service: tuple[str, bool, str], host: str) -> bool:
+    if host != "terrascale.tech" and not host.endswith(".terrascale.tech"):
+        return True
+    own, regional, _ = service
+    label = host.removesuffix("." + own)
+    return host == own or regional and label != host and label != "" and "." not in label
+
+
+def split_origin(raw: str, what: str, service: tuple[str, bool, str]) -> tuple[str, str]:
+    try:
+        parts = urlsplit(raw)
+        port = parts.port
+    except ValueError:
+        raise ValueError(f"{what} must be an absolute https URL") from None
+    host = parts.hostname or ""
+    if not host:
+        raise ValueError(f"{what} must be an absolute https URL")
+    if parts.scheme != "https" and not (parts.scheme == "http" and loopback(host)):
+        raise ValueError(f"{what} must use https; plain http is allowed only for localhost, 127.0.0.0/8 and [::1]")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError(f"{what} must not carry user info")
+    if parts.query or parts.fragment or "?" in raw or "#" in raw:
+        raise ValueError(f"{what} must not carry a query or a fragment")
+    if not _serves(service, host):
+        raise ValueError(f"{what} names a TerraScale host that does not serve {service[2]}")
+    shown = f"[{host}]" if ":" in host else host
+    if port is not None and (parts.scheme, port) not in (("https", 443), ("http", 80)):
+        shown += f":{port}"
+    return f"{parts.scheme}://{shown}", parts.path.rstrip("/")
+
+
+def service_origin(raw: str, what: str, service: tuple[str, bool, str]) -> str:
+    base, path = split_origin(raw, what, service)
+    if path:
+        raise ValueError(f"{what} must be an origin without a path")
+    return base
+
+
+def issuer_parts(issuer: str | None) -> tuple[str, str]:
+    base, path = split_origin(issuer or DEFAULT_ISSUER, "issuer", AUTH_SERVICE)
+    if path.count("/") != 1:
+        raise ValueError("issuer must be a ts-auth origin followed by one tenant segment")
+    return base, path
+
+
 # 503 codes that mean "try again later". storage_busy and unavailable are the
 # live API's documented 503 codes (openapi/v1.json).
 TRANSIENT = frozenset({

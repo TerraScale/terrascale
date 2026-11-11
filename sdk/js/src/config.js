@@ -1,4 +1,4 @@
-import { isDataApiHostname } from "./native-origin.js";
+import { authService, serviceOrigin } from "./origin.js";
 
 /**
  * Shared fetch signature; native database and hosted identity credentials stay distinct.
@@ -64,51 +64,7 @@ export function resolveTsAuthRuntimeConfig(config) {
       "requestTimeoutMs must be an integer between 0 and 300000.",
     );
   }
-  const apiBaseUrl = config.apiBaseUrl.trim().replace(/\/+$/u, "");
-  /** @type {URL} */
-  let url;
-  try {
-    url = new URL(apiBaseUrl);
-  } catch {
-    return { apiBaseUrl, maxRetryAttempts, retryDelayMs, requestTimeoutMs };
-  }
-  if (isDataApiHostname(url.hostname)) {
-    throw new TypeError("Database API hosts cannot be used as an auth origin.");
-  }
-  for (const key of url.searchParams.keys()) {
-    if (
-      /(?:auth|cookie|credential|key|pass(?:word)?|secret|session|token)/iu.test(
-        key,
-      )
-    )
-      throw new TypeError(
-        "ts-auth origins cannot contain secret-bearing query parameters.",
-      );
-  }
-  if (
-    url.username !== "" ||
-    url.password !== "" ||
-    url.pathname !== "/" ||
-    url.search !== "" ||
-    url.hash !== ""
-  ) {
-    throw new TypeError(
-      "The ts-auth apiBaseUrl must be a bare origin without credentials, a path, query, or fragment.",
-    );
-  }
-  const hostname = url.hostname.toLowerCase();
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
-  const testTransport =
-    config.fetch !== undefined &&
-    (hostname === "test" || hostname.endsWith(".test"));
-  if (
-    url.protocol !== "https:" &&
-    !(url.protocol === "http:" && (loopback || testTransport))
-  ) {
-    throw new TypeError(
-      "ts-auth endpoints require HTTPS except explicit loopback/test transports.",
-    );
-  }
+  const apiBaseUrl = serviceOrigin(config.apiBaseUrl, "apiBaseUrl", authService);
   return { apiBaseUrl, maxRetryAttempts, retryDelayMs, requestTimeoutMs };
 }
 

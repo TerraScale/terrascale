@@ -89,31 +89,6 @@ public sealed record TerraScaleAuthClientOptions
         }
     }
 
-    internal static void ValidateEndpoint(Uri endpoint, string name)
-    {
-        if (!endpoint.IsAbsoluteUri)
-        {
-            throw new ArgumentException("The ts-auth base address must be absolute.", name);
-        }
-
-        if (endpoint.UserInfo.Length != 0 || endpoint.Query.Length != 0 || endpoint.Fragment.Length != 0 || endpoint.AbsolutePath is not ("" or "/"))
-        {
-            throw new ArgumentException("The ts-auth base address must be an origin without credentials, paths, queries, or fragments.", name);
-        }
-
-        if (endpoint.Scheme is not ("http" or "https"))
-        {
-            throw new ArgumentException("The ts-auth base address must use HTTP or HTTPS.", name);
-        }
-
-        if (endpoint.Scheme == "http" && !IsLoopbackOrTestHost(endpoint.Host))
-        {
-            throw new ArgumentException("HTTP is allowed only for loopback or explicit test endpoints; production endpoints must use HTTPS.", name);
-        }
-    }
-
-    private static bool IsLoopbackOrTestHost(string host) =>
-        string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".test", StringComparison.OrdinalIgnoreCase) ||
-        IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
+    internal static void ValidateEndpoint(Uri endpoint, string name) =>
+        _ = TerraScaleOrigin.Parse(endpoint, "The ts-auth base address", name, TerraScaleService.Auth, netBird: false);
 }

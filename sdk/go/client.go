@@ -12,13 +12,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+
+	"terrascale.tech/sdk/internal/origin"
 )
 
 // Public protocol limits (GOAL D-32). These limits are applied before a
@@ -59,16 +59,14 @@ func ParseRegionCode(s string) (RegionCode, error) {
 }
 
 // DefaultAPIBaseURL is the fixed global public API origin.
-const DefaultAPIBaseURL = "https://" + publicAPIHostname
+const DefaultAPIBaseURL = "https://api.terrascale.tech"
 
 // Config configures a Client. Hosts are fixed: every client uses the global
 // API and auth origins unless a base URL is overridden for a dev or test
 // deployment.
 type Config struct {
 	// APIBaseURL is the public API origin. Empty means DefaultAPIBaseURL.
-	APIBaseURL string
-	// TSAuthBaseURL is the ts-auth origin used by the TSAuth family. Empty
-	// means the global auth origin, publicAuthBaseURL.
+	APIBaseURL    string
 	TSAuthBaseURL string
 	// StatusBaseURL overrides the public ts-status origin (default
 	// https://status.terrascale.tech).
@@ -90,41 +88,13 @@ type Client struct {
 // NewClient validates local configuration and constructs a Client;
 // successful construction does not establish service readiness.
 func NewClient(cfg Config) (*Client, error) {
-	base := strings.TrimSpace(cfg.APIBaseURL)
-	if base == "" {
-		base = DefaultAPIBaseURL
-	}
-	base = strings.TrimSuffix(base, "/")
-	u, err := url.Parse(base + "/")
+	base, err := origin.Parse(cmp.Or(strings.TrimSpace(cfg.APIBaseURL), DefaultAPIBaseURL), origin.API)
 	if err != nil {
-		return nil, fmt.Errorf("sdk: invalid API base URL %q: %w", cfg.APIBaseURL, err)
+		return nil, &ValidationError{Field: "api_base_url", Message: err.Error()}
 	}
-	if base != "" && ((u.Scheme != "http" && u.Scheme != "https") || u.Host == "") {
-		return nil, fmt.Errorf("sdk: API base URL must be an absolute http or https URL")
-	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		return nil, fmt.Errorf("sdk: API base URL must not contain a query or fragment")
-	}
-	if u.User != nil {
-		return nil, fmt.Errorf("sdk: API base URL must not contain userinfo")
-	}
-	if u.Scheme == "http" {
-		host := strings.ToLower(u.Hostname())
-		loopback := host == "localhost"
-		if ip := net.ParseIP(host); ip != nil {
-			loopback = ip.IsLoopback()
-		}
-		if !loopback {
-			return nil, fmt.Errorf("sdk: API endpoints must use HTTPS, except loopback test transports")
-		}
-	}
-	lowerHost := strings.ToLower(u.Hostname())
-	if strings.Contains(lowerHost, "tbep") || strings.Contains(lowerHost, "terrabase") {
-		return nil, fmt.Errorf("sdk: clients may target only the public API, not TBEP or TerraBase")
-	}
-	lowerPath := strings.ToLower(u.EscapedPath())
-	if strings.Contains(lowerPath, "tbep") || strings.Contains(lowerPath, "terrabase") {
-		return nil, fmt.Errorf("sdk: clients may target only the public API, not TBEP or TerraBase")
+	authBase, err := origin.Parse(cmp.Or(strings.TrimSpace(cfg.TSAuthBaseURL), origin.Auth.Default()), origin.Auth)
+	if err != nil {
+		return nil, &ValidationError{Field: "ts_auth_base_url", Message: err.Error()}
 	}
 
 	statusBase, err := statusResolveBase(cfg.StatusBaseURL)
@@ -143,7 +113,7 @@ func NewClient(cfg Config) (*Client, error) {
 
 	c := &Client{cfg: Config{
 		APIBaseURL:    base,
-		TSAuthBaseURL: strings.TrimSpace(cfg.TSAuthBaseURL),
+		TSAuthBaseURL: authBase,
 		StatusBaseURL: statusBase,
 		HTTPClient:    httpClient,
 	}, http: httpClient}

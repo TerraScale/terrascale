@@ -35,6 +35,21 @@ Python `issuer=`); .NET, Go and Rust refuse.
 A token source built separately (Go `tsauth.NewAPIKeySource`, Python `APIKeyTokenSource`) sends the key to the issuer
 it is given, `https://auth.terrascale.tech/terrascale` by default, whatever origin the client that uses it sends to.
 
+Every SDK checks the TerraBase origin (`BaseAddress`, `baseUrl`, `Config.BaseURL`, `base_url`, `endpoint`) and the
+ts-auth origin (the options above, .NET `TerraScaleAuthClientOptions.BaseAddress`, JS/TS `apiBaseUrl`, Go
+`Config.TSAuthBaseURL` and `tsauth` `Issuer`, Rust `ClientConfig::auth_base_url`) with one rule when the client is built,
+before any request:
+
+| Part | Rule |
+|---|---|
+| Scheme | `https`. `http` only for a loopback host: `localhost`, an IPv4 address in `127.0.0.0/8` or `[::1]`. .NET also takes `http` to a NetBird `100.64.0.0/10` address for TerraBase's private listener and for `AuthAddress`. |
+| Host case | Any case; the SDK uses it in lower case. |
+| Default port | `:443` (`:80` for `http`) is the same origin as no port; any other port is kept. |
+| Path | None; a trailing `/` is allowed. An issuer (Go `tsauth`, Python `issuer=`) is the ts-auth origin and one tenant segment, such as `/terrascale`. |
+| Query, fragment | Refused, also when empty (`?`, `#`). |
+| User info | Refused. |
+| TerraScale's own hosts | Under `terrascale.tech` the TerraBase origin is `api.terrascale.tech` or `<region>.api.terrascale.tech`, and the ts-auth origin is `auth.terrascale.tech`; any other `terrascale.tech` host is refused. An API key goes to `https://auth.terrascale.tech` only when the TerraBase origin is `https://api.terrascale.tech` in any case, with or without `:443` and `/`. |
+
 ## Databases for agents
 
 One database per agent, session or test run: create it, fork it, let it expire, and hand the agent a key that reaches

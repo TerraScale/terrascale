@@ -6,6 +6,7 @@ pub mod auth_projects;
 pub mod client;
 pub mod config;
 pub mod error;
+mod origin;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 pub mod regions;

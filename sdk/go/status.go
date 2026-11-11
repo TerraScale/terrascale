@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"terrascale.tech/sdk/internal/origin"
 )
 
 // DefaultStatusBaseURL is the public ts-status origin.
@@ -67,5 +69,9 @@ func statusResolveBase(raw string) (string, error) {
 	if base == "" {
 		return DefaultStatusBaseURL, nil
 	}
-	return resolveServiceBase(base, "status_base_url", false)
+	status, err := origin.Parse(base, origin.Status)
+	if err != nil {
+		return "", &ValidationError{Field: "status_base_url", Message: err.Error()}
+	}
+	return status, nil
 }
