@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Organizations;
 
 namespace TerraScale.Dashboard.Features.Settings
@@ -34,7 +33,7 @@ namespace TerraScale.Dashboard.Features.Settings
     }
     public sealed record ProjectSettings(string ProjectId, string ProjectName, int AuditRetentionDays, bool CanManage, bool ProjectCanBeDeleted);
 
-    public sealed class SettingsService(AccountService accounts, ISettingsBackend backend, OrganizationLifecycleService lifecycle, BackupService backups, TimeProvider time)
+    public sealed class SettingsService(AccountService accounts, ISettingsBackend backend, OrganizationLifecycleService lifecycle, TimeProvider time)
     {
         public async Task<ProjectSettings> ReadAsync(AccountContext context, CancellationToken cancellationToken)
         {
@@ -95,17 +94,6 @@ namespace TerraScale.Dashboard.Features.Settings
             }
 
             await lifecycle.DeleteProjectAsync(context, projectId, confirmation, cancellationToken);
-        }
-        public async Task CreateBackupAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
-        {
-            context = await FreshAsync(context, true, cancellationToken);
-            await backups.CreateAsync(context, databaseId, cancellationToken);
-        }
-        public async Task SetBackupPolicyAsync(AccountContext context, string databaseId, string fullBackupCron,
-            string incrementalBackupCron, int retentionDays, CancellationToken cancellationToken)
-        {
-            context = await FreshAsync(context, true, cancellationToken);
-            await backups.SetPolicyAsync(context, databaseId, fullBackupCron, incrementalBackupCron, retentionDays, cancellationToken);
         }
         private async Task<AccountContext> FreshAsync(AccountContext context, bool manage, CancellationToken cancellationToken)
         {
