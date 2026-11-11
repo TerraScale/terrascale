@@ -1,10 +1,10 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationMemberModel>
 @using TerraScale.Dashboard.Features.Organizations
-<tr>
-    <td><div class="ts-row ts-access-member"><span class="ts-avatar" aria-hidden="true">@(Model.Initials.Length > 0 ? Model.Initials : "?")</span><div class="ts-list-main"><span class="ts-strong ts-truncate">@Model.DisplayName</span><span class="ts-meta ts-truncate">@Model.Member.Email</span></div></div></td>
-    <td><code class="ts-meta">@Model.Member.UserId</code></td><td><span class="ts-badge ts-badge-neutral"><span class="ts-dot" aria-hidden="true"></span>@(Model.Member.Role == "owner" ? "Organization Owner" : OrganizationPage.RoleLabel(Model.Member.Role))</span></td>
-    <td class="ts-meta ts-access-date">@(Model.Member.CreatedAt != DateTimeOffset.MinValue ? Model.Member.CreatedAt.UtcDateTime.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture) : Model.Member.JoinedOn?.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture) ?? "Not reported")</td>
-    <td class="ts-table-actions">
+<tr role="row">
+    <td role="cell"><div class="ts-row ts-access-member"><span class="ts-avatar" aria-hidden="true">@(Model.Initials.Length > 0 ? Model.Initials : "?")</span><div class="ts-list-main"><span class="ts-strong ts-truncate">@Model.DisplayName</span><span class="ts-meta ts-truncate">@Model.Member.Email</span></div></div></td>
+    <td role="cell"><code class="ts-meta">@Model.Member.UserId</code></td><td role="cell"><span class="ts-badge ts-badge-neutral"><span class="ts-dot" aria-hidden="true"></span>@(Model.Member.Role == "owner" ? "Organization Owner" : OrganizationPage.RoleLabel(Model.Member.Role))</span></td>
+    <td class="ts-meta ts-access-date" role="cell">@(Model.Member.CreatedAt != DateTimeOffset.MinValue ? Model.Member.CreatedAt.UtcDateTime.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture) : Model.Member.JoinedOn?.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture) ?? "Not reported")</td>
+    <td class="ts-table-actions" role="cell">
     @if (Model.CanEdit)
     {
         <div class="ts-row ts-row-end"><form class="ts-row" method="post" action="@("/api/v1/access/members/" + Uri.EscapeDataString(Model.Member.UserId) + "/role?tab=members")"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><label class="ts-sr-only" for="role-@Model.Member.UserId">Role for @Model.DisplayName</label><select class="ts-select ts-input-sm ts-access-role" id="role-@Model.Member.UserId" name="role" required>@if (Model.Member.Role is not ("viewer" or "member" or "admin")) { <option value="" selected disabled>@OrganizationPage.RoleLabel(Model.Member.Role)</option> }<option value="viewer" selected="@(Model.Member.Role == "viewer" ? "selected" : null)">Viewer</option><option value="member" selected="@(Model.Member.Role == "member" ? "selected" : null)">Member</option><option value="admin" selected="@(Model.Member.Role == "admin" ? "selected" : null)">Admin</option></select><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save role</button></form>
