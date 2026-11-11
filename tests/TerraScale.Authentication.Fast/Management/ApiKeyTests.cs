@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Tests;
 using static TerraScale.Authentication.Tests.PlatformCalls;
 
@@ -76,20 +78,23 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task The_21st_key_a_user_creates_within_the_hour_answers_429_with_retry_after()
+    public async Task The_21st_key_a_user_creates_within_the_hour_answers_429_with_retry_after(CancellationToken cancellationToken)
     {
         var clock = new ManualClock(DateTimeOffset.UtcNow);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        var (_, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("frank"));
+        var (user, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("frank"));
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Production");
         var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
 
-        for (var created = 1; created <= 20; created++)
+        var limiter = oidc.Server.App.Services.GetRequiredService<AttemptLimiter>();
+        for (var seeded = 1; seeded < ApiKeys.CreationsPerUserPerHour; seeded++)
         {
-            using var response = await CreateAsync($"key {created}");
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(await limiter.AcquireAsync(PlatformDirectory.Instance, "api-key-create", user.Id, ApiKeys.CreationsPerUserPerHour, TimeSpan.FromHours(1), cancellationToken)).IsNull();
         }
+
+        using var last = await CreateAsync("the 20th");
+        await Assert.That(last.StatusCode).IsEqualTo(HttpStatusCode.Created);
 
         using var limited = await CreateAsync("one too many");
         await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
@@ -100,7 +105,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         {
             using var create = new HttpRequestMessage(HttpMethod.Post, keys) { Content = JsonContent.Create(new { name, scopes = ReadWrite }) };
             create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            return await oidc.Client.SendAsync(create);
+            return await oidc.Client.SendAsync(create, cancellationToken);
         }
     }
 
