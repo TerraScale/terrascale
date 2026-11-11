@@ -2,7 +2,8 @@
 
 A successful database DELETE destroys its wrapped envelope keys before returning 204. If custody cannot confirm
 absence, DELETE returns 503 and durable erasure work retries. Project and account deletion apply the same authority
-to every database they own; the project closure request destroys those keys before it answers `accepted`.
+to every database they own; a project closure answers `accepted` only once those keys are destroyed, by its own
+request when they fit in its 10-second erasure budget, otherwise by the purge passes or a later request.
 
 The [F11 deletion contract](crypto-shredding-f11.md) specifies key custody, persisted-copy protection, regional
 convergence, CDN purge retries and the format reset. Wrapped keys live in the existing R2 custody prefix outside

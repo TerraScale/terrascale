@@ -39,11 +39,17 @@ after a lost response, a restart or a repeated request presents the same identit
   project. Registration (`CanAddDatabaseAsync`: create, branch, copy/restore, adoption) and enrollment
   (`ResolveProjectAsync` with `create`) read the fence in their committing transaction, so after a machine's receipt no
   database of the project can be registered on that machine.
-- The closure request erases what it can on its machine before it answers: for each database the closure tracks
-  (`project_closure_purges/<project>`) it deletes the local files and destroys the backup keys, as a database DELETE
-  does, then refreshes this machine's receipt until the purge-history scan stops advancing. A closure whose holders are
-  all this machine answers `200 accepted` in the same request; erasure that fails there stays pending for the
-  convergence and purge passes.
+- After the fence, the request erases on its machine, for at most 10 seconds, the first 100 purges the closure tracks
+  (`project_closure_purges/<project>`, read once): for each it deletes the local files, then destroys the backup key
+  scopes, each managed snapshot's and then the database's own, as a database DELETE does. A failed file deletion does
+  not stop the key destruction. Each scope is recorded as destroyed (`keysShreddedAt` of
+  `backup_purge_progress/<id>`) only after its keys are gone, so the next request and the purge passes go on from the
+  first scope not recorded. Once the 10 seconds are spent no further database or key scope starts. The request then
+  refreshes this machine's receipt until the purge-history scan stops advancing and answers `200 accepted` only when
+  every holder's receipt is empty. It answers `202 pending`, and the convergence, purge and backup-erasure passes and
+  the next request continue, while a client session holds a database open, a peer region has not confirmed a key
+  destruction, the project has more than 100 databases or tracked purges, the 10 seconds ran out, or a purge was found
+  only by the purge-history scan.
 - A replicated version-2 erasure fence whose authority organization conflicts with the local storage binding never
   erases local contents. Convergence records this holder's receipt as non-empty, keeping closure pending until the
   binding agrees and erasure can be verified.
