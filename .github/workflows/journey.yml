@@ -74,17 +74,15 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         if: matrix.sdk == 'go'
         with:
-          install: false
+          go-version-file: sdk/go/.go-version
+          cache: false
       - name: Install the pinned toolchain
         run: |
           echo "E2E_SDK_BUILD=$RUNNER_TEMP/sdk" >> "$GITHUB_ENV"
-          case "$SDK" in
-            go) mise use -g "go@$(cat sdk/go/.go-version)"; dirname "$(mise which go)" >> "$GITHUB_PATH" ;;
-            rust) rustup toolchain install 1.99.1 --profile minimal ;;
-          esac
+          if [ "$SDK" = rust ]; then rustup toolchain install 1.99.1 --profile minimal; fi
       - id: cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -189,6 +187,7 @@ jobs:
         run: |
           mv "$E2E_BUILD/sdk/dotnet" "$E2E_SDK_BUILD/dotnet"
           chmod +x "$E2E_SDK_BUILD/go/runner" "$E2E_SDK_BUILD/rust/runner"
+          bash env/tools.sh
           bash sdk/build.sh python > "$RUNNER_TEMP/python-runner.log" 2>&1 &
           python=$!
           bash sdk/build.sh js > "$RUNNER_TEMP/js-runner.log" 2>&1 &
@@ -200,8 +199,6 @@ jobs:
       - id: trust
         name: Pin the production names and trust the run CA
         run: |
-          sudo apt-get install -y --no-install-recommends libnss3-tools > /dev/null
-          bash e2e/env/tools.sh
           bash e2e/env/pki.sh
           bash e2e/env/install-runner.sh
       - name: Boot the stack
@@ -249,7 +246,7 @@ jobs:
             ~/.npm
             ~/.cache/pip
           key: ${{ steps.packages.outputs.cache-primary-key }}
-      - if: always() && steps.trust.outcome == 'success' && steps.tools.outputs.cache-hit != 'true'
+      - if: always() && steps.install.outcome == 'success' && steps.tools.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/terrascale-e2e

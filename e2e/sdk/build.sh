@@ -17,8 +17,10 @@ case $sdk in
     install -D "${CARGO_TARGET_DIR:-$here/rust/target}/release/terrascale-e2e-runner" "$out/rust/runner"
     ;;
   python)
-    python3 -m venv "$out/python"
-    "$out/python/bin/pip" install --quiet --disable-pip-version-check "$repo/sdk/python"
+    uv=${E2E_TOOLS:?E2E_TOOLS holds the pinned tools}/uv
+    "$uv" venv --quiet --clear --python 3.12 --no-python-downloads "$out/python"
+    "$uv" pip sync --quiet --python "$out/python/bin/python" --require-hashes --only-binary :all: "$repo/sdk/python/requirements-ci.txt"
+    "$uv" pip install --quiet --python "$out/python/bin/python" --no-deps --no-build-isolation "$repo/sdk/python"
     ;;
   js)
     npm ci --prefix "$repo/sdk/js" --omit=dev --no-audit --no-fund
