@@ -74,9 +74,18 @@ public sealed partial class StripeBilling
 
     private static async Task<bool> CancelDraftSubscriptionAsync(StripeClient client, string subscriptionId, CancellationToken cancellationToken)
     {
+        Subscription subscription;
         try
         {
-            var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId, cancellationToken: cancellationToken);
+            subscription = await client.V1.Subscriptions.GetAsync(subscriptionId, cancellationToken: cancellationToken);
+        }
+        catch (StripeException error) when (PermanentStripeFailure(error))
+        {
+            return false;
+        }
+
+        try
+        {
             if (subscription.Status is not ("canceled" or "incomplete_expired"))
             {
                 try
@@ -121,7 +130,7 @@ public sealed partial class StripeBilling
             {
                 refunded += refund.Amount;
             }
-            if (refund.Status is "failed" or "canceled" && string.CompareOrdinal(refund.Id, lastFailure) > 0)
+            if (refund.Status is "failed" or "canceled" && lastFailure.Length == 0)
             {
                 lastFailure = refund.Id;
             }
