@@ -241,7 +241,6 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<DatabaseGrantsEndpoint>(),
                 EndpointRegistration.Create<DatabaseGrantsDeleteEndpoint>(),
                 EndpointRegistration.Create<DatabasePlacementEndpoint>(),
-                EndpointRegistration.Create<DatabaseMoveHomeEndpoint>(),
                 EndpointRegistration.Create<DatabaseSettingsPageEndpoint>(),
                 EndpointRegistration.Create<RenameDatabaseEndpoint>(),
                 EndpointRegistration.Create<FunctionsPageEndpoint>(),

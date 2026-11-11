@@ -1,0 +1,327 @@
+[data-region-surface] {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.ts-region-map {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+  touch-action: manipulation;
+}
+
+.ts-region-map[data-bleed="true"] {
+  position: static;
+  isolation: auto;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.ts-region-map-sea {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.ts-region-map-stage {
+  container-type: inline-size;
+}
+
+.ts-region-map-room {
+  height: clamp(320px, 50cqi, 460px);
+}
+
+.ts-region-map-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+.ts-region-node {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button.ts-region-node {
+  cursor: pointer;
+}
+
+.ts-region-node-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: var(--ts-ink-2);
+  box-shadow: 0 0 0 3px var(--ts-surface);
+  pointer-events: none;
+  transform: scale(0.8);
+  transition: transform var(--ts-base) var(--ts-ease), background-color var(--ts-base) var(--ts-ease), box-shadow var(--ts-base) var(--ts-ease);
+}
+
+.ts-region-node[data-hot] .ts-region-node-core {
+  background: var(--ts-ink);
+  transform: scale(1);
+}
+
+.ts-region-node[data-selected="true"] .ts-region-node-core {
+  background: var(--ts-link);
+  box-shadow: 0 0 0 3px var(--ts-surface), 0 0 0 4.5px var(--ts-link);
+  transform: scale(1.2);
+}
+
+.ts-region-callouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-region-callouts:has(> [data-docked]) {
+  padding: 0 var(--ts-s3) var(--ts-s3);
+}
+
+.ts-region-map[data-bleed="true"] .ts-region-callouts:has(> [data-docked]) {
+  padding: var(--ts-s3) 0 0;
+}
+
+.ts-region-callout {
+  display: block;
+  width: max-content;
+  max-width: 252px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+  transition: border-color var(--ts-fast) var(--ts-ease), opacity var(--ts-base) var(--ts-ease);
+}
+
+.ts-region-callout[data-hot] {
+  border-color: var(--ts-control-line);
+}
+
+.ts-region-callout[data-selected="true"] {
+  border-color: color-mix(in oklab, var(--ts-link) 60%, transparent);
+}
+
+.ts-region-callout:has(input:focus-visible) {
+  outline: 2px solid var(--ts-focus);
+  outline-offset: 2px;
+}
+
+.ts-region-callout-body {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  min-width: 0;
+  padding: 9px 10px;
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+label.ts-region-callout-body {
+  cursor: pointer;
+  user-select: none;
+}
+
+.ts-region-map[data-mode="read-only"] .ts-region-callout-body {
+  padding: 6px var(--ts-s2);
+}
+
+.ts-region-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+.ts-region-mark > * {
+  grid-area: 1 / 1;
+  transition: opacity var(--ts-base) var(--ts-ease);
+}
+
+.ts-region-mark > input {
+  cursor: pointer;
+}
+
+.ts-region-busy {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--ts-link);
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ts-region-flag {
+  display: block;
+  flex: none;
+  width: 20px;
+  height: 15px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--ts-line-strong);
+  object-fit: cover;
+}
+
+.ts-region-flag-none {
+  display: grid;
+  place-items: center;
+  color: var(--ts-ink-3);
+  box-shadow: none;
+}
+
+.ts-region-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ts-region-code {
+  margin-left: auto;
+  padding-left: var(--ts-s1);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  font-weight: 400;
+}
+
+.ts-region-detail {
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.ts-region-map-status {
+  min-height: 18px;
+  margin: 0;
+  padding: 0 var(--ts-s3);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  line-height: 18px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity var(--ts-base) var(--ts-ease);
+}
+
+.ts-region-map-status[data-shown] {
+  opacity: 1;
+}
+
+.ts-region-map[data-busy] .ts-region-node,
+.ts-region-map[data-busy] .ts-region-callout-body {
+  pointer-events: none;
+}
+
+.ts-region-map[data-busy] .ts-region-mark > input {
+  opacity: 0;
+}
+
+.ts-region-map[data-busy] .ts-region-callout[data-selected="true"] .ts-region-busy {
+  opacity: 1;
+  animation: ts-region-spin 800ms linear infinite;
+}
+
+.ts-region-map[data-busy] .ts-region-callout[data-selected="false"] {
+  opacity: 0.4;
+}
+
+.ts-region-callout[data-refused] .ts-region-callout-body {
+  animation: ts-region-refuse 300ms var(--ts-ease);
+}
+
+@keyframes ts-region-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ts-region-refuse {
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
+@media (scripting: enabled) {
+  .ts-region-map-art {
+    display: none;
+  }
+
+  .ts-region-node {
+    opacity: 0;
+    transition: opacity var(--ts-base) var(--ts-ease);
+  }
+
+  .ts-region-map[data-ready] .ts-region-node {
+    opacity: 1;
+  }
+
+  .ts-region-callout:not([data-docked]) {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+  }
+
+  .ts-region-callout:not([data-docked], [data-placed]) {
+    visibility: hidden;
+  }
+}
+
+@media (scripting: none) {
+  .ts-region-map-sea,
+  .ts-region-node {
+    display: none;
+  }
+
+  .ts-region-callouts {
+    padding: var(--ts-s3);
+  }
+}
+
+@media (max-width: 560px) {
+  .ts-region-map-room {
+    height: 360px;
+  }
+
+  .ts-region-callout {
+    max-width: 168px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-region-map[data-busy] .ts-region-callout[data-selected="true"] .ts-region-busy {
+    border-top-color: var(--ts-link);
+    animation: none;
+  }
+
+  .ts-region-callout[data-refused] .ts-region-callout-body {
+    animation: none;
+  }
+}

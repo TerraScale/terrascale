@@ -17,6 +17,7 @@
 @import "overlays.css" layer(components);
 @import "auth.css" layer(components);
 @import "sdk-tabs.css" layer(components);
+@import "../../../Common/UI/region-map.css" layer(components);
 
 /* Feature styles. */
 @import "../../../Features/Home/home.css" layer(features);

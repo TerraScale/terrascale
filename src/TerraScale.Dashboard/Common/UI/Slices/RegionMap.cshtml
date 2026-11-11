@@ -1,12 +1,45 @@
-@inherits RazorSlice
+@inherits RazorSlice<RegionMapModel>
 @inject AssetUrls Assets
-<div class="ts-region-map" aria-hidden="true" data-highlights="GRU,FRA,SJC">
-    <img class="ts-region-map-image" src="@Assets.Url("brand/region-map.svg")" alt="" loading="lazy" decoding="async" />
-    <svg class="ts-region-overlay" viewBox="0 0 136 80" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-        <path class="ts-region-arc" d="M 21.00 28.58 Q 35.50 19.76 50.00 59.76" />
-        <path class="ts-region-arc" d="M 50.00 59.76 Q 35.50 19.76 21.00 28.58" />
-    </svg>
-    <span class="ts-region-node" data-region="SJC"><span class="ts-region-node-ring"></span><span class="ts-region-node-core"></span></span>
-    <span class="ts-region-node" data-region="GRU"><span class="ts-region-node-ring"></span><span class="ts-region-node-core"></span></span>
-    <span class="ts-region-node" data-region="FRA"><span class="ts-region-node-ring"></span><span class="ts-region-node-core"></span></span>
+@{
+    var regions = Model.Shown;
+}
+<div class="ts-region-map" id="@Model.Id" role="group" aria-labelledby="@(Model.LabelledBy.Length > 0 ? Model.LabelledBy : Model.Id + "-label")" data-region-map data-mode="@(Model.Selects ? "select" : "read-only")" data-bleed="@(Model.Bleed ? "true" : "false")">
+    @if (Model.LabelledBy.Length == 0) { <span class="ts-sr-only" id="@(Model.Id)-label">@Model.Label</span> }
+    <canvas class="ts-region-map-sea" aria-hidden="true"></canvas>
+    <div class="ts-region-map-stage" aria-hidden="true"><div class="ts-region-map-room"><img class="ts-region-map-art" src="@Assets.Url("brand/region-map.svg")" alt="" width="136" height="80" loading="lazy" decoding="async" /></div></div>
+    @foreach (var region in regions)
+    {
+        @if (Model.Selects) { <button class="ts-region-node" type="button" tabindex="-1" aria-hidden="true" data-region="@region.Key"><span class="ts-region-node-core"></span></button> }
+        else { <span class="ts-region-node" aria-hidden="true" data-region="@region.Key"><span class="ts-region-node-core"></span></span> }
+    }
+    <ul class="ts-region-callouts">
+        @foreach (var region in regions)
+        {
+            var selected = Model.IsSelected(region);
+            <li class="ts-region-callout" data-region="@region.Key" data-selected="@(selected ? "true" : "false")">
+                @if (Model.Selects)
+                {
+                    <label class="ts-region-callout-body">
+                        <span class="ts-region-mark"><input type="@(Model.Exclusive ? "radio" : "checkbox")" name="@Model.Field" value="@region.Code" checked="@selected" required="@Model.Exclusive" /><i class="ts-region-busy" aria-hidden="true"></i></span>
+                        @if (region.Flag.Length > 0) { <img class="ts-region-flag" src="@Assets.Url($"flags/{region.Flag}.svg")" alt="" width="20" height="15" /> } else { <span class="ts-region-flag ts-region-flag-none">@Icons.Render("Globe", 14)</span> }
+                        <span class="ts-region-name">@region.Title</span>
+                        @if (region.Title != region.Key) { <span class="ts-region-code ts-mono">@region.Key</span> }
+                        @if (region.Detail.Length > 0) { <span class="ts-region-detail">@region.Detail</span> }
+                    </label>
+                }
+                else
+                {
+                    <span class="ts-region-callout-body">
+                        @if (region.Flag.Length > 0) { <img class="ts-region-flag" src="@Assets.Url($"flags/{region.Flag}.svg")" alt="" width="20" height="15" /> } else { <span class="ts-region-flag ts-region-flag-none">@Icons.Render("Globe", 14)</span> }
+                        <span class="ts-region-name">@region.Title</span>
+                        @if (region.Title != region.Key) { <span class="ts-region-code ts-mono">@region.Key</span> }
+                        @if (region.Detail.Length > 0) { <span class="ts-region-detail">@region.Detail</span> }
+                    </span>
+                }
+            </li>
+        }
+    </ul>
+    @if (Model.Selects && Model.OrderField.Length > 0) { <input type="hidden" name="@Model.OrderField" value="@Model.Order" data-region-order /> }
+    @if (Model.Selects && !Model.Exclusive && Model.Minimum.Length > 0) { <p class="ts-region-map-status" role="status" data-region-status data-message="@Model.Minimum"></p> }
 </div>
+<script type="module" src="@Assets.Url("js/region-map.js")"></script>

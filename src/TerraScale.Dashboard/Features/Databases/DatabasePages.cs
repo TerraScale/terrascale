@@ -21,8 +21,15 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         public IReadOnlyList<string> Regions => [.. All.SelectMany(Serving).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Common.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase)];
-        public string? HomeSelection { get; init; }
-        public string HomeRegion => HomeSelection ?? Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase))?.Code ?? (Choices is [var firstRegion, ..] ? firstRegion?.Code ?? "" : "");
+        public IReadOnlyList<string>? Selection { get; init; }
+        public IReadOnlyList<string> Selected => Selection
+            ?? ((Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase)) ?? (Choices is [var first, ..] ? first : null))?.Code is { } code ? [code] : []);
+        public RegionMapModel RegionMap => new("create-database-regions", RegionMapMode.Select, RegionMapModel.Rows(Choices.Select(region => new RegionMapRegion(region.Code, region.Name, region.Country))), Selected)
+        {
+            Bleed = true,
+            OrderField = "regionOrder",
+            Minimum = DatabasePlacementEndpoints.Minimum
+        };
         public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
         public static string Tone(string status)
         {
@@ -171,8 +178,15 @@ namespace TerraScale.Dashboard.Features.Databases
         public AccountContext Context => Shell.Context;
         public IReadOnlyList<DatabaseRecord> Branches => [.. Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal)];
         public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database);
-        public IReadOnlyList<string> Replicas => [.. DatabaseService.Regions(Database).Skip(1)];
         public bool CanPlace => Context.CanManage && Database.Status == "ready" && !PlatformDatabases.IsPlatform(Context.Organization?.Id);
+        public RegionMapModel RegionMap => CanPlace
+            ? new("database-regions", RegionMapMode.Select, RegionMapModel.Rows(Choices.Select(region => new RegionMapRegion(region.Code, region.Name, region.Country))),
+                Database.AllRegions ? [.. Serving.Concat(Choices.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)] : Serving)
+            {
+                LabelledBy = "regions-title",
+                Minimum = DatabasePlacementEndpoints.Minimum
+            }
+            : RegionMapModel.ReadOnly("database-regions", Serving) with { LabelledBy = "regions-title" };
         public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
             : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
         public (string Tone, string Title, HtmlString Body) CreatedState => DatabasesPage.Tone(Database.Status) switch

@@ -101,20 +101,31 @@ namespace TerraScale.Dashboard.Features.Databases
 
             try
             {
-                var home = form.ContainsKey("homeRegion") ? form["homeRegion"].ToString().Trim() : context.Project?.Region ?? "";
-                if (home.Length == 0)
-                {
-                    throw new AccountAccessException("Choose a home region.", 422);
-                }
-
-                var database = await databases.CreateAsync(context, form["name"].ToString(), home, http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()),
-                    [.. form["replicaRegions"].OfType<string>()], form["allRegions"].ToString() is "on" or "true");
+                var regions = Regions(form, context);
+                var database = await databases.CreateAsync(context, form["name"].ToString(), regions[0], http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), [.. regions.Skip(1)]);
                 return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
             }
             catch (Exception error) when (KnownFailure(error))
             {
-                return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null) : Failure(error);
+                return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), selection: Picked(form) ? Chosen(form) : null) : Failure(error);
             }
+        }
+
+        private static bool Picked(IFormCollection form)
+        {
+            return form.ContainsKey("regions") || form.ContainsKey("regionOrder");
+        }
+
+        private static IReadOnlyList<string> Regions(IFormCollection form, AccountContext context)
+        {
+            return Picked(form) ? DatabasePlacementEndpoints.Selection(form, "regionOrder")
+                : context.Project?.Region is { Length: > 0 } region ? [region] : throw new AccountAccessException(DatabasePlacementEndpoints.Minimum, 422);
+        }
+
+        private static IReadOnlyList<string> Chosen(IFormCollection form)
+        {
+            try { return DatabasePlacementEndpoints.Selection(form, "regionOrder"); }
+            catch (AccountAccessException) { return []; }
         }
 
         internal static async Task<IResult> OperateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend, string action)
@@ -188,7 +199,7 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
-            string error = "", bool openCreate = false, string name = "", int status = 200, string? homeRegion = null)
+            string error = "", bool openCreate = false, string name = "", int status = 200, IReadOnlyList<string>? selection = null)
         {
             var synced = await OptionalPanel.RunAsync(http, "database-sync", () => databases.SyncAsync(context, http.RequestAborted));
             var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
@@ -203,7 +214,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
             var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
             var metrics = await metricsRead;
-            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, HomeSelection = homeRegion, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." });
+            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, Selection = selection, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." });
             result.StatusCode = status;
             return result;
         }

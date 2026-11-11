@@ -1,9 +1,4 @@
 @inherits RazorSlice
-@inject AssetUrls Assets
-<div class="ts-auth-map">
-    <svg class="ts-auth-routes" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M16.1 32.8 Q 22 70 37 75.7"/><path d="M37 75.7 Q 46 40 52.4 23.9"/></svg>
-    @foreach (var code in new[] { "SJC", "GRU", "FRA" })
-    {
-        <span class="ts-auth-pin ts-auth-point-@code.ToLowerInvariant()" title="@Regions.Name(code)"><i class="ts-auth-pin-ring"></i><i class="ts-auth-pin-core"></i><span class="ts-auth-pin-label">@if (Regions.Country(code) is { Length: > 0 } flag) { <img src="@Assets.Url("flags/" + flag + ".svg")" alt="" /> }<span class="ts-mono">@code.ToLowerInvariant()</span></span></span>
-    }
+<div class="ts-auth-map" data-region-surface>
+    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.RegionMap, RegionMapModel>(RegionMapModel.ReadOnly("auth-region-map", ["gru", "fra", "sjc"]) with { Bleed = true }))
 </div>

@@ -7,6 +7,6 @@ namespace TerraScale.Dashboard.Features.Databases
         public override void Configure() => Post("/api/v1/dashboard/databases/placement");
 
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-            new(DatabasePlacementEndpoints.MutateAsync(HttpContext, sessions, accounts, databases, backend, "placement"));
+            new(DatabasePlacementEndpoints.MutateAsync(HttpContext, sessions, accounts, databases, backend));
     }
 }

@@ -90,7 +90,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
             if (recovered && remote.HomeRegion != home.Id)
             {
-                throw new AccountAccessException("A database with this name already exists in another home region.", 409);
+                throw new AccountAccessException("A database with this name already exists in another region.", 409);
             }
 
             if (ttlSeconds is not null && remote.ExpiresAt is null)
@@ -293,7 +293,7 @@ namespace TerraScale.Dashboard.Common.Databases
             var target = DatabaseRegion.Resolve(await backend.RegionsAsync(cancellationToken), homeRegion.Trim());
             if (target is null || target.Id == home.Id || !Regions(database).Skip(1).Any(code => code.Equals(target.Code, StringComparison.OrdinalIgnoreCase) || code == target.Id))
             {
-                throw new AccountAccessException("Choose one of this database's replica regions.", 422);
+                throw new AccountAccessException("Choose one of this database's regions.", 422);
             }
 
             ManagedDatabase remote;
@@ -302,9 +302,9 @@ namespace TerraScale.Dashboard.Common.Databases
             {
                 throw new AccountAccessException(error.ErrorCode switch
                 {
-                    "move_in_progress" => "Another move of this database is running. Try again when it finishes.",
-                    "replica_not_ready" => "The replica in " + DatabaseFormat.Region(target.Id) + " is not ready. Nothing changed. Try again shortly.",
-                    _ => "The move is still being settled, and writes are paused until it is. Retry the move."
+                    "move_in_progress" => "Another region change of this database is running. Try again when it finishes.",
+                    "replica_not_ready" => DatabaseFormat.Region(target.Id) + " is still syncing, so the current regions keep serving. Try again shortly.",
+                    _ => "The region change is still being settled, and writes are paused until it is. Try again."
                 }, error.Status, error.ErrorCode);
             }
             if (remote.HomeRegion != target.Id)
