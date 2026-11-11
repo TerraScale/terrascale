@@ -67,7 +67,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
 
                 return PendingPage(http, completed ? "Finalizing dashboard cleanup" : "Account deletion is pending",
-                    completed ? "ts-auth has confirmed account closure. Continue to finish dashboard cleanup and sign out." :
+                    completed ? "ts-auth has confirmed account closure. Finishing dashboard cleanup. This page continues by itself." :
                     "Account closure is still pending. Completion requires project deletion confirmation from every storage region that holds your data. If a required region is unavailable, confirmation waits for recovery. This status does not identify a specific waiting step or region.",
                     attempt, 202);
             }

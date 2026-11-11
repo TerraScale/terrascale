@@ -15,6 +15,7 @@ admission remains owned by P06/TS-1106 and the separate preparation-contract wor
 A ten-second budget covers journal loading, status reads and confirmed cleanup.
 The page checks again by itself 2, 4, 8 and 16 seconds apart, then every 30 seconds,
 for as long as the closure stays pending; a slow closure never needs a manual check.
+A check that comes due while the tab is hidden waits until the tab is visible again.
 Permanent receipt/authorization errors retain the journal and stop automatic checks;
 temporary failures remain recoverable. All checks require
 the existing opaque operation cookie, POSTs retain CSRF checks, and pages use no-store.

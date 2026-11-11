@@ -8,7 +8,7 @@
     <h1 class="ts-auth-title">@Model.Title</h1>
     <p class="ts-auth-subtitle" role="status" aria-live="polite">@Model.Message</p>
     <form method="post" action="/api/v1/dashboard/profile/delete/status" data-submit-once
-          data-init="@(Model.Automatic ? $"setTimeout(() => el.requestSubmit(), {Model.DelayMilliseconds})" : "void 0")">
+          data-init="@(Model.Automatic ? $"setTimeout(() => document.visibilityState === 'hidden' ? document.addEventListener('visibilitychange', () => el.requestSubmit(), {{ once: true }}) : el.requestSubmit(), {Model.DelayMilliseconds})" : "void 0")">
         <input type="hidden" name="_csrf" value="@Model.Csrf" />
         <input type="hidden" name="_retry" value="@Model.Attempt" />
         <button class="ts-btn ts-btn-primary" type="submit">Check deletion status</button>
