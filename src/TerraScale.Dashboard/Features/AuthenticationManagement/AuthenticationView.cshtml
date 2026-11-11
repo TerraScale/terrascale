@@ -3,153 +3,194 @@
 @using TerraScale.Dashboard.Features.AuthenticationManagement
 @{
     var current = Model.Section; var settings = Model.Settings; var manage = Model.Context.CanManageProject;
+    var projectName = Model.Context.Project?.Name ?? "";
+    var dangers = new[]
+    {
+        (Family: "sessions", Title: "Revoke a session", Consequence: "The selected session ends. The user must sign in again.", Items: (Model.Sessions ?? []).Select(item => (Id: item.Id, Label: item.Email + " · " + Date(item.CreatedAt))).ToArray()),
+        (Family: "users", Title: "Delete an end user", Consequence: "Permanently removes the selected user and their sessions.", Items: (Model.Users ?? []).Select(item => (Id: item.Id, Label: item.Email)).ToArray()),
+        (Family: "clients", Title: "Delete an OAuth application", Consequence: "The selected application can no longer sign users in.", Items: (Model.Clients ?? []).Select(item => (Id: item.ClientId, Label: item.Name)).ToArray())
+    };
+    var failed = Model.Error.Length > 0 && Model.Draft is not null ? (HttpContext!.Request.RouteValues["path"]?.ToString() ?? "").Split('/') switch
+    {
+        ["clients"] when manage => "auth-create-client-dialog",
+        ["clients", var id, "edit"] when manage && Model.Clients?.Any(client => client.ClientId == id) == true => id + "-edit",
+        ["webhooks"] when manage => "auth-create-webhook-dialog",
+        ["providers", var provider] when manage && settings?.Providers.Any(item => item.Provider == provider) == true => "auth-provider-" + provider + "-dialog",
+        ["danger", var family] when manage && dangers.Any(danger => danger.Family == family && danger.Items.Length > 0) => "danger-" + family + "-dialog",
+        _ => ""
+    } : "";
     string Date(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+    string Draft(string dialog, string name, string? saved) => failed == dialog ? Model.Draft![name].ToString() : saved ?? "";
+    string Open(string dialog) => failed == dialog ? "el.showModal()" : "void 0";
     void Card(string title) { <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="@("auth-" + current.Key + "-title")">@title</h2></div></header> }
-    // Confirm the button click so acceptance keeps native validation, submit and shared pending feedback.
+    void DialogHead(string id, string title) { <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(id + "-title")">@title</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@id">@Icons.Render("X", 18)</button></header> }
+    void DialogError(string id) { if (failed == id) { <div class="ts-alert ts-alert-danger" role="alert" id="@(id + "-error")"><p class="ts-alert-body">@Model.Error</p></div> } }
+    void DialogFooter(string id, string label, string tone = "ts-btn-primary") { <div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="@id">Cancel</button><button class="ts-btn @tone" type="submit">@label</button></div> }
+    void Csrf() { <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /> }
     void Action(string path, string label, string confirm = "") {
-        <form method="post" action="@("/api/v1/auth-management/" + path)"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+        <form method="post" action="@("/api/v1/auth-management/" + path)">@{ Csrf(); }
         @if (confirm.Length == 0) { <button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">@label</button> }
         else { <button class="ts-btn ts-btn-danger ts-btn-sm" type="submit" data-on:click="@("confirm('" + confirm + "') || evt.preventDefault()")">@label</button> }
         </form>
     }
-    void ClientActions(TerraScale.Dashboard.Platform.TsAuth.TsAuthProjectOAuthClient client) {
-        <div class="ts-row"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="@(client.ClientId + "-edit")">Edit</button>@if (client.Type == "confidential") { Action("clients/" + client.ClientId + "/rotate", "Rotate secret"); } Action("clients/" + client.ClientId + "/delete", "Delete", "Delete this application? Its users can no longer sign in through it."); }</div>
+    void Empty(string title, string href = "", string label = "", string dialog = "") {
+        <div class="ts-empty" role="status"><p class="ts-empty-title">@title</p>
+        @if (dialog.Length > 0) { <button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="@dialog">@Icons.Render("Plus", 14)<span>@label</span></button> }
+        else if (href.Length > 0) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@href">@label</a> }
+        </div>
     }
-    void Empty(string title) { <div class="ts-empty" role="status"><p class="ts-empty-title">@title</p></div> }
     void CopyValue(string id, string value, string label, bool link = false, bool secret = false) {
-        <div class="ts-stack-sm" data-auth-copy><div class="ts-idp-copy">
-        @if (link) { <a class="ts-break" href="@value" id="@id" @(ExternalLink.Attributes)>@value@(ExternalLink.Hint)</a> }
-        else { <code class="@(secret ? "ts-apikeys-secret-value" : "ts-break")" tabindex="0" id="@id">@value</code> }
-        <button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" aria-label="@("Copy " + label)" aria-describedby="@(id + "-copy-status")" data-on:click="@CopyExpression">@Icons.Render("Copy", 14)<span>Copy</span></button>
+        <div class="ts-idp-copy" data-auth-copy><div class="ts-idp-copy-row">
+        @if (link) { <a class="ts-link ts-break" href="@value" id="@id" @(ExternalLink.Attributes)>@value@(ExternalLink.Hint)</a> }
+        else { <code class="@(secret ? "ts-apikeys-secret-value" : "ts-idp-copy-value")" tabindex="0" id="@id">@value</code> }
+        <button class="ts-icon-btn" type="button" aria-label="@("Copy " + label)" title="Copy" aria-describedby="@(id + "-copy-status")" data-on:click="@CopyExpression">@Icons.Render("Copy", 14)</button>
         </div><p class="ts-meta" id="@(id + "-copy-status")" role="status" aria-live="polite" aria-atomic="true"></p></div>
     }
     void Pager(string path) { if (Model.Next is null && Model.After.Length == 0) { return; } <nav class="ts-pager" aria-label="@(current.Title + " pages")"><div class="ts-row">@if (Model.After.Length > 0) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@path">First page</a> }@if (Model.Next is not null) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(path + (path.Contains('?') ? "&" : "?") + "after=" + Uri.EscapeDataString(Model.Next))">Next page</a> }</div></nav> }
+    void Secret(string title, string id, string value, string label, string? after = null) {
+        <p class="ts-alert-body">@title · Copy it now: it is shown only once.</p>CopyValue(id, value, label, secret: true);
+        if (after is not null) { <p class="ts-alert-body">@after</p> }
+    }
+    string Previous(DateTimeOffset? until) => until is { } at ? "The previous secret works until " + Date(at) + "." : "The previous secret no longer works.";
 }
 <main class="ts-page ts-idp" data-auth-section="@current.Key">
-<h1 class="ts-sr-only">@Model.Heading</h1><div class="ts-page-actions"></div>
-<form class="ts-idp-mobile-nav" method="get" action="/auth"><label class="ts-sr-only" for="auth-section-select">Authentication section</label><select class="ts-select" id="auth-section-select" name="section" data-on:change="el.form.requestSubmit()">@foreach(var section in AuthenticationSection.All){<option value="@(section.Key)" selected="@(section.Key == current.Key)">@(section.Title)</option>}</select><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Open</button></form>
-<div class="ts-idp-layout"><nav aria-label="Authentication sections">@foreach (var group in AuthenticationSection.All.GroupBy(section => section.Group)) { <div class="ts-nav-group">@if (group.Key.Length > 0 && group.Key != "Danger") { <div class="ts-nav-group-label">@group.Key</div> }<ul class="ts-nav">@foreach (var section in group) { <li><a class="ts-nav-link" href="@("/auth/" + section.Key)" aria-current="@(section.Key == current.Key ? "page" : null)"><span class="ts-nav-icon" aria-hidden="true">@Icons.Render(section.Icon, 16)</span><span class="ts-nav-label">@(section.Title)</span></a></li> }</ul></div> }</nav><div class="ts-stack-lg ts-idp-content">
-@if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert" id="auth-error"><p class="ts-alert-body">@Model.Error</p></div> }
+<header class="ts-page-header">
+<h1 class="ts-page-title" aria-label="@Model.Heading">Authentication</h1>
+<div class="ts-page-actions">
+@if (manage && current.Key == "users") { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="auth-directory-export">@Icons.Render("Download", 16)<span>Export users</span></button> }
+else if (manage && current.Key == "clients") { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="auth-create-client-dialog">@Icons.Render("Plus", 16)<span>Add application</span></button> }
+else if (manage && current.Key == "webhooks") { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="auth-create-webhook-dialog">@Icons.Render("Plus", 16)<span>Add webhook endpoint</span></button> }
+else if (manage && settings is not null && current.Key == "sign-in") { <button class="ts-btn ts-btn-primary" type="submit" form="auth-sign-in-form">Save sign-in methods</button> }
+else if (manage && settings is not null && current.Key == "configuration") { <button class="ts-btn ts-btn-primary" type="submit" form="auth-configuration-form">Save configuration</button> }
+else if (settings is not null && current.Key == "branding") {
+<form class="ts-row" id="auth-branding-form" method="post" action="/api/v1/auth-management/branding" data-project-name="@projectName">@{ Csrf(); }<span class="ts-badge ts-badge-warning" data-brand-dirty hidden>Unsaved changes</span>@if (manage) { <button class="ts-btn ts-btn-ghost" type="reset">Discard</button><button class="ts-btn ts-btn-secondary" type="button" data-brand-defaults>Reset to defaults</button><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Check", 16)<span>Save</span></button> }</form>
+}
+</div>
+</header>
+<nav class="ts-tabs ts-idp-tabs" aria-label="Authentication sections">@foreach (var section in AuthenticationSection.All) { if (section.Key == current.Key) { <a class="ts-tab" href="@("/auth/" + section.Key)" aria-current="page" data-init="el.scrollIntoView({block: 'nearest', inline: 'nearest'})"><span>@(section.Title)</span></a> } else { <a class="ts-tab" href="@("/auth/" + section.Key)"><span>@(section.Title)</span></a> } }</nav>
+@if (Model.Error.Length > 0 && failed.Length == 0) { <div class="ts-alert ts-alert-danger" role="alert" id="auth-error"><p class="ts-alert-body">@Model.Error</p></div> }
 @if (Model.Saved) { <div class="ts-alert ts-alert-success" role="status"><p class="ts-alert-body">Changes saved.</p></div> }
 @if (!manage && current.Key != "overview") { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">You can view this configuration. Organization owners and admins can change it.</p></div> }
 @if (Model.Created is { } created) {
-<section class="ts-alert ts-alert-success" id="auth-created" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Created @created.Name</h2><p class="ts-alert-body">Client ID</p>@{ CopyValue("auth-created-client-id", created.ClientId, "new client ID"); }@if (created.ClientSecret is { } secret) { <p class="ts-alert-body">Client secret · Copy it now: it is shown only once.</p>CopyValue("auth-client-secret", secret, "client secret", secret: true); }</section>
+<section class="ts-alert ts-alert-success" id="auth-created" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Created @created.Name</h2><p class="ts-alert-body">Client ID</p>@{ CopyValue("auth-created-client-id", created.ClientId, "new client ID"); }@if (created.ClientSecret is { } secret) { Secret("Client secret", "auth-client-secret", secret, "client secret"); }</section>
 }
 @if (Model.Rotated is { } rotated) {
-<section class="ts-alert ts-alert-success" id="auth-rotated" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Rotated secret</h2><p class="ts-alert-body">Client secret · Copy it now: it is shown only once.</p>@{ CopyValue("auth-rotated-secret", rotated.ClientSecret, "client secret", secret: true); }<p class="ts-alert-body">@(rotated.PreviousSecretExpiresAt is { } until ? "The previous secret works until " + Date(until) + "." : "The previous secret no longer works.")</p></section>
+<section class="ts-alert ts-alert-success" id="auth-rotated" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Rotated secret</h2>@{ Secret("Client secret", "auth-rotated-secret", rotated.ClientSecret, "client secret", Previous(rotated.PreviousSecretExpiresAt)); }</section>
 }
 @if (Model.CreatedWebhook is { } registered) {
-<section class="ts-alert ts-alert-success" id="auth-webhook-created" data-init="history.replaceState(null, '', '/auth/webhooks')"><h2 class="ts-alert-title">Registered endpoint</h2><p class="ts-alert-body ts-break">@registered.Url</p>@if (registered.Secret is { } secret) { <p class="ts-alert-body">Signing secret · Copy it now: it is shown only once.</p>CopyValue("auth-webhook-created-secret", secret, "signing secret", secret: true); }</section>
+<section class="ts-alert ts-alert-success" id="auth-webhook-created" data-init="history.replaceState(null, '', '/auth/webhooks')"><h2 class="ts-alert-title">Registered endpoint</h2><p class="ts-alert-body ts-break">@registered.Url</p>@if (registered.Secret is { } secret) { Secret("Signing secret", "auth-webhook-created-secret", secret, "signing secret"); }</section>
 }
 @if (Model.RotatedWebhook is { } rotatedSecret) {
-<section class="ts-alert ts-alert-success" id="auth-webhook-rotated" data-init="history.replaceState(null, '', '/auth/webhooks')"><h2 class="ts-alert-title">Rotated signing secret</h2><p class="ts-alert-body">Signing secret · Copy it now: it is shown only once.</p>@{ CopyValue("auth-webhook-rotated-secret", rotatedSecret.Secret, "signing secret", secret: true); }<p class="ts-alert-body">@(rotatedSecret.PreviousSecretExpiresAt is { } until ? "The previous secret works until " + Date(until) + "." : "The previous secret no longer works.")</p></section>
+<section class="ts-alert ts-alert-success" id="auth-webhook-rotated" data-init="history.replaceState(null, '', '/auth/webhooks')"><h2 class="ts-alert-title">Rotated signing secret</h2>@{ Secret("Signing secret", "auth-webhook-rotated-secret", rotatedSecret.Secret, "signing secret", Previous(rotatedSecret.PreviousSecretExpiresAt)); }</section>
 }
-<section class="@(current.Key == "branding" ? null : "ts-card")" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
+<section class="@(current.Key switch { "branding" when settings is not null => "ts-idp-branding", "danger" => "ts-card ts-card-boxed ts-idp-danger", _ => "ts-card" })" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
 @if (current.Key == "overview") {
 Card("Project authentication");
-<div class="ts-card-body">@if (settings is null) { Empty("Authentication details unavailable"); } else {
-<dl class="ts-stats ts-idp-stats" aria-label="Identity totals"><div class="ts-stat"><dt class="ts-stat-label">Users</dt><dd class="ts-stat-value" id="auth-count-users">@settings.Counts.Users</dd></div><div class="ts-stat"><dt class="ts-stat-label">OAuth applications</dt><dd class="ts-stat-value" id="auth-count-clients">@settings.Counts.Clients</dd></div></dl>
-<dl class="ts-kv ts-idp-endpoints"><dt>Project</dt><dd class="ts-strong">@Model.Context.Project?.Name</dd><dt>Issuer</dt><dd>@{ CopyValue("auth-issuer", settings.Issuer, "issuer"); }</dd><dt>Discovery</dt><dd>@{ CopyValue("auth-discovery", settings.DiscoveryUrl, "discovery URL"); }</dd><dt>Hosted sign-in</dt><dd>@{ CopyValue("auth-sign-in-url", settings.SignInUrl, "hosted sign-in URL", link: true); }</dd></dl> }</div>
+<div class="ts-card-body">@if (settings is null) { Empty("Authentication details are unavailable."); } else {
+<dl class="ts-stats" aria-label="Identity totals"><div class="ts-stat"><dt class="ts-stat-label">Users</dt><dd class="ts-stat-value" id="auth-count-users">@settings.Counts.Users</dd></div><div class="ts-stat"><dt class="ts-stat-label">OAuth applications</dt><dd class="ts-stat-value" id="auth-count-clients">@settings.Counts.Clients</dd></div></dl>
+<dl class="ts-kv ts-idp-kv"><dt>Project</dt><dd class="ts-strong">@projectName</dd><dt>Issuer</dt><dd>@{ CopyValue("auth-issuer", settings.Issuer, "issuer"); }</dd><dt>Discovery</dt><dd>@{ CopyValue("auth-discovery", settings.DiscoveryUrl, "discovery URL"); }</dd><dt>Hosted sign-in</dt><dd>@{ CopyValue("auth-sign-in-url", settings.SignInUrl, "hosted sign-in URL", link: true); }</dd></dl> }</div>
 }
 else if (current.Key == "users") {
-Card("Users");
-<div class="ts-card-body"><form class="ts-filters" method="get" action="/auth/users" role="search" aria-label="Search users"><input class="ts-input ts-input-sm" type="search" name="q" value="@Model.Search" placeholder="Search by email" aria-label="Search by email" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Search</button></form>
-@if (manage) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.DirectoryExportControls, AuthenticationPage>(Model)) }
-@if (Model.Users is not { Count: > 0 } users) { Empty(Model.Search.Length > 0 ? "No users match this search" : "No users yet"); } else {
-<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Users"><table class="ts-table"><thead><tr><th>Email</th><th>Created</th><th>Status</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var user in users) { <tr><td class="ts-table-strong">@user.Email</td><td class="ts-idp-nowrap">@Date(user.CreatedAt)</td><td><span class="ts-badge ts-badge-tone" data-tone="@(user.Disabled ? "warning" : "success")"><span class="ts-dot" aria-hidden="true"></span>@(user.Disabled ? "Disabled" : "Active")</span></td><td><div class="ts-row"><a class="ts-btn ts-btn-ghost ts-btn-sm" href="@("/auth/sessions?user=" + user.Id)">Sessions</a>@if (manage) { Action("users/" + user.Id + (user.Disabled ? "/enable" : "/disable"), user.Disabled ? "Enable" : "Disable"); Action("users/" + user.Id + "/delete", "Delete", "Delete this user? This cannot be undone."); }</div></td></tr> }</tbody></table></div> }
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="auth-users-title">Users</h2></div><div class="ts-card-actions"><form class="ts-filters" method="get" action="/auth/users" role="search" aria-label="Search users"><input class="ts-input ts-input-sm" type="search" name="q" value="@Model.Search" placeholder="Search by email" aria-label="Search by email" autocomplete="off" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Search</button></form></div></header>
+<div class="ts-card-body">
+@if (Model.Users is not { Count: > 0 } users) { if (Model.Search.Length > 0) { Empty("No users match this search.", "/auth/users", "Clear search"); } else { Empty("No users yet.", "/auth/sign-in", "Sign-in methods"); } } else {
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Users"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">Email</th><th scope="col">Created</th><th scope="col">Status</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var user in users) { <tr><td class="ts-table-strong ts-break">@user.Email</td><td class="ts-idp-nowrap" data-label="Created">@Date(user.CreatedAt)</td><td><span class="ts-badge ts-badge-tone" data-tone="@(user.Disabled ? "warning" : "success")"><span class="ts-dot" aria-hidden="true"></span>@(user.Disabled ? "Disabled" : "Active")</span></td><td class="ts-table-actions"><div class="ts-row"><a class="ts-btn ts-btn-ghost ts-btn-sm" href="@("/auth/sessions?user=" + user.Id)">Sessions</a>@if (manage) { Action("users/" + user.Id + (user.Disabled ? "/enable" : "/disable"), user.Disabled ? "Enable" : "Disable"); Action("users/" + user.Id + "/delete", "Delete", "Delete this user? This cannot be undone."); }</div></td></tr> }</tbody></table></div> }
 @{ Pager(Model.Search.Length > 0 ? "/auth/users?q=" + Uri.EscapeDataString(Model.Search) : "/auth/users"); }</div>
+@if (manage) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.DirectoryExportControls, AuthenticationPage>(Model)) }
 }
 else if (current.Key == "sessions") {
-Card(Model.User.Length > 0 ? "Sessions of one user" : "Live sessions");
-<div class="ts-card-body">@if (Model.User.Length > 0) { <p><a href="/auth/sessions">Show every session</a></p> }
-@if (Model.Sessions is not { Count: > 0 } live) { Empty("No live sessions"); } else {
-<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Sessions"><table class="ts-table"><thead><tr><th>User</th><th>Signed in</th><th>Expires</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var item in live) { <tr><td class="ts-table-strong">@item.Email</td><td class="ts-idp-nowrap">@Date(item.CreatedAt)</td><td class="ts-idp-nowrap">@Date(item.ExpiresAt)</td><td>@if (manage) { Action("sessions/" + item.Id + "/revoke", "Revoke", "Revoke this session?"); }</td></tr> }</tbody></table></div> }
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="auth-sessions-title">@(Model.User.Length > 0 ? "Sessions of one user" : "Live sessions")</h2></div>@if (Model.User.Length > 0) { <div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="/auth/sessions">Show every session</a></div> }</header>
+<div class="ts-card-body">@if (Model.Sessions is not { Count: > 0 } live) { Empty("No live sessions.", "/auth/users", "Users"); } else {
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Sessions"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">User</th><th scope="col">Signed in</th><th scope="col">Expires</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var item in live) { <tr><td class="ts-table-strong ts-break">@item.Email</td><td class="ts-idp-nowrap" data-label="Signed in">@Date(item.CreatedAt)</td><td class="ts-idp-nowrap" data-label="Expires">@Date(item.ExpiresAt)</td><td class="ts-table-actions">@if (manage) { <div class="ts-row">@{ Action("sessions/" + item.Id + "/revoke", "Revoke", "Revoke this session?"); }</div> }</td></tr> }</tbody></table></div> }
 @{ Pager(Model.User.Length > 0 ? "/auth/sessions?user=" + Uri.EscapeDataString(Model.User) : "/auth/sessions"); }</div>
 }
 else if (current.Key == "clients") {
 Card("OAuth applications");
-<div class="ts-card-body">@if (Model.Clients is not { Count: > 0 } clients) { Empty("No OAuth applications yet"); } else {
-<div class="ts-table-wrap" tabindex="0" role="region" aria-label="OAuth applications"><table class="ts-table"><thead><tr><th>Application</th><th>Client ID</th><th>Type</th><th>Redirect URIs</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var client in clients) { <tr><td class="ts-table-strong">@client.Name</td><td>@{ CopyValue("auth-client-" + client.ClientId, client.ClientId, "client ID for " + client.Name); }</td><td><span class="ts-badge">@client.Type</span></td><td class="ts-mono">@string.Join(", ", client.RedirectUris)</td><td>@if (manage) { ClientActions(client); }</td></tr> }</tbody></table></div>
-@foreach (var client in clients) { var editId = client.ClientId + "-edit";
-<dialog id="@editId" class="ts-dialog" closedby="any" aria-labelledby="@(editId + "-title")"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(editId + "-title")">Edit @client.Name</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@editId">@Icons.Render("X", 18)</button></header>
-<form class="ts-form" method="post" action="@("/api/v1/auth-management/clients/" + client.ClientId + "/edit")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-<div class="ts-field"><label class="ts-label" for="@(editId + "-name")">Application name</label><input class="ts-input" id="@(editId + "-name")" name="name" required maxlength="64" value="@client.Name" autocomplete="off" /></div>
-<div class="ts-field"><label class="ts-label" for="@(editId + "-uris")">Redirect URIs</label><textarea class="ts-input ts-mono" id="@(editId + "-uris")" name="redirect_uris" rows="3" required spellcheck="false" placeholder="https://app.example.com/callback (one per line, up to 10)">@string.Join("\n", client.RedirectUris)</textarea></div>
-<div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="@editId">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Save</button></div></form></div></dialog> } }
+<div class="ts-card-body">@if (Model.Clients is not { Count: > 0 } clients) { if (manage) { Empty("No OAuth applications yet.", label: "Add application", dialog: "auth-create-client-dialog"); } else { Empty("No OAuth applications yet."); } } else {
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="OAuth applications"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">Application</th><th scope="col">Client ID</th><th scope="col">Type</th><th scope="col">Redirect URIs</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var client in clients) { <tr><td class="ts-table-strong ts-break">@client.Name</td><td>@{ CopyValue("auth-client-" + client.ClientId, client.ClientId, "client ID for " + client.Name); }</td><td><span class="ts-badge ts-badge-neutral">@client.Type</span></td><td class="ts-table-mono" data-label="Redirect URIs"><ul class="ts-idp-uris">@foreach (var uri in client.RedirectUris) { <li>@uri</li> }</ul></td><td class="ts-table-actions">@if (manage) { <div class="ts-row"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="@(client.ClientId + "-edit")">Edit</button>@if (client.Type == "confidential") { Action("clients/" + client.ClientId + "/rotate", "Rotate secret"); }@{ Action("clients/" + client.ClientId + "/delete", "Delete", "Delete this application? Its users can no longer sign in through it."); }</div> }</td></tr> }</tbody></table></div>
+@if (manage) { foreach (var client in clients) { var editId = client.ClientId + "-edit";
+<dialog id="@editId" class="ts-dialog" closedby="any" aria-labelledby="@(editId + "-title")" data-init="@Open(editId)"><div class="ts-dialog-content">@{ DialogHead(editId, "Edit " + client.Name); }
+<form class="ts-form" method="post" action="@("/api/v1/auth-management/clients/" + client.ClientId + "/edit")">@{ Csrf(); DialogError(editId); }
+<div class="ts-field"><label class="ts-label" for="@(editId + "-name")">Application name</label><input class="ts-input" id="@(editId + "-name")" name="name" required maxlength="64" value="@Draft(editId, "name", client.Name)" autocomplete="off" /></div>
+<div class="ts-field"><label class="ts-label" for="@(editId + "-uris")">Redirect URIs</label><textarea class="ts-input ts-mono" id="@(editId + "-uris")" name="redirect_uris" rows="3" required spellcheck="false" autocomplete="off" placeholder="https://app.example.com/callback (one per line, up to 10)">@Draft(editId, "redirect_uris", string.Join("\n", client.RedirectUris))</textarea></div>
+@{ DialogFooter(editId, "Save"); }</form></div></dialog> } } }
+</div>
 @if (manage) {
-<form class="ts-form" method="post" action="/api/v1/auth-management/clients" id="auth-create-client"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><h3 class="ts-strong">Add an application</h3>
-<div class="ts-field"><label class="ts-label" for="auth-client-name">Application name</label><input class="ts-input" id="auth-client-name" name="name" required maxlength="64" placeholder="Web app" autocomplete="off" /></div>
-<div class="ts-field"><label class="ts-label" for="auth-client-type">Client type</label><select class="ts-select" id="auth-client-type" name="type"><option value="public">Public (PKCE, no secret)</option><option value="confidential">Confidential (client secret)</option></select></div>
-<div class="ts-field"><label class="ts-label" for="auth-client-uris">Redirect URIs</label><textarea class="ts-input ts-mono" id="auth-client-uris" name="redirect_uris" rows="3" required spellcheck="false" placeholder="https://app.example.com/callback (one per line, up to 10)"></textarea></div>
-<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Add application</button></div></form> }</div>
+<dialog id="auth-create-client-dialog" class="ts-dialog" closedby="any" aria-labelledby="auth-create-client-dialog-title" data-init="@Open("auth-create-client-dialog")"><div class="ts-dialog-content">@{ DialogHead("auth-create-client-dialog", "Add an application"); }
+<form class="ts-form" method="post" action="/api/v1/auth-management/clients" id="auth-create-client">@{ Csrf(); DialogError("auth-create-client-dialog"); }
+<div class="ts-field"><label class="ts-label" for="auth-client-name">Application name</label><input class="ts-input" id="auth-client-name" name="name" required maxlength="64" placeholder="Web app" autocomplete="off" value="@Draft("auth-create-client-dialog", "name", "")" /></div>
+<div class="ts-field"><label class="ts-label" for="auth-client-type">Client type</label><select class="ts-select" id="auth-client-type" name="type" required>@foreach (var (type, label) in new[] { ("public", "Public (PKCE, no secret)"), ("confidential", "Confidential (client secret)") }) { <option value="@type" selected="@(Draft("auth-create-client-dialog", "type", "public") == type)">@label</option> }</select></div>
+<div class="ts-field"><label class="ts-label" for="auth-client-uris">Redirect URIs</label><textarea class="ts-input ts-mono" id="auth-client-uris" name="redirect_uris" rows="3" required spellcheck="false" autocomplete="off" placeholder="https://app.example.com/callback (one per line, up to 10)">@Draft("auth-create-client-dialog", "redirect_uris", "")</textarea></div>
+@{ DialogFooter("auth-create-client-dialog", "Add application"); }</form></div></dialog> }
 }
 else if (current.Key == "webhooks") {
 Card("Webhooks");
-<div class="ts-card-body">@if (Model.Webhooks is not { Count: > 0 } hooks) { Empty(manage ? "No webhook endpoints yet" : "Webhook endpoints unavailable"); } else {
-<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Webhook endpoints"><table class="ts-table"><thead><tr><th>URL</th><th>Events</th><th>Created</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var hook in hooks) { <tr><td class="ts-table-strong ts-break">@hook.Url</td><td class="ts-mono">@string.Join(", ", hook.EventTypes)</td><td class="ts-idp-nowrap">@Date(hook.CreatedAt)</td><td>@if (manage) { <div class="ts-row">@{ Action("webhooks/" + hook.Id + "/rotate", "Rotate secret"); }@{ Action("webhooks/" + hook.Id + "/delete", "Delete", "Delete this webhook endpoint? It receives no further events."); }</div> }</td></tr> }</tbody></table></div> }
-@if (manage) {
-<form class="ts-form" method="post" action="/api/v1/auth-management/webhooks" id="auth-create-webhook"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><h3 class="ts-strong">Add a webhook endpoint</h3>
-<div class="ts-field"><label class="ts-label" for="auth-webhook-url">URL</label><input class="ts-input ts-mono" id="auth-webhook-url" name="url" type="url" required maxlength="2048" placeholder="https://hooks.example.com/lifecycle" autocomplete="off" /></div>
-<fieldset class="ts-field ts-stack-sm"><legend class="ts-label">Events</legend>@foreach (var name in TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationConsole.LifecycleEvents) { <label><input type="checkbox" name="event_types" value="@name" /> @name</label> }</fieldset>
-<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Add webhook endpoint</button></div></form> }</div>
+<div class="ts-card-body">@if (Model.Webhooks is not { Count: > 0 } hooks) { if (manage) { Empty("No webhook endpoints yet.", label: "Add webhook endpoint", dialog: "auth-create-webhook-dialog"); } else { Empty("Webhook endpoints are unavailable."); } } else {
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Webhook endpoints"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">URL</th><th scope="col">Events</th><th scope="col">Created</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var hook in hooks) { <tr><td class="ts-table-strong ts-break">@hook.Url</td><td><div class="ts-idp-events">@foreach (var name in hook.EventTypes) { <span class="ts-badge ts-badge-neutral ts-mono">@name</span> }</div></td><td class="ts-idp-nowrap" data-label="Created">@Date(hook.CreatedAt)</td><td class="ts-table-actions">@if (manage) { <div class="ts-row">@{ Action("webhooks/" + hook.Id + "/rotate", "Rotate secret"); }@{ Action("webhooks/" + hook.Id + "/delete", "Delete", "Delete this webhook endpoint? It receives no further events."); }</div> }</td></tr> }</tbody></table></div> }</div>
+@if (manage) { HashSet<string> chosen = failed == "auth-create-webhook-dialog" ? [.. Model.Draft!["event_types"].Select(value => value ?? "")] : [];
+<dialog id="auth-create-webhook-dialog" class="ts-dialog" closedby="any" aria-labelledby="auth-create-webhook-dialog-title" data-init="@Open("auth-create-webhook-dialog")"><div class="ts-dialog-content">@{ DialogHead("auth-create-webhook-dialog", "Add a webhook endpoint"); }
+<form class="ts-form" method="post" action="/api/v1/auth-management/webhooks" id="auth-create-webhook">@{ Csrf(); DialogError("auth-create-webhook-dialog"); }
+<div class="ts-field"><label class="ts-label" for="auth-webhook-url">URL</label><input class="ts-input ts-mono" id="auth-webhook-url" name="url" type="url" required maxlength="2048" pattern="https://[^\s#]+" title="The URL must be an absolute https URL of up to 2048 characters." placeholder="https://hooks.example.com/lifecycle" autocomplete="off" spellcheck="false" value="@Draft("auth-create-webhook-dialog", "url", "")" /></div>
+<fieldset class="ts-field"><legend class="ts-label">Events</legend><div class="ts-idp-checks">@foreach (var name in AuthenticationConsole.LifecycleEvents) { <label class="ts-check"><input type="checkbox" name="event_types" value="@name" checked="@chosen.Contains(name)" /><span class="ts-mono">@name</span></label> }</div></fieldset>
+@{ DialogFooter("auth-create-webhook-dialog", "Add webhook endpoint"); }</form></div></dialog> }
 }
 else if (current.Key == "sign-in") {
 Card("Sign-in methods");
-<div class="ts-card-body">@if (settings is null) { Empty("Sign-in methods unavailable"); } else {
-<form class="ts-form" method="post" action="/api/v1/auth-management/settings"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><ul class="ts-idp-settings">@foreach (var (name, label, on) in new[] { ("passcode", "Email passcode", settings.Methods.Passcode), ("password", "Password", settings.Methods.Password), ("sign_up", "Self sign-up", settings.Methods.SignUp) }) { <li class="ts-idp-setting"><div class="ts-idp-setting-text"><label class="ts-strong" for="@("auth-method-" + name)">@label</label></div><input class="ts-switch" type="checkbox" role="switch" id="@("auth-method-" + name)" name="@name" checked="@on" disabled="@(!manage)" /></li> }</ul>@if (manage) { <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save sign-in methods</button></div> }</form> }</div>
+<div class="ts-card-body">@if (settings is null) { Empty("Sign-in methods are unavailable."); } else {
+<form method="post" action="/api/v1/auth-management/settings" id="auth-sign-in-form">@{ Csrf(); }<ul class="ts-list">@foreach (var (name, label, on) in new[] { ("passcode", "Email passcode", settings.Methods.Passcode), ("password", "Password", settings.Methods.Password), ("sign_up", "Self sign-up", settings.Methods.SignUp) }) { <li class="ts-list-item"><label class="ts-list-main ts-strong" for="@("auth-method-" + name)">@label</label><input class="ts-switch" type="checkbox" role="switch" id="@("auth-method-" + name)" name="@name" checked="@on" disabled="@(!manage)" /></li> }</ul></form> }</div>
 }
 else if (current.Key == "social") {
 Card("Social sign-in");
-<div class="ts-card-body">@if (settings is null) { Empty("Social sign-in unavailable"); } else {
-<ul class="ts-idp-settings">@foreach (var provider in settings.Providers) { if (AuthenticationProvider.Find(provider.Provider) is not { } info) { continue; } var id = "auth-provider-" + info.Key; var apple = info.Key == "apple";
-<li class="ts-idp-setting" id="@id"><div class="ts-idp-setting-text ts-stack-sm"><div class="ts-row"><span class="ts-strong">@info.Name</span><span class="@(provider.Configured ? "ts-badge ts-badge-success" : "ts-badge ts-badge-neutral")">@(provider.Configured ? "Configured" : "Not configured")</span></div>
-@if (provider.Configured) { <p class="ts-meta">@info.ClientIdLabel <code>@provider.ClientId</code>@if (provider.Issuer is not null) { <text> · Issuer <code>@provider.Issuer</code></text> }@if (provider.TeamId is not null) { <text> · Team ID <code>@provider.TeamId</code> · Key ID <code>@provider.KeyId</code></text> }</p> }
-@if (info.ConsoleUrl.Length > 0) { <a class="ts-link" href="@info.ConsoleUrl" @(ExternalLink.Attributes)>@info.ConsoleName@(ExternalLink.Hint)</a> }
-@{ CopyValue(id + "-callback", provider.CallbackUrl, info.Name + " callback URL"); }</div>
-@if (manage) { <div class="ts-row"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="@(id + "-dialog")">@(provider.Configured ? "Update" : "Configure")</button>@if (provider.Configured) { Action("providers/" + info.Key + "/delete", "Remove", "Remove " + info.Name + " sign-in? Its users can no longer continue with it."); }</div>
-<dialog id="@(id + "-dialog")" class="ts-dialog" closedby="any" aria-labelledby="@(id + "-dialog-title")"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(id + "-dialog-title")">@(provider.Configured ? "Update" : "Configure") @info.Name sign-in</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@(id + "-dialog")">@Icons.Render("X", 18)</button></header>
-<form class="ts-form" method="post" action="@("/api/v1/auth-management/providers/" + info.Key)"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-@if (info.Key == "oidc") { <div class="ts-field"><label class="ts-label" for="@(id + "-issuer")">Issuer</label><input class="ts-input" id="@(id + "-issuer")" type="url" name="issuer" value="@provider.Issuer" required placeholder="https://example.us.auth0.com/" autocomplete="off" /></div> }
-<div class="ts-field"><label class="ts-label" for="@(id + "-client-id")">@info.ClientIdLabel</label><input class="ts-input ts-mono" id="@(id + "-client-id")" name="client_id" value="@provider.ClientId" required maxlength="256" autocomplete="off" /></div>
-@if (apple) { <div class="ts-form-grid"><div class="ts-field"><label class="ts-label" for="auth-provider-apple-team">Team ID</label><input class="ts-input ts-mono" id="auth-provider-apple-team" name="team_id" value="@provider.TeamId" required pattern="[A-Za-z0-9]{10}" maxlength="10" autocomplete="off" /></div><div class="ts-field"><label class="ts-label" for="auth-provider-apple-key">Key ID</label><input class="ts-input ts-mono" id="auth-provider-apple-key" name="key_id" value="@provider.KeyId" required pattern="[A-Za-z0-9]{10}" maxlength="10" autocomplete="off" /></div></div> }
-<div class="ts-field"><label class="ts-label" for="@(id + "-secret")">@(apple ? "Private key (.p8)" : "Client secret")</label>@if (apple) { <textarea class="ts-input ts-mono" id="@(id + "-secret")" name="client_secret" rows="5" required="@(!provider.Configured)" placeholder="@(provider.Configured ? "unchanged" : "-----BEGIN PRIVATE KEY-----")" autocomplete="off" spellcheck="false"></textarea><input class="ts-input" type="file" accept=".p8" aria-label="Read the private key from a .p8 file" data-on:change="el.files[0]?.text().then(text => el.form.client_secret.value = text)" /> } else { <input class="ts-input ts-mono" id="@(id + "-secret")" type="password" name="client_secret" required="@(!provider.Configured)" placeholder="@(provider.Configured ? "unchanged" : null)" autocomplete="new-password" /> }</div>
-<div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="@(id + "-dialog")">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Save @info.Name</button></div></form></div></dialog> }
-</li> }</ul> }</div>
+@if (settings is null) { Empty("Social sign-in is unavailable."); } else {
+<ul class="ts-grid ts-idp-providers">@foreach (var provider in settings.Providers) { if (AuthenticationProvider.Find(provider.Provider) is not { } info) { continue; } var id = "auth-provider-" + info.Key; var apple = info.Key == "apple"; var dialog = id + "-dialog";
+<li class="ts-card ts-card-boxed ts-idp-provider" id="@id">
+<header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h3 class="ts-section-title">@info.Name</h3></div><span class="@(provider.Configured ? "ts-badge ts-badge-success" : "ts-badge ts-badge-neutral")">@(provider.Configured ? "Configured" : "Not configured")</span></header>
+<dl class="ts-kv ts-idp-kv">@if (provider.Configured) { <dt>@info.ClientIdLabel</dt><dd class="ts-mono">@provider.ClientId</dd>@if (provider.Issuer is not null) { <dt>Issuer</dt><dd class="ts-mono">@provider.Issuer</dd> }@if (provider.TeamId is not null) { <dt>Team ID</dt><dd class="ts-mono">@provider.TeamId</dd><dt>Key ID</dt><dd class="ts-mono">@provider.KeyId</dd> } }<dt>Callback URL</dt><dd>@{ CopyValue(id + "-callback", provider.CallbackUrl, info.Name + " callback URL"); }</dd></dl>
+<div class="ts-row-between ts-idp-provider-foot">@if (info.ConsoleUrl.Length > 0) { <a class="ts-link" href="@info.ConsoleUrl" @(ExternalLink.Attributes)>@info.ConsoleName@(ExternalLink.Hint)</a> } else { <span></span> }
+@if (manage) { <div class="ts-row">@if (provider.Configured) { Action("providers/" + info.Key + "/delete", "Remove", "Remove " + info.Name + " sign-in? Its users can no longer continue with it."); }<button class="ts-btn @(provider.Configured ? "ts-btn-secondary" : "ts-btn-primary") ts-btn-sm" type="button" command="show-modal" commandfor="@dialog">@(provider.Configured ? "Update" : "Configure")</button></div> }</div>
+@if (manage) {
+<dialog id="@dialog" class="ts-dialog" closedby="any" aria-labelledby="@(dialog + "-title")" data-init="@Open(dialog)"><div class="ts-dialog-content">@{ DialogHead(dialog, (provider.Configured ? "Update " : "Configure ") + info.Name + " sign-in"); }
+<form class="ts-form" method="post" action="@("/api/v1/auth-management/providers/" + info.Key)">@{ Csrf(); DialogError(dialog); }
+@if (info.Key == "oidc") { <div class="ts-field"><label class="ts-label" for="@(id + "-issuer")">Issuer</label><input class="ts-input ts-mono" id="@(id + "-issuer")" type="url" name="issuer" value="@Draft(dialog, "issuer", provider.Issuer)" required maxlength="2048" pattern="https://[^\s?#]+" title="The issuer must be an https URL without a query." placeholder="https://example.us.auth0.com/" autocomplete="off" spellcheck="false" /></div> }
+<div class="ts-field"><label class="ts-label" for="@(id + "-client-id")">@info.ClientIdLabel</label><input class="ts-input ts-mono" id="@(id + "-client-id")" name="client_id" value="@Draft(dialog, "client_id", provider.ClientId)" required maxlength="256" autocomplete="off" spellcheck="false" /></div>
+@if (apple) { <div class="ts-form-grid"><div class="ts-field"><label class="ts-label" for="auth-provider-apple-team">Team ID</label><input class="ts-input ts-mono" id="auth-provider-apple-team" name="team_id" value="@Draft(dialog, "team_id", provider.TeamId)" required minlength="10" maxlength="10" pattern="[A-Za-z0-9]{10}" title="The Apple team ID and key ID are 10 letters or digits." autocomplete="off" spellcheck="false" /></div><div class="ts-field"><label class="ts-label" for="auth-provider-apple-key">Key ID</label><input class="ts-input ts-mono" id="auth-provider-apple-key" name="key_id" value="@Draft(dialog, "key_id", provider.KeyId)" required minlength="10" maxlength="10" pattern="[A-Za-z0-9]{10}" title="The Apple team ID and key ID are 10 letters or digits." autocomplete="off" spellcheck="false" /></div></div> }
+<div class="ts-field"><label class="ts-label" for="@(id + "-secret")">@(apple ? "Private key (.p8)" : "Client secret")</label>@if (apple) { <textarea class="ts-input ts-mono" id="@(id + "-secret")" name="client_secret" rows="5" required="@(!provider.Configured)" maxlength="8192" placeholder="@(provider.Configured ? "unchanged" : "-----BEGIN PRIVATE KEY-----")" autocomplete="off" spellcheck="false"></textarea><input class="ts-input ts-idp-file" type="file" accept=".p8" aria-label="Read the private key from a .p8 file" data-on:change="el.files[0]?.text().then(text => el.form.client_secret.value = text)" /> } else { <input class="ts-input ts-mono" id="@(id + "-secret")" type="password" name="client_secret" required="@(!provider.Configured)" maxlength="8192" placeholder="@(provider.Configured ? "unchanged" : null)" autocomplete="new-password" /> }</div>
+@{ DialogFooter(dialog, "Save " + info.Name); }</form></div></dialog> }
+</li> }</ul> }
 }
 else if (current.Key == "configuration") {
 Card("Configuration");
-<div class="ts-card-body">@if (settings is null) { Empty("Configuration unavailable"); } else {
+<div class="ts-card-body">@if (settings is null) { Empty("Configuration is unavailable."); } else {
 var config = settings.Configuration;
 string Field(string name, string saved) => Model.Draft is { } draft ? draft[name].ToString() : saved;
-<form class="ts-form" method="post" action="/api/v1/auth-management/configuration"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><fieldset class="ts-stack" disabled="@(!manage)">
-<div class="ts-field"><label class="ts-label" for="auth-redirects">Allowed redirect URLs</label><textarea class="ts-input ts-mono" id="auth-redirects" name="redirect_urls" rows="5" spellcheck="false" placeholder="https://app.example.com/callback (one per line, up to 100)">@Field("redirect_urls", string.Join("\n", config?.RedirectUrls ?? []))</textarea></div>
-<div class="ts-field"><label class="ts-label" for="auth-lifetime">Session lifetime (seconds)</label><input class="ts-input" id="auth-lifetime" name="session_lifetime_seconds" type="number" required min="300" max="2592000" value="@Field("session_lifetime_seconds", (config?.SessionLifetimeSeconds ?? 1209600).ToString(System.Globalization.CultureInfo.InvariantCulture))" /></div>
-@if(manage){<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save configuration</button></div>}
+<form class="ts-form" method="post" action="/api/v1/auth-management/configuration" id="auth-configuration-form">@{ Csrf(); }<fieldset class="ts-form" disabled="@(!manage)">
+<div class="ts-field"><label class="ts-label" for="auth-redirects">Allowed redirect URLs</label><textarea class="ts-input ts-mono" id="auth-redirects" name="redirect_urls" rows="5" maxlength="204899" spellcheck="false" autocomplete="off" placeholder="https://app.example.com/callback (one per line, up to 100)">@Field("redirect_urls", string.Join("\n", config?.RedirectUrls ?? []))</textarea></div>
+<div class="ts-field ts-idp-short"><label class="ts-label" for="auth-lifetime">Session lifetime (seconds)</label><input class="ts-input" id="auth-lifetime" name="session_lifetime_seconds" type="number" inputmode="numeric" required min="300" max="2592000" step="1" value="@Field("session_lifetime_seconds", (config?.SessionLifetimeSeconds ?? 1209600).ToString(System.Globalization.CultureInfo.InvariantCulture))" /></div>
 </fieldset></form> }</div>
 }
 else if (current.Key == "danger") {
 Card("Danger zone");
-<div class="ts-card-body ts-stack-lg">
-@foreach(var (family,title,description,items) in new[]{
-("sessions", "Revoke a session", "The selected session ends. The user must sign in again.", (Model.Sessions ?? []).Select(item => (item.Id, item.Email + " · " + Date(item.CreatedAt)))),
-("users", "Delete an end user", "Permanently removes the selected user and their sessions.", (Model.Users ?? []).Select(item => (item.Id, item.Email))),
-("clients", "Delete an OAuth application", "The selected application can no longer sign users in.", (Model.Clients ?? []).Select(item => (item.ClientId, item.Name)))}){
-<section class="ts-idp-danger-action"><h3>@title</h3><p class="ts-meta">@description</p>
-@if(!items.Any()){<p class="ts-meta">No records.</p>}else if(manage){
-<form class="ts-form" method="post" action="@("/api/v1/auth-management/danger/" + family)"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="@("danger-" + family)">Record</label><select class="ts-select" id="@("danger-" + family)" name="record_id" required><option value="">Choose a record</option>@foreach(var (id,label) in items){<option value="@id">@label</option>}</select></div><div class="ts-field"><label class="ts-label" for="@("confirm-" + family)">Type @Model.Context.Project?.Name to confirm</label><input class="ts-input" id="@("confirm-" + family)" name="confirmation" required autocomplete="off" /></div><div><button class="ts-btn ts-btn-danger" type="submit">@title</button></div></form>}
-</section>}
-</div>
+@foreach (var danger in dangers) { var dialog = "danger-" + danger.Family + "-dialog";
+<div class="ts-idp-danger-row"><h3 class="ts-list-main ts-section-title">@danger.Title</h3>
+@if (danger.Items.Length == 0) { <p class="ts-meta">No records.</p> }
+else if (manage) { <button class="ts-btn ts-btn-danger" type="button" command="show-modal" commandfor="@dialog">@danger.Title</button>
+<dialog id="@dialog" class="ts-dialog" closedby="any" aria-labelledby="@(dialog + "-title")" data-init="@Open(dialog)"><div class="ts-dialog-content">@{ DialogHead(dialog, danger.Title); }
+<form class="ts-form" method="post" action="@("/api/v1/auth-management/danger/" + danger.Family)">@{ Csrf(); DialogError(dialog); }<p class="ts-muted">@danger.Consequence</p>
+<div class="ts-field"><label class="ts-label" for="@("danger-" + danger.Family)">Record</label><select class="ts-select" id="@("danger-" + danger.Family)" name="record_id" required><option value="">Choose a record</option>@foreach (var (id, label) in danger.Items) { <option value="@id" selected="@(Draft(dialog, "record_id", "") == id)">@label</option> }</select></div>
+<div class="ts-field"><label class="ts-label" for="@("confirm-" + danger.Family)">Type @projectName to confirm</label><input class="ts-input" id="@("confirm-" + danger.Family)" name="confirmation" required pattern="@Literal(projectName)" title="Type the project name exactly to confirm." autocomplete="off" spellcheck="false" value="@Draft(dialog, "confirmation", "")" /></div>
+@{ DialogFooter(dialog, danger.Title, "ts-btn-danger"); }</form></div></dialog> }
+</div> }
 }
 else {
-@if (settings is null) { Card("Branding"); Empty("Branding unavailable"); } else {
+@if (settings is null) { Card("Branding"); Empty("Branding is unavailable."); } else {
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.BrandingEditor, AuthenticationPage>(Model))
 }
 }
 </section>
-</div></div></main>
+</main>
 @functions {
 public ShellModel LayoutModel => Model.Shell;
-// Values stay in the rendered DOM, never in Datastar signals or browser storage.
+private static string Literal(string value) => System.Text.RegularExpressions.Regex.Replace(value, @"[\\^$.*+?()\[\]{}|/]", @"\$&");
 private const string CopyExpression = """
     (async () => {
         if (el.getAttribute('aria-disabled') === 'true') return;
