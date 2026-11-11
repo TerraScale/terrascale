@@ -21,6 +21,7 @@ and the build.
 Pushing the tag `sdk/js/v0.0.N` on a `main` commit starts
 `.github/workflows/sdk-release.yml`. Its `qualify` job runs the qualification above at
 the tag and requires the tag to match the `package.json` version. Its `npm` job then
-publishes that tarball with `npm publish --ignore-scripts --provenance --access public`,
-authenticated by the `NPM_TOKEN` Actions secret; without it the job fails. Never publish
-secret values or private storage paths.
+publishes that tarball with `npm publish --ignore-scripts --provenance --access public`.
+It authenticates through npm trusted publishing (OIDC) once that is configured for this
+workflow, or through the `NPM_TOKEN` Actions secret until then; with neither, the job
+fails. Never publish secret values or private storage paths.

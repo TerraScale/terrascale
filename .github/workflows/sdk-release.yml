@@ -11,7 +11,7 @@ on:
       - 'sdk/js/v0.0.*'
       - 'sdk/python/v0.0.*'
       - 'sdk/rust/v0.0.*'
-      - 'sdk/dotnet/v[0-9]+.[0-9]+.[0-9]+'
+      - 'sdk/dotnet/v0.0.*'
   workflow_dispatch:
     inputs:
       tag:
@@ -79,7 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.workflow_run.head_sha || inputs.tag || github.ref }}
+          ref: ${{ github.event.workflow_run.head_sha || format('refs/tags/{0}', inputs.tag || github.ref_name) }}
           persist-credentials: false
           fetch-depth: 0
       - *go-release-due
@@ -235,6 +235,7 @@ jobs:
           name: ${{ steps.tag.outputs.sdk }}
           path: ${{ runner.temp }}/qualified
           if-no-files-found: error
+          retention-days: 1
 
   npm:
     needs: qualify
