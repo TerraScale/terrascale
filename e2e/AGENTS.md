@@ -135,8 +135,12 @@ test asks the object store itself whether an object is there: `stored` of `suppo
 `HEAD` signed with the run's R2 key pair. Just before its account deletion `finish` uploads and deletes one more file
 in that bucket and reserves an upload it does not use. After the deletion the live and the just-deleted file are gone
 from the object store, the reserved link still takes its file, and that file is gone again within the step's wait
-(TerraBase deletes such late objects every 5 s until the link has expired). A `finish` without the bucket of the files
-tests fails with "left no bucket for the account deletion".
+(TerraBase deletes such late objects every 5 s until the link has expired). The test then puts one object under the
+project's prefix that no record names, signed with the run's key pair (`putUnnamed`): the state an upload leaves when
+it ends after its purge record is gone, six minutes after the reservation, which a run of three minutes cannot reach
+by waiting. Only TerraBase's sweep of the closed project's prefix can delete it; a sweep comes each time the age of
+the project's marker has doubled, so the wait is bounded by the time since the deletion began plus 15 s. A `finish`
+without the bucket of the files tests fails with "left no bucket for the account deletion".
 
 ## The SDK stage and the plans' request budgets
 
@@ -223,7 +227,8 @@ SHA-256 to its archive's.
   `env/r2.mjs` for Cloudflare R2 behind `journey.r2.cloudflarestorage.com`, TerraBase's customer file store: in-memory
   objects of the `terrascale-<region>-files` bucket, every request signed with SigV4 by the run's key pair in
   `$E2E_STATE/r2`, presigned or in its headers, an upload refused unless its body matches its
-  `x-amz-checksum-sha256`, and CORS for the dashboard's origin only. A request it refuses for any other reason than a
+  `x-amz-checksum-sha256`, a `ListObjectsV2` of one project's prefix (`app-files/<organization>/<project>/`, at most
+  1000 keys a call; a listing of anything else is unexpected), and CORS for the dashboard's origin only. A request it refuses for any other reason than a
   checksum or a missing object is a line in its `unexpected` list, which fails the run when it ends). The
   edge stands in for the ts-orch edge: Caddy for HTTPS and `env/pg-edge.mjs` for PostgreSQL on
   `pg.terrascale.tech:5432` (`SSLRequest`, TLS with the edge certificate, then TerraBase's listener). One exclusion:

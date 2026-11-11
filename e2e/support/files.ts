@@ -49,20 +49,31 @@ export async function putReserved(reservation: Reservation, content: Buffer): Pr
   return (await fetch(reservation.url, { method: 'PUT', headers, body: new Uint8Array(content) })).status;
 }
 
-export async function stored(path: string): Promise<boolean> {
+async function signed(method: 'HEAD' | 'PUT', path: string, content: Buffer, extra: Record<string, string>): Promise<Response> {
   const [id, secret] = readFileSync(join(stateDir, 'r2'), 'utf8').split('\n');
   const host = new URL(r2StandIn).host;
   const date = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '');
   const scope = `${date.slice(0, 8)}/auto/s3/aws4_request`;
-  const payload = sha256('').digest('hex');
+  const payload = sha256(content).digest('hex');
   const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
-  const canonical = ['HEAD', path, '', `host:${host}\nx-amz-content-sha256:${payload}\nx-amz-date:${date}\n`, signedHeaders, payload].join('\n');
+  const canonical = [method, path, '', `host:${host}\nx-amz-content-sha256:${payload}\nx-amz-date:${date}\n`, signedHeaders, payload].join('\n');
   const key = scope.split('/').reduce<string | Buffer>((derived, part) => hmac(derived, part), `AWS4${secret}`);
   const signature = hmac(key, ['AWS4-HMAC-SHA256', date, scope, sha256(canonical).digest('hex')].join('\n')).toString('hex');
-  const response = await fetch(`${r2StandIn}${path}`, {
-    method: 'HEAD',
-    headers: { 'x-amz-date': date, 'x-amz-content-sha256': payload, authorization: `AWS4-HMAC-SHA256 Credential=${id}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}` },
+  return fetch(`${r2StandIn}${path}`, {
+    method,
+    headers: { ...extra, 'x-amz-date': date, 'x-amz-content-sha256': payload, authorization: `AWS4-HMAC-SHA256 Credential=${id}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}` },
+    ...(method === 'PUT' ? { body: new Uint8Array(content) } : {}),
   });
+}
+
+export async function stored(path: string): Promise<boolean> {
+  const response = await signed('HEAD', path, Buffer.alloc(0), {});
   if (response.status !== 200 && response.status !== 404) throw new Error(`the object store answered ${response.status} to a signed HEAD`);
   return response.status === 200;
+}
+
+export const unnamedPath = (sibling: string) => sibling.replace(/[0-9A-Z]{26}$/, '7ZZZZZZZZZZZZZZZZZZZZZZZZZ');
+
+export async function putUnnamed(path: string, content: Buffer): Promise<number> {
+  return (await signed('PUT', path, content, { 'content-type': 'text/plain', 'x-amz-checksum-sha256': sha256(content).digest('base64') })).status;
 }

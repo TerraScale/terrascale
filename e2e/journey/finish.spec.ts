@@ -1,10 +1,12 @@
 import { deleteAccount } from '../support/account';
 import { test, expect } from '../support/audit';
-import { completeUpload, deleteFile, leftFiles, putReserved, reserveUpload, stored, type Reservation } from '../support/files';
+import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
 import { runOperations, sdks } from '../support/sdk';
 import { shell } from '../support/shell';
 import { onLocalStack } from '../support/stack';
 import { journey, setupFinished } from '../support/state';
+
+const sweepPass = 15_000;
 
 test.describe.configure({ mode: 'default' });
 
@@ -76,11 +78,17 @@ test.describe('teardown', () => {
       expect([await stored(left.live), await stored(held.path), await stored(late.path)], 'the bucket holds a live file and a just-deleted file, and nothing for the reserved upload').toEqual([true, true, false]);
       files.push({ live: left.live, held, late });
     });
+    const closing = Date.now();
     await deleteAccount(page, audit, browser, info);
     for (const { live, held, late } of files) {
       expect([await stored(live), await stored(held.path)], 'the deleted account left no file in the object store').toEqual([false, false]);
       expect(await putReserved(late, content), 'an upload link issued before the deletion still takes its file').toBe(200);
       await expect.poll(() => stored(late.path), { message: 'a file uploaded after the deletion is erased again' }).toBe(false);
+      const unnamed = unnamedPath(late.path);
+      expect(await putUnnamed(unnamed, content), 'an object that no record names arrives under the deleted project').toBe(200);
+      const nextSweep = Date.now() - closing + sweepPass;
+      info.setTimeout(info.timeout + nextSweep);
+      await expect.poll(() => stored(unnamed), { message: 'the sweep of the project prefix erases an object that no record names', timeout: nextSweep }).toBe(false);
     }
   });
 });
