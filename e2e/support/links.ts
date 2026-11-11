@@ -11,6 +11,9 @@ const journeyPages: readonly PagePattern[] = [
   { path: /^\/account-deleted$/ },
   { path: /^\/profile$/, query: { tab: /^access-tokens$/, status: /^token-revoked$/ } },
   { path: /^\/profile$/, query: { tab: /^profile$/, status: /^profile-saved$/ } },
+  { path: /^\/organization$/, query: { tab: /^billing$/, payment: /^success$/ } },
+  { path: /^\/organization$/, query: { tab: /^members$/, invitation: /^accepted$/ } },
+  { path: /^\/organizations\/choose$/, query: { returnTo: /^\/$/ } },
 ];
 
 const hostedPages: readonly RegExp[] = [

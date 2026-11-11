@@ -245,18 +245,6 @@
       "ttlSeconds": 3600
     },
     {
-      "id": "agent.fork",
-      "group": "b",
-      "title": "forkDatabase (branch)",
-      "needs": "a second database slot: the Free plan allows one database"
-    },
-    {
-      "id": "agent.fork_point_in_time",
-      "group": "b",
-      "title": "forkDatabase at a point in time",
-      "needs": "a second database slot: the Free plan allows one database"
-    },
-    {
       "id": "agent.set_ttl",
       "group": "b",
       "title": "setDatabaseTtl",
@@ -275,12 +263,6 @@
       "ttlSeconds": 600,
       "sql": "CREATE TABLE scoped_check (id TEXT PRIMARY KEY)",
       "mintStatus": 403
-    },
-    {
-      "id": "agent.scoped_key_outside",
-      "group": "b",
-      "title": "a scoped key is refused on another database of its project",
-      "needs": "a second database: the Free plan allows one"
     },
     {
       "id": "agent.delete",
@@ -306,6 +288,36 @@
       "group": "b",
       "title": "moveDatabaseHome",
       "needs": "two serving regions: the PR environment serves one region"
+    },
+    {
+      "id": "agent.fork",
+      "group": "c",
+      "title": "forkDatabase (branch)",
+      "setup": "CREATE TABLE {table} (id TEXT PRIMARY KEY)",
+      "sql": "INSERT INTO {table} (id) VALUES ('before the fork')",
+      "name": "e2e-{sdk}-{run}-fork",
+      "check": "SELECT id FROM {table} ORDER BY id",
+      "checkRows": [
+        [
+          "before the fork"
+        ]
+      ]
+    },
+    {
+      "id": "agent.fork_point_in_time",
+      "group": "c",
+      "title": "forkDatabase at a point in time",
+      "needs": "continuous backup: the PR environment's TerraBase runs in Development without a backup bucket"
+    },
+    {
+      "id": "agent.scoped_key_outside",
+      "group": "c",
+      "title": "a scoped key is refused on another database of its project",
+      "access": "read",
+      "ttlSeconds": 600,
+      "sql": "SELECT 1",
+      "status": 404,
+      "code": "unknown_database"
     }
   ]
 }

@@ -1,8 +1,9 @@
 # Journey suite (`e2e/`)
 
 Playwright Test (TypeScript) that drives the real services built from the commit under test: TerraBase, ts-auth
-and the dashboard behind a Caddy edge that serves the production host names, a per-run CA, Mailpit as the SMTP
-server and a Cloudflare send-API sink that must stay empty. CI runs it through `.github/workflows/journey.yml` on the
+and the dashboard behind an edge that serves the production host names (Caddy for HTTPS, a PostgreSQL TLS edge for
+`pg.terrascale.tech`), a per-run CA, Mailpit as the SMTP server, a Cloudflare send-API sink that must stay empty and a
+Stripe stand-in for the API and Checkout. CI runs it through `.github/workflows/journey.yml` on the
 merge commit GitHub tests for a pull request, unless every file the pull request changes is a `*.md` file or sits
 under `docs/`, `docs-site/`, `status-site/` or `landing-site/` other than `landing-site/static/pricing.json` (the
 `journey` filter of `.github/workflows/ci.yml`). Pushes to `main` and dispatches of `CI` never run it on a local stack;
@@ -15,8 +16,9 @@ bash e2e/env/local.sh        # build, enter the namespaces, run the egress guard
 ```
 
 Needs the .NET SDK of `global.json`, Node 24 with npm, Go (`sdk/go/.go-version`), Rust through rustup
-(`e2e/sdk/rust/rust-toolchain.toml`), Python 3.12, git, make, curl, openssl, tar, sha256sum, `certutil` (Ubuntu
-`libnss3-tools`; NixOS `nix shell nixpkgs#nss.tools`), iproute2 `ip`, procps `pgrep`, util-linux `unshare`, `nsenter`
+(`e2e/sdk/rust/rust-toolchain.toml`), Python 3.12, git, make, curl, openssl, tar, sha256sum, jq, `certutil` (Ubuntu
+`libnss3-tools`; NixOS `nix shell nixpkgs#nss.tools`), `psql` of PostgreSQL 16 or later for `sslrootcert=system`
+(NixOS `nix shell nixpkgs#postgresql`), iproute2 `ip`, procps `pgrep`, util-linux `unshare`, `nsenter`
 and `mount`, a CA bundle at `/etc/ssl/certs/ca-certificates.crt`, and unprivileged user namespaces; Ubuntu 23.10 and
 later restrict those through AppArmor until `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, the one
 command CI runs with sudo. The `ubuntu-24.04` runner image has all of them; CI installs only the pinned versions of
@@ -43,7 +45,8 @@ never for a pull request: once after the last release of each commit (the rule i
   CA bundle itself;
 - asks mail.tm for an active domain before the first request to production ("inbox provider … production was not
   contacted" when it cannot), records both `/readyz` answers in `production-report/readyz.txt`, then runs the projects
-  of both pull-request shards (179 tests). A new project runs against production only once it is added there.
+  of both pull-request shards but the paid flow (179 tests). A new project runs against production only once it is
+  added there; `paid`, `paid-invitation` and `paid-finish` stay local because they pay through the Stripe stand-in.
 
 What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 
@@ -56,8 +59,9 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
   password and token are registered secrets. Errors name the "inbox provider".
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
-  sender, and the sign-up submission of the four `hosted` tests: each would send a production mail, and `setup`,
-  `desktop-setup` and `invitation` already audit the verify page.
+  sender; the sign-up submission of the four `hosted` tests: each would send a production mail, and `setup`,
+  `desktop-setup` and `invitation` already audit the verify page; and the global teardown's check of the Stripe
+  stand-in's unexpected calls (`support/teardown.ts`), because production has no stand-in.
 - The SDK stage keeps the pacing and every per-operation check. TerraBase's lane counters (`127.0.0.1:9091`) exist only
   on the local target, so a refused request that an SDK resends itself (Go and Rust REST calls, JavaScript and .NET
   reads) is caught on pull requests only; on production a refusal fails the run when it reaches the runner.
@@ -79,33 +83,59 @@ then `bash e2e/env/production.sh`; each run makes three production accounts.
 
 `setup` signs up, reads the code from Mailpit, onboards on Free, creates a database and an API key. `desktop-setup`
 does the same for a second user whose only project is `pages-desktop`; its teardown `desktop-close` only deletes that
-account. CI runs the two users in two shards, each with the `projects` of its row in the journey matrix of
-`journey.yml`. In the phone shard, once `setup` has passed, the tests of `pages-mobile`, `hosted`, `interactions` and
-`invitation` share six workers. Playwright queues them in the order `playwright.config.ts` lists the projects, so
-in practice the flows start once every page test has started; nothing enforces that order and no test depends on it.
-The organization audit is read through the tab's own Action filter, and its second page is a state of its own (the
-phone owner's organization holds 12 audit events before `finish`; the two pages show 20). `finish`, the teardown of
-`setup`, starts when all four have ended and runs its tests in order in one worker: SDK group A, the database
-deletion through the UI, SDK group B, a rename and the account deletion. A teardown whose setup failed fails once
-with "setup did not finish" and runs nothing else.
+account. `paid` signs up a third user, onboards on Free, renames the organization, creates a database, upgrades to Pro
+from the billing tab through Checkout (the stand-in's page, its signed `checkout.session.completed` webhook and the
+dashboard's return), checks the plan and its limits on the billing and organization pages, sees a webhook signed with
+another secret refused, then creates a second database and an API key. `paid-invitation` invites a fourth user, who
+signs up through the emailed link, accepts, onboards in the Personal organization every account gets, signs in again
+to the organization choice and opens the Pro organization; the owner then sees both members and removes the new one.
+`paid-finish`, the teardown of `paid`, runs in order in one worker: SDK group C, the branch action and the account
+deletion, which waits for ts-auth's deletion cleanup (every 60 s) to prove the organization deleted, then for the
+dashboard's deletion reconciler (every 30 s) to cancel the subscription at the stand-in; the wait is bounded by the
+two periods plus 20 s for the reconciler's passes. CI runs the
+users in two shards, each with the `projects` of its row in the journey matrix of `journey.yml`: the phone owner's
+projects in one, `pages-desktop` and the paid flow in the other. In the phone shard, once `setup` has passed, the
+tests of `pages-mobile`, `hosted`, `interactions` and `invitation` share six workers. Playwright queues them in the
+order `playwright.config.ts` lists the projects, so in practice the flows start once every page test has started;
+nothing enforces that order and no test depends on it. The organization audit is read through the tab's own Action
+filter, and its second page is a state of its own (the phone owner's organization holds 12 audit events before
+`finish`; the two pages show 20). `finish`, the teardown of `setup`, starts when all four have ended and runs its
+tests in order in one worker: SDK group A, the database deletion through the UI, SDK group B, a rename and the account
+deletion. A teardown whose setup failed fails once with "setup did not finish" and runs nothing else.
 
-## The SDK stage and the Free plan's request budget
+## The SDK stage and the plans' request budgets
 
-TerraBase admits each organization's requests through a token bucket (Free: 50 per second, burst 100;
-`src/TerraBase/Features/Qos/QosPolicy.cs:10`) and refuses the rest with `429 tenant_busy`. The Go and Rust SDKs
-resend a refused REST call after `Retry-After`, and the JavaScript and .NET SDKs resend refused reads, so a refusal
-does not always fail an operation. `support/sdk.ts` runs the five runners one at a time, and starts a runner only
-when a model of the bucket holds that runner's `requestsPerRunner` plus 20 (each group starts the model at 0 tokens
-and books a runner's requests when it exits). Around each runner it reads TerraBase's own counters for the journey
-organization's lane from `http://127.0.0.1:9091/metrics` (`terrabase_qos_request_duration_seconds_count` and
-`terrabase_qos_rejected_total` with `plan="hobby"` and the organization's `tenant_bucket`); each reading waits until
-the metrics differ from the last reading, because the exporter repeats the same answer for about 300 ms.
-A runner fails when TerraBase refused any of its requests or admitted more than its booked count, with a message that
-names the runner, the count and `requestsPerRunner`, and when TerraBase admitted none (the metric moved). Each runner
-prints `<sdk> group <a|b>: TerraBase admitted N of the M requests booked and refused 0`. The 20 tokens of headroom
-absorb requests in the lane that no runner's readings count, between two runners; none are expected. After a change
-to an SDK call or to `sdk/operations.json`, run `finish` locally and set `requestsPerRunner` to the admitted counts
-the runners print.
+TerraBase admits each organization's requests through its plan's token bucket (Free: 50 per second, burst 100; Pro:
+500 per second, burst 1000; `src/TerraBase/Features/Qos/QosPolicy.cs:10,12`) and refuses the rest with
+`429 tenant_busy`. Groups A and B run in the phone owner's Free organization; group C (a fork, the scoped key refused
+on another database) runs in the paid owner's Pro organization with its API key, and its runners also get the first
+database's id (`E2E_DATABASE_ID`) and the second database's name (`E2E_OTHER_DATABASE`). The Go and Rust SDKs resend a
+refused REST call after `Retry-After`, and the JavaScript and .NET SDKs resend refused reads, so a refusal does not
+always fail an operation. `support/sdk.ts` runs the five runners one at a time, and starts a runner only when a model
+of the bucket holds that runner's `requestsPerRunner` plus 20 (each group starts the model at 0 tokens and books a
+runner's requests when it exits). Around each runner it reads TerraBase's own counters for the organization's lane
+from `http://127.0.0.1:9091/metrics` (`terrabase_qos_request_duration_seconds_count` and
+`terrabase_qos_rejected_total` with the plan's label, `plan="hobby"` or `plan="pro"`, and the organization's
+`tenant_bucket`); each reading waits until the metrics differ from the last reading, because the exporter repeats the
+same answer for about 300 ms, and the reading after a runner is the second new answer, made after the runner exited
+even when another worker's readings refresh the exporter while it runs. A runner fails when TerraBase refused any of
+its requests or admitted more than its booked count, with a message that names the runner, the count and
+`requestsPerRunner`, and when TerraBase admitted none (the metric moved). Each runner prints
+`<sdk> group <a|b|c>: TerraBase admitted N of the M requests booked and refused 0`. The 20 tokens of headroom absorb
+requests in the lane that no runner's readings count, between two runners; none are expected. After a change to an
+SDK call or to `sdk/operations.json`, run `finish` (groups A and B) or `paid-finish` (group C) locally and set
+`requestsPerRunner` to the admitted counts the runners print.
+
+## The branch action
+
+`paid-finish` runs `branch.sh` of `TerraScale/branch-action` with the environment its `action.yml` gives it (a pull
+request event of its own, `GITHUB_OUTPUT` under `$E2E_STATE`) against the paid owner's second database with the
+paid API key: create, create again (the same branch), reset (a new branch, the previous one kept) and delete. It
+queries and writes through the printed connection URL with `psql` over the PostgreSQL edge, the password in
+`PGPASSWORD`, and checks the dashboard's database list after each step. `env/tools.sh` fetches the action at the
+commit in `branch_action`, checked by the archive's SHA-256, and runs the action's own `install-ts.sh`, which installs
+the released `ts` it pins by version and SHA-256. To move the pin, set `branch_action` to the new commit and the
+SHA-256 to its archive's.
 
 ## Add a page, a dialog, a hosted page, a flow, a secret, a host name or an SDK operation
 
@@ -134,13 +164,25 @@ the runners print.
   JavaScript and Python); a request count that is too low fails the runner; an SDK method with no entry in
   `operations.json` fails nothing. An operation the PR environment cannot run carries a `needs` reason and is
   reported as not run.
+- A Stripe call the dashboard makes: one route in `api` of `env/stripe.mjs` for exactly that method and path, whose
+  answer holds only the fields the dashboard reads plus those Stripe.net needs to deserialize, named as in the entity
+  classes of the Stripe.net version `Directory.Packages.props` pins (its `StripeConfiguration.ApiVersion` is the only
+  `Stripe-Version` the stand-in accepts). A list route names the filters the dashboard must send (the customer, and
+  `status=all` on subscriptions), so a list call without them is unexpected like a call to no route: either gets 404
+  and a line in the stand-in's `unexpected` list, which fails the run when it ends (`support/teardown.ts`). Each
+  line of its call log holds the method, the path, the query keys and the expand paths, and no other query or form
+  value.
 
 ## Rules
 
 - Real services only: never fake our own code; only third parties are stood in for (Mailpit for SMTP, a sink for
-  Cloudflare's send API, a closed edge for Stripe). One exclusion: our status site (`status-site/`, Cloudflare
-  Workers on D1) does not run here, so the edge answers `status.terrascale.tech` with 404 (`env/Caddyfile:38-41`)
-  and the dashboard's Regions card (`HomeMeasurements.cs:194`) is tested on its unavailable path only.
+  Cloudflare's send API, `env/stripe.mjs` for Stripe's API and Checkout page: in-memory customers, sessions and
+  subscriptions, the run's `STRIPE_SECRET_KEY` required, webhooks signed with the run's `STRIPE_WEBHOOK_SECRET`). The
+  edge stands in for the ts-orch edge: Caddy for HTTPS and `env/pg-edge.mjs` for PostgreSQL on
+  `pg.terrascale.tech:5432` (`SSLRequest`, TLS with the edge certificate, then TerraBase's listener). One exclusion:
+  our status site (`status-site/`, Cloudflare Workers on D1) does not run here, so the edge answers
+  `status.terrascale.tech` with 404 (`env/Caddyfile:38-41`) and the dashboard's Regions card
+  (`HomeMeasurements.cs:194`) is tested on its unavailable path only.
 - Every audited state fails on a console error, warning or failed `console.assert`, an uncaught page error, a failed
   request, an HTTP status of 400 or more, a broken `<img>`, horizontal overflow of the document, an axe WCAG 2.2 AA
   violation or an uncovered same-origin link. What passes on purpose: the other console types (`log`, `debug`,
@@ -153,18 +195,20 @@ the runners print.
   computed from the request budget; the SDKs' own resends of a refused request are caught by the lane check.
 - Step-ups: ts-auth issues at most 10 per user in 15 minutes (`StepUpProofs.cs:60-62,94`); a run spends 1 for the
   desktop owner (account deletion), 6 for the phone-and-flows owner (the access token in `interactions`, 4 in
-  `hosted`, account deletion) and none for any other user; API keys need none.
+  `hosted`, account deletion), 1 for the paid owner (account deletion) and none for any other user; API keys need
+  none.
 - Secrets: every value the run generates is registered through `saveSecret` in `support/state.ts` or in
-  `$E2E_STATE/secrets` (the service keys of `env/up.sh`) and masked in the job log: passwords before their first
-  use, API keys and the access token right after the test reads them, the owner's cookies when `setup` saves its
-  session, every cookie of a test's own context when the test ends, pass or fail, and the cookies of a context a
-  flow opens itself when that flow passes (those flows keep no trace); the runners write their scoped keys to
-  `secrets.d` before they use them. Before anything uploads, `env/scrub.py` replaces each value, raw, URL-encoded and
-  JSON-escaped, with `[redacted]` in every file, inside zip archives and inside the report's embedded zip, then
-  checks none is left; a file it cannot rewrite is deleted and named, and the step fails, so nothing uploads. Once
-  the namespace step has passed, Stop runs before the scrub, even after a timeout or a cancel, and ends every
-  process inside, so nothing the suite started writes after the scrub lists its files. Text is redacted; pixels are
-  not scanned: screenshots mask the secret fields by selector and videos are off. The 6-digit codes are not redacted
+  `$E2E_STATE/secrets` (the service keys of `env/up.sh`) and masked in the job log: passwords before their first use,
+  API keys and the access token right after the test reads them, the owner's cookies when `setup` saves its session,
+  every cookie of a test's own context when the test ends, pass or fail, and the cookies of a context a flow opens
+  itself when that flow passes (those flows keep no trace); the runners write their scoped keys to `secrets.d` before
+  they use them, and the branch action's connection URL and scoped key are registered the moment the test reads them
+  from `GITHUB_OUTPUT`. Before anything uploads, `env/scrub.py` replaces each value, raw, URL-encoded and
+  JSON-escaped, with `[redacted]` in every file, inside zip archives and inside the report's embedded zip, then checks
+  none is left; a file it cannot rewrite is deleted and named, and the step fails, so nothing uploads. Once the
+  namespace step has passed, Stop runs before the scrub, even after a timeout or a cancel, and ends every process
+  inside, so nothing the suite started writes after the scrub lists its files. Text is redacted; pixels are not
+  scanned: screenshots mask the secret fields by selector and videos are off. The 6-digit codes are not redacted
   (single use, under 16 characters). Every secret of a PR run is generated in that run and dies with the VM: `ci.yml`
   passes no secret to `journey.yml`, which grants `contents: read` only, checks out with `persist-credentials: false`
   and uses no repository secret. Never print a secret.

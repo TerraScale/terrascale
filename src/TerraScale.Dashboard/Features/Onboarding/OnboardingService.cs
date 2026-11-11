@@ -86,11 +86,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
                         break;
                     }
 
-                    if (context.Organization?.Kind != "personal")
-                    {
-                        throw new OnboardingValidationException("Return to your Personal workspace to finish account setup.");
-                    }
-
                     var interval = form["interval"].ToString();
                     if (interval.Length == 0)
                     {
@@ -102,16 +97,12 @@ namespace TerraScale.Dashboard.Features.Onboarding
                         throw new OnboardingValidationException("Choose an available plan and billing interval.");
                     }
 
+                    context = await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken);
                     return await payments.StartCheckoutAsync(context, plan, interval, "/onboarding", cancellationToken);
                 case "project":
                     if (context.Account.OnboardingStep != "project")
                     {
                         throw new OnboardingValidationException("Complete the current setup step first.");
-                    }
-
-                    if (context.Organization?.Id != context.Account.PersonalOrganizationId || context.Project?.IsDefault != true)
-                    {
-                        throw new OnboardingValidationException("Return to your default Personal project to finish account setup.");
                     }
 
                     var name = form["name"].ToString().Trim();
@@ -126,6 +117,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
                     }
                     // The provisioner accepts only a region TerraBase reports as serving.
                     var region = form["region"].ToString().Trim().ToUpperInvariant();
+                    context = await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken);
                     if (context.Organization is null || context.Project is null || !context.CanManage)
                     {
                         throw new AccountAccessException("Project membership is required.");
@@ -161,6 +153,12 @@ namespace TerraScale.Dashboard.Features.Onboarding
                     throw new OnboardingValidationException("Choose a valid setup step.");
             }
             return "/onboarding";
+        }
+
+        private async Task<AccountContext> SwitchToPersonalAsync(SessionRecord session, string personalOrganizationId, CancellationToken cancellationToken)
+        {
+            var personal = await accounts.SwitchOrganizationAsync(session, personalOrganizationId, cancellationToken);
+            return personal.Project?.IsDefault == true ? personal : throw new OnboardingValidationException("Your Personal workspace has no default project.");
         }
 
         public static string DisplayName(string raw)
