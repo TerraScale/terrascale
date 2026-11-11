@@ -121,7 +121,8 @@ namespace TerraScale.Dashboard.Features.Profile
                     { await DropAsync(storage, Key(http), cancellationToken); http.Response.Cookies.Delete(Cookie); }
                 }
                 var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "danger", Error: error.Message,
-                    Tokens: await tokens.ListAsync(context, cancellationToken), Sessions: await sessions.ListAsync(http, context.Session)));
+                    Tokens: await tokens.ListAsync(context, cancellationToken), Sessions: await sessions.ListAsync(http, context.Session))
+                { DialogId = "delete-account", DraftEmail = form["email"].ToString() });
                 view.StatusCode = error.StatusCode;
                 return view;
             }

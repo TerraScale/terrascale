@@ -202,6 +202,7 @@ async function build() {
     entryPoints: {
       'code-editor': resolve(source, 'code-editor/index.js'),
       'sql-results': resolve(source, 'code-editor/results.js'),
+      'form-validation': resolve(source, 'form-validation.js'),
       'button-loading': resolve(source, 'button-loading.js'),
       'auth-branding': resolve(source, 'auth-branding.js'),
       'auth-directory-export': resolve(source, 'auth-directory-export.js'),

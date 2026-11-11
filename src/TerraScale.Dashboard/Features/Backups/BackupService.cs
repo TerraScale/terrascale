@@ -289,7 +289,7 @@ namespace TerraScale.Dashboard.Features.Backups
             context = await databases.CurrentAsync(context, ct);
             var home = await databases.HomeAsync(context, Manage(context, databaseId), ct);
             (endpoint, region, bucket, accessKeyId) = (endpoint.Trim(), region.Trim(), bucket.Trim(), accessKeyId.Trim());
-            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || region.Length is 0 or > 64 ||
+            if (endpoint.Length > 2048 || !Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || region.Length is 0 or > 64 ||
                 bucket.Length is < 3 or > 63 || accessKeyId.Length is 0 or > 256 || secretKey.Length is 0 or > 256)
             {
                 throw new AccountAccessException("Enter an https endpoint, the region, a bucket name of 3 to 63 characters, and the access key ID and secret.", 422);

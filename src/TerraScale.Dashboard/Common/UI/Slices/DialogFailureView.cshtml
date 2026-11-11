@@ -1,0 +1,6 @@
+@inherits RazorSlice<DialogError>
+<dialog id="@Model.DialogId" class="ts-dialog" closedby="any" aria-labelledby="@(Model.DialogId + "-title")"><div class="ts-dialog-content">
+    <h2 class="ts-dialog-title" id="@(Model.DialogId + "-title")">Request failed</h2>
+    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.DialogErrorView, DialogError>(Model))
+    <div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="@Model.DialogId">Close</button></div>
+</div></dialog>

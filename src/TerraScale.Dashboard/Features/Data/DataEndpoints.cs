@@ -80,7 +80,7 @@ namespace TerraScale.Dashboard.Features.Data
                     return DatabaseResults.PageFailure(http, context, error);
                 }
 
-                return await PageAsync(http, context, id, data, saved, DatabaseEndpoints.Message(error), action == "saved-queries" ? "save-query" : "",
+                return await PageAsync(http, context, id, data, saved, DatabaseEndpoints.Message(error), action == "saved-queries" ? "save-query" : action == "saved-queries/delete" ? "delete-query-" + form["id"] : "",
                     form["sql"].ToString(), queryName: form["name"].ToString(), status: DatabaseEndpoints.Status(error));
             }
         }

@@ -9,7 +9,8 @@
     }
     else
     {
-        <form method="post" action="@("/api/v1/dashboard/organization/projects/" + Uri.EscapeDataString(project.Id) + "/delete")" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="delete-project-confirmation-@project.Id">Enter “@project.Name” to confirm</label><input class="ts-input" id="delete-project-confirmation-@project.Id" name="confirmation" autocomplete="off" required /></div><div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="delete-project-@project.Id">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Delete project</button></div></form>
+        @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.DialogErrorView, DialogError>(new("delete-project-" + project.Id, DialogSubmission.Matches(HttpContext!, "/api/v1/dashboard/organization/projects/" + project.Id + "/delete") ? Model.Page.Error : "")))
+        <form method="post" action="@("/api/v1/dashboard/organization/projects/" + Uri.EscapeDataString(project.Id) + "/delete")" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="delete-project-confirmation-@project.Id">Enter “@project.Name” to confirm</label><input class="ts-input" id="delete-project-confirmation-@project.Id" name="confirmation" value="@DialogSubmission.Value(HttpContext!, "/api/v1/dashboard/organization/projects/" + project.Id + "/delete", "confirmation", "")" autocomplete="off" required /></div><div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="delete-project-@project.Id">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Delete project</button></div></form>
     }
     </div></dialog>
 }

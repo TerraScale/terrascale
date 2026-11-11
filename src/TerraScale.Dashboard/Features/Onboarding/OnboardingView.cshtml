@@ -30,7 +30,7 @@
             <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="account-information-title">Review your account information</h2><p class="ts-meta">Signed in as @Model.Email</p></div>
             <form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="account-information-title">
                 <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="account-information" />@if (Model.RequestedPlan.Length > 0) { <input type="hidden" name="plan" value="@Model.RequestedPlan" /> }
-                <div class="ts-field"><label class="ts-label" for="displayName">Full name</label><input class="ts-input" id="displayName" name="displayName" value="@Model.DisplayName" maxlength="128" autocomplete="name" required /></div>
+                <div class="ts-field"><label class="ts-label" for="displayName">Full name</label><input class="ts-input" id="displayName" name="displayName" value="@Model.DisplayName" autocomplete="name" required pattern="[\s\u0085]*[^\p{Cc}]*\S[^\p{Cc}]*[\s\u0085]*" title="Enter a name without control characters" /></div>
                 <div class="ts-field"><label class="ts-label" for="accountEmail">Email</label><input class="ts-input" id="accountEmail" type="email" value="@Model.Email" readonly /></div>
                 <p class="ts-meta">By continuing you accept the <a href="https://docs.terrascale.tech/legal/terms" @(ExternalLink.Attributes)>Terms of Service@(ExternalLink.Hint)</a>, <a href="https://docs.terrascale.tech/legal/privacy" @(ExternalLink.Attributes)>Privacy Policy@(ExternalLink.Hint)</a> and <a href="https://docs.terrascale.tech/legal/dpa" @(ExternalLink.Attributes)>Data Processing Agreement@(ExternalLink.Hint)</a>.</p>
                 <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save and continue <span aria-hidden="true">→</span></button></div>
@@ -60,7 +60,7 @@
             <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="project-title">Create your first project</h2></div>
             <form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="project-title">
                 <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="project" />
-                <div class="ts-field"><label class="ts-label" for="projectName">Project name</label><input class="ts-input" id="projectName" name="name" maxlength="100" value="@Model.ProjectName" autocomplete="organization" required /></div>
+                <div class="ts-field"><label class="ts-label" for="projectName">Project name</label><input class="ts-input" id="projectName" name="name" value="@Model.ProjectName" autocomplete="organization" pattern="[\s\u0085]*[^\p{Cc}]*[\s\u0085]*" title="Enter a name without control characters" /></div>
                 <div class="ts-field"><label class="ts-label" for="region">Primary region</label>
                     @{ var regions = Model.Regions ?? []; var selectedRegion = Model.Region.Length > 0 ? Model.Region : regions.FirstOrDefault() ?? ""; }
                     @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.RegionPicker, RegionMapField>(new("region", selectedRegion, Available: regions)))

@@ -10,6 +10,8 @@ namespace TerraScale.Dashboard.Features.Profile
             : PlatformDatabases.IsPlatform(Shell.Context.Organization?.Id) ? "viewer"
             : project.Role is "viewer" or "member" or "admin" ? project.Role : null;
         public int ScopeRoleCount => (Shell.Context.Role.Length > 0 ? 1 : 0) + (SelectedProjectRole is not null ? 1 : 0);
+        public string DialogId { get; init; } = "";
+        public string DraftEmail { get; init; } = "";
         public bool EmailCodeEntry { get; init; }
         public string? PendingEmail { get; init; }
         public string? DraftName { get; init; }
@@ -64,7 +66,11 @@ namespace TerraScale.Dashboard.Features.Profile
                 return RequestError.FormExpired(http, "/profile?tab=sessions", Results.BadRequest("Invalid form token."));
             }
 
-            await platform.SignOutEverywhereAsync(context.Session, http.RequestAborted);
+            try { await platform.SignOutEverywhereAsync(context.Session, http.RequestAborted); }
+            catch (AccountAccessException error)
+            { return await ProfileDialogErrors.PageAsync(http, sessions, accounts, "sign-out-everywhere", "sessions", error.Message, error.StatusCode); }
+            catch (HttpRequestException)
+            { return await ProfileDialogErrors.PageAsync(http, sessions, accounts, "sign-out-everywhere", "sessions", "Sign-out could not be confirmed. Try again.", 503); }
             await sessions.RevokeUserAsync(context.UserId, http.RequestAborted);
             await sessions.EndAsync(http);
             return HttpRedirects.SeeOther("/login?returnTo=%2Fprofile");

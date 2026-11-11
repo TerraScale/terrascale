@@ -1,0 +1,20 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectGrantPage>
+<dialog id="@Model.Dialog" class="ts-dialog" closedby="any" aria-labelledby="grant-error-title"><div class="ts-dialog-content">
+    <h2 id="grant-error-title">Explicit project grant</h2>
+    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.DialogErrorView, DialogError>(new(Model.Dialog, Model.Error)))
+    <form method="post" action="@Model.PostUrl" class="ts-form" data-submit-once>
+        <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+        <input type="hidden" name="userId" value="@Model.DraftUserId" />
+        <input type="hidden" name="dialog" value="@(Model.Dialog.StartsWith("edit-", StringComparison.Ordinal) ? "edit" : "remove")" />
+        <p class="ts-mono">@Model.DraftUserId</p>
+        @if (Model.Dialog.StartsWith("edit-", StringComparison.Ordinal))
+        {
+            <label class="ts-label" for="failed-grant-role">Explicit role</label><select class="ts-select" id="failed-grant-role" name="role" required>
+            @foreach (var role in new[] { "viewer", "member", "admin" }) { <option value="@role" selected="@(role == Model.DraftRole)">@role</option> }
+            </select>
+            <button class="ts-btn ts-btn-primary" type="submit" name="operation" value="set">Save role</button>
+        }
+        else { <button class="ts-btn ts-btn-danger" type="submit" name="operation" value="remove">Remove only this grant</button> }
+        <button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="@Model.Dialog">Cancel</button>
+    </form>
+</div></dialog>
