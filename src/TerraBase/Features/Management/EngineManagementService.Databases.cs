@@ -41,6 +41,61 @@ internal sealed partial class EngineManagementService
             Unavailable error => error,
         };
 
+    public async ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionSetAsync(
+        string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> selected, CancellationToken cancellationToken)
+    {
+        var result = await WriteAsync<SetDatabaseRegionsResult>(async transaction =>
+        {
+            var project = await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            if (project is not TenantContext)
+            {
+                return project switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    TenantContext => throw new UnreachableException(),
+                };
+            }
+
+            if (await GetDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is not { } database)
+            {
+                return ManagementErrors.NotFound;
+            }
+
+            if (database.Home(options.Region) != options.Region)
+            {
+                return ManagementErrors.WrongRegion;
+            }
+
+            if (await HomeMovePendingAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
+            {
+                return MoveInProgress;
+            }
+
+            var replicas = selected.Contains(options.Region, StringComparer.Ordinal)
+                ? DatabaseRegions.AllBut(selected, options.Region)
+                : DatabaseRegions.AllBut(database.Replicas.Concat(selected), options.Region);
+            if (DatabaseRegions.Check(replicas, options.Region) is Validation invalid)
+            {
+                return invalid;
+            }
+
+            if (!database.AllRegions && database.Replicas.Order(StringComparer.Ordinal).SequenceEqual(replicas))
+            {
+                return database;
+            }
+
+            return await SetDatabaseRegionsAsync(transaction, userId, organizationId, projectId, databaseId, replicas, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (result is ManagedDatabase placed && engine is IDatabaseRevisions revisions)
+        {
+            var tenant = new TenantContext(organizationId, PlanTier.Hobby, projectId, databaseId);
+            await revisions.RetainReplicaCdcAsync(tenant, placed.Placement(options.Region), null, null, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
     public async ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
         string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken,
         bool allRegions = false)
@@ -91,11 +146,6 @@ internal sealed partial class EngineManagementService
         if (await HomeMovePendingAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
         {
             return MoveInProgress;
-        }
-
-        if (database.AllRegions == allRegions && database.Replicas.SequenceEqual(replicaRegions.Order(StringComparer.Ordinal)))
-        {
-            return database;
         }
 
         var placed = database with

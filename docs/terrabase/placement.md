@@ -15,11 +15,15 @@ request that reached another region (`421 wrong_region`, `ts-replay: region=<hom
 
 `regions` is a JSON array with at least one serving region id, without duplicates. Unknown, non-serving, duplicate and empty sets answer the existing `400 invalid_request` envelope. Database responses include `regions` sorted by region id, the catalog order. Response order carries no meaning and does not identify the writer.
 
-On create, the first region in the caller's array is the initial writer. On update, the writer stays if it remains selected. Otherwise TerraBase tries selected regions in region-id order through the existing move and uses the first target that accepts promotion. Newly selected regions are staged as members before promotion so they can synchronize. If every target refuses as not ready, staged additions are undone and the original membership and writer remain. After a successful move, the same placement request is forwarded to the new writer, which removes the old writer and other unselected regions. Repeating the same set continues or completes the change; a completed set preserves its placement version. An unresolved move returns its existing retryable refusal and is settled by the existing move mechanism before the caller continues. A rename is sent separately from placement. Explicit `regions` turns off all-regions placement.
+On create, the first region in the caller's array is the initial writer. On update, the writer stays if it remains selected. Otherwise TerraBase adds missing requested regions and keeps them as members so their followers can synchronize. This first call returns `503 replica_not_ready`; it does not attempt promotion. The intermediate placement is the old writer and existing members plus the requested regions. Nothing is unstaged on any refusal, and `regions` reports that superset meanwhile.
+
+Repeat the same request after a requested region catches up. TerraBase tries requested regions in region-id order and promotes the first one that is ready through the existing move. After promotion, the same request is forwarded to the new writer, which removes every unselected region. Moving from `{"regions":["gru"]}` to `{"regions":["sjc"]}` therefore requires at least two calls: add, then move and remove. Each call is idempotent: placement versions change only when membership, the writer or all-regions mode changes. A rename is sent separately from placement. Explicit `regions` turns off all-regions placement.
+
+The requested placement and any intermediate superset must pass the existing limit of eight replicas other than the writer (nine total members). A superset that exceeds it returns `400 invalid_request` before any membership is written; remove other non-writers first to make room. A retryable refusal leaves the current valid placement in place, including additions. An unresolved move returns its existing refusal and is settled by the existing move mechanism before the caller continues.
 
 Transitional: the old fields and the move-home endpoint are removed by category C23 of batch db4a5ba7 once every consumer sends `regions`.
 
-Until then, requests using `homeRegion`, `replicaRegions` or `allRegions`, and responses containing the old fields, keep working unchanged. Combining `regions` with any of those placement fields is invalid. The transitional fields retain these rules:
+Until then, requests using `homeRegion`, `replicaRegions` or `allRegions`, and responses containing the old fields, keep working. The old-field PATCH retains its placement-version bump even when repeated without a membership change. It now returns `409 move_in_progress` while a move is pending: changing membership then could consume the move marker's next version and prevent the source catalog from recording the promoted writer, while the target holds the membership captured for promotion. Combining `regions` with any of those placement fields is invalid. The transitional fields retain these rules:
 
 - `replicaRegions` names at most 8 distinct serving regions other than the home, and turns all-regions mode off.
 - `allRegions: true` places a replica in every serving region other than the home. The home keeps the replica set equal
@@ -33,7 +37,7 @@ Until then, requests using `homeRegion`, `replicaRegions` or `allRegions`, and r
 | `400 invalid_request` | bad or unserved regions; `homeRegion` is not a replica region |
 | `409 move_in_progress` | another move of this database is running |
 | `421 wrong_region` | the request reached a region other than the home |
-| `503 replica_not_ready` | the target replica could not catch up or be reached; nothing changed |
+| `503 replica_not_ready` | no requested replica can take over yet; added regions remain members (move-home itself changes nothing on this refusal) |
 | `503 move_unresolved` | the move outcome is being settled with the target; writes stay paused until it is; retry |
 
 ## Moving the home

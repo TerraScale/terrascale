@@ -17,10 +17,13 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         Metadata(AnchoredRevocation.Instance);
         Name("updateDatabase");
         Summary("Renames a database or sets its regions");
-        Description("Sets regions to a nonempty set of distinct serving region ids. Response regions are sorted by id; their order carries no meaning. "
-            + "If the set drops the current writer, TerraBase tries the remaining regions in region-id order through the existing writer move, "
-            + "then removes the old writer after promotion. Repeat the same set to continue a change that answers an existing retryable refusal. "
-            + "Transitional: homeRegion and replicaRegions, the existing response fields and move-home keep their behavior until category C23 of batch db4a5ba7 removes them once every consumer sends regions. "
+        Description("Sets regions to a nonempty set of distinct serving region ids, with at most 8 replicas besides the writer, including any intermediate superset. "
+            + "Response regions are sorted by id; their order carries no meaning. If the current writer is excluded, missing requested regions are added and stay added; "
+            + "that call returns 503 replica_not_ready with the old writer and existing members plus requested regions still selected. Nothing is unstaged on any refusal. "
+            + "Repeat the request after catch-up: TerraBase tries requested regions in region-id order, promotes the first ready region, then removes every unselected region. "
+            + "Completed regions requests preserve their placement version. Transitional fields and move-home remain until category C23 of batch db4a5ba7. "
+            + "Old-field PATCH still bumps the placement version when repeated, but now refuses with 409 move_in_progress while a move is pending, "
+            + "so membership cannot consume the move's reserved version or diverge from the placement sent to the target. "
             + "Send regions separately from homeRegion, replicaRegions and allRegions. A name change must be sent separately. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
@@ -100,6 +103,7 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         NotFound error => ManagementRoute.DatabaseNotFound(error),
         Forbidden error => ErrorResponse.From(error),
         Conflict error => ErrorResponse.From(error),
+        Validation error => ErrorResponse.From(error),
         Unavailable error => ErrorResponse.From(error),
     };
 }

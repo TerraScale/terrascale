@@ -21,7 +21,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("Creates a database in regions, a nonempty set of distinct serving region ids. The first requested region is the initial writer; "
+        Description("Creates a database in regions, a nonempty set of distinct serving region ids. At most 8 regions other than the initial writer are allowed. The first requested region is the initial writer; "
             + "response regions are sorted by id and their order carries no meaning. TerraBase manages its writer internally. "
             + "Transitional: homeRegion and replicaRegions, the existing response fields and move-home keep their behavior until category C23 of batch db4a5ba7 removes them once every consumer sends regions. "
             + "Send regions separately from homeRegion, replicaRegions and allRegions. The transitional replicaRegions field allows up to 8 regions other than homeRegion; "
@@ -82,7 +82,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
                 : ErrorResponse.From(new Validation("homeRegion must name a region"));
         }
 
-        if (!all && request.Regions is null)
+        if (!all)
         {
             var checkedRegions = DatabaseRegions.Check(replicas, home);
             if (checkedRegions is Validation invalid)

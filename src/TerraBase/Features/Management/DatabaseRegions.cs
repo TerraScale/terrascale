@@ -47,6 +47,7 @@ internal static class DatabaseRegions
         : request.Regions is not { Count: > 0 } selected ? new Validation("regions must name at least one serving region, without duplicates")
         : selected.Any(region => !TerraBaseOptions.IsRegion(region)) || selected.Distinct(StringComparer.Ordinal).Count() != selected.Count
             ? new Validation("regions must name at least one serving region, without duplicates")
+        : Check(AllBut(selected, selected[0]), selected[0]) is Validation invalid ? invalid
         : Unserved("regions", selected, serving);
 
     internal static IReadOnlyList<string> AllBut(IEnumerable<string> serving, string home) =>

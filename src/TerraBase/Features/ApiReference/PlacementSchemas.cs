@@ -26,7 +26,7 @@ internal static class PlacementSchemas
         {
             if (properties.TryGetValue(name, out var legacy) && legacy is OpenApiSchema property)
             {
-                property.Description = "Transitional: keeps its existing behavior; removed with move-home by category C23 of batch db4a5ba7 once every consumer sends regions. Cannot be combined with regions in a request.";
+                property.Description = "Transitional: old-field PATCH bumps the version on repeat and refuses with 409 move_in_progress while a move is pending; removed with move-home by category C23 of batch db4a5ba7 once every consumer sends regions. Cannot be combined with regions in a request.";
             }
         }
 
@@ -34,7 +34,7 @@ internal static class PlacementSchemas
         {
             regions.Type = JsonSchemaType.Array;
             regions.Description = context.JsonTypeInfo.Type == typeof(DatabaseRegionsRequest)
-                ? "At least one distinct serving region id. On create only, the first requested entry chooses the initial writer. Send separately from homeRegion, replicaRegions and allRegions."
+                ? "At least one distinct serving region id, with at most 8 replicas besides the writer, including intermediate supersets on update. Added regions remain members on retryable refusals; repeat after catch-up to promote the first ready requested region in region-id order and remove unselected members. On create only, the first requested entry chooses the initial writer. Send separately from homeRegion, replicaRegions and allRegions."
                 : "Selected regions in catalog order, sorted by region id. Order carries no meaning; a status entry identifies the writer with role writer.";
             if (context.JsonTypeInfo.Type == typeof(DatabaseRegionsRequest))
             {
