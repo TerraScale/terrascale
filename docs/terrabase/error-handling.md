@@ -5,8 +5,8 @@ Expected failures (not found, name taken, invalid input, role too low, quota hit
 produce. The caller handles every case in a `switch` expression, and the compiler checks that the switch covers
 all of them. One function turns a failure into an HTTP response.
 
-The native `union` feature compiles on the pinned .NET 11 RC1 SDK with `LangVersion` `preview`, so the closed-record
-fallback was not needed.
+The native `union` feature compiles on the .NET 11 SDK pinned in `global.json` with `LangVersion` `preview`, so the
+closed-record fallback was not needed.
 
 ## The pieces
 

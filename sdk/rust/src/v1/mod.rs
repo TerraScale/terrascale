@@ -56,7 +56,7 @@ pub use database_regions::{DatabaseRegions, ReplicaStatus};
 pub use errors::{Error, Result, SqlError};
 pub use files::{FileObject, FileObjectPage, FileSignedUrl, FileUploadRequest};
 pub use functions::{Function, FunctionDeployment, FunctionInvocation, FunctionLog};
-pub use ids::{is_valid_name, new_id};
+pub use ids::{is_valid_id, is_valid_name, new_id};
 pub use management::{DatabasePlacement, ManagementPage};
 pub use observability::ServingRegions;
 pub use request_logs::{DatabaseRequestLog, DatabaseRequestLogs};

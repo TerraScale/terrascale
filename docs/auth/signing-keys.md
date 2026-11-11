@@ -10,6 +10,9 @@ which is supplied by OCI Vault. Private key material and the master key never ap
 - Startup is idempotent: existing keys are checked under the master key and are never replaced.
 - Startup retries storage failures after 5 seconds, doubling up to 5 minutes. `/readyz` remains 503 until the identity
   bootstrap and key verification complete; TerraBase can start before or after ts-auth.
+- Until the first key exists, a request that needs the platform issuer's keys is refused with `503 no_signing_keys`.
+  While the replica's first startup bootstrap attempt is still running, each refusal is logged at Information; once an
+  attempt has failed or the bootstrap has succeeded, at Error.
 - Tampered keys or a different master key fail closed. Startup does not replace unusable keys.
 - Concurrent initial starts may generate multiple keys; all remain published and replicas select the same signer.
 - Scheduled rotation adds keys after 30 days, with a two-day publication overlap. Project tenants receive their first

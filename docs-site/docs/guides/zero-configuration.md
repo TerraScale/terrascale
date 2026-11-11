@@ -24,3 +24,5 @@ Customer applications still need authorized credentials. Store those in the appl
 The platform uses one correct setting for each behavior. Features do not depend on opt-in flags, demo stores or skip-auth production modes. Test fakes remain in test code.
 
 The SDKs take one explicit endpoint, `https://api.terrascale.tech`, or a resolver you supply.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

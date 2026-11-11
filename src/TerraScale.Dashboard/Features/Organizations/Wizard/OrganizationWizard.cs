@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Common.Validation;
 
@@ -17,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Wizard
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, "/organization", Results.StatusCode(403));
             }
 
             try

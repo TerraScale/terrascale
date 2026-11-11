@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Common.UI;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Databases
@@ -18,7 +19,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) { return Results.Unauthorized(); }
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!Csrf.Validate(http, form)) { return Results.BadRequest("Invalid form token."); }
+            if (!Csrf.Validate(http, form)) { return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "settings"), Results.BadRequest("Invalid form token.")); }
             var id = form["databaseId"].ToString();
             try
             {

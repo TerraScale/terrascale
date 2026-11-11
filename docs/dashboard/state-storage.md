@@ -189,3 +189,5 @@ and waits for `MigrateAsync` to make it ready.
 
 Production data is not migrated between storage formats: a format change drops the `ts-dashboard` database during a
 production re-bootstrap, then TerraBase re-seeds it and the dashboard migrates it on start.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

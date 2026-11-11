@@ -136,9 +136,9 @@ public sealed class TerraScaleAuthIntegrationContractTests
         await Assert.That(handler.Uri!.PathAndQuery).IsEqualTo(path);
         await Assert.That(handler.Method).IsEqualTo(contract.GetProperty("method").GetString());
         await Assert.That(handler.Uri.Host).IsEqualTo("auth.example.test");
-        await Assert.That(handler.Calls).IsEqualTo(1);
+        var needsProof = contract.TryGetProperty("step_up", out var stepUp);
+        await Assert.That(handler.Calls).IsEqualTo(needsProof && stepUp.TryGetProperty("consume_first", out _) ? 2 : 1);
         await Assert.That(handler.Authorization!.ToString()).IsEqualTo("Bearer fixture-sign-in");
-        var needsProof = contract.TryGetProperty("step_up", out _);
         await Assert.That(handler.StepUpProof).IsEqualTo(needsProof ? "fixture-step-up" : null);
         await Assert.That(http.DefaultRequestHeaders.Contains("X-TerraScale-Step-Up-Proof")).IsFalse();
         if (requestJson is not null)

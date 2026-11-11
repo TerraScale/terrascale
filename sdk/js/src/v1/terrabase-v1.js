@@ -59,12 +59,11 @@ export class V1Database {
 
   /**
    * Runs one relational SQL statement as its own transaction. Reads need the read scope; writes and DDL also need the write scope.
-   * @param {string} sql
    * @param {import("./sql-execute.js").V1SqlArguments} [args] Positional array, or named values keyed without their prefix.
    * @param {V1RequestOptions} [options]
    * @returns {Promise<import("./sql-execute.js").V1SqlExecuteResult>}
    */
-  async execute(sql, args, options = {}) {
+  async execute(/** @type {string | import("./sql-execute.js").V1SqlStatement} */ sql, args, options = {}) {
     const [result] = await executeSql(this.#transport, this.name, [sqlStatement(sql, args)], options);
     return /** @type {import("./sql-execute.js").V1SqlExecuteResult} */ (result);
   }
@@ -333,9 +332,7 @@ export function createTerraBaseV1ClientFromEnvironment(/** @type {Partial<TerraB
     return value;
   });
   const config = /** @type {TerraBaseV1ClientConfig} */ ({ ...overrides, project: overrides.project ?? fromEnv("TERRASCALE_PROJECT_ID"), apiKey: overrides.apiKey ?? fromEnv("TERRASCALE_API_KEY") });
-  if (config.baseUrl === undefined) {
-    const base = process.env.TERRASCALE_BASE_URL;
-    if (base !== undefined && base !== "") config.baseUrl = base;
-  }
+  const base = process.env.TERRASCALE_BASE_URL;
+  if (config.baseUrl === undefined && config.endpointResolver === undefined && base !== undefined && base !== "") config.baseUrl = base;
   return new TerraBaseV1Client(config);
 }

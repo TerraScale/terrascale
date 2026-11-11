@@ -288,7 +288,12 @@ export function createTerraScaleIdentityManagementClient(config) {
     /** @param {string} organizationId @param {IdentityNameRequest} request @param {IdentityRequestOptions} [options] */
     renameOrganization: (organizationId, request, options = {}) => call("rename_organization", { organization: organizationId }, organization, options, named(request)),
     /** @param {string} organization @param {IdentityRequestOptions} [options] */
-    deleteOrganization: (organization, options = {}) => call("delete_organization", { organization }, empty, options),
+    deleteOrganization: async (organization, options = {}) => {
+      members(options, ["signal", "stepUpProof"]);
+      const consumed = await call("consume_step_up", {}, empty, options.signal === undefined ? {} : { signal: options.signal },
+        { proof: stepUpProof(options.stepUpProof), purpose: "delete_organization", audience: "ts-auth", organization_id: requireId(organization, "organization") });
+      return consumed.ok ? call("delete_organization", { organization }, empty, options) : consumed;
+    },
     /** @param {string} organization @param {IdentityPageRequest} [request] @param {IdentityRequestOptions} [options] */
     listMembers: (organization, request = {}, options = {}) => call("list_members", { organization }, page(member), options, undefined, paging(request)),
     /** @param {string} organization @param {string} user @param {{readonly role: IdentityOrganizationRole}} request @param {IdentityRequestOptions} [options] */

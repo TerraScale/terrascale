@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/storage", Results.BadRequest("Invalid form token."));
             }
 
             var bucket = form["bucket"].ToString();

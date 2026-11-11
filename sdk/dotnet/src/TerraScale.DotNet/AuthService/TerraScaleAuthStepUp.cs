@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
 
-/// <summary>A purpose-bound step-up request. ReturnUri is the registered dashboard origin's /auth/step-up/callback. OrganizationId is required for and binds delete_organization and start_ownership_transfer proofs.</summary>
+/// <summary>A purpose-bound step-up request. ReturnUri is the registered dashboard origin's /auth/step-up/callback. OrganizationId is required for and binds delete_organization, start_ownership_transfer and change_plan proofs.</summary>
 public sealed record TerraScaleAuthStepUpRequest(
     [property: JsonPropertyName("purpose")] string Purpose,
     [property: JsonPropertyName("audience")] string Audience,
@@ -20,12 +20,14 @@ public sealed record TerraScaleAuthStepUp(
     public override string ToString() => nameof(TerraScaleAuthStepUp);
 }
 
-/// <summary>Consumes an approved proof once. Account deletion additionally binds the exact deletion receipt.</summary>
+/// <summary>Consumes an approved proof once. Account deletion additionally binds the exact deletion receipt. change_plan and delete_organization (ts-auth) require OrganizationId,
+/// the organization about to change: a proof minted for another organization is refused with step_up_required and stays unconsumed. create_pat and delete_account (ts-dashboard) leave it null.</summary>
 public sealed record TerraScaleAuthStepUpConsume(
     [property: JsonPropertyName("proof")] string Proof,
     [property: JsonPropertyName("purpose")] string Purpose,
     [property: JsonPropertyName("audience")] string Audience,
-    [property: JsonPropertyName("operation_receipt")] string? OperationReceipt = null)
+    [property: JsonPropertyName("operation_receipt")] string? OperationReceipt = null,
+    [property: JsonPropertyName("organization_id")] string? OrganizationId = null)
 {
     /// <summary>Omits proof and deletion capabilities from diagnostic formatting.</summary>
     public override string ToString() => nameof(TerraScaleAuthStepUpConsume);
@@ -55,8 +57,9 @@ public sealed partial class TerraScaleAuthPlatformClient
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthStepUp,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, 16 * 1024, cancellationToken);
 
-    /// <summary>Consumes a dashboard proof once before side effects. Returns null for PAT (204), or the deletion
-    /// operation_grant (200) to retain with the receipt. A lost/rejected response never authorizes continuation.</summary>
+    /// <summary>Consumes a proof once before side effects. Returns null for create_pat, change_plan and delete_organization (204),
+    /// or the account-deletion operation_grant (200) to retain with the receipt. A lost/rejected response never authorizes continuation.
+    /// DeleteOrganizationAsync consumes its delete_organization proof itself; never consume that proof first.</summary>
     public async Task<string?> ConsumeStepUpAsync(string accessToken, TerraScaleAuthStepUpConsume request,
         CancellationToken cancellationToken = default)
     {

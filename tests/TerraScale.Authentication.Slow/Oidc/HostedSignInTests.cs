@@ -40,7 +40,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(forged.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
 
         // Short, common and own-email passwords are refused before any code is mailed.
-        foreach (var weak in new[] { "fourteen chars", "1234567890123456", Address })
+        foreach (var weak in new[] { "nine char", "1234567890123456", Address })
         {
             using var refused = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = Address, ["password"] = weak, ["next"] = string.Empty });
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);

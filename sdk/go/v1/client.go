@@ -54,8 +54,6 @@ const (
 
 // Config configures a Client or a Management client.
 type Config struct {
-	// APIKey is a platform API key. It is exchanged only at the fixed auth origin
-	// for cached project access tokens and can mint database-scoped keys.
 	// Set this, Token or TokenSource exclusively.
 	APIKey string
 	// BaseURL is the TerraBase origin; empty uses DefaultBaseURL.
@@ -77,13 +75,15 @@ type Config struct {
 	// HTTPClient is used for every request. Nil uses a client that requires
 	// TLS 1.3. The client is copied and its redirect policy replaced, so the
 	// bearer token is never forwarded to a redirect target.
-	HTTPClient *http.Client
-	RegionPin  string
+	HTTPClient    *http.Client
+	RegionPin     string
+	TSAuthBaseURL string
 }
 
 // Client is a data-plane client for one API key. It is safe for concurrent use.
 type Client struct {
 	apiKey      string
+	authOrigin  string
 	projects    *sync.Map
 	resolver    Resolver
 	token       string
@@ -151,6 +151,16 @@ func newClient(cfg Config) (*Client, error) {
 	if cfg.Resolver != nil && cfg.BaseURL != "" {
 		return nil, errors.New("terrabase: set either Resolver or BaseURL")
 	}
+	if cfg.TSAuthBaseURL != "" && cfg.APIKey == "" {
+		return nil, errors.New("terrabase: TSAuthBaseURL exchanges an APIKey; set APIKey or remove TSAuthBaseURL")
+	}
+	authOrigin := ""
+	if cfg.APIKey != "" {
+		var err error
+		if authOrigin, err = keyExchangeOrigin(cfg); err != nil {
+			return nil, err
+		}
+	}
 	if cfg.Resolver == nil {
 		if cfg.BaseURL == "" {
 			cfg.BaseURL = DefaultBaseURL
@@ -175,11 +185,11 @@ func newClient(cfg Config) (*Client, error) {
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: DefaultMaxRetries, maxResponse: DefaultMaxResponseBytes, regionPin: strings.TrimSpace(cfg.RegionPin)}
 	if cfg.APIKey != "" {
-		source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: cfg.APIKey, HTTPClient: hc})
+		source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: authOrigin + "/terrascale", Key: cfg.APIKey, HTTPClient: hc})
 		if err != nil {
 			return nil, err
 		}
-		c.apiKey, c.projects, c.tokenSource = cfg.APIKey, new(sync.Map), source
+		c.apiKey, c.authOrigin, c.projects, c.tokenSource = cfg.APIKey, authOrigin, new(sync.Map), source
 	}
 	return c, nil
 }
@@ -218,6 +228,25 @@ func (c *Client) invalidateToken(token string, refusal *APIError, refreshed bool
 		return true
 	}
 	return false
+}
+
+func keyExchangeOrigin(cfg Config) (string, error) {
+	if cfg.TSAuthBaseURL != "" {
+		u, err := parseBaseURL(cfg.TSAuthBaseURL)
+		if err != nil || u.Path != "" {
+			return "", errors.New("terrabase: TSAuthBaseURL must be a bare ts-auth origin: https, or plain HTTP on a loopback host, without a path")
+		}
+		return u.Scheme + "://" + u.Host, nil
+	}
+	if cfg.Resolver == nil && cfg.BaseURL == "" {
+		return "https://auth.terrascale.tech", nil
+	}
+	if cfg.Resolver == nil {
+		if u, err := parseBaseURL(cfg.BaseURL); err != nil || u.String() == DefaultBaseURL {
+			return "https://auth.terrascale.tech", err
+		}
+	}
+	return "", errors.New("terrabase: set TSAuthBaseURL to the ts-auth that exchanges the APIKey: with a TerraBase origin other than https://api.terrascale.tech the key is not sent to production ts-auth")
 }
 
 func parseBaseURL(raw string) (*url.URL, error) {

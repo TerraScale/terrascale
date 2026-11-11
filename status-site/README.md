@@ -180,8 +180,10 @@ The minute cron enqueues up to 1,000 eligible subscriber/update pairs into the D
 
 ## Deploy
 
-`.github/workflows/status-ci.yml` in the terrascale monorepo runs `npm run check`, `npm test`, the Python tests, `npm run lint` and `npm run build` on every change to `status-site/`, then deploys that build from main with `npm run deploy:prebuilt` and checks the live `/health/version` ([docs/deploy-pipeline.md](docs/deploy-pipeline.md)). The Worker applies `schema.sql` to D1 on first use. The checks use HTTP fakes and local SQLite, without deployment credentials or a TerraBase binary. Locally: `make status-test-fast` from the monorepo root.
+The `status` job of `.github/workflows/ci.yml` in the terrascale monorepo runs `npm run check`, `npm test`, the Python tests, `npm run lint` and `npm run build` on every pull request that changes `status-site/`. On main, `deploy-status` in `.github/workflows/sites.yml` builds the tip of `main`, deploys it with `npm run deploy:prebuilt` and proves from Cloudflare's records that each of the three Workers serves the version that deploy created, with that commit as its message ([docs/deploy-pipeline.md](docs/deploy-pipeline.md)). The Worker applies `schema.sql` to D1 on first use. The checks use HTTP fakes and local SQLite, without deployment credentials or a TerraBase binary. Locally: `make status-test-fast` from the monorepo root.
 
 Worker secrets: `SUBSCRIPTION_SECRET`, `ADMIN_SESSION_SECRET`, and the probe secrets `TERRABASE_PROBES` and `DATA_API_CANARY`. Set them through the `cf` CLI using protected stdin; never print them.
 
 Probe keys belong to the internal `terrascale` organization's `ts-status` project and are narrowed to its `status-canary` database by ULID, never customer data, with only `sql:read` and `sql:write`. `scripts/recover-canaries.py` creates the databases, the `canary` table, the Data API fixture row and the keys, and installs both probe secrets; the Data API canary never mutates the fixture, and the SQL API probe deletes every row it writes.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

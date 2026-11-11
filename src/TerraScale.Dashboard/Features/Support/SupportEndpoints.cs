@@ -72,7 +72,7 @@ namespace TerraScale.Dashboard.Features.Support
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/support", Results.BadRequest("Invalid form token."));
             }
 
             var draft = new SupportDraft(form["organizationId"].ToString(), form["projectId"].ToString(), form["databaseId"].ToString(),

@@ -100,3 +100,6 @@ ts-go pin lacked these methods, and read region latency through ts-go
 The public status origin is fixed in code; there is no override or
 measurement-disable setting. The public status read never receives the
 signed-in user's token.
+
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
