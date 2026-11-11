@@ -2,8 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { onboard, signInWithPassword, signUp, verify } from '../support/hosted';
 import { shell } from '../support/shell';
-import { saveSecret, journey } from '../support/state';
-import { dash, desktop, mobile, userSession } from '../support/stack';
+import { ownerSession, saveSecret, journey } from '../support/state';
+import { dash, desktop, mobile } from '../support/stack';
 
 const phone = { viewport: mobile, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 
@@ -26,7 +26,7 @@ test('a second user signs up on a phone, the Free plan refuses to invite them, a
   await shell(page, identity);
   await audit.check('second user overview');
 
-  const ownerContext = await auditedContext(browser, { viewport: desktop, storageState: userSession });
+  const ownerContext = await auditedContext(browser, { viewport: desktop, storageState: ownerSession() });
   const ownerPage = await ownerContext.newPage();
   const ownerAudit = new Audit(ownerPage, info);
   ownerAudit.expectStatus(/^https:\/\/dash\.terrascale\.tech\/api\/v1\/access\/invitations(\?|$)/, 409);

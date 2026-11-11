@@ -2,9 +2,9 @@ import { randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { cloudflareSendCount, nextMail } from '../support/inbox';
-import { saveJourney } from '../support/state';
+import { ownerSession, saveJourney } from '../support/state';
 import { shell } from '../support/shell';
-import { auth, dash, userSession } from '../support/stack';
+import { auth, dash } from '../support/stack';
 import { enterSecret } from '../support/secret';
 
 function stat(page: Page, label: string) {
@@ -109,7 +109,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await shell(page, identity);
   await audit.check('API keys after reload');
 
-  await context.storageState({ path: userSession });
+  await context.storageState({ path: ownerSession() });
   saveJourney({
     runId,
     email,

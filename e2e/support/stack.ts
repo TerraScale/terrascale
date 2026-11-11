@@ -8,7 +8,7 @@ export const auth = 'https://auth.terrascale.tech';
 export const mailpit = 'http://127.0.0.1:8025';
 export const cloudflareSink = 'http://127.0.0.1:8026';
 export const browserHome = join(stateDir, 'pki', 'browser-home');
-export const userSession = join(stateDir, 'user.json');
+export const sessionFile = (setup: string) => join(stateDir, `${setup}.session.json`);
 export const stackHosts: ReadonlySet<string> = new Set(
   readFileSync(join(e2eRoot, 'env', 'hostnames'), 'utf8').split('\n').filter(Boolean),
 );

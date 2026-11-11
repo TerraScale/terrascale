@@ -13,8 +13,7 @@ values = set()
 secrets = state / "secrets"
 if secrets.exists():
     values.update(line.strip() for line in secrets.read_text().splitlines())
-journey = state / "journey.json"
-if journey.exists():
+for journey in state.glob("*.journey.json"):
     recorded = json.loads(journey.read_text())
     values.update(recorded[key] for key in ("password", "apiKey"))
 extra = state / "secrets.d"

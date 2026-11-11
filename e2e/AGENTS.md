@@ -19,8 +19,10 @@ from `e2e/`, then `bash e2e/env/local.sh stop`. The script also builds the five 
 ## Stages
 
 `setup` signs up, reads the code from Mailpit, onboards on Free, creates a database and an API key. Then
-`pages-desktop`, `pages-mobile`, `hosted`, `interactions` and `invitation` run in parallel. `finish` (the teardown
-of `setup`) runs SDK group A, deletes the database through the UI, runs SDK group B and deletes the account.
+`pages-mobile`, `hosted`, `interactions` and `invitation` run in parallel. `finish` (the teardown of `setup`) runs
+SDK group A, deletes the database through the UI, runs SDK group B and deletes the account. `desktop-setup` makes a
+second user for `pages-desktop`, and its teardown `desktop-close` only deletes that account. CI runs the two users in
+two shards; a teardown whose setup failed fails once with "setup did not finish" and runs nothing else.
 
 ## Add a page or an operation
 

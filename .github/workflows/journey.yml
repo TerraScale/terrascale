@@ -122,9 +122,9 @@ jobs:
       matrix:
         include:
           - shard: desktop
-            projects: --project setup --project pages-desktop
+            projects: --project pages-desktop
           - shard: phone and flows
-            projects: --project setup --project pages-mobile --project hosted --project interactions --project invitation
+            projects: --project pages-mobile --project hosted --project interactions --project invitation
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

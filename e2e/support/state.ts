@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { stateDir } from './stack';
+import { test, type TestInfo } from '@playwright/test';
+import { sessionFile, stateDir } from './stack';
 
 export type Journey = {
   runId: string;
@@ -18,15 +19,24 @@ export type Journey = {
   apiKey: string;
 };
 
-const file = join(stateDir, 'journey.json');
+const setupOf = (info: TestInfo) => String(info.project.metadata.setup);
+const journeyFile = (info: TestInfo) => join(stateDir, `${setupOf(info)}.journey.json`);
+
+export function ownerSession(): string {
+  return sessionFile(setupOf(test.info()));
+}
 
 export function saveJourney(journey: Journey): void {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  writeFileSync(file, JSON.stringify(journey), { mode: 0o600 });
+  writeFileSync(journeyFile(test.info()), JSON.stringify(journey), { mode: 0o600 });
 }
 
 export function journey(): Journey {
-  return JSON.parse(readFileSync(file, 'utf8')) as Journey;
+  return JSON.parse(readFileSync(journeyFile(test.info()), 'utf8')) as Journey;
+}
+
+export function setupFinished(info: TestInfo): boolean {
+  return existsSync(journeyFile(info));
 }
 
 export function saveSecret(name: string, value: string): void {

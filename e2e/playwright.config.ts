@@ -1,5 +1,5 @@
 import { defineConfig } from '@playwright/test';
-import { browserHome, dash, desktop, mobile, userSession } from './support/stack';
+import { browserHome, dash, desktop, mobile, sessionFile } from './support/stack';
 
 const secretFree = { trace: 'off', video: 'off' } as const;
 
@@ -24,17 +24,37 @@ export default defineConfig({
     launchOptions: { env: { ...process.env, HOME: browserHome } },
   },
   projects: [
-    { name: 'setup', testMatch: 'journey/setup.spec.ts', teardown: 'finish', use: secretFree },
-    { name: 'pages-desktop', testMatch: 'pages/*.spec.ts', dependencies: ['setup'], use: { storageState: userSession } },
+    { name: 'setup', testMatch: 'journey/setup.spec.ts', teardown: 'finish', metadata: { setup: 'setup' }, use: secretFree },
+    { name: 'desktop-setup', testMatch: 'journey/setup.spec.ts', teardown: 'desktop-close', metadata: { setup: 'desktop-setup' }, use: secretFree },
+    {
+      name: 'pages-desktop',
+      testMatch: 'pages/*.spec.ts',
+      dependencies: ['desktop-setup'],
+      metadata: { setup: 'desktop-setup' },
+      use: { storageState: sessionFile('desktop-setup') },
+    },
     {
       name: 'pages-mobile',
       testMatch: 'pages/*.spec.ts',
       dependencies: ['setup'],
-      use: { storageState: userSession, viewport: mobile, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },
+      metadata: { setup: 'setup' },
+      use: { storageState: sessionFile('setup'), viewport: mobile, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },
     },
-    { name: 'hosted', testMatch: 'hosted/*.spec.ts', dependencies: ['setup'], use: secretFree },
-    { name: 'interactions', testMatch: 'interactions/*.spec.ts', dependencies: ['setup'], use: { storageState: userSession, ...secretFree } },
-    { name: 'invitation', testMatch: 'journey/invitation.spec.ts', dependencies: ['setup'], use: secretFree },
-    { name: 'finish', testMatch: 'journey/finish.spec.ts', use: { storageState: userSession, ...secretFree } },
+    { name: 'hosted', testMatch: 'hosted/*.spec.ts', dependencies: ['setup'], metadata: { setup: 'setup' }, use: secretFree },
+    {
+      name: 'interactions',
+      testMatch: 'interactions/*.spec.ts',
+      dependencies: ['setup'],
+      metadata: { setup: 'setup' },
+      use: { storageState: sessionFile('setup'), ...secretFree },
+    },
+    { name: 'invitation', testMatch: 'journey/invitation.spec.ts', dependencies: ['setup'], metadata: { setup: 'setup' }, use: secretFree },
+    { name: 'finish', testMatch: 'journey/finish.spec.ts', metadata: { setup: 'setup' }, use: { storageState: sessionFile('setup'), ...secretFree } },
+    {
+      name: 'desktop-close',
+      testMatch: 'journey/close.spec.ts',
+      metadata: { setup: 'desktop-setup' },
+      use: { storageState: sessionFile('desktop-setup'), ...secretFree },
+    },
   ],
 });
