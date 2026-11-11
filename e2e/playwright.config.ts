@@ -13,6 +13,7 @@ export default defineConfig({
   timeout: 60_000 + mailWait,
   expect: { timeout: 20_000 },
   reporter: production ? [['list'], ['json', { outputFile: 'production-report/report.json' }]] : [['list'], ['html', { open: 'never' }]],
+  globalTeardown: './support/teardown.ts',
   use: {
     baseURL: dash,
     locale: 'en-US',
@@ -49,6 +50,7 @@ export default defineConfig({
       use: { storageState: sessionFile('setup'), ...secretFree },
     },
     { name: 'invitation', testMatch: 'journey/invitation.spec.ts', dependencies: ['setup'], metadata: { setup: 'setup' }, use: secretFree },
+    { name: 'paid', testMatch: 'journey/paid.spec.ts', metadata: { setup: 'paid' }, use: secretFree },
     { name: 'finish', testMatch: 'journey/finish.spec.ts', metadata: { setup: 'setup' }, use: { storageState: sessionFile('setup'), ...secretFree } },
     {
       name: 'desktop-close',

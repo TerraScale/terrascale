@@ -42,5 +42,5 @@ https://status.terrascale.tech {
 
 https://api.stripe.com, https://checkout.stripe.com, https://billing.stripe.com {
 	import edge
-	abort
+	reverse_proxy 127.0.0.1:8027
 }

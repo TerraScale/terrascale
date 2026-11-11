@@ -36,13 +36,13 @@ export async function saveCookies(context: BrowserContext): Promise<void> {
   for (const cookie of await context.cookies()) saveSecret(`cookie-${cookie.name}`, cookie.value);
 }
 
-export function saveJourney(journey: Journey): void {
+export function saveJourney<T extends Journey>(journey: T): void {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   writeFileSync(journeyFile(test.info()), JSON.stringify(journey), { mode: 0o600 });
 }
 
-export function journey(): Journey {
-  return JSON.parse(readFileSync(journeyFile(test.info()), 'utf8')) as Journey;
+export function journey<T extends Journey = Journey>(): T {
+  return JSON.parse(readFileSync(journeyFile(test.info()), 'utf8')) as T;
 }
 
 export function setupFinished(info: TestInfo): boolean {

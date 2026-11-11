@@ -34,7 +34,7 @@ export async function verify(page: Page, email: string): Promise<void> {
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/onboarding');
 }
 
-export async function onboard(page: Page, audit: Audit, displayName: string, projectName: string, label: string): Promise<void> {
+export async function onboard(page: Page, audit: Audit, displayName: string, projectName: string, label: string): Promise<string> {
   await audit.check(`${label} onboarding account information`);
   await page.locator('#displayName').fill(displayName);
   await page.getByRole('button', { name: 'Save and continue' }).click();
@@ -43,9 +43,11 @@ export async function onboard(page: Page, audit: Audit, displayName: string, pro
   await page.locator('button[data-plan="free"]').click();
   await expect(page.locator('#projectName')).toBeVisible();
   await audit.check(`${label} onboarding project`);
+  const region = await page.locator('#region').inputValue();
   await page.locator('#projectName').fill(projectName);
   await page.getByRole('button', { name: 'Create project and open Dashboard' }).click();
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/');
+  return region;
 }
 
 export async function signInWithPassword(page: Page, audit: Audit, email: string, password: string, label: string): Promise<void> {
