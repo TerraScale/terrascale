@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/profile?tab=sessions", Results.BadRequest("Invalid form token."));
             }
 
             await platform.SignOutEverywhereAsync(context.Session, http.RequestAborted);
@@ -81,7 +81,7 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/profile", Results.BadRequest("Invalid form token."));
             }
 
             try

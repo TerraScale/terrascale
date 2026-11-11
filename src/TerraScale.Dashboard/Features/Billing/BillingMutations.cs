@@ -22,7 +22,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return Results.Text("Invalid CSRF token.", statusCode: 403);
+                return RequestError.FormExpired(http, "/organization?tab=billing", Results.Text("Invalid CSRF token.", statusCode: 403));
             }
 
             try

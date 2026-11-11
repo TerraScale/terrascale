@@ -449,6 +449,14 @@ dialog.ts-db-create-dialog .ts-dialog-title {
   -webkit-tap-highlight-color: transparent;
 }
 
+.ts-db-region-map:has(.ts-region-node[data-region="SJC"]) .ts-region-node[data-region="SFO"] {
+  --x: 15.86;
+}
+
+.ts-db-region-map:has(.ts-region-node[data-region="SFO"]) .ts-region-node[data-region="SJC"] {
+  --x: 26.36;
+}
+
 .ts-db-region-map .ts-region-node:is(:hover, :focus-visible) {
   z-index: 2;
 }

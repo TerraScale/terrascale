@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement
@@ -18,7 +19,12 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!Csrf.Validate(http, form) || !context.CanManageProject || context.Project is null)
+            if (!Csrf.Validate(http, form))
+            {
+                return RequestError.FormExpired(http, "/auth/users", Results.StatusCode(403));
+            }
+
+            if (!context.CanManageProject || context.Project is null)
             {
                 return Results.StatusCode(403);
             }
