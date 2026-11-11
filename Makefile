@@ -161,7 +161,7 @@ sdk-rust-check:
 
 .PHONY: docs-build
 docs-build:
-	cd docs-site && npm ci --no-audit --no-fund && npm run build
+	cd docs-site && npm ci --no-audit --no-fund && npm run check && npm run build
 .PHONY: dashboard-build dashboard-lint dashboard-check
 dashboard-build:
 	$(MAKE) -f scripts/dashboard/Makefile build
