@@ -16,7 +16,7 @@ ts -project my-project --json databases rename 01ARZ3NDEKTSV4RRFFQ69G5FAW orders
 
 The SDK takes an immutable database ULID. The CLI accepts a current name or ULID,
 resolves a name once, then sends PATCH by ULID with only `{"name":"orders_new"}`.
-The home region accepts the mutation; other regions return `421 wrong_region`.
+The region that writes accepts the mutation; other regions return `421 wrong_region`.
 Errors retain the server code, including `name_taken`, `unknown_database` and
 `platform_placement_locked`. An uncertain write is not automatically replayed.
 

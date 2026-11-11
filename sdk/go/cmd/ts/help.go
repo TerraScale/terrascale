@@ -23,8 +23,8 @@ var commandSyntax = map[string]string{
 	"db branch url": "db branch url <name>",
 	"db branch":     "db branch <source> <new-database>", "db info": "db info <database>",
 	"db export": "db export <database> [-o <file>] [-force]", "db url": "db url <database>",
-	"db import":    "db import <database> <file|-> [-from <n>]",
-	"db placement": "db placement <database> (-replica-regions <a,b> | -all-regions)", "db move-home": "db move-home <database> <region>",
+	"db import":        "db import <database> <file|-> [-from <n>]",
+	"db placement":     "db placement <database> (-regions <a,b> | -all-regions)",
 	"db regions":       "db regions <database>",
 	"db rename":        "db rename <database> <new-name>",
 	"databases rename": "databases rename <database> <new-name>",
@@ -109,7 +109,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions", "lang":
+			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "regions", "lang":
 				if !equal {
 					i++
 				}
@@ -228,12 +228,11 @@ func helpOptions(name string) map[string]string {
 	case name == "backup destination":
 		options["-yes"] = "required for set (credential JSON only on stdin); delete otherwise types the project ID"
 	case name == "db create":
-		options["-home-region <region>"] = "home region; default the called region"
-		options["-replica-regions <a,b>"] = "regions that hold replicas"
-		options["-all-regions"] = "a replica in every serving region"
+		options["-regions <a,b>"] = "regions that hold the database; at least one"
+		options["-all-regions"] = "every serving region"
 	case name == "db placement":
-		options["-replica-regions <a,b>"] = "regions that hold replicas; empty removes them"
-		options["-all-regions"] = "a replica in every serving region, including new ones"
+		options["-regions <a,b>"] = "regions that hold the database; at least one"
+		options["-all-regions"] = "every serving region, including new ones"
 	case name == "keys rotate":
 		options["<grace>"] = "required whole-second duration from 0s to 24h; previous secret remains valid for this grace; new secret appears once on stdout"
 	case strings.HasPrefix(name, "keys create"):

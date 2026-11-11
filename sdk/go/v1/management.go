@@ -130,11 +130,9 @@ type ManagedDatabase struct {
 	CreatedAt    time.Time  `json:"createdAt"`
 	ExpiresAt    *time.Time `json:"expiresAt"`
 	// Region identifies the answering node; it is absent from restore results.
-	Region string `json:"region"`
-	// HomeRegion is null when catalog placement has not been assigned.
-	HomeRegion     *string  `json:"homeRegion"`
-	ReplicaRegions []string `json:"replicaRegions"`
-	AllRegions     bool     `json:"allRegions"`
+	Region     string   `json:"region"`
+	Regions    []string `json:"regions"`
+	AllRegions bool     `json:"allRegions"`
 	// PlacementVersion is included in catalog restore results.
 	PlacementVersion int64 `json:"placementVersion"`
 }
@@ -467,9 +465,12 @@ func (u *ManagementUser) CreateDatabase(ctx context.Context, org, project, name 
 // a region id such as gru-1; empty means the called region.
 func (u *ManagementUser) CreateDatabaseIn(ctx context.Context, org, project, name, region string) (*ManagedDatabase, error) {
 	body := struct {
-		Name       string `json:"name"`
-		HomeRegion string `json:"homeRegion,omitempty"`
-	}{name, region}
+		Name    string   `json:"name"`
+		Regions []string `json:"regions,omitempty"`
+	}{name, nil}
+	if region != "" {
+		body.Regions = []string{region}
+	}
 	return send[ManagedDatabase](ctx, u, http.MethodPost, projectAPIPath(project, "databases"), body)
 }
 
