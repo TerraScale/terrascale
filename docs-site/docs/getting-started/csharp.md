@@ -126,6 +126,8 @@ refused: primary_key_violation statement 0 sqlstate 23505
 - **Arguments are parameters, not string interpolation.** Positional (`?`) and named values are sent as typed JSON; blobs (`TerraBaseSqlValue.FromBytes`) travel as base64. `TerraBaseSqlRecord` reads by ordinal or column name, and `QueryAsync<T>` maps rows through source-generated JSON metadata.
 - **Refused statements throw `TerraBaseSqlException`.** It carries `Code` (one of `TerraBaseSqlErrorCodes`), `Statement` (zero-based) and `Sqlstate`; the request rolled back. A `serialization_conflict` is resent at most twice; nothing else is.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Next steps
 
 - [SDK reference](/guides/sdks) — the five SDKs and their install commands
