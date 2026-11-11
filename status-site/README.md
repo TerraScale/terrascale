@@ -185,3 +185,5 @@ The `status` job of `.github/workflows/ci.yml` in the terrascale monorepo runs `
 Worker secrets: `SUBSCRIPTION_SECRET`, `ADMIN_SESSION_SECRET`, and the probe secrets `TERRABASE_PROBES` and `DATA_API_CANARY`. Set them through the `cf` CLI using protected stdin; never print them.
 
 Probe keys belong to the internal `terrascale` organization's `ts-status` project and are narrowed to its `status-canary` database by ULID, never customer data, with only `sql:read` and `sql:write`. `scripts/recover-canaries.py` creates the databases, the `canary` table, the Data API fixture row and the keys, and installs both probe secrets; the Data API canary never mutates the fixture, and the SQL API probe deletes every row it writes.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
