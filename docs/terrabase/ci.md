@@ -17,7 +17,9 @@ check: it fails when any job it needs failed or was cancelled, and a skipped job
 - `libs`, `auth` and `terrabase` restore locked, verify the pinned native libraries, check whitespace format and build
   their solution filter in Release with analyzers and warnings as errors, then check that no project fell back to
   Debug (`scripts/ci/release-only.sh`). `libs` also checks code style; `auth` also runs the NuGet audit and the OpenAPI
-  contract check (`make auth-check`). Locally: `make terrabase-build`.
+  contract check (`make auth-check`); `terrabase` also publishes the linux-arm64 single file as the release does and
+  fails when a native library lies beside it (`make terrabase-publish`).
+  Locally: `make terrabase-build`.
 - `dashboard` (`dashboard-ci.yml`) builds the dashboard solution in Release and runs its lint set.
 - `sdk` runs `make sdk-<sdk>-check` for each changed SDK: a locked install or restore and a build or type check.
 - `docs`, `landing` and `status` build the three sites.

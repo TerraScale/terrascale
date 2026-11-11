@@ -112,6 +112,8 @@ terrabase-run: turso-native
 # Self-contained single-file binary (JIT): $(PUBLISH_DIR)/terrabase
 terrabase-publish: turso-native
 	dotnet publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
+	test ! -e "$(PUBLISH_DIR)/libturso_sdk_kit.so"
+	test ! -e "$(PUBLISH_DIR)/libterrascale_sql_parser.so"
 
 # ts-benchmark (Go) plus the BenchmarkDotNet projects for ts-libs.
 benchmark-build: restore

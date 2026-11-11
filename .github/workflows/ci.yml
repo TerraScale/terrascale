@@ -421,6 +421,9 @@ jobs:
         run: |
           make -o restore fmt-check terrabase-build SOLUTION=terrabase.slnf CONFIGURATION=Release
           scripts/ci/release-only.sh
+      - name: Release publish keeps the natives inside the single file
+        working-directory: terrascale
+        run: make -o turso-native terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/terrabase-publish"
 
   main:
     needs: [changes, terrabase, test]

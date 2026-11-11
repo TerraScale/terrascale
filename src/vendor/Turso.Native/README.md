@@ -112,7 +112,8 @@ tests, and 14/14 focused FTS HTTP tests on linux-x64 at `52ca8e1bd`. The isolate
 single-file driver also passes 23/23 and its extracted Turso library matches the
 pin. `ClassifyTursoNativeForSingleFile` restores native metadata lost through
 project references; otherwise .NET 11 leaves a sidecar outside the bundle.
-Normal TerraBase CI repeats the executable-only loading and extracted-hash check.
+Normal TerraBase CI now checks only that the release publish keeps both libraries
+inside the single file (`make terrabase-publish` in the `terrabase` leg).
 ARM64 native smoke proof does not imply ARM64 managed Fast qualification.
 
 ## Maintenance and publication
@@ -161,8 +162,9 @@ tag and reviewed pins; the published tag above is immutable.
    file and install the four candidate libraries under
    `src/vendor/Turso.Data.Sqlite/native/runtimes/<rid>/native/` as `libturso_sdk_kit.so` and
    `libterrascale_sql_parser.so`.
-   Parent must run the journey and the published single-file loading
-   qualification with these exact candidate bytes and the integrated managed
+   Parent must run the journey and the single-file release publish
+   (`make terrabase-publish`, which fails when either library lies beside the
+   single file) with these exact candidate bytes and the integrated managed
    changes, without an unpublished release download or a second native build
    inside normal CI.
 
@@ -183,7 +185,8 @@ tag and reviewed pins; the published tag above is immutable.
 5. Qualify normal CI at the final pinned head. The legs and image jobs download
    and verify both architectures; Docker and MSBuild verify hashes and ELF
    architecture again before using cached bytes. Retain the journey run and the
-   published single-file loading proof. No NuGet fallback exists.
+   `terrabase` leg's single-file release publish, which fails when either
+   library lies beside the single file. No NuGet fallback exists.
 
 For an admitted native dev-host build, the same helper accepts
 `nice -n 19 scripts/vendor/build-turso-native.sh amd64 artifacts/native-x64`
