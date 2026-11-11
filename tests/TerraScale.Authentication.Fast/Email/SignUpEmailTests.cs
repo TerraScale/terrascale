@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Oidc;
@@ -18,11 +19,13 @@ public sealed partial class SignUpEmailTests(TerraBaseFixture fixture)
     private const string Password = "A sound body keeps a sound mind!";
 
     [Test]
-    public async Task A_sign_up_delivers_one_code_email_over_smtp_and_the_code_completes_the_sign_up()
+    public async Task A_sign_up_hands_one_code_email_to_smtp_without_any_timer_and_the_code_completes_the_sign_up()
     {
         await using var mail = await SmtpMailFixture.StartAsync();
         await using var cloudflare = await EmailProviderFixture.FakeCloudflare.StartAsync();
-        await using var oidc = await StartAsync(fixture, mail, cloudflare);
+        var frozen = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var start = frozen.GetUtcNow();
+        await using var oidc = await StartAsync(fixture, mail, cloudflare, frozen);
 
         var email = oidc.UniqueEmail("smtp-signup");
         using var started = await oidc.PostFormAsync(SignUp, new() { ["email"] = email, ["password"] = Password });
@@ -31,6 +34,7 @@ public sealed partial class SignUpEmailTests(TerraBaseFixture fixture)
         await Assert.That(pending).IsNotEmpty();
 
         var accepted = await mail.WaitForAsync(email);
+        await Assert.That(frozen.GetUtcNow()).IsEqualTo(start);
         await Assert.That(mail.Accepted.Count(message => message.To.Contains(email, StringComparer.Ordinal))).IsEqualTo(1);
         await Assert.That(accepted.From).IsEqualTo("no-reply@terrascale.tech");
         await Assert.That(accepted.Message.From.Mailboxes.Single().Address).IsEqualTo("no-reply@terrascale.tech");
@@ -73,8 +77,8 @@ public sealed partial class SignUpEmailTests(TerraBaseFixture fixture)
         await Assert.That(OidcHarness.SessionCookie(verified)).IsNotNull();
     }
 
-    private static async Task<OidcHarness> StartAsync(TerraBaseFixture fixture, SmtpMailFixture mail, EmailProviderFixture.FakeCloudflare cloudflare) =>
-        await OidcHarness.StartAsync(fixture, settings: settings =>
+    private static async Task<OidcHarness> StartAsync(TerraBaseFixture fixture, SmtpMailFixture mail, EmailProviderFixture.FakeCloudflare cloudflare, TimeProvider? clock = null) =>
+        await OidcHarness.StartAsync(fixture, clock: clock, settings: settings =>
         {
             settings["smtp-host"] = "127.0.0.1";
             settings["smtp-port"] = mail.Endpoint.Port.ToString();

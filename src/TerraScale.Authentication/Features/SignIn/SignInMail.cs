@@ -172,7 +172,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 if (pending.Length > 0)
                 {
                     var open = await data.ReadAsync((db, token) => db.MailOutbox.Where(row => row.State == "queued" || row.State == "ready" || row.State == "sending")
-                        .Select(row => row.Id).Take(Batch).ToListAsync(token), CancellationToken.None).ConfigureAwait(false);
+                        .OrderBy(row => row.Id).Select(row => row.Id).Take(Batch).ToListAsync(token), CancellationToken.None).ConfigureAwait(false);
                     if (open.Count < Batch)
                     {
                         this.Release(id => pending.Contains(id, StringComparer.Ordinal) && !open.Contains(id, StringComparer.Ordinal));

@@ -5,8 +5,11 @@ namespace TerraScale.Authentication.Storage;
 public sealed class AuthSchema(IDbContextFactory<AuthDbContext> contexts)
 {
     private readonly TaskCompletionSource seeded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private volatile bool bootstrapFailed;
 
     public Task Ready => this.seeded.Task;
+
+    public bool BootstrapPending => !this.bootstrapFailed && !this.seeded.Task.IsCompleted;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -15,4 +18,6 @@ public sealed class AuthSchema(IDbContextFactory<AuthDbContext> contexts)
     }
 
     internal void MarkSeeded() => this.seeded.TrySetResult();
+
+    internal void MarkBootstrapFailed() => this.bootstrapFailed = true;
 }

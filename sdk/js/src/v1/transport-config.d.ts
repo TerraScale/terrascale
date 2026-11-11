@@ -6,6 +6,7 @@ declare module "./transport.js" {
     apiKey?: string | undefined;
     token?: string | (() => string | Promise<string>) | undefined;
     baseUrl?: string | undefined;
+    authBaseUrl?: string | undefined;
     region?: string;
     endpointResolver?: ((context: {
       readonly project: string | undefined;

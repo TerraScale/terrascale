@@ -44,20 +44,21 @@ namespace TerraScale.Dashboard.Features.Organizations
             return slice;
         }
 
-        internal static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null)
+        internal static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null, bool openCreateProject = false)
         {
             if (context.Organization is not null && context.Role.Length == 0)
             {
                 throw new AccountAccessException("Organization membership is required.");
             }
 
-            var tab = tabOverride ?? (http.Request.Query["newProject"] == "1" ? "projects" : http.Request.Query["tab"].ToString());
+            openCreateProject |= http.Request.Query["newProject"] == "1";
+            var tab = tabOverride ?? (openCreateProject ? "projects" : http.Request.Query["tab"].ToString());
             if (tab is not ("projects" or "members" or "invitations" or "audit" or "sso" or "billing" or "danger"))
             {
                 tab = "organization";
             }
 
-            var regionsRead = tab == "projects" || http.Request.Query["newOrganization"] == "project" || http.Request.Query["newProject"] == "1"
+            var regionsRead = tab == "projects" || http.Request.Query["newOrganization"] == "project" || openCreateProject
                 ? placement.RegionsAsync(http.RequestAborted) : null;
             // The projects and billing tabs render no members, invitations, audit events or ownership transfer.
             var accessRead = context.Organization is not null && tab is not ("projects" or "billing")
@@ -83,8 +84,10 @@ namespace TerraScale.Dashboard.Features.Organizations
             // Only an owner sets the two-factor policy; the card stays hidden while ts-auth does not report it.
             var requireMfa = tab == "organization" && context.Role == "owner" && context.Organization is { } owned
                 ? await http.RequestServices.GetRequiredService<ITsAuthMfa>().GetRequireMfaAsync(context.Session, owned.Id, http.RequestAborted) : null;
-            return new(ShellModel.For(http, context, "Organization"), tab, regions, error,
-                http.Request.Query["newProject"] == "1", wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
+            var shell = ShellModel.For(http, context, "Organization");
+            var pageWithoutDialog = wizard.Length > 0 ? "/organization" : openCreateProject ? "/organization?tab=projects" : null;
+            return new(pageWithoutDialog is null ? shell : shell with { ReturnUrl = WorkspaceUrl.For(context, pageWithoutDialog) }, tab, regions, error,
+                openCreateProject, wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
                 Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "", RequireMfa: requireMfa,
                 Sso: tab == "sso" && context.CanManage ? await http.RequestServices.GetRequiredService<OrganizationSsoService>().ReadAsync(context, http.RequestAborted) : null);
         }
@@ -100,12 +103,10 @@ namespace TerraScale.Dashboard.Features.Organizations
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                if (operation == "invite" && http.Request.Path.Value is "/api/v1/access/invitations" or "/api/v1/dashboard/organization/members/invite")
-                {
-                    return await PageAsync(http, context, placement, "Invalid form token.", 400, http.Request.Path.Value == "/api/v1/access/invitations" ? "invitations" : "members");
-                }
-
-                return Results.BadRequest("Invalid form token.");
+                var refused = operation == "invite" && RequestError.WantsJson(http) && http.Request.Path.Value is "/api/v1/access/invitations" or "/api/v1/dashboard/organization/members/invite"
+                    ? await PageAsync(http, context, placement, "Invalid form token.", 400, http.Request.Path.Value == "/api/v1/access/invitations" ? "invitations" : "members")
+                    : Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger" : "/organization?tab=members", refused);
             }
 
             try
@@ -140,7 +141,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                         var intent = StepUpFlow.Intent(http, context, "start_ownership_transfer");
                         if (intent is null)
                         {
-                            return await StepUpFlow.StartAsync(http, context, "start_ownership_transfer", "ts-auth");
+                            return await StepUpFlow.StartAsync(http, context, "start_ownership_transfer", "ts-auth", boundOrganizationId: context.Organization.Id);
                         }
 
                         proof = intent.Challenge.Proof;
@@ -171,7 +172,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, operation == "delete-project" ? "/organization?tab=projects" : "/organization?tab=danger", Results.StatusCode(403));
             }
 
             try
@@ -194,10 +195,10 @@ namespace TerraScale.Dashboard.Features.Organizations
                     var intent = StepUpFlow.Intent(http, context, "delete_organization");
                     if (intent is null)
                     {
-                        return await StepUpFlow.StartAsync(http, context, "delete_organization", "ts-auth");
+                        return await StepUpFlow.StartAsync(http, context, "delete_organization", "ts-auth", boundOrganizationId: context.Organization.Id);
                     }
 
-                    await lifecycle.DeleteAsync(context, form["confirmation"].ToString(), http.RequestAborted, intent.Challenge.Proof);
+                    await lifecycle.DeleteAsync(context, form["confirmation"].ToString(), intent.Challenge.Proof, http.RequestAborted);
                 }
                 // Leaving or deleting moves the account to another organization.
                 if (operation is "leave" or "delete" || operation == "delete-project" && context.Project?.Id == projectId)
@@ -227,7 +228,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, operation is "projects" or "rename-project" ? "/organization?tab=projects" : "/organization", Results.BadRequest("Invalid form token."));
             }
 
             try
@@ -276,18 +277,14 @@ namespace TerraScale.Dashboard.Features.Organizations
                     return await PageAsync(http, context, placement, error.Message, error.StatusCode);
                 }
 
-                var available = await placement.RegionsAsync(http.RequestAborted);
-                var page = (await PageModelAsync(http, context, placement, error.Message)) with
+                var page = await PageModelAsync(http, context, placement, error.Message, openCreateProject: true);
+                var slice = OrganizationView.Create(page with
                 {
-                    Tab = "projects",
-                    Regions = available,
-                    OpenCreateProject = true,
                     ProjectDraftName = form["name"].ToString(),
-                    ProjectDraftRegions = [.. form["regions"].Select(value => value ?? "").Where(available.Contains)],
+                    ProjectDraftRegions = [.. form["regions"].Select(value => value ?? "").Where(page.Regions.Contains)],
                     ProjectDraftPrimaryRegion = form["region"].ToString(),
                     ProjectDraftBackupRegion = form["backupRegion"].ToString()
-                };
-                var slice = OrganizationView.Create(page);
+                });
                 slice.StatusCode = error.StatusCode;
                 return slice;
             }

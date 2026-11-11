@@ -136,7 +136,6 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<RevokeDashboardCredentialByIdEndpoint>(),
                 EndpointRegistration.Create<RotateDashboardCredentialEndpoint>(),
                 EndpointRegistration.Create<SetCredentialAllowedCidrsEndpoint>(),
-                EndpointRegistration.Create<SetProjectAllowedCidrsEndpoint>(),
                 EndpointRegistration.Create<OrganizationPageEndpoint>(),
                 EndpointRegistration.Create<DashboardContextEndpoint>(),
                 EndpointRegistration.Create<RenameOrganizationEndpoint>(),

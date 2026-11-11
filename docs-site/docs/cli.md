@@ -294,7 +294,9 @@ ts orgs delete acme
 
 `orgs` lists every accessible organization. `orgs create` makes a new one;
 `orgs info` inspects one; `orgs rename` needs admin and `orgs delete` needs
-owner and an empty organization.
+owner, an empty organization and a fresh sign-in confirmation: after the typed
+ID, or `-yes`, which skips only that, it prints the hosted confirmation URL and
+waits for you to approve it, as `keys rotate` does.
 
 ```sh
 ts projects info my-project
@@ -400,13 +402,13 @@ shows. `keys rotate <id> <grace>` rotates a key once; the grace is a required
 whole-second duration from `0s` to `24h` during which the previous secret
 stays valid, and the new secret appears once on stdout.
 
-Creating or rotating a key needs a fresh sign-in confirmation with your password
-or an email code, plus two-factor authentication when enrolled. The command
-prints the hosted confirmation URL and waits for you to approve it in a browser;
-after approval the one-time secret is printed in the terminal. Ctrl+C cancels
-the wait; an unconfirmed request expires after five minutes and the command
-exits with `403 step_up_required`. `keys list` and `keys revoke` work from the
-CLI without confirmation.
+Rotating a key needs a fresh sign-in confirmation with your password or an
+email code, plus two-factor authentication when enrolled. The command prints
+the hosted confirmation URL and waits for you to approve it in a browser; after
+approval the one-time secret is printed in the terminal. Ctrl+C cancels the
+wait; an unconfirmed request expires after five minutes and the command exits
+with `403 step_up_required`. `keys create`, `keys list` and `keys revoke` work
+from the CLI without a sign-in confirmation.
 
 ### Key lifetime and allowed networks
 

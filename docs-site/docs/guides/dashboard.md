@@ -25,3 +25,5 @@ Follow the [JavaScript](/getting-started/javascript) or [C#](/getting-started/cs
 ## Review usage and destructive actions
 
 Review [pricing](/pricing/) and [limits](/limits) before increasing traffic. Confirm the resource name and scope before a customer deletion, and keep a copy of any data you need to retain.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

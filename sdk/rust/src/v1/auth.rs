@@ -72,7 +72,11 @@ fn header(scheme: &str, value: &str) -> Result<HeaderValue> {
 const RENEW_PAUSE: Duration = Duration::from_secs(1);
 
 impl Auth {
-    pub(super) fn new(credential: Credential, project: Option<&str>) -> Result<Self> {
+    pub(super) fn new(
+        credential: Credential,
+        project: Option<&str>,
+        auth_origin: &str,
+    ) -> Result<Self> {
         match credential {
             Credential::Bearer(token) => {
                 if token.is_empty() || !token.bytes().all(|b| b.is_ascii_graphic()) {
@@ -85,7 +89,7 @@ impl Auth {
                     .ok_or_else(|| Error::InvalidInput("API keys require a project".into()))?;
                 if !key.is_ascii()
                     || key.len() != 79
-                    || !super::ids::valid_entity_id(&key[..26])
+                    || !super::ids::is_valid_id(&key[..26])
                     || key.as_bytes()[26] != b'_'
                     || !key.as_bytes()[27..]
                         .iter()
@@ -97,10 +101,10 @@ impl Auth {
                 Ok(Self::Key(Arc::new(KeyAuth {
                     basic,
                     project: project.to_owned(),
-                    endpoint: "https://auth.terrascale.tech/terrascale/oauth/token".into(),
-                    scoped_endpoint:
-                        "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys"
-                            .into(),
+                    endpoint: format!("{auth_origin}/terrascale/oauth/token"),
+                    scoped_endpoint: format!(
+                        "{auth_origin}/v1/terrascale/api-keys/self/scoped-keys"
+                    ),
                     cached: Mutex::new(None),
                     exchange_gate: Mutex::new(()),
                     renewing: AtomicBool::new(false),

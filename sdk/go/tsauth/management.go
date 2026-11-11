@@ -310,6 +310,12 @@ func (u *User) RenameOrganization(ctx context.Context, org, name string) (*Organ
 // DeleteOrganization deletes an organization without projects; it needs owner
 // and a delete_organization step-up proof via WithStepUpProof.
 func (u *User) DeleteOrganization(ctx context.Context, org string) error {
+	if u.proof == "" {
+		return errors.New("tsauth: DeleteOrganization needs a delete_organization step-up proof via WithStepUpProof")
+	}
+	if err := u.consumeStepUp(ctx, u.proof, StepUpDeleteOrganization, org); err != nil {
+		return err
+	}
 	return u.none(ctx, http.MethodDelete, orgPath(org), nil, nil)
 }
 

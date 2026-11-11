@@ -145,6 +145,8 @@ refused: primary_key_violation statement 0 sqlstate "23505"
 - **Arguments are parameters, not string interpolation.** Positional `?` values and named (`:name`) values are sent as typed JSON; blobs (`[]byte`) travel as base64. `QueryAs[T]` maps rows by column name into your struct.
 - **Refused statements are `*tb.SQLError`.** It carries `Code`, `Statement` (zero-based), `SQLState` and `Status`, and wraps the API error so `errors.Is` matches every code constant. A `serialization_conflict` is resent at most twice; nothing else is.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Next steps
 
 - [SDK reference](/guides/sdks) — the five SDKs and their install commands

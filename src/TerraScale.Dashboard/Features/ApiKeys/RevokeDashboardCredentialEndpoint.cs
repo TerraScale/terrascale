@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/api-keys", Results.BadRequest("Invalid form token."));
             }
 
             try { await ApiKeyPages.RecordRevokeAsync(http, context, accounts, keys, form["keyId"].ToString()); }

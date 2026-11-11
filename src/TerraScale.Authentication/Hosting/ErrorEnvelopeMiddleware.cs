@@ -2,6 +2,7 @@ using System.Globalization;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Features.SigningKeys;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
@@ -14,7 +15,7 @@ namespace TerraScale.Authentication.Hosting;
 /// answer in time into the retryable 503 envelope, and any other unhandled exception into the generic 500 envelope, so
 /// internal details never reach the client.
 /// </summary>
-public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorEnvelopeMiddleware> logger)
+public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema schema, ILogger<ErrorEnvelopeMiddleware> logger)
 {
     /// <summary>Runs the rest of the pipeline.</summary>
     public async Task InvokeAsync(HttpContext context)
@@ -34,7 +35,8 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
         }
         catch (ApiException error) when (!context.Response.HasStarted)
         {
-            Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
+            var level = error.Code == KeyRing.NoSigningKeysCode && schema.BootstrapPending ? LogLevel.Information : LogLevel.Error;
+            Diagnose(context, error, () => logger.ZLog(level, error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
         }
         catch (DbUpdateException conflict) when (!context.Response.HasStarted && AuthData.IsConflict(conflict))

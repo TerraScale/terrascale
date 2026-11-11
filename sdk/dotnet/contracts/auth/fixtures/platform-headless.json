@@ -7,11 +7,11 @@
     "response": {"proof":"fixture-proof-canary","step_up_url":"https://auth.example.test/ui/terrascale/step-up/01JA0000000000000000000005","expires_at":"2026-10-26T12:05:00Z"}
   },
   "consume_step_up": {
-    "request": {"proof":"fixture-proof-canary","purpose":"create_pat","audience":"ts-dashboard","operation_receipt":null},
+    "request": {"proof":"fixture-proof-canary","purpose":"create_pat","audience":"ts-dashboard","operation_receipt":null,"organization_id":null},
     "response": null
   },
   "consume_step_up_delete": {
-    "request": {"proof":"fixture-proof-canary","purpose":"delete_account","audience":"ts-dashboard","operation_receipt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+    "request": {"proof":"fixture-proof-canary","purpose":"delete_account","audience":"ts-dashboard","operation_receipt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","organization_id":null},
     "response": {"operation_grant":"fixture-operation-grant-canary"}
   },
   "create_organization": {

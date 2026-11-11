@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, "/profile", Results.StatusCode(403));
             }
 
             if (!TsAuthGateway.IsSignInProvider(provider))
@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, "/profile", Results.StatusCode(403));
             }
 
             if (!TsAuthGateway.IsSignInProvider(provider))

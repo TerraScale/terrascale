@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Common.UI;
 using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Databases
@@ -25,7 +26,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "grants"), Results.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
