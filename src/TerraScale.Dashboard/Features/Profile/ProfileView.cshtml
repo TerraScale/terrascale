@@ -1,6 +1,10 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Profile.ProfilePage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page">
+    @if (Model.DialogId.StartsWith("revoke-", StringComparison.Ordinal) && (Model.Tokens is not { } liveTokens || !liveTokens.Any(token => "revoke-" + token.Id == Model.DialogId)))
+    {
+        @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.DialogFailureView, DialogError>(new(Model.DialogId, Model.Error)))
+    }
     <header class="ts-profile-head"><span class="ts-avatar" aria-hidden="true">@Initials</span><div><h1 class="ts-profile-name">@Model.Shell.Context.Account.Name</h1><p class="ts-meta">@Model.Shell.Context.Account.Email</p></div></header><div class="ts-page-actions"></div>
     @if (Model.Error.Length > 0 && Model.DialogId.Length == 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error @if (Model.InvalidField is { } field) { <a class="ts-link" href="#@field">Review the field</a> }</p></div> }
     @if (Model.Status.Length > 0) { <p role="status" aria-live="polite" class="ts-alert ts-alert-success">@Model.Status</p> }
