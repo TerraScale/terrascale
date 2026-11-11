@@ -34,6 +34,8 @@ jobs:
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           RUN_UPDATED: ${{ github.event.workflow_run.updated_at }}
           COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+          RELEASE_STEPS: '["Release to every region", "Release the pinned arm64 digest to each region"]'
+          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main", "main-auth", "main-auth-ordered", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
         run: |
           set -euo pipefail
           [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
@@ -50,21 +52,28 @@ jobs:
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$COMMIT&per_page=100" --jq '[.workflow_runs[]
             | select(.head_branch == "main" and (.event == "push" or .event == "workflow_dispatch")
               and (.path == ".github/workflows/ci.yml" or .path == ".github/workflows/images-ghcr.yml"))
-            | {id, name, status, updated_at}]')
+            | {id, name, path, event, status, updated_at}]')
           others=$(jq --argjson run "$RUN_ID" '[.[] | select(.id != $run)]' <<< "$runs")
           running=$(jq -r '[.[] | select(.status != "completed") | "\(.name) run \(.id)"] | join(", ")' <<< "$others")
           later=$(jq -r --arg at "$RUN_UPDATED" '[.[] | select(.status == "completed" and .updated_at > $at) | "\(.name) run \(.id)"] | join(", ")' <<< "$others")
-          released=""
           for id in "$RUN_ID" $(jq -r '.[] | select(.status == "completed") | .id' <<< "$others"); do
-            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --jq '[.jobs[]
-              | select(.conclusion == "success" and (.name == "main-auth" or .name == "main-auth-ordered" or .name == "release-only" or .name == "Publish and release"))
-              | .name] | join(", ")')
-            [ -z "$jobs" ] || released+="${released:+, }$jobs in run $id"
-          done
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --jq "{id: $id, jobs: [.jobs[] | {name, conclusion, steps: [.steps[]? | {name, conclusion}]}]}"
+          done > "$RUNNER_TEMP/jobs.json"
+          released=$(jq -rs --argjson steps "$RELEASE_STEPS" '[.[] | .id as $id | .jobs[]
+            | select(any(.steps[]; .conclusion == "success" and (.name | IN($steps[])))) | "\(.name) in run \($id)"] | join(", ")' "$RUNNER_TEMP/jobs.json")
+          unknown=$(jq -rs --argjson runs "$runs" --argjson known "$RELEASE_JOBS" --argjson steps "$RELEASE_STEPS" '[.[] | .id as $id
+            | ($runs[] | select(.id == $id)) as $run | $known[$run.path] as $names | [.jobs[] | select(.name | IN($names[]))] as $jobs
+            | (if $run.event == "push" and (.jobs | length) > 0 and ($jobs | length) == 0 then "\($run.name) run \($id) has none of the jobs \($names | join(", "))" else empty end),
+              ($jobs[] | select(.conclusion == "success" and (any(.steps[]; .name | IN($steps[])) | not))
+                | "job \(.name) of \($run.name) run \($id) has none of the steps \($steps | join(", "))")] | join("; ")' "$RUNNER_TEMP/jobs.json")
+          if [ -n "$unknown" ]; then
+            echo "::error::production-journey.yml no longer knows how $COMMIT released: $unknown. Name the renamed release jobs and steps in RELEASE_JOBS and RELEASE_STEPS."
+            exit 1
+          fi
           if [ -n "$running" ]; then
             echo "$COMMIT: $running is still running, and its completion starts the journey"
           elif [ -z "$released" ]; then
-            echo "$COMMIT: no release job succeeded in CI or Images (GHCR), so production did not change"
+            echo "$COMMIT: no release step succeeded in CI or Images (GHCR), so production did not change"
           elif [ -n "$later" ]; then
             echo "$COMMIT: $later completed after this run, and its completion starts the journey"
           else
