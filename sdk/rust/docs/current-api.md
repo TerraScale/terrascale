@@ -10,11 +10,13 @@ not a claim that this SDK implements or qualifies every operation. SQL follows t
 Use `Client::for_project_api_key(project_ulid, api_key)` for automatic exchange and refresh
 ([authentication guide](api-key-auth.md)), or `Client::for_project(project_ulid, access_token)`
 for a static token, against `https://api.terrascale.tech`,
-or `.endpoint(origin)` for a static endpoint. `Client::builder(origin, token)`
+or `.endpoint(origin)` for a static endpoint (with an API key, an endpoint other than
+`https://api.terrascale.tech` also needs `.auth_base_url(origin)`, the ts-auth that exchanges it).
+`Client::builder(origin, token)`
 requires `.project(project_ulid)`. Platform administration uses
 `Client::for_platform(origin, access_token)`.
 
-Entity IDs are canonical uppercase ULIDs; `new_id()` generates one. Database selectors are a
+Entity IDs are canonical uppercase ULIDs; `new_id()` generates one and `is_valid_id(id)` checks one. Database selectors are a
 name or ULID.
 
 ## Public operations

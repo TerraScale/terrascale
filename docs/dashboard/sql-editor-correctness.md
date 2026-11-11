@@ -22,3 +22,5 @@ project templates remain available across the project. No stored records are rew
 
 Run and check coverage lives in `SqlCheckJourneyTests` and
 `SqlRunReceiptJourneyTests`.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

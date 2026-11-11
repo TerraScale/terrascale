@@ -92,8 +92,7 @@ public static partial class OpenApiSetup
                     }
                 }
 
-                if (operation.OperationId is "delete_account" or "create_organization_api_key" or "create_project_api_key"
-                    or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client")
+                if (operation.OperationId is "delete_account" or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client")
                 {
                     (operation.Parameters ??= []).Add(new OpenApiParameter
                     {

@@ -9,7 +9,7 @@ use `0s` for immediate replacement, or a Go duration resolving to whole seconds
 up to `24h`. The CLI validates the canonical key ULID and grace before auth.
 The SDK sends `previous_secret_ttl` as integer seconds (0 through 86400).
 
-Creation and rotation complete their step-up in the terminal: the command
+Rotation completes its step-up in the terminal: the command
 requests a purpose-bound proof from `POST /v1/terrascale/step-up`, prints the
 hosted confirmation URL and retries the mutation with
 `X-TerraScale-Step-Up-Proof` every five seconds. Approve with a fresh password
@@ -36,7 +36,8 @@ rotation committed, and the returned secret cannot be retrieved later. Inspect
 state before retrying. Already-issued access tokens keep their own expiry;
 rotation does not revoke them.
 
-Creation keeps its explicit `read-write` default: `databases:read`,
+Creation requests no proof and prints no confirmation URL: ts-auth creates
+the key at once. It keeps its explicit `read-write` default: `databases:read`,
 `databases:write`, `sql:read`, `sql:write`. For read-only work use
 `ts -scope read -expires 30d keys create reports <database>`, which requests only
 `databases:read` and `sql:read`. The optional database narrows the key;

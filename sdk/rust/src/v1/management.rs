@@ -7,7 +7,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use super::client::{Client, Req};
 use super::database::{Database, ProjectDatabaseInfo};
 use super::errors::Result;
-use super::ids::{check_database_selector, check_name, valid_entity_id};
+use super::ids::{check_database_selector, check_name, is_valid_id};
 
 /// Management pagination uses `after` / `next`, independently of data cursors.
 #[derive(Debug, Clone, Deserialize)]
@@ -198,7 +198,7 @@ impl Database {
 }
 
 fn check_expected_id(id: &str) -> Result<()> {
-    if valid_entity_id(id) {
+    if is_valid_id(id) {
         Ok(())
     } else {
         Err(super::errors::Error::InvalidInput(

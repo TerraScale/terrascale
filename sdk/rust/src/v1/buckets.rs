@@ -2,7 +2,7 @@
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use super::{client::Req, ids::valid_entity_id, Client, Error, Result};
+use super::{client::Req, ids::is_valid_id, Client, Error, Result};
 
 /// Independent grants for one operation. All-false grants deny access.
 /// `public` means authenticated end-users, never anonymous requests.
@@ -57,7 +57,7 @@ pub struct FileBucketPage {
 
 fn bucket_cursor<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Option<String>, D::Error> {
     let next = Option::<String>::deserialize(d)?;
-    if next.as_deref().is_some_and(|value| !valid_entity_id(value)) {
+    if next.as_deref().is_some_and(|value| !is_valid_id(value)) {
         return Err(serde::de::Error::custom(
             "bucket cursor must be a canonical uppercase ULID or null",
         ));
@@ -66,7 +66,7 @@ fn bucket_cursor<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Option<
 }
 
 fn check_id(id: &str) -> Result<()> {
-    if valid_entity_id(id) {
+    if is_valid_id(id) {
         Ok(())
     } else {
         Err(Error::InvalidInput(

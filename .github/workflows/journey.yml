@@ -1,0 +1,187 @@
+name: Journey
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  services:
+    name: build ${{ matrix.service }}
+    strategy:
+      matrix:
+        service: [terrabase, ts-auth, dashboard]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      SERVICE: ${{ matrix.service }}
+      E2E_REVISION: ${{ github.sha }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        if: matrix.service == 'dashboard'
+        with:
+          node-version: '24.21.0'
+      - name: Build the service
+        run: |
+          bash e2e/env/build.sh . "$RUNNER_TEMP/services" "$SERVICE"
+          if [ "$SERVICE" = ts-auth ]; then E2E_SDK_BUILD="$RUNNER_TEMP/services/sdk" bash e2e/sdk/build.sh dotnet; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: services-${{ matrix.service }}
+          path: ${{ runner.temp }}/services
+          retention-days: 30
+          if-no-files-found: error
+
+  runners:
+    name: runner ${{ matrix.sdk }}
+    strategy:
+      matrix:
+        sdk: [go, rust]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      SDK: ${{ matrix.sdk }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: matrix.sdk == 'go'
+        with:
+          go-version-file: sdk/go/.go-version
+          cache: false
+      - name: Install the pinned toolchain
+        working-directory: e2e/sdk/rust
+        run: |
+          echo "E2E_SDK_BUILD=$RUNNER_TEMP/sdk" >> "$GITHUB_ENV"
+          if [ "$SDK" = rust ]; then rustup toolchain install; fi
+      - name: Build the runner
+        run: bash e2e/sdk/build.sh "$SDK"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: runner-${{ matrix.sdk }}
+          path: ${{ runner.temp }}/sdk
+          retention-days: 30
+          if-no-files-found: error
+
+  journey:
+    name: journey ${{ matrix.shard }}
+    needs: [services, runners]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: desktop
+            projects: --project pages-desktop
+          - shard: phone and flows
+            projects: --project pages-mobile --project hosted --project interactions --project invitation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      PROJECTS: ${{ matrix.projects }}
+      E2E_STATE: ${{ github.workspace }}/e2e/.state
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Journey paths
+        run: |
+          {
+            echo "E2E_TOOLS=$HOME/.cache/terrascale-e2e"
+            echo "E2E_BUILD=$RUNNER_TEMP/services"
+            echo "E2E_SDK_BUILD=$RUNNER_TEMP/sdk"
+          } >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.21.0'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: services-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/services
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: runner-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/sdk
+      - name: Install the suite, its browser and the runners
+        working-directory: e2e
+        run: |
+          mv "$E2E_BUILD/sdk/dotnet" "$E2E_SDK_BUILD/dotnet"
+          chmod +x "$E2E_SDK_BUILD/go/runner" "$E2E_SDK_BUILD/rust/runner"
+          bash env/tools.sh
+          bash sdk/build.sh python > "$RUNNER_TEMP/python-runner.log" 2>&1 &
+          python=$!
+          bash sdk/build.sh js > "$RUNNER_TEMP/js-runner.log" 2>&1 &
+          js=$!
+          npm ci --no-audit --no-fund
+          { started=$SECONDS; npx tsc --noEmit && echo "tsc --noEmit over e2e/ took $((SECONDS - started)) s"; } > "$RUNNER_TEMP/typecheck.log" 2>&1 &
+          typecheck=$!
+          npx playwright install --only-shell chromium
+          wait "$typecheck" || { cat "$RUNNER_TEMP/typecheck.log"; exit 1; }
+          cat "$RUNNER_TEMP/typecheck.log"
+          wait "$python" || { cat "$RUNNER_TEMP/python-runner.log"; exit 1; }
+          wait "$js" || { cat "$RUNNER_TEMP/js-runner.log"; exit 1; }
+      - id: namespace
+        name: Enter a network namespace with only loopback, the production names pinned and the run CA trusted
+        timeout-minutes: 2
+        run: |
+          bash e2e/env/pki.sh
+          sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
+          bash e2e/env/local.sh start
+      - name: Egress guard
+        timeout-minutes: 1
+        run: bash e2e/env/local.sh exec bash e2e/env/guard.sh
+      - name: Boot the stack
+        timeout-minutes: 3
+        run: bash e2e/env/local.sh exec bash e2e/env/up.sh
+      - name: Journey
+        timeout-minutes: 15
+        working-directory: e2e
+        run: |
+          read -ra projects <<< "$PROJECTS"
+          bash env/local.sh exec npx playwright test "${projects[@]}"
+      - name: Stop the stack
+        if: always() && steps.namespace.outcome == 'success'
+        timeout-minutes: 1
+        run: bash e2e/env/local.sh stop
+      - id: scrub
+        name: Redact every generated secret from the files that upload
+        if: always()
+        run: python3 e2e/env/scrub.py "$E2E_STATE" e2e/playwright-report e2e/test-results "$E2E_STATE/logs"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && steps.scrub.outcome == 'success'
+        with:
+          name: journey-report-${{ strategy.job-index }}
+          path: e2e/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: (failure() || cancelled()) && steps.scrub.outcome == 'success'
+        with:
+          name: journey-evidence-${{ strategy.job-index }}
+          path: |
+            e2e/test-results
+            e2e/.state/logs
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore

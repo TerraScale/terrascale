@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Functions
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), Results.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();

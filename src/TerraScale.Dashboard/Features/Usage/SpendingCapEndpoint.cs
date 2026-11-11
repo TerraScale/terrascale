@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Endpoints;
 
@@ -19,7 +20,7 @@ namespace TerraScale.Dashboard.Features.Usage
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/usage?tab=settings", Results.BadRequest("Invalid form token."));
             }
 
             if (!context.CanManage)

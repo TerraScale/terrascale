@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 
 # The SDK pinned by global.json.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.3-resolute@sha256:3a9175b6c54b2f076817af1360f691c9994447b192faa48a1a1f112a516844c7 AS publish
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-resolute@sha256:65f3c7c6a25a239ab3e6719f2896147e7b68242ff2d8818dd70498bde6ef8bea AS publish
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 # The project build bundles CSS and JS with node (BundleDashboardAssets).
 COPY --from=node-modules /usr/local/bin/node /usr/local/bin/node
@@ -29,7 +29,7 @@ RUN dotnet publish src/TerraScale.Dashboard --configuration Release --output /ap
       -p:ContinuousIntegrationBuild=true -p:SourceRevisionId=$SOURCE_REVISION
 
 # No shell or package manager; runs as the non-root app user and listens on 8080.
-FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-rc.3-resolute-chiseled@sha256:7bb2935a9c058ececbeadcdc26c7ccc20f2a193c8efa7764123ef7b83cd4e179
+FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-resolute-chiseled@sha256:fc0ee12f9ea79bde6cda88c7a34e5467fe383dbb62276be0ec13e5e9cc1654ac
 WORKDIR /app
 COPY --from=publish /app .
 EXPOSE 8080

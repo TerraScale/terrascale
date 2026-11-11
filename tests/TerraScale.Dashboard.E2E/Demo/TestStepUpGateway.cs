@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.E2E
     // Hosted approval is deliberate and test-only. Begin never marks a proof approved.
     internal sealed class TestStepUpGateway(TimeProvider time, Func<string, (string UserId, string Email)?> resolve) : IAuthStepUpGateway
     {
-        internal sealed record Pending(string UserId, string AccessToken, string Purpose, string Audience, string ReturnUri, StepUpChallenge Challenge, bool Approved = false);
+        internal sealed record Pending(string UserId, string AccessToken, string Purpose, string Audience, string? OrganizationId, string ReturnUri, StepUpChallenge Challenge, bool Approved = false);
         private readonly ConcurrentDictionary<string, Pending> pending = new();
         private sealed record DeletionGrant(string UserId, string AccessToken, string Receipt, DateTimeOffset ExpiresAt);
         private readonly ConcurrentDictionary<string, DeletionGrant> grants = new();
@@ -28,16 +28,16 @@ namespace TerraScale.Dashboard.E2E
 
             var id = Guid.NewGuid().ToString("N");
             var challenge = new StepUpChallenge(id + ".synthetic-backend-proof", "https://auth.terrascale.tech/ui/terrascale/step-up/" + id, ExpiresAt ?? time.GetUtcNow().AddMinutes(5));
-            pending[id] = new(session.UserId, session.AccessToken, purpose, audience, returnUri, challenge);
+            pending[id] = new(session.UserId, session.AccessToken, purpose, audience, organizationId, returnUri, challenge);
             return Task.FromResult(challenge);
         }
 
-        public Task<string?> ConsumeAsync(SessionRecord session, string proof, string purpose, string audience, string? operationReceipt, CancellationToken cancellationToken)
+        public Task<string?> ConsumeAsync(SessionRecord session, string proof, string purpose, string audience, string? operationReceipt, string? organizationId, CancellationToken cancellationToken)
         {
             var entry = pending.SingleOrDefault(pair => pair.Value.Challenge.Proof == proof);
             if (entry.Value is not { Approved: true } value || value.UserId != session.UserId ||
                 resolve(value.AccessToken)?.UserId != value.UserId || resolve(session.AccessToken)?.UserId != value.UserId ||
-                value.Purpose != purpose || value.Audience != audience ||
+                value.Purpose != purpose || value.Audience != audience || value.OrganizationId != organizationId ||
                 value.Challenge.ExpiresAt <= time.GetUtcNow() || purpose == "delete_account" && operationReceipt is not { Length: 43 } || !pending.TryRemove(entry))
             {
                 throw StepUpFlow.Required();

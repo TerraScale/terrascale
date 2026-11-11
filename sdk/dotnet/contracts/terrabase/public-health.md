@@ -38,3 +38,5 @@ parity tests were read, not built or executed. The retained historical route
 inventory uses an older `status` liveness identity and does not define this DTO.
 Producer ApiExamples lacks an explicit backupz example; no fresh generated
 OpenAPI/full route manifest is claimed by this source-only supplemental pin.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

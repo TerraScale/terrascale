@@ -80,7 +80,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
             var form = await FormRequests.ReadAsync(context, context.RequestAborted);
             if (!Csrf.Validate(context, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(context, "/onboarding", Results.StatusCode(403));
             }
 
             var session = await sessions.ReadAsync(context);

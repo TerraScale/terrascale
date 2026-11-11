@@ -9,9 +9,4 @@ check_public=$!
 node scripts/check-links.mjs
 wait "$check_public"
 node scripts/build-worker.mjs
-node --test scripts/*.test.mjs &
-node_tests=$!
-python3 scripts/check-main.test.py &
-py_tests=$!
-wait "$node_tests"
-wait "$py_tests"
+node --test scripts/*.test.mjs

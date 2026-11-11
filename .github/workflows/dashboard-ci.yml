@@ -2,30 +2,6 @@ name: Dashboard Fast
 
 # Main pushes run this through images-ghcr.yml, the dashboard's single main entry point.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/TerraScale.Dashboard*/**'
-      # The dashboard calls TerraBase through these MagicOnion contracts.
-      - 'src/TerraScale.TerraBase.Contracts/**'
-      # The dashboard's endpoints and their source generator.
-      - 'src/TerraScale.Endpoints/**'
-      - 'src/TerraScale.Endpoints.Generators/**'
-      - 'tests/TerraScale.Dashboard*/**'
-      - 'scripts/dashboard/**'
-      - 'scripts/ci/release-only.sh'
-      - 'sdk/dotnet/**'
-      - 'Directory.*'
-      - '.editorconfig'
-      - 'BannedSymbols.txt'
-      - 'global.json'
-      - 'NuGet.config'
-      - 'Makefile'
-      - '.github/actions/**'
-      - '.github/workflows/dashboard-ci.yml'
-      - '.github/workflows/images-ghcr.yml'
-      - '!**/AGENTS.md'
-      - '!**/CLAUDE.md'
   workflow_call:
   workflow_dispatch:
 

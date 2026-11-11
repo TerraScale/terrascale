@@ -20,12 +20,6 @@ The monorepo commits `.legacy-scan-mode` containing `fail`. Main CI scans every 
 
 ## Other repository scans
 
-Repositories with deletion work remaining may commit `.legacy-scan-mode` containing `report`. Report mode lists all hits and returns 0. Switch to `fail` after confirming zero hits. Fail mode returns 1 on hits. Invalid mode, unreadable tracked files, missing Git metadata and policy errors return 2 in either mode. `--mode` overrides the tracked mode only for investigations and process tests.
-
-Process integration verification uses isolated real Git repositories and concurrent scanner subprocesses:
-
-```sh
-nice -n 19 python3 scripts/legacy-scan/process-test.py
-```
+Repositories with deletion work remaining may commit `.legacy-scan-mode` containing `report`. Report mode lists all hits and returns 0. Switch to `fail` after confirming zero hits. Fail mode returns 1 on hits. Invalid mode, unreadable tracked files, missing Git metadata and policy errors return 2 in either mode. `--mode` overrides the tracked mode only for investigations.
 
 No API, storage, authentication or storage-format behavior changes. No visual change.

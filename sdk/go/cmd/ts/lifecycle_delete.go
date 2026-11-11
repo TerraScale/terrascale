@@ -33,7 +33,7 @@ func confirmManagementTarget(action, name, id string, yes bool, in io.Reader, ou
 	return nil
 }
 
-func deleteOrganizationLifecycle(ctx context.Context, u *tsauth.User, selector string, consent managementConsent, out io.Writer) error {
+func deleteOrganizationLifecycle(ctx context.Context, u *tsauth.User, signIn func(context.Context) (*tsauth.User, error), selector string, consent managementConsent, out, diagnostics io.Writer) error {
 	o, err := selectOrganization(ctx, u, selector)
 	if err != nil {
 		return err
@@ -41,8 +41,9 @@ func deleteOrganizationLifecycle(ctx context.Context, u *tsauth.User, selector s
 	if err := consent("organization", o.Name, o.ID); err != nil {
 		return err
 	}
-	// ts-auth enforces owner role and refuses organizations with projects.
-	if err := u.DeleteOrganization(ctx, o.ID); err != nil {
+	if _, err := stepUp(ctx, signIn, tsauth.StepUpDeleteOrganization, o.ID, "Deleting an organization", func(proof *tsauth.User) (*struct{}, error) {
+		return nil, proof.DeleteOrganization(ctx, o.ID)
+	}, func(err error) error { return err }, diagnostics); err != nil {
 		return err
 	}
 	return emitJSON(out, struct {

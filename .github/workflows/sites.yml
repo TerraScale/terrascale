@@ -1,0 +1,176 @@
+name: Sites
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs-site/**'
+      - 'Makefile'
+      - 'landing-site/**'
+      - 'status-site/**'
+      - 'scripts/ci/prove-worker-deploy.mjs'
+      - '.github/workflows/sites.yml'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.docs == 'true' }}
+      landing: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.landing == 'true' }}
+      status: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.status == 'true' }}
+    steps:
+      - if: github.event_name == 'push'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - id: filter
+        if: github.event_name == 'push'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          base: ${{ github.event.before }}
+          ref: ${{ github.sha }}
+          filters: |
+            docs:
+              - docs-site/**/!(AGENTS.md|CLAUDE.md)
+              - Makefile
+              - scripts/ci/prove-worker-deploy.mjs
+              - .github/workflows/sites.yml
+            landing:
+              - landing-site/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/ci/prove-worker-deploy.mjs
+              - .github/workflows/sites.yml
+            status:
+              - status-site/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/ci/prove-worker-deploy.mjs
+              - .github/workflows/sites.yml
+
+  deploy-docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    concurrency:
+      group: docs-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: main
+      - name: Record the checked-out revision
+        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: docs-site/.node-version
+          package-manager-cache: false
+      - name: Install dependencies
+        working-directory: docs-site
+        run: npm ci --no-audit --no-fund
+      - name: Build the checked-out revision
+        working-directory: docs-site
+        run: npm run build
+      - name: Deploy the site to Workers
+        working-directory: docs-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
+        run: npm run deploy:site -- --message "$REVISION"
+      - name: Prove the deployed revision
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-docs
+
+  deploy-landing:
+    needs: changes
+    if: needs.changes.outputs.landing == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: landing-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: main
+      - name: Record the checked-out revision
+        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: landing-site/.node-version
+          cache: npm
+          cache-dependency-path: landing-site/package-lock.json
+      - name: Install dependencies
+        working-directory: landing-site
+        run: npm ci --no-audit --no-fund
+      - name: Run tests and validate the static build
+        working-directory: landing-site
+        run: npm run build
+      - name: Deploy static assets
+        working-directory: landing-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
+        run: npx wrangler deploy --message "$REVISION"
+      - name: Prove the deployed revision
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-landing
+
+  deploy-status:
+    needs: changes
+    if: needs.changes.outputs.status == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: status-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: main
+      - name: Record the checked-out revision
+        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: status-site/.node-version
+          cache: npm
+          cache-dependency-path: status-site/package-lock.json
+      - name: Install dependencies
+        working-directory: status-site
+        run: npm ci --no-audit --no-fund
+      - name: Build the checked-out revision
+        working-directory: status-site
+        run: npm run build
+      - name: Deploy the status Workers
+        working-directory: status-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
+        run: npm run deploy:prebuilt
+      - name: Prove the deployed revision
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-status-vantage-sfo ts-status-vantage-gru ts-status

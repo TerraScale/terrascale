@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
             new(CreateAsync(HttpContext, HttpContext.Request.RouteValues["kind"]?.ToString() ?? "", sessions, accounts, keys, databases));
 
-        public static async Task<IResult> CreateAsync(HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases)
+        private static async Task<IResult> CreateAsync(HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
@@ -40,9 +40,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
+            if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/api-keys", Results.BadRequest("Invalid form token."));
             }
 
             try
@@ -64,16 +64,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
                 }
 
-                _ = keys.PrepareCreate(context, kind, form["name"].ToString(), form["databaseId"].ToString(),
-                    form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)),
-                    expiresInDays, ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString()));
-                var intent = StepUpFlow.Intent(http, context, "create_api_key");
-                if (intent is null)
-                {
-                    return await StepUpFlow.StartAsync(http, context, "create_api_key", "ts-auth");
-                }
-
-                var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), expiresInDays, ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString()), http.RequestAborted, intent.Challenge.Proof);
+                var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), expiresInDays, ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString()), http.RequestAborted);
                 await keys.RecordAsync(accounts, context, credential.Key.Id, true, http.RequestAborted);
                 return DatabaseEndpoints.WantsHtml(http) ? await ApiKeyPages.PageAsync(http, context, keys, databases, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret, statusCode: 201);
             }

@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, "/profile?tab=danger", Results.StatusCode(403));
             }
 
             if (await ReadOperationAsync(http, storage, identity) is { } pending)
@@ -132,7 +132,7 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, "/account-deletion", Results.StatusCode(403));
             }
 
             if (await CompletedAsync(http, storage))
