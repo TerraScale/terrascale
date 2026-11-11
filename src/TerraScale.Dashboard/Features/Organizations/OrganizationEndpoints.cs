@@ -103,12 +103,10 @@ namespace TerraScale.Dashboard.Features.Organizations
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                if (operation == "invite" && http.Request.Path.Value is "/api/v1/access/invitations" or "/api/v1/dashboard/organization/members/invite")
-                {
-                    return await PageAsync(http, context, placement, "Invalid form token.", 400, http.Request.Path.Value == "/api/v1/access/invitations" ? "invitations" : "members");
-                }
-
-                return Results.BadRequest("Invalid form token.");
+                var refused = operation == "invite" && RequestError.WantsJson(http) && http.Request.Path.Value is "/api/v1/access/invitations" or "/api/v1/dashboard/organization/members/invite"
+                    ? await PageAsync(http, context, placement, "Invalid form token.", 400, http.Request.Path.Value == "/api/v1/access/invitations" ? "invitations" : "members")
+                    : Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger" : "/organization?tab=members", refused);
             }
 
             try
@@ -174,7 +172,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, operation == "delete-project" ? "/organization?tab=projects" : "/organization?tab=danger", Results.StatusCode(403));
             }
 
             try
@@ -230,7 +228,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, operation is "projects" or "rename-project" ? "/organization?tab=projects" : "/organization", Results.BadRequest("Invalid form token."));
             }
 
             try

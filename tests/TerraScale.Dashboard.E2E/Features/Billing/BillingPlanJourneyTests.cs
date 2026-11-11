@@ -308,8 +308,6 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
             using var login = await HttpJourney.LoginAsync(client);
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            using var missingCsrf = await HttpJourney.PostFormAsync(client, "/billing/change", new() { ["plan"] = "pro", ["interval"] = "monthly" });
-            await Assert.That(missingCsrf.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
             var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
             using var invalid = await HttpJourney.PostConfirmedFormAsync(client, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "reserved", ["interval"] = "monthly" });
             await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);

@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/notifications/alerts", Results.BadRequest("Invalid form token."));
             }
 
             try

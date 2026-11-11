@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     var form = await FormRequests.ReadAsync(http, budget.Token);
                     if (!Csrf.Validate(http, form))
                     {
-                        return Results.StatusCode(403);
+                        return RequestError.FormExpired(http, "/account-deletion", Results.StatusCode(403));
                     }
 
                     _ = int.TryParse(form["_retry"], out attempt);
