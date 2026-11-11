@@ -9,7 +9,7 @@ from pathlib import Path
 
 from terrascale import Statement, TerraScale, is_valid_id, new_id
 
-spec = json.load(open(os.environ["E2E_OPERATIONS"], encoding="utf-8"))
+spec = json.loads(Path(os.environ["E2E_OPERATIONS"]).read_text(encoding="utf-8"))
 run = os.environ["E2E_RUN_ID"]
 project = os.environ["TERRASCALE_PROJECT_ID"]
 table = spec["table"].replace("{sdk}", "python").replace("{run}", run)
@@ -18,9 +18,7 @@ state = {}
 
 
 def fill(text):
-    return (
-        text.replace("{table}", table).replace("{sdk}", "python").replace("{run}", run)
-    )
+    return text.replace("{table}", table).replace("{sdk}", "python").replace("{run}", run)
 
 
 def same(actual, expected, what):
@@ -172,9 +170,7 @@ def ws_rollback(op):
     session.begin()
     session.execute(fill(op["sql"]))
     session.rollback()
-    same(
-        cells(state["db"].query(fill(op["check"]))), op["checkRows"], "rolled back rows"
-    )
+    same(cells(state["db"].query(fill(op["check"]))), op["checkRows"], "rolled back rows")
 
 
 def ws_transaction_commit(op):
@@ -192,9 +188,7 @@ def ws_transaction_rethrow(op):
     error = refused(lambda: state["session"].transaction(work))
     if error is not thrown:
         raise AssertionError(f"the transaction rethrew {error!r}")
-    same(
-        cells(state["db"].query(fill(op["check"]))), op["checkRows"], "rolled back rows"
-    )
+    same(cells(state["db"].query(fill(op["check"]))), op["checkRows"], "rolled back rows")
 
 
 def ws_in_transaction(op):
@@ -222,9 +216,7 @@ def conflicts(op):
 
 
 def ids(op):
-    same(
-        [is_valid_id(new_id()), is_valid_id(op["invalid"])], [True, False], "validation"
-    )
+    same([is_valid_id(new_id()), is_valid_id(op["invalid"])], [True, False], "validation")
 
 
 def create_ttl(op):
@@ -300,11 +292,7 @@ operations = {
     "agent.delete": delete,
 }
 
-group = [
-    op
-    for op in spec["operations"]
-    if op["group"] == os.environ["E2E_GROUP"] and "needs" not in op
-]
+group = [op for op in spec["operations"] if op["group"] == os.environ["E2E_GROUP"] and "needs" not in op]
 if os.environ["E2E_GROUP"] == "a":
     state["db"] = client.database(os.environ["TERRASCALE_DATABASE_NAME"])
 failed = False

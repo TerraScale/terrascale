@@ -3,6 +3,7 @@ import io
 import re
 import sys
 import zipfile
+import zlib
 from pathlib import Path
 from urllib.parse import quote
 
@@ -41,20 +42,24 @@ def clean(data: bytes) -> bytes:
         source = zipfile.ZipFile(io.BytesIO(data))
         entries = [(entry, source.read(entry)) for entry in source.infolist()]
         cleaned = [(entry, clean(body)) for entry, body in entries]
-        if all(body == new for (_, body), (_, new) in zip(entries, cleaned)):
+        if cleaned == entries:
             return data
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as target:
             for entry, body in cleaned:
                 target.writestr(entry, body)
         return output.getvalue()
-    data = embedded.sub(lambda match: b"data:application/zip;base64," + base64.b64encode(clean(base64.b64decode(match.group(1), validate=True))), data)
+    data = embedded.sub(reencoded, data)
     for needle in needles:
         found = data.count(needle)
         if found:
             data = data.replace(needle, redacted)
             redactions += found
     return data
+
+
+def reencoded(match: re.Match[bytes]) -> bytes:
+    return b"data:application/zip;base64," + base64.b64encode(clean(base64.b64decode(match.group(1), validate=True)))
 
 
 def holds(data: bytes) -> bool:
@@ -78,7 +83,7 @@ for path in files:
             changed += 1
         if holds(path.read_bytes()):
             raise ValueError("a secret is still there after redaction")
-    except Exception as error:
+    except (OSError, ValueError, EOFError, RuntimeError, zipfile.BadZipFile, zlib.error) as error:
         path.unlink(missing_ok=True)
         failed.append(path)
         print(f"deleted {path}: it could not be scrubbed ({type(error).__name__}: {error})")
