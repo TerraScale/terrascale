@@ -121,17 +121,17 @@ const organizationTabs: [string, Identity][] = [
   ['members', title(/^Organization members/, 2)],
   ['invitations', title(/^Invitations/, 2)],
   ['projects', region('Organization projects')],
-  ['billing', title('Plans and billing', 2)],
+  ['billing', title('Current plan', 2)],
   ['audit', title('Recent activity', 2)],
   ['sso', title('Single sign-on', 2)],
   ['danger', title('Danger zone', 2)],
 ];
 const auditDefaults = { severity: /^(all)?$/, action: /^(all)?$/, search: /^$/ };
 const auditFilteredTo = (action: string) => `/organization?tab=audit&search=&action=${action}&severity=all&range=7d`;
-const auditRows = (page: Page) => page.locator('#recent-activity tbody tr');
+const auditRows = (page: Page) => page.locator('#recent-activity tr[data-audit-action]');
 
 async function onlyAction(page: Page, action: string): Promise<void> {
-  await expect(auditRows(page).filter({ hasNotText: action }), `every row of the filtered audit is ${action}`).toHaveCount(0);
+  await expect(page.locator(`#recent-activity tr[data-audit-action]:not([data-audit-action="${action}"])`), `every row of the filtered audit is ${action}`).toHaveCount(0);
 }
 
 const profileTabs: [string, Identity][] = [
