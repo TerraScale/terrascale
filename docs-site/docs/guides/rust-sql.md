@@ -120,3 +120,5 @@ db.batch(vec![
 sqlx, SeaORM and Diesel are **not supported** against TerraScale today. sqlx has no third-party backend extension point for an HTTP/WebSocket database driver; SeaORM is built on sqlx and inherits that limit; Diesel's SQLite backend links the SQLite C library directly and is synchronous, with connection traits TerraScale's HTTP/WebSocket client cannot implement. Use the SDK's typed `query_as` queries, parameters, transactions and batches instead — for anything schema-shaped, plain `CREATE TABLE` and `ALTER TABLE` statements over `execute` cover it.
 
 For errors, typed failures and safe retries, see [Errors and safe retries](/guides/errors).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

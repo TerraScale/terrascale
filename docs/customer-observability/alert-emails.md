@@ -18,3 +18,5 @@ with a link to `https://dash.terrascale.tech/notifications/alerts`, and returns 
 `{ "status": "accepted" | "retryable" | "unknown" | "rejected" | "no_recipients" }`. Durable per-recipient claims in
 `email_alert_deliveries`, keyed by organization, alert and state, send one message per transition with the
 allowance email's retry semantics.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

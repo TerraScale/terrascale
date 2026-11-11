@@ -2,8 +2,11 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace TerraScale.Dashboard.Common.UI
 {
-    public sealed record RequestError(DocumentModel Document, string Heading, string Detail)
+    public sealed record RequestError(DocumentModel Document, string Heading, string Detail, string? Back = null)
     {
+        private const string FormExpiredHeading = "This form expired";
+        private const string FormExpiredDetail = "Nothing was changed. Open the form again to send it.";
+
         // Native form navigations explicitly accept HTML, including forms posted under /api.
         // API callers need a problem body even when they omit Accept or send */*.
         public static bool WantsJson(HttpContext http)
@@ -13,6 +16,18 @@ namespace TerraScale.Dashboard.Common.UI
                 (value.Contains("json", StringComparison.OrdinalIgnoreCase) || value.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))) ||
             http.Request.Path.StartsWithSegments("/api") &&
             !http.Request.Headers.Accept.Any(value => value is not null && value.Contains("text/html", StringComparison.OrdinalIgnoreCase));
+        }
+
+        public static IResult FormExpired(HttpContext http, string page, IResult refused)
+        {
+            if (WantsJson(http))
+            {
+                return refused;
+            }
+
+            var view = Slices.RequestErrorPage.Create(new RequestError(new DocumentModel(FormExpiredHeading, DocumentModel.NonceFor(http)), FormExpiredHeading, FormExpiredDetail, page));
+            view.StatusCode = StatusCodes.Status400BadRequest;
+            return view;
         }
 
         public static IResult Response(HttpContext http, int status, string? detail = null)

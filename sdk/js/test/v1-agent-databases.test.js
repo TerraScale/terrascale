@@ -8,7 +8,7 @@ test("agent database lifecycle matches the recorded contract and reuses a scoped
   const operations = [...contract.operations];
   /** @type {string[]} */
   const exchanges = [];
-  const client = createTerraBaseClient({ project: contract.project, apiKey: contract.apiKey, baseUrl: "https://database.example.invalid",
+  const client = createTerraBaseClient({ project: contract.project, apiKey: contract.apiKey, baseUrl: "https://database.example.invalid", authBaseUrl: "https://auth.terrascale.tech",
     fetch: async (input, init) => {
       const url = new URL(String(input));
       const headers = new Headers(init?.headers);
@@ -47,7 +47,7 @@ test("agent database lifecycle matches the recorded contract and reuses a scoped
   const wireKey = contract.operations[8].response.body;
   expect(scoped).toEqual({ key: wireKey.key, id: wireKey.id, projectId: wireKey.project_id,
     database: wireKey.database, access: wireKey.access, expiresAt: wireKey.expires_at });
-  const agent = createTerraBaseClient({ project: contract.project, apiKey: scoped.key, baseUrl: "https://database.example.invalid", fetch: clientFetch });
+  const agent = createTerraBaseClient({ project: contract.project, apiKey: scoped.key, baseUrl: "https://database.example.invalid", authBaseUrl: "https://auth.terrascale.tech", fetch: clientFetch });
   /** @type {import("../src/config.js").FetchLike} */
   async function clientFetch(input, init) {
     const url = new URL(String(input));
@@ -69,7 +69,7 @@ test("agent database lifecycle matches the recorded contract and reuses a scoped
 test("agent database validation and scoped-key refusals preserve errors without replay", async () => {
   /** @type {{ method: string; path: string; body: unknown }[]} */
   const requests = [];
-  const client = createTerraBaseClient({ project: contract.project, apiKey: contract.apiKey, baseUrl: "https://database.example.invalid",
+  const client = createTerraBaseClient({ project: contract.project, apiKey: contract.apiKey, baseUrl: "https://database.example.invalid", authBaseUrl: "https://auth.terrascale.tech",
     fetch: async (input, init) => {
       const request = new Request(input, init);
       requests.push({ method: request.method, path: new URL(request.url).pathname, body: JSON.parse(await request.text()) });

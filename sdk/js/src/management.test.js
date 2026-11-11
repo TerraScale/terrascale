@@ -54,6 +54,10 @@ test("organization deletion and ownership-transfer start send the step-up proof 
   const proofs = [];
   const client = createTerraScaleIdentityManagementClient({ ...identityConfig, fetch: async input => {
     const request = /** @type {Request} */ (input);
+    if (new URL(request.url).pathname === "/v1/terrascale/step-up/consume") {
+      expect(await request.json()).toEqual({ proof: "fixture-proof", purpose: "delete_organization", audience: "ts-auth", organization_id: config.project });
+      return new Response(null, { status: 204 });
+    }
     proofs.push(/** @type {string} */ (request.headers.get("x-terrascale-step-up-proof")));
     if (request.method === "DELETE") return new Response(null, { status: 204 });
     expect(new URL(request.url).pathname).toBe(`/v1/terrascale/organizations/${config.project}/ownership-transfer`);

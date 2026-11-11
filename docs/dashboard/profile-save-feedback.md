@@ -11,3 +11,5 @@ become messages, and each notice appears only on its own tab.
 Validation failures retain the existing error response and drafted profile
 fields, without a success notice. No authentication, storage or API-body
 contract changes are introduced.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

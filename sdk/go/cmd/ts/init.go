@@ -170,12 +170,10 @@ func runInit(ctx context.Context, s *session, database, lang string, input comma
 	} else if err := confirmNamedOperation(database, message, "ts init", input.yes, input.in, prompt, input.tty); err != nil {
 		return err
 	}
-	k, err := stepUp(ctx, s, tsauth.StepUpCreateAPIKey, "Creating API keys", func(u *tsauth.User) (*tsauth.CreatedAPIKey, error) {
-		return u.CreateAPIKey(ctx, s.org, s.project, tsauth.APIKeyRequest{Name: keyName,
-			Scopes: []string{tsauth.ScopeSQLRead, tsauth.ScopeSQLWrite}, Database: id})
-	}, prompt)
+	k, err := s.user.CreateAPIKey(ctx, s.org, s.project, tsauth.APIKeyRequest{Name: keyName,
+		Scopes: []string{tsauth.ScopeSQLRead, tsauth.ScopeSQLWrite}, Database: id})
 	if err != nil {
-		return err
+		return keyOperationError(err, "Creating API keys", s)
 	}
 	if k == nil || k.APIKey.ProjectID != s.project || k.APIKey.Database != id || k.Key == "" {
 		return errors.New("API key response did not match the request; inspect key state before retrying")

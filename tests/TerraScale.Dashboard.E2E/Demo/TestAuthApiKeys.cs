@@ -173,7 +173,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     }
 
                     await StepUp.ConsumeAsync(new(actor.UserId, "Synthetic", actor.Email, token, null, DateTimeOffset.UtcNow.AddHours(1)),
-                        proofs.Single(), purpose, "ts-auth", null, cancellationToken);
+                        proofs.Single(), purpose, "ts-auth", null, null, cancellationToken);
                     return true;
                 }
                 catch (AccountAccessException) { return false; }
@@ -278,11 +278,6 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
             if (keyId.Length == 0 && request.Method == HttpMethod.Post)
             {
-                if (!await ConfirmAsync("create_api_key"))
-                {
-                    return Error(HttpStatusCode.Forbidden, "step_up_required");
-                }
-
                 Interlocked.Increment(ref createdKeys);
                 if (!manage)
                 {

@@ -24,3 +24,5 @@ down. Discovery metadata remains identical across those hosts and after disposal
 This avoids repeated MCP/AI JSON schema reflection during multi-host startup.
 It does not address ASP.NET `RequestDelegateFactory` expression compilation;
 startup and HTTP deadlines and test parallelism remain unchanged.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

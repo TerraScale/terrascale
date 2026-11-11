@@ -132,3 +132,5 @@ refused: primary_key_violation statement 0 sqlstate 23505
 - [C#](/getting-started/csharp), [Go](/getting-started/go), [Python](/getting-started/python) and [Rust](/getting-started/rust) quickstarts
 - [SQL over HTTP](/guides/sql-http) for the raw HTTP interface and [concepts](/concepts/sql) for the SQL dialect
 - [Use Drizzle ORM](/guides/orm-drizzle) and [Use Prisma ORM](/guides/orm-prisma) for ORMs over the JavaScript SDK
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

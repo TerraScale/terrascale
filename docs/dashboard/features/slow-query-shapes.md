@@ -16,3 +16,5 @@ Reads use the existing user's project-scoped `databases:read` authority and the
 resolved database name through TerraScale.DotNet 0.0.7. Shape failures display an
 unavailable message without failing an otherwise healthy Logs page. There are
 no storage changes or new public dashboard APIs.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

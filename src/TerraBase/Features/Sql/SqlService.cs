@@ -950,9 +950,25 @@ internal sealed class SqlSession(
         }
 
         long baseline = 0;
-        if (write && await MeasureAsync(transaction, cancellationToken).ConfigureAwait(false) is long measured)
+        try
         {
-            baseline = measured;
+            if (write && await MeasureAsync(transaction, cancellationToken).ConfigureAwait(false) is long measured)
+            {
+                baseline = measured;
+            }
+        }
+        catch
+        {
+            try
+            {
+                await transaction.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                lease?.Dispose();
+            }
+
+            throw;
         }
 
         var generation = ++_generation;

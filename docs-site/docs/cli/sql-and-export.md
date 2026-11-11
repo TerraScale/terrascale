@@ -27,3 +27,5 @@ SELECT id, name FROM people ORDER BY id;
 
 For one-shot statements, use [`ts sql <db> <statement>`](/cli); for the SQL
 model, transactions and limits, see the [SQL overview](/concepts/sql).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

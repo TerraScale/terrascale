@@ -257,7 +257,7 @@ class SqlSession:
 
     def execute(self, sql: str | Statement, args: Args = None) -> StatementResult:
         """Run one statement, in the open transaction or as its own."""
-        return self.batch([sql if isinstance(sql, Statement) else Statement(sql, args)])[0]
+        return self.batch([_sql.statement(sql, args)])[0]
 
     def batch(self, statements: Statements) -> builtins.list[StatementResult]:
         """Run 1 to 256 statements, all or nothing outside a transaction; one result per statement."""
@@ -425,7 +425,7 @@ class AsyncSqlSession:
 
     async def execute(self, sql: str | Statement, args: Args = None) -> StatementResult:
         """Run one statement, in the open transaction or as its own."""
-        return (await self.batch([sql if isinstance(sql, Statement) else Statement(sql, args)]))[0]
+        return (await self.batch([_sql.statement(sql, args)]))[0]
 
     async def batch(self, statements: Statements) -> builtins.list[StatementResult]:
         """Run 1 to 256 statements, all or nothing outside a transaction; one result per statement."""

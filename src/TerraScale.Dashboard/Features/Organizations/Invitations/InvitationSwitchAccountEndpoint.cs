@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, "/invitations/" + Uri.EscapeDataString(http.Request.RouteValues["token"]?.ToString() ?? ""), Results.StatusCode(403));
             }
 
             return await AuthEndpoints.SignOutAsync(http);
