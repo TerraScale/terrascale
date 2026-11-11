@@ -12,12 +12,18 @@ OCI Vault delivery supplies these references (the application uses its existing
 - `TERRABASE_FILES_S3_ENDPOINT`: `https://<account-id>.r2.cloudflarestorage.com`
 
 The identity needs object read/write/delete access only to
-`terrascale-gru-files`, `terrascale-sjc-files` and `terrascale-fra-files`.
+`terrascale-gru-files`, `terrascale-sjc-files` and `terrascale-fra-files`,
+and it lists objects in those three buckets: after a project closure every
+node lists the closed project's prefix, `app-files/<organization>/<project>/`,
+in each of them and deletes what it finds
+([account-project-erasure.md](account-project-erasure.md)). It needs no
+bucket-level permission beyond that list.
 Signing uses region `auto`; bucket names come from the serving region. Tigris
 is accepted only in the Development environment for tests.
 
 Absent, partial, unreadable or malformed file credentials leave record and
 backup service available. File transfers return 503 and release their storage
-reservation. Supplying Tigris backup credentials alone never enables transfers.
+reservation. A node without credentials keeps the sweep marker of each closed
+project and makes no list call; it sweeps once it runs with credentials. Supplying Tigris backup credentials alone never enables transfers.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
