@@ -8,7 +8,7 @@
   </PropertyGroup>
   <!-- Banned APIs (BannedSymbols.txt) for the TerraBase area: referenced by Directory.Build.targets. -->
   <ItemGroup Label="Analyzers">
-    <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.0.0" />
   </ItemGroup>
   <ItemGroup Label="Analyzer authoring">
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
@@ -56,7 +56,7 @@
   </ItemGroup>
   <ItemGroup Label="API and hosting">
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.15" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.17.13" />
     <PackageVersion Include="RazorSlices" Version="0.12.1" />
   </ItemGroup>
