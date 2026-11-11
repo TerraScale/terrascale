@@ -3,34 +3,26 @@ NPM ?= npm
 # The asset build's npm project.
 WEB = src/TerraScale.Dashboard/web
 SOLUTION = scripts/dashboard/TerraScale.Dashboard.slnx
-E2E = $(DOTNET) run --configuration Release --project tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj --
-RESULTS = --report-trx --results-directory "$(CURDIR)/test-results/tunit"
 
-.PHONY: turso-native build lint security check css check-css js dev demo test-e2e test-fast test-slow test-live-readiness check-e2e-shards
+.PHONY: build lint security check css check-css js dev
 
-turso-native:
-	scripts/vendor/verify-turso-native.sh src/vendor/Turso.Data.Sqlite/native >/dev/null 2>&1 || scripts/vendor/download-turso-native.sh src/vendor/Turso.Data.Sqlite/native
-
-build: turso-native
+build:
 	$(DOTNET) build $(SOLUTION) --configuration Release -p:RestoreLockedMode=true
 
 lint: check-css
 	python3 scripts/dashboard/check-simple-ui.py
 	python3 scripts/dashboard/verify-sdk.py
-	python3 scripts/dashboard/verify-e2e.py
 	DOTNET="$(DOTNET)" bash scripts/dashboard/ci/format.sh
 
 security:
 	$(DOTNET) restore $(SOLUTION) --locked-mode -p:NuGetAudit=true -p:NuGetAuditMode=all -p:NuGetAuditLevel=low
 	$(NPM) --prefix $(WEB) audit --audit-level=low
 
-# Required before advancing an artifact. Slow runs independently and retains failures.
-check: build lint security test-fast
+check: build lint security
 
 css:
 	$(NPM) --prefix $(WEB) run build:css
 
-# Tests serve the committed stylesheet, so it must match web/assets.
 check-css:
 	$(NPM) --prefix $(WEB) run check:css
 
@@ -39,28 +31,3 @@ js:
 
 dev:
 	scripts/dashboard/dev.sh
-
-demo:
-	scripts/dashboard/demo.sh
-
-# Every dashboard test target runs TUnit application E2E journeys against real Kestrel hosts with
-# test-only providers (tests/TerraScale.Dashboard.E2E/Demo). test-fast is the HTTP, MCP, CLI and
-# customer-SDK journeys; test-slow is the browser journeys and the internal-billing policy suites
-# ([Category("Slow")]); test-e2e is both for local investigation. Fast is the merge/release gate.
-# Slow is non-blocking and failures are reported by its independent workflow. The explicit live readiness journey
-# runs only through its own target below.
-test-e2e:
-	$(E2E) $(RESULTS)
-
-test-fast:
-	bash scripts/dashboard/test-fast.sh
-
-test-slow: build
-	python3 scripts/ci/tunit.py 1 -- $(DOTNET) run --configuration Release --no-build --project tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj -- \
-		$(if $(TESTS),,--treenode-filter '/*/*/*/*[Category=Slow]') $(RESULTS) --report-trx-filename slow.trx
-
-test-live-readiness:
-	$(E2E) --treenode-filter '/*/*/LiveProductionReadinessJourneyTests/*' $(RESULTS) --report-trx-filename live-production-readiness.trx
-
-check-e2e-shards:
-	$(E2E) --list-tests

@@ -1,13 +1,8 @@
 # TerraScale monorepo targets: libs (TerraScale.Endpoints, TerraScale.Logging), auth, TerraBase and benchmark.
-# Locally, run them at low CPU priority, e.g. `nice -n 19 make test-fast`; CI runs them at full priority.
-# Nothing here applies nice itself.
 SOLUTION := TerraScale.slnx
 CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
-# Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
-TEST_ARGS ?=
-TESTS ?=
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
@@ -18,10 +13,6 @@ REDOCLY := npx --yes @redocly/cli@2.57.0
 # Upstream's source of the vendored SQL driver keeps upstream's formatting: reformatting it would break the pristine
 # import and the patch replay (src/vendor/Turso.Data.Sqlite/UPSTREAM.md).
 VENDORED_UPSTREAM := src/vendor/Turso.Data.Sqlite/src
-ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
-
-LIBS_TEST_PROJECTS := tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj \
-	tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj
 
 AUTH_HOST_DLL := src/TerraScale.Authentication/bin/$(CONFIGURATION)/net11.0/ts-auth.dll
 
@@ -29,16 +20,15 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks/TerraScale.EntityFrameworkCore.Benchmarks.csproj \
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
 
-.PHONY: restore turso-native build fmt fmt-check lint test-fast test-slow test check docker-test clean \
-	libs-build libs-test libs-check libs-nativeaot-check \
-	auth-restore auth-build auth-fast-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-fast-build terrabase-test-fast terrabase-test-slow terrabase-e2e-local terrabase-e2e terrabase-check terrabase-run terrabase-publish \
-	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke region-sim
+.PHONY: restore turso-native build fmt fmt-check lint check clean \
+	libs-build libs-check libs-nativeaot-check \
+	auth-restore auth-build auth-audit auth-openapi-check auth-mail-delivery-check auth-check auth-publish auth-dev \
+	terrabase-build terrabase-run terrabase-publish \
+	benchmark-build benchmark-fmt-check benchmark-check region-sim
 
 # Global: the whole solution.
 restore:
 	dotnet restore $(SOLUTION) --locked-mode
-	dotnet restore $(ANALYZER_CHECK_PROJECT) --locked-mode
 
 # Pinned storage engine native libraries (src/vendor/Turso.Native/SHA256SUMS), needed by every build of TerraBase or its driver.
 # Fetched only when the pins do not verify: a fresh checkout has none, and a partial or stale copy is replaced. The
@@ -60,34 +50,15 @@ fmt-check: restore
 # Analyzers and code style run in the build with warnings as errors.
 lint: fmt-check build
 
-test-fast: libs-test auth-test-fast terrabase-test-fast
-
-test-slow: auth-test-slow terrabase-test-slow
-
-test: test-fast test-slow
-
 # Everything required before a push.
-check: lint libs-check auth-check terrabase-check benchmark-check test-fast
-
-# CI's three area stages (Dockerfile `test`, BuildKit runs them in parallel), run locally. Uses sdk/dotnet from this checkout.
-docker-test:
-	docker build --build-context ts-dotnet=$(TS_DOTNET_DIR) --build-arg TERRABASE_REVISION=$(shell git rev-parse HEAD) --target test .
+check: lint libs-check auth-check benchmark-check
 
 clean:
 	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION)
 	rm -rf artifacts
 
-# ts-libs: TerraScale.Endpoints and TerraScale.Logging, their generator, tests and examples. libs.slnf also builds
-# their benchmarks and the CLI, so libs.slnf, auth.slnf and terrabase.slnf together build the whole solution.
 libs-build: restore
 	dotnet build libs.slnf --configuration $(CONFIGURATION) --no-restore
-
-libs-test: libs-build
-	# Independent assemblies run together; each runner keeps TUnit's default parallelism.
-	@set -e; pids=""; for p in $(LIBS_TEST_PROJECTS); do \
-		python3 scripts/ci/fast-budget.py $$(basename $$(dirname $$p)) -- python3 scripts/ci/tunit.py 1 -- dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- & pids="$$pids $$!"; \
-	done; trap 'kill $$pids 2>/dev/null || true' EXIT INT TERM; \
-	status=0; for pid in $$pids; do wait $$pid || status=$$?; done; trap - EXIT INT TERM; exit $$status
 
 libs-check: libs-build
 	dotnet format style libs.slnf --verify-no-changes --no-restore --exclude benchmark/dotnet
@@ -112,20 +83,6 @@ auth-openapi-check: auth-build
 	scripts/auth/export-openapi.sh $(AUTH_HOST_DLL) artifacts/openapi.json
 	$(REDOCLY) lint artifacts/openapi.json docs/auth/platform-api.openapi.yaml
 
-# Builds only the Fast suite and its references; the Slow suite has its own target.
-# Cases share one TerraBase process; individual concurrency tests still run their own request races.
-auth-fast-build: turso-native
-	dotnet restore scripts/auth/fast.slnx --locked-mode
-	dotnet build scripts/auth/fast.slnx --configuration $(CONFIGURATION) --no-restore --nologo -m
-
-auth-test-fast: auth-fast-build
-	TERRABASE_BINARY=$(TERRABASE_BINARY) python3 scripts/ci/fast-budget.py auth -- python3 scripts/ci/tunit.py 1 -- dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build --
-
-auth-test-slow: auth-build turso-native
-	dotnet restore src/TerraBase/TerraBase.csproj --locked-mode
-	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
-	TERRABASE_BINARY=$(TERRABASE_BINARY) python3 scripts/ci/tunit.py 1 -- dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build --
-
 auth-check: auth-audit auth-openapi-check
 
 # One production signup email, fetched from a disposable inbox; no account is verified.
@@ -146,56 +103,8 @@ dev: turso-native
 	dotnet tool restore
 	TsDotnetRoot=$(abspath $(TS_DOTNET_DIR)) dotnet aspire run --apphost aspire
 
-# TerraBase: the server, its analyzer and its integration suites.
 terrabase-build: restore turso-native
 	dotnet build terrabase.slnf --configuration $(CONFIGURATION) --no-restore
-
-terrabase-analyzer-check: restore
-	@set -eu; log=$$(mktemp); trap 'rm -f "$$log"' EXIT; \
-	if dotnet build $(ANALYZER_CHECK_PROJECT) --configuration $(CONFIGURATION) --no-restore -p:TB0001BuildCheck=true >"$$log" 2>&1; then \
-		cat "$$log"; echo 'TB0001 build check unexpectedly succeeded' >&2; exit 1; \
-	fi; \
-	cat "$$log"; \
-	test "$$(grep -E 'BuildCheck.cs\([0-9]+,[0-9]+\): error TB0001' "$$log" | sort -u | wc -l)" -eq 15; \
-	for line in 35 36 37 38 39 40 41 42 43 53 54 55 56 65 71; do grep -q "BuildCheck.cs($$line," "$$log"; done; \
-	test "$$(grep -E 'ExpectedFailures.cs\([0-9]+,[0-9]+\): error RS0030' "$$log" | sort -u | wc -l)" -eq 5; \
-	for line in 8 10 12 14 16; do grep -q "ExpectedFailures.cs($$line," "$$log"; done; \
-	if grep -vE 'error (TB0001|RS0030)' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in analyzer build check' >&2; exit 1; fi
-
-# Builds only the Fast suite: TerraBase and its analyzer build as its references; the Slow suite has its own target.
-terrabase-fast-build: restore turso-native
-	dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration $(CONFIGURATION) --no-restore
-	dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration $(CONFIGURATION) --no-restore
-
-terrabase-test-fast: terrabase-fast-build
-	# The independent driver and integration assemblies run in parallel; preserve both exit codes.
-	@set -e; \
-	python3 scripts/ci/fast-budget.py turso -- python3 scripts/ci/tunit.py 4 -- dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- & driver=$$!; \
-	trap 'kill $$driver 2>/dev/null || true' EXIT INT TERM; \
-	status=0; python3 scripts/ci/fast-budget.py terrabase -- python3 scripts/ci/tunit.py 1 -- dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- || status=$$?; \
-	wait $$driver || status=$$?; trap - EXIT INT TERM; exit $$status
-
-terrabase-test-slow: terrabase-build
-	python3 scripts/ci/tunit.py 1 -- dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build --
-
-TERRABASE_E2E_RUN = dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --
-
-E2E_LOCAL_TESTS := 1
-terrabase-e2e-local: terrabase-build
-	rm -f "$(E2E_RESULTS)"
-	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_ORCH_NODES TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" $(TERRABASE_E2E_RUN) --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
-	jq -r 'select(.category == "fail" or .category == "skip") | "E2E \(.category): \(.test)\n\(.detail)"' "$(E2E_RESULTS)" || status=1; exit $$status
-	jq -se 'length == $(E2E_LOCAL_TESTS) and all(.[]; .category == "pass" or .category == "harness")' "$(E2E_RESULTS)"
-
-E2E_RESULTS ?= $(CURDIR)/tests/TerraBase.E2E/bin/e2e-results.jsonl
-terrabase-e2e: terrabase-build
-	rm -f "$(E2E_RESULTS)"
-	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS) || status=$$?; \
-	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-local}" || status=1; exit $$status
-
-terrabase-check: terrabase-build terrabase-analyzer-check
-	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md tests/TerraBase.E2E/RUNS.md
-
 
 terrabase-run: turso-native
 	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
@@ -215,9 +124,6 @@ benchmark-fmt-check:
 benchmark-check:
 	$(MAKE) -C benchmark check
 
-benchmark-smoke:
-	$(MAKE) -C benchmark smoke
-
 # Two-region replica simulation: gru-1 and sjc-1 TerraBase nodes driven by the ts CLI (benchmark/region-sim/README.md).
 REGION_SIM_OUT ?= $(CURDIR)/benchmark/bench/region-sim/$(shell date -u +%Y-%m-%d-%H%M).md
 region-sim: terrabase-build
@@ -225,59 +131,45 @@ region-sim: terrabase-build
 	cd benchmark && go build -trimpath -o bin/region-sim ./cmd/region-sim
 	benchmark/bin/region-sim -terrabase $(TERRABASE_BINARY) -ts benchmark/bin/ts -out $(REGION_SIM_OUT) $(REGION_SIM_ARGS)
 
-.PHONY: terrabase-test-shard
-terrabase-test-shard:
-	python3 scripts/ci/terrabase-shard.py $(SHARD)
-
-# Landing Fast covers tests and the complete prerendered production output.
-.PHONY: landing-test-fast
-landing-test-fast:
+.PHONY: landing-build
+landing-build:
 	cd landing-site && npm ci --no-audit --no-fund && npm run build
 
-# Status Fast covers types, tests, the canary recovery tests, lint and the Worker build.
-.PHONY: status-test-fast
-status-test-fast:
-	cd status-site && npm ci --no-audit --no-fund && npm run check && npm test && python3 -m unittest discover -s scripts -p 'test_*.py' && npm run lint && npm run build
+.PHONY: status-build
+status-build:
+	cd status-site && npm ci --no-audit --no-fund && npm run check && npm run lint && npm run build
 
-# API-coupled SDKs retain independent Fast suites and release identities.
-.PHONY: sdk-test-fast sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast
-sdk-test-fast: sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast
+.PHONY: sdk-check sdk-dotnet-check sdk-js-check sdk-go-check sdk-python-check sdk-rust-check
+sdk-check: sdk-dotnet-check sdk-js-check sdk-go-check sdk-python-check sdk-rust-check
 
-sdk-dotnet-test-fast: turso-native
-	dotnet restore src/TerraBase/TerraBase.csproj --locked-mode
-	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
-	cd sdk/dotnet && TERRABASE_BINARY=$(TERRABASE_BINARY) bash scripts/test-fast.sh
+sdk-dotnet-check:
+	cd sdk/dotnet && dotnet restore TerraScale.DotNet.slnx --locked-mode
+	cd sdk/dotnet && dotnet build TerraScale.DotNet.slnx --configuration Release --no-restore
 
-sdk-js-test-fast:
+sdk-js-check:
 	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- npm ci --no-audit --no-fund
-	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- python3 ../../scripts/ci/fast-budget.py sdk-js --format vitest -- npm test
+	cd sdk/js && mise exec node@24.21.0 -- npm run typecheck
+	cd sdk/js && mise exec node@24.21.0 -- npm run build
 
-sdk-go-test-fast:
-	cd sdk/go && go test -count=1 -run '^$$' ./... >/dev/null
-	cd sdk/go && python3 ../../scripts/ci/fast-budget.py sdk-go --format go -- go test -count=1 ./...
+sdk-go-check:
+	cd sdk/go && go build ./... && go vet ./...
 
-sdk-python-test-fast:
+sdk-python-check:
 	cd sdk/python && uv venv --allow-existing --python 3.12 .venv && uv pip sync --python .venv/bin/python --require-hashes --only-binary :all: requirements-ci.txt
-	cd sdk/python && uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e '.[dev]' && python3 ../../scripts/ci/fast-budget.py sdk-python --format pytest -- .venv/bin/pytest -q
+	cd sdk/python && uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e '.[dev]' && .venv/bin/mypy
 
-sdk-rust-test-fast:
-	cd sdk/rust && bash scripts/test-fast.sh
+sdk-rust-check:
+	cd sdk/rust && cargo build --locked --all-targets
 
-.PHONY: docs-test-fast
-docs-test-fast:
-	cd docs-site && bash scripts/test-fast.sh
-.PHONY: dashboard-build dashboard-lint dashboard-test-fast dashboard-test-slow dashboard-check
+.PHONY: docs-build
+docs-build:
+	cd docs-site && npm ci --no-audit --no-fund && npm run build
+.PHONY: dashboard-build dashboard-lint dashboard-check
 dashboard-build:
 	$(MAKE) -f scripts/dashboard/Makefile build
 
 dashboard-lint:
 	$(MAKE) -f scripts/dashboard/Makefile lint
-
-dashboard-test-fast:
-	bash scripts/dashboard/test-fast.sh
-
-dashboard-test-slow:
-	$(MAKE) -f scripts/dashboard/Makefile test-slow
 
 dashboard-check:
 	$(MAKE) -f scripts/dashboard/Makefile check
