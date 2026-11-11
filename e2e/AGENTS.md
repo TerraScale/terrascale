@@ -88,7 +88,9 @@ another secret refused, then creates a second database and an API key. `paid-inv
 signs up through the emailed link, accepts, onboards in the Personal organization every account gets, signs in again
 to the organization choice and opens the Pro organization; the owner then sees both members and removes the new one.
 `paid-finish`, the teardown of `paid`, runs in order in one worker: SDK group C, the branch action and the account
-deletion, which waits for the deletion reconciler (every 30 s) to cancel the subscription at the stand-in. CI runs the
+deletion, which waits for ts-auth's deletion cleanup (every 60 s) to prove the organization deleted, then for the
+dashboard's deletion reconciler (every 30 s) to cancel the subscription at the stand-in; the wait is bounded by the
+two periods plus 20 s for the reconciler's passes. CI runs the
 users in two shards, each with the `projects` of its row in the journey matrix of `journey.yml`: the phone owner's
 projects in one, `pages-desktop` and the paid flow in the other. In the phone shard, once `setup` has passed, the
 tests of `pages-mobile`, `hosted`, `interactions` and `invitation` share six workers. Playwright queues them in the

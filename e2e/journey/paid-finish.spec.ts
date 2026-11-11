@@ -9,6 +9,11 @@ import { journey, setupFinished } from '../support/state';
 
 test.describe.configure({ mode: 'default' });
 
+const tsAuthDeletionCleanupInterval = 60_000;
+const deletionReconcilerInterval = 30_000;
+const deletionReconcilerPassMargin = 20_000;
+const subscriptionCancelBound = tsAuthDeletionCleanupInterval + deletionReconcilerInterval + deletionReconcilerPassMargin;
+
 test.beforeAll(({}, info) => {
   expect(setupFinished(info), 'setup did not finish').toBe(true);
 });
@@ -73,13 +78,13 @@ test.describe('branch action', () => {
 
 test.describe('teardown', () => {
   test('the Pro owner deletes the account, which cancels the Stripe subscription, and a new sign-in is refused', async ({ page, audit, browser }, info) => {
-    test.setTimeout(120_000);
+    test.setTimeout(info.timeout + subscriptionCancelBound);
     const current = journey<PaidJourney>();
     await deleteAccount(page, audit, browser, info);
     await expect
       .poll(async () => (await stripeLog()).cancels.filter((cancel) => cancel.organization === current.organizationId).length, {
-        message: 'subscriptions of the Pro organization the Stripe stand-in cancelled once the deletion reconciler ran',
-        timeout: 75_000,
+        message: 'subscriptions of the Pro organization the Stripe stand-in cancelled once the ts-auth deletion cleanup and the deletion reconciler ran',
+        timeout: subscriptionCancelBound,
         intervals: [500],
       })
       .toBe(1);
