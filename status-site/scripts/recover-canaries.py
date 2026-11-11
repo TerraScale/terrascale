@@ -9,8 +9,7 @@ home-region canary database per region, the canary table and its fixture row
 only the two ts-status Worker secrets. It does not deploy or restart a
 service, change orchestration, or touch status history in D1.
 
-Sign-in uses the owner's password (set once below); step-up proofs approve
-with that password, so no email codes are consumed while provisioning. An
+Sign-in uses the owner's password (set once below). An
 approving admin still signs in once in a browser when the account has no
 password yet.
 """
@@ -44,7 +43,6 @@ SCOPES = ['sql:read', 'sql:write']
 TABLE = 'CREATE TABLE IF NOT EXISTS "canary" (id TEXT PRIMARY KEY, canary TEXT NOT NULL)'
 CLOUDFLARE_ACCOUNT = '6cd3f3639e928077593d9b470765efeb'
 WORKER = 'ts-status'
-DASHBOARD_ORIGIN = 'https://dash.terrascale.tech'
 ULID = '[0-7][0-9A-HJKMNP-TV-Z]{25}'
 MAIL_COOLDOWN = 60
 
@@ -91,8 +89,8 @@ class Setup:
         self.jar.save(ignore_discard=True)
         os.chmod(self.cookies, 0o600)
 
-    def call(self, url, method='GET', data=None, token=None, form=False, statuses=(200,), region=None, headers=None):
-        h = {'User-Agent': 'ts-status-canary-recovery/2.0', **(headers or {})}
+    def call(self, url, method='GET', data=None, token=None, form=False, statuses=(200,), region=None):
+        h = {'User-Agent': 'ts-status-canary-recovery/2.0'}
         if token:
             h['Authorization'] = 'Bearer ' + token
         if region:
@@ -284,23 +282,10 @@ class Setup:
                  'scope': 'databases:read databases:write sql:read sql:write'}, form=True)['access_token']
 
     def create_api_key(self, grant, organization, project, database, name):
-        """One password-approved step-up proof per database-narrowed key."""
         self.stage = 'database-scoped canary credential'
-        proof_body = self.call(AUTH + '/v1/terrascale/step-up', 'POST', {
-            'purpose': 'create_api_key', 'audience': 'ts-auth',
-            'return_uri': DASHBOARD_ORIGIN + '/auth/step-up/callback'}, token=grant['access_token'], statuses=(201,))
-        proof = proof_body['proof']
-        path = '/ui/terrascale/step-up/' + proof_body['step_up_url'].rsplit('/', 1)[-1]
-        status, _ = self.form(path)
-        if status != 200:
-            raise RuntimeError('Step-up page refused')
-        status, page = self.form(path, {'password': self.state['password']})
-        if status != 200 or 'Verification failed' in page:
-            raise RuntimeError('Step-up refused')
         root = AUTH + '/v1/terrascale/organizations/' + organization + '/projects/' + project + '/api-keys'
         return self.call(root, 'POST', {'name': name, 'database': database, 'scopes': SCOPES},
-                         token=grant['access_token'], statuses=(201,),
-                         headers={'X-TerraScale-Step-Up-Proof': proof})
+                         token=grant['access_token'], statuses=(201,))
 
     def provision(self, regions):
         address = self.state['email']

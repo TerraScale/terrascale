@@ -84,7 +84,7 @@ def _keys_path(organization: str, project: str | None, *extra: str) -> list[str]
 
 def create_api_key_call(issuer: str | None, organization: str, project: str | None, name: str,
                         scopes: Sequence[str], database: str | None, expires_at: str | None,
-                        allowed_cidrs: Sequence[str] | None, step_up_proof: str) -> _spec.Call:
+                        allowed_cidrs: Sequence[str] | None) -> _spec.Call:
     body: dict[str, Any] = {"name": name, "scopes": list(scopes)}
     if database is not None:
         body["database"] = validate_id(database, "database")
@@ -94,7 +94,7 @@ def create_api_key_call(issuer: str | None, organization: str, project: str | No
         body["allowed_cidrs"] = list(allowed_cidrs)
     return _spec.Call("POST", _keys_path(organization, project),
                       lambda r: models.ApiKeySecret.from_json(r.json()),
-                      headers={PROOF_HEADER: step_up_proof}, body=body, success=(201,), base_url=_origin(issuer))
+                      body=body, success=(201,), base_url=_origin(issuer))
 
 
 def list_api_keys_call(issuer: str | None, organization: str, project: str | None,

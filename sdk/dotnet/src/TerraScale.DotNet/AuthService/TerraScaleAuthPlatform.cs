@@ -289,17 +289,16 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
-    /// <summary>create_organization_api_key: POST /v1/terrascale/organizations/{organization}/api-keys. ts-auth consumes no proof for key creation: stepUpProof is sent and not checked.</summary>
+    /// <summary>create_organization_api_key: POST /v1/terrascale/organizations/{organization}/api-keys.</summary>
     public Task<TerraScaleAuthPlatformApiKeySecret> CreateOrganizationApiKeyAsync(
         string accessToken,
         string organizationId,
         TerraScaleAuthPlatformCreateApiKey request,
-        string stepUpProof,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, $"/v1/terrascale/organizations/{Id(organizationId)}/api-keys",
             request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateApiKey,
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformApiKeySecret,
-            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken, Proof(stepUpProof));
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
 
     /// <summary>list_organization_api_keys: GET /v1/terrascale/organizations/{organization}/api-keys.</summary>
     public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformApiKey>> ListOrganizationApiKeysAsync(
@@ -347,18 +346,17 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformApiKeySecret,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken, Proof(stepUpProof));
 
-    /// <summary>create_project_api_key: POST /v1/terrascale/organizations/{organization}/projects/{project}/api-keys. ts-auth consumes no proof for key creation: stepUpProof is sent and not checked.</summary>
+    /// <summary>create_project_api_key: POST /v1/terrascale/organizations/{organization}/projects/{project}/api-keys.</summary>
     public Task<TerraScaleAuthPlatformApiKeySecret> CreateProjectApiKeyAsync(
         string accessToken,
         string organizationId,
         string projectId,
         TerraScaleAuthPlatformCreateApiKey request,
-        string stepUpProof,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, $"/v1/terrascale/organizations/{Id(organizationId)}/projects/{Id(projectId)}/api-keys",
             request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateApiKey,
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformApiKeySecret,
-            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken, Proof(stepUpProof));
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
 
     /// <summary>list_project_api_keys: GET /v1/terrascale/organizations/{organization}/projects/{project}/api-keys.</summary>
     public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformApiKey>> ListProjectApiKeysAsync(

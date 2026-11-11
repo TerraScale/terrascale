@@ -143,7 +143,7 @@ class Tenant:
         self.project = json.loads(body)["id"]
         path = f"/organizations/{organization}/projects/{self.project}/api-keys"
         _, body, _ = self.platform(path, "POST", dict(name="API overhead benchmark", scopes=["databases:read", "databases:write",
-            "sql:read", "sql:write"]), purpose="create_api_key", expected=(201,))
+            "sql:read", "sql:write"]), expected=(201,))
         self.key = json.loads(body)["key"]
         self.checkpoint()
         return organization

@@ -27,7 +27,6 @@ type StepUpBody struct {
 }
 
 const (
-	StepUpCreateAPIKey           = "create_api_key"
 	StepUpRotateAPIKey           = "rotate_api_key"
 	StepUpDeleteOrganization     = "delete_organization"
 	StepUpStartOwnershipTransfer = "start_ownership_transfer"
@@ -36,7 +35,7 @@ const (
 const DefaultDashboardOrigin = "https://dash.terrascale.tech"
 
 func (u *User) RequestStepUp(ctx context.Context, purpose string) (*StepUpBody, error) {
-	if purpose != StepUpCreateAPIKey && purpose != StepUpRotateAPIKey {
+	if purpose != StepUpRotateAPIKey {
 		return nil, fmt.Errorf("tsauth: unsupported step-up purpose %q", purpose)
 	}
 	return u.requestStepUp(ctx, purpose, "")

@@ -318,13 +318,13 @@ class TerraScale:
         return self._send(_rotate_key_call(self._api_key, self._issuer, key_id, grace_seconds))
 
     def create_api_key(
-        self, organization: str, name: str, scopes: Sequence[str], *, step_up_proof: str,
+        self, organization: str, name: str, scopes: Sequence[str], *,
         project: str | None = None, database: str | None = None, expires_at: str | None = None,
         allowed_cidrs: Sequence[str] | None = None,
     ) -> models.ApiKeySecret:
         """Create an organization key, or a project key with ``project``; the whole key string is answered once."""
         return self._send(create_api_key_call(
-            self._issuer, organization, project, name, scopes, database, expires_at, allowed_cidrs, step_up_proof))
+            self._issuer, organization, project, name, scopes, database, expires_at, allowed_cidrs))
 
     def list_api_keys(
         self, organization: str, *, project: str | None = None, limit: int | None = None, cursor: str | None = None,

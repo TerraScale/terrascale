@@ -15,10 +15,10 @@ dashboard callback origin, without a query or fragment.
 
 Supported pairs are `delete_account` with `ts-dashboard` or `ts-auth`,
 `create_pat` with `ts-dashboard`, and `delete_organization`,
-`start_ownership_transfer`, `change_plan`, `create_api_key`, `rotate_api_key`,
+`start_ownership_transfer`, `change_plan`, `rotate_api_key`,
 `create_oauth_client`, `update_oauth_client`, `rotate_oauth_client`,
 `create_webhook_endpoint`, `rotate_webhook_secret`,
-`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). Starting an ownership transfer consumes its proof exactly like API-key rotation. Organization deletion and ownership-transfer proofs additionally bind the exact `organization_id`: the minting request carries it and consumption refuses a proof minted for another organization. Organization deletion consumes its `delete_organization/ts-auth` proof at the step-up consume endpoint, naming the organization in `organization_id`, before any other effect, then the organization `DELETE` requires that consumed proof in `X-TerraScale-Step-Up-Proof` for the same organization, account and authentication state before the proof's deadline, and spends it; a retry needs a new proof. Dashboard plan changes consume their `change_plan/ts-auth` proof single-use at the step-up consume endpoint for the signed-in user and the organization named in `organization_id` before any Stripe effect; the dashboard names the organization the proof was minted for, from its one-use encrypted, organization-pinned intent. The hosted page identifies the operation
+`change_email`, `add_passkey` or `delete_passkey` with `ts-auth` (see `email-change.md`). Starting an ownership transfer consumes its proof exactly like API-key rotation. Organization deletion and ownership-transfer proofs additionally bind the exact `organization_id`: the minting request carries it and consumption refuses a proof minted for another organization. Organization deletion consumes its `delete_organization/ts-auth` proof at the step-up consume endpoint, naming the organization in `organization_id`, before any other effect, then the organization `DELETE` requires that consumed proof in `X-TerraScale-Step-Up-Proof` for the same organization, account and authentication state before the proof's deadline, and spends it; a retry needs a new proof. Dashboard plan changes consume their `change_plan/ts-auth` proof single-use at the step-up consume endpoint for the signed-in user and the organization named in `organization_id` before any Stripe effect; the dashboard names the organization the proof was minted for, from its one-use encrypted, organization-pinned intent. The hosted page identifies the operation
 and account. It requires a fresh password, or one explicitly requested email
 code for a passwordless account, followed by a fresh active MFA factor.
 Opening the page sends no email. An attempt requests at most one code and uses
@@ -45,9 +45,9 @@ consumption returns 200 with a separate `operation_grant` bearer capability only
 after consumption completes before the proof's deadline. These
 mutations must never be automatically retried after an ambiguous response.
 
-API-key creation never reads `X-TerraScale-Step-Up-Proof`: a client that still
-sends a `create_api_key` proof gets the same answer as one that sends none, and
-the proof stays unconsumed.
+API-key creation has no step-up purpose and never reads
+`X-TerraScale-Step-Up-Proof`: a request that carries the header, whatever its
+value, gets the same answer as one without it, and no proof is consumed.
 
 Dashboard deletion additionally supplies a canonical base64url encoding of 32
 random bytes as `operation_receipt`. Consumption atomically creates a grant

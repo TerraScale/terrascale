@@ -14,7 +14,6 @@ public sealed record StepUpPageModel(string Id, string Email, string Purpose, bo
     {
         "delete_account" => this.Copy.OpDeleteAccount,
         "create_pat" => this.Copy.OpCreatePat,
-        "create_api_key" => this.Copy.OpCreateApiKey,
         "rotate_api_key" => this.Copy.OpRotateApiKey,
         "create_oauth_client" => this.Copy.OpCreateOauthClient,
         "update_oauth_client" => this.Copy.OpUpdateOauthClient,
