@@ -149,7 +149,6 @@ const operations = {
     writeFileSync(join(process.env.E2E_SECRETS, 'scoped-key-js'), scoped.key, { mode: 0o600 });
     const narrow = createTerraBaseClientFromEnvironment({ apiKey: scoped.key });
     await narrow.database(state.agent.id).execute(op.sql);
-    same(await status(() => narrow.database(fill(op.outside)).execute(op.sql)), op.outsideStatus, 'outside its database');
     same(await status(() => narrow.createScopedKey({ project, database: state.agent.id, access: 'read' })), op.mintStatus, 'minting with a scoped key');
   },
   async 'agent.delete'(op) {

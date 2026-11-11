@@ -274,8 +274,6 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         using var http = new HttpClient(TerraBaseHttp.CreateHandler());
         var narrow = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = scoped.Key });
         await narrow.Database(project, Agent.Id).ExecuteAsync(Text(op, "sql"), cancellationToken: cancellationToken);
-        var outside = await StatusAsync(() => narrow.Database(project, Fill(op, "outside")).ExecuteAsync(Text(op, "sql"), cancellationToken: cancellationToken));
-        Same(outside, Canonical(op.GetProperty("outsideStatus")), "outside its database");
         var mint = await StatusAsync(() => narrow.CreateScopedKeyAsync(Agent.Id, "read", project, cancellationToken: cancellationToken));
         Same(mint, Canonical(op.GetProperty("mintStatus")), "minting with a scoped key");
     }

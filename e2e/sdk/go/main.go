@@ -45,8 +45,6 @@ type operation struct {
 	Name          string         `json:"name"`
 	TTLSeconds    int64          `json:"ttlSeconds"`
 	Access        string         `json:"access"`
-	Outside       string         `json:"outside"`
-	OutsideStatus int            `json:"outsideStatus"`
 	MintStatus    int            `json:"mintStatus"`
 	DeletedStatus int            `json:"deletedStatus"`
 }
@@ -375,10 +373,6 @@ func (r *runner) do(op operation) error {
 			return err
 		}
 		if _, err := narrow.Database(r.project, r.agent.ID).Execute(ctx, op.SQL); err != nil {
-			return err
-		}
-		_, outside := narrow.Database(r.project, r.fill(op.Outside)).Execute(ctx, op.SQL)
-		if err := same(status(outside), op.OutsideStatus, "outside its database"); err != nil {
 			return err
 		}
 		_, mint := narrow.CreateScopedKey(ctx, v1.ScopedKeyRequest{Project: r.project, Database: r.agent.ID, Access: v1.ScopedKeyRead})

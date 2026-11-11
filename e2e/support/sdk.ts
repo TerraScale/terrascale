@@ -13,7 +13,7 @@ type Line = { id: string; ok: boolean; ms: number; error?: string };
 
 const freePlan = { requestsPerSecond: 50, burst: 100 };
 const headroom = 20;
-const requestsPerRunner: Record<Operation['group'], number> = { a: 37, b: 7 };
+const requestsPerRunner: Record<Operation['group'], number> = { a: 37, b: 6 };
 
 let budget: { group: Operation['group']; tokens: number; at: number } | undefined;
 

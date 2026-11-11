@@ -246,11 +246,6 @@ def scoped_key(op):
     narrow = TerraScale(api_key=scoped.key, project=project)
     narrow.database(agent).execute(op["sql"])
     same(
-        status(lambda: narrow.database(fill(op["outside"])).execute(op["sql"])),
-        op["outsideStatus"],
-        "outside its database",
-    )
-    same(
         status(lambda: narrow.create_scoped_key(agent, "read")),
         op["mintStatus"],
         "minting with a scoped key",

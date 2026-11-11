@@ -471,17 +471,6 @@ impl Runner {
                     .execute(&text(op, "sql"), &[])
                     .await
                     .map_err(e)?;
-                same(
-                    status(
-                        narrow
-                            .database(fill("outside"))
-                            .sql()
-                            .execute(&text(op, "sql"), &[])
-                            .await,
-                    ),
-                    &op["outsideStatus"],
-                    "outside its database",
-                )?;
                 let again = ScopedKeyOptions {
                     project: Some(self.project.clone()),
                     database: agent,

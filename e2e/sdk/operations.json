@@ -270,13 +270,17 @@
     {
       "id": "agent.scoped_key",
       "group": "b",
-      "title": "createScopedKey, use it, and be refused outside its database",
+      "title": "createScopedKey, use it on its database, and be refused minting another key",
       "access": "read_write",
       "ttlSeconds": 600,
       "sql": "CREATE TABLE scoped_check (id TEXT PRIMARY KEY)",
-      "outside": "e2e-outside-{run}",
-      "outsideStatus": 404,
       "mintStatus": 403
+    },
+    {
+      "id": "agent.scoped_key_outside",
+      "group": "b",
+      "title": "a scoped key is refused on another database of its project",
+      "needs": "a second database: the Free plan allows one"
     },
     {
       "id": "agent.delete",
