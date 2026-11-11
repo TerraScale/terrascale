@@ -27,7 +27,8 @@ public sealed record ConsumeStepUpRequest(
     [property: JsonPropertyName("proof")] string Proof,
     [property: JsonPropertyName("purpose")] string Purpose,
     [property: JsonPropertyName("audience")] string Audience,
-    [property: JsonPropertyName("operation_receipt")] string? OperationReceipt = null)
+    [property: JsonPropertyName("operation_receipt")] string? OperationReceipt = null,
+    [property: JsonPropertyName("organization_id")] string? OrganizationId = null)
 {
     public override string ToString() => nameof(ConsumeStepUpRequest);
 }

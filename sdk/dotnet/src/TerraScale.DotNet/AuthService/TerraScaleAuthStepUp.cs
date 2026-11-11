@@ -20,12 +20,14 @@ public sealed record TerraScaleAuthStepUp(
     public override string ToString() => nameof(TerraScaleAuthStepUp);
 }
 
-/// <summary>Consumes an approved proof once. Account deletion additionally binds the exact deletion receipt.</summary>
+/// <summary>Consumes an approved proof once. Account deletion additionally binds the exact deletion receipt. change_plan and delete_organization (ts-auth) require OrganizationId,
+/// the organization about to change: a proof minted for another organization is refused with step_up_required and stays unconsumed. create_pat and delete_account (ts-dashboard) leave it null.</summary>
 public sealed record TerraScaleAuthStepUpConsume(
     [property: JsonPropertyName("proof")] string Proof,
     [property: JsonPropertyName("purpose")] string Purpose,
     [property: JsonPropertyName("audience")] string Audience,
-    [property: JsonPropertyName("operation_receipt")] string? OperationReceipt = null)
+    [property: JsonPropertyName("operation_receipt")] string? OperationReceipt = null,
+    [property: JsonPropertyName("organization_id")] string? OrganizationId = null)
 {
     /// <summary>Omits proof and deletion capabilities from diagnostic formatting.</summary>
     public override string ToString() => nameof(TerraScaleAuthStepUpConsume);

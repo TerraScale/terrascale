@@ -173,7 +173,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     }
 
                     await StepUp.ConsumeAsync(new(actor.UserId, "Synthetic", actor.Email, token, null, DateTimeOffset.UtcNow.AddHours(1)),
-                        proofs.Single(), purpose, "ts-auth", null, cancellationToken);
+                        proofs.Single(), purpose, "ts-auth", null, null, cancellationToken);
                     return true;
                 }
                 catch (AccountAccessException) { return false; }

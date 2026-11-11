@@ -14,7 +14,7 @@ namespace TerraScale.Dashboard.Features.Auth
     public interface IAuthStepUpGateway
     {
         Task<StepUpChallenge> BeginAsync(SessionRecord session, string purpose, string audience, string? organizationId, string returnUri, CancellationToken cancellationToken);
-        Task<string?> ConsumeAsync(SessionRecord session, string proof, string purpose, string audience, string? operationReceipt, CancellationToken cancellationToken);
+        Task<string?> ConsumeAsync(SessionRecord session, string proof, string purpose, string audience, string? operationReceipt, string? organizationId, CancellationToken cancellationToken);
     }
 
     public sealed record StepUpChallenge(string Proof, string StepUpUrl, DateTimeOffset ExpiresAt)
@@ -121,7 +121,7 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             Validate(http, context, intent, intent.Purpose);
             return await http.RequestServices.GetRequiredService<IAuthStepUpGateway>().ConsumeAsync(context.Session, intent.Challenge.Proof, intent.Purpose,
-                intent.Audience, intent.Receipt, http.RequestAborted);
+                intent.Audience, intent.Receipt, intent.Audience == "ts-auth" ? intent.OrganizationId : null, http.RequestAborted);
         }
 
         public static async Task<IResult> CallbackAsync(HttpContext http, AuthFlows flows, DashboardSessions sessions, AccountService accounts)

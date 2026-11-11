@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 throw new AccountAccessException("Type the organization name to confirm deletion.", 422);
             }
 
-            await stepUp.ConsumeAsync(context.Session, stepUpProof, "delete_organization", "ts-auth", null, cancellationToken);
+            await stepUp.ConsumeAsync(context.Session, stepUpProof, "delete_organization", "ts-auth", null, org.Id, cancellationToken);
             // The mark stops new projects and billing changes while the deletion runs.
             await accounts.UpdateOrganizationAsync(context, current =>
             {

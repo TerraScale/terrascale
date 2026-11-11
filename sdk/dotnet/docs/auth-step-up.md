@@ -37,6 +37,8 @@ the single-use proof must never be replayed. After token revocation, query
 For dashboard operations, call `auth.Platform.ConsumeStepUpAsync(accessToken,
 new(proof, purpose, "ts-dashboard", operationReceipt))` before any side effect.
 `create_pat` requires a null receipt, returns 204, and the SDK returns null.
+A plan change names its organization: `new(proof, "change_plan", "ts-auth", null, organizationId)`;
+ts-auth refuses a proof minted for another organization with `step_up_required` and leaves it unconsumed.
 `delete_account` requires the exact canonical 32-byte base64url receipt and
 returns 200 `{operation_grant}`. The SDK returns that secret only after a successful
 acknowledgement. Store it with the receipt before side effects and pass both to
