@@ -1,34 +1,27 @@
-/* API keys: one-time secret banner, credential type badges, and filters. */
-
-/* Header: title and subtitle on the left, the gated create action on the right. */
 .ts-apikeys-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: space-between;
   gap: var(--ts-s3) var(--ts-s4);
-}
-
-.ts-apikeys-header > .ts-stack-sm {
-  flex: 1 1 280px;
-  min-width: 0;
-  gap: var(--ts-s2);
 }
 
 .ts-apikeys-header h1 {
   font-size: var(--ts-fs-3xl);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
-.ts-apikeys-header .ts-stack-sm > p {
-  color: var(--ts-ink-2);
+.ts-apikeys-heading {
+  display: grid;
+  gap: var(--ts-s2);
+  min-width: 0;
 }
 
 .ts-apikeys-header > .ts-page-actions {
   margin-left: auto;
 }
 
-/* Narrow screens: the create action drops under the title, aligned with it. */
 @media (max-width: 767px) {
   .ts-apikeys-header > .ts-page-actions {
     margin-left: 0;
@@ -36,45 +29,6 @@
   }
 }
 
-/* Credential type badge: the icon keeps its size in narrow table cells. */
-.ts-apikeys-type > svg {
-  flex: none;
-}
-
-/* Rotation grace: the old secret's deadline sits muted under the key's status. */
-.ts-apikeys-grace {
-  margin: var(--ts-s1) 0 0;
-  white-space: nowrap;
-}
-
-/* Credential type is neutral text with its icon, not a tinted badge. */
-.ts-apikeys-page .ts-apikeys-type {
-  height: auto;
-  padding: 0;
-  background: none;
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-sm);
-  font-weight: 400;
-}
-
-/* Dense rows: vertical padding only, so the edge-aligned cells keep theirs. */
-.ts-apikeys-page .ts-table th,
-.ts-apikeys-page .ts-table td {
-  padding-block: var(--ts-s2);
-}
-
-.ts-apikeys-secret-value {
-  flex: 1 1 280px;
-  min-width: 0;
-  padding: var(--ts-s2) var(--ts-s3);
-  overflow-wrap: anywhere;
-}
-
-.ts-apikeys-scopes {
-  gap: var(--ts-s1);
-}
-
-/* Toolbar below the card header: search, type tabs, then the selects. */
 .ts-apikeys-filters {
   max-width: 100%;
   flex-wrap: wrap;
@@ -91,20 +45,72 @@
   width: 160px;
 }
 
-.ts-apikeys-secret > .ts-alert-title {
-  font-size: var(--ts-fs-md);
+.ts-apikeys-table .ts-apikeys-name > a {
+  color: var(--ts-ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
-/* Credential authorization: select the resource, then a least-privilege preset. */
+.ts-apikeys-table .ts-apikeys-name > a:hover {
+  text-decoration: underline;
+}
+
+.ts-apikeys-hint {
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  white-space: nowrap;
+}
+
+.ts-apikeys-table td.ts-meta {
+  white-space: nowrap;
+}
+
+.ts-apikeys-expiry {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-apikeys-table .ts-table-actions {
+  width: 1%;
+}
+
+.ts-apikeys-actions {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.ts-apikeys-actions > .ts-icon-btn:hover {
+  background: var(--ts-surface-3);
+}
+
+.ts-apikeys-actions > .ts-apikeys-revoke:hover {
+  color: var(--ts-danger);
+}
+
+.ts-apikeys-scopes {
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+}
+
+.ts-apikeys-cidrs {
+  display: grid;
+  gap: var(--ts-s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 dialog.ts-credential-dialog {
-  width: min(40rem, calc(100vw - 2 * var(--ts-s4)));
+  width: min(32rem, calc(100vw - 2 * var(--ts-s4)));
 }
 
 .ts-credential-form {
-  gap: var(--ts-s6);
+  gap: var(--ts-s5);
 }
 
-/* Keep creation reachable while a short viewport scrolls the form. */
 .ts-credential-form > .ts-dialog-footer {
   position: sticky;
   bottom: 0;
@@ -112,15 +118,219 @@ dialog.ts-credential-dialog {
   margin: 0 calc(-1 * var(--ts-s6)) calc(-1 * var(--ts-s6));
   padding: var(--ts-s4) var(--ts-s6) var(--ts-s6);
   border-top: 1px solid var(--ts-line);
+  background: var(--ts-surface-2);
+}
+
+.ts-apikeys-permissions > legend {
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.ts-apikeys-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
+}
+
+.ts-apikeys-choice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-s2);
+  min-width: 0;
+  height: calc(var(--ts-control-h) - 6px);
+  padding: 0 var(--ts-s2);
+  border-radius: var(--ts-radius-sm);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-apikeys-choice:hover {
+  color: var(--ts-ink);
+}
+
+.ts-apikeys-choice:has(> input:checked) {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.ts-apikeys-choice > input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ts-apikeys-choice:has(> input:focus-visible) {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 1px;
+}
+
+.ts-apikeys-scopes-grid {
+  display: grid;
+  margin-top: var(--ts-s2);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+}
+
+.ts-apikeys-scope-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--ts-s5);
+  min-height: 40px;
+  padding: 0 var(--ts-s3);
+}
+
+.ts-apikeys-scope-row + .ts-apikeys-scope-row {
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-apikeys-scope-name {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-apikeys-scope-row > .ts-check {
+  align-items: center;
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-apikeys-scope-row > .ts-check > input {
+  margin-top: 0;
+}
+
+.ts-apikeys-scopes-grid:disabled .ts-check {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ts-apikeys-selects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ts-s4);
+}
+
+.ts-apikeys-restrictions > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+  list-style: none;
+  cursor: pointer;
+}
+
+.ts-apikeys-restrictions > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ts-apikeys-restrictions > summary:hover {
+  color: var(--ts-ink);
+}
+
+.ts-apikeys-restrictions > summary > svg {
+  transition: transform var(--ts-fast) var(--ts-ease);
+}
+
+.ts-apikeys-restrictions[open] > summary > svg {
+  transform: rotate(90deg);
+}
+
+.ts-apikeys-restrictions[open] > .ts-field {
+  margin-top: var(--ts-s3);
+}
+
+.ts-apikeys-secret-value {
+  flex: 1 1 280px;
+  min-width: 0;
+  padding: var(--ts-s2) var(--ts-s3);
+  overflow-wrap: anywhere;
+}
+
+dialog.ts-apikeys-secret-dialog {
+  width: min(32rem, calc(100vw - 2 * var(--ts-s4)));
+}
+
+.ts-apikeys-secret-field {
+  display: flex;
+  align-items: stretch;
+  gap: var(--ts-s2);
+}
+
+.ts-apikeys-secret-field > .ts-apikeys-secret-value {
+  flex: 1 1 auto;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
   background: var(--ts-surface);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+  line-height: 1.5;
+}
+
+.ts-apikeys-secret-field > .ts-apikeys-copy {
+  align-self: start;
+  height: auto;
+  min-height: var(--ts-control-h-sm);
+}
+
+.ts-apikeys-copy > .ts-apikeys-copy-done,
+.ts-apikeys-copy.ts-apikeys-copied > .ts-apikeys-copy-idle {
+  display: none;
+}
+
+.ts-apikeys-copy.ts-apikeys-copied > .ts-apikeys-copy-done {
+  display: inline-flex;
+  color: var(--ts-success);
+}
+
+.ts-apikeys-secret-notice {
+  color: var(--ts-ink-2);
+}
+
+.ts-apikeys-copy-status:empty {
+  display: none;
 }
 
 @media (max-width: 540px) {
-  /* Filters stack full width, one control per row. */
   .ts-apikeys-filters > .ts-input,
   .ts-apikeys-filters > .ts-select {
     flex-basis: 100%;
     width: 100%;
   }
-}
 
+  .ts-apikeys-selects {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-apikeys-kv {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s4);
+  }
+
+  .ts-apikeys-kv > div {
+    display: grid;
+    gap: var(--ts-s1);
+  }
+
+  .ts-apikeys-secret-field {
+    flex-direction: column;
+  }
+
+  .ts-apikeys-secret-field > .ts-apikeys-copy {
+    align-self: stretch;
+    justify-content: center;
+  }
+}

@@ -85,6 +85,25 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return [.. result.OrderBy(key => key.Name, StringComparer.Ordinal)];
         }
 
+        public async Task<ProjectCredential?> GetAsync(AccountContext context, string keyId, CancellationToken cancellationToken)
+        {
+            if (context.Project is null || !context.CanManageKeys || !TerraScaleIds.IsValid(keyId))
+            {
+                return null;
+            }
+
+            var scope = DatabaseService.Scope(context);
+            try
+            {
+                var key = Map(context, await Client().GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken));
+                return key.Id == keyId ? key : throw new HttpRequestException("Credential lookup returned a different key.");
+            }
+            catch (HttpRequestException absent) when (absent.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+        }
+
         public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
         {
             var request = PrepareCreate(context, kind, name, databaseId, scopes, expiresInDays, allowedCidrs);
@@ -487,52 +506,5 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     public sealed record ApiKeyListPage(IReadOnlyList<ProjectCredential> Items, string? NextCursor, bool ViewerOnly = false)
     {
         public bool HasMore => NextCursor is not null;
-    }
-
-    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
-    {
-        public static readonly IReadOnlyList<string> FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
-        public string Warning { get; init; } = "";
-        public bool ViewerOnly { get; init; }
-        public string DraftKeyCidrs { get; init; } = "";
-        public static string Lines(IReadOnlyList<string>? cidrs)
-        {
-            return string.Join('\n', cidrs ?? []);
-        }
-
-        public AccountContext Context => Shell.Context;
-        public IReadOnlyList<ProjectCredential> Filtered => [.. Keys.Where(key => (Status.Length == 0 || Status == "active" == key.IsActive) && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase)))];
-        public string DatabaseFilterTitle => Context.Project?.Databases.GetValueOrDefault(DatabaseId)?.Name ?? "All databases";
-        public string With(string path, bool clear = false, string? create = null)
-        {
-            var values = new SortedDictionary<string, string?>();
-            if (!clear) { values["databaseId"] = DatabaseId; values["q"] = Search; values["status"] = Status; if (HasMore || Cursor.Length > 0) { values["cursor"] = Cursor; } }
-            if (create is not null)
-            {
-                values["create"] = create;
-            }
-
-            var query = string.Join('&', values.Where(value => !string.IsNullOrEmpty(value.Value)).Select(value => System.Net.WebUtility.UrlEncode(value.Key) + "=" + System.Net.WebUtility.UrlEncode(value.Value)));
-            return query.Length == 0 ? path : path + "?" + query;
-        }
-        public static bool FullAccess(IReadOnlyCollection<string> scopes)
-        {
-            return FullAccessScopes.All(scopes.Contains);
-        }
-
-        public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
-        {
-            if (FullAccess(key.Scopes))
-            {
-                return ("Full-access key", "rose", "ShieldAlert");
-            }
-
-            if (key.Scopes.Any(scope => scope is "sql:write" or "databases:write"))
-            {
-                return key.Scopes.Any(scope => scope is "sql:read" or "databases:read") ? ("Read-write key", "amber", "KeyRound") : ("Write-only key", "amber", "Pencil");
-            }
-
-            return ("Read-only key", "sky", "Eye");
-        }
     }
 }

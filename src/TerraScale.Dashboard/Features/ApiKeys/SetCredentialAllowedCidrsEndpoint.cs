@@ -36,7 +36,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException)
             { return DatabaseEndpoints.WantsHtml(http) ? await ApiKeyPages.PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error), draftKeyCidrs: keyId, draftAllowedCidrs: form["allowedCidrs"].ToString()) : DatabaseEndpoints.Failure(error); }
-            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
+            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys/" + keyId) : Results.NoContent();
         }
     }
 }
