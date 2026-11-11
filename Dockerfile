@@ -6,7 +6,7 @@
 
 # Match global.json and keep the SDK's targeting packs aligned with locked NuGet dependencies.
 # Build stages run on the builder's platform; the arm64 images cross-publish (publish-* stages).
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.3-resolute@sha256:3a9175b6c54b2f076817af1360f691c9994447b192faa48a1a1f112a516844c7 AS sdk
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-resolute@sha256:65f3c7c6a25a239ab3e6719f2896147e7b68242ff2d8818dd70498bde6ef8bea AS sdk
 
 FROM sdk AS base
 # Test hosts retain the eight-CPU .NET budget across runner types.
@@ -158,7 +158,7 @@ RUN case "$TARGETARCH" in amd64) runtime=linux-x64; machine=3e00 ;; arm64) runti
     && make auth-publish RUNTIME="$runtime" PUBLISH_DIR=/out \
     && test "$(od -An -tx1 -j18 -N2 /out/ts-auth | tr -d ' \n')" = "$machine"
 
-FROM mcr.microsoft.com/dotnet/runtime-deps:11.0.0-rc.3-resolute-chiseled@sha256:0a70ecd3350d11f4a5377be3a9e44372ef28281ee162b71f498ed69fea901745 AS terrabase
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0.0-resolute-chiseled@sha256:24534e1f18024d3f8026061537fa21ba424f46cc0cdab4297c5528937b1ae960 AS terrabase
 COPY --from=publish-terrabase /out /app
 USER 0
 RUN --mount=type=bind,from=busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213,source=/bin/busybox,target=/busybox ["/busybox","mkdir","-p","/data"]
@@ -168,7 +168,7 @@ WORKDIR /data
 USER 1654
 ENTRYPOINT ["/app/terrabase"]
 
-FROM mcr.microsoft.com/dotnet/runtime-deps:11.0.0-rc.3-resolute-chiseled@sha256:0a70ecd3350d11f4a5377be3a9e44372ef28281ee162b71f498ed69fea901745 AS ts-auth
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0.0-resolute-chiseled@sha256:24534e1f18024d3f8026061537fa21ba424f46cc0cdab4297c5528937b1ae960 AS ts-auth
 COPY --from=publish-ts-auth /out /app
 USER 0
 RUN --mount=type=bind,from=busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213,source=/bin/busybox,target=/busybox ["/busybox","mkdir","-p","/data"]
