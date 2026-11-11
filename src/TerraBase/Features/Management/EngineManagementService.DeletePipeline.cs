@@ -102,7 +102,7 @@ internal sealed partial class EngineManagementService
             logger.ZLogWarning(error, $"Telling replica regions to forget deleted database {storage.DatabaseId:@Database} failed ({error.GetType().Name:@Error}); their own sweeps forget it");
         }
 
-        return await shredding.Value.DestroyAsync(storage, cancellationToken).ConfigureAwait(false) ? new Done()
+        return await shredding.Value.DestroyAsync(storage, DateTimeOffset.MaxValue, cancellationToken).ConfigureAwait(false) ? new Done()
             : new Unavailable("database deletion committed; key destruction is pending and will retry");
     }
 

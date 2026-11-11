@@ -39,6 +39,18 @@ after a lost response, a restart or a repeated request presents the same identit
   project. Registration (`CanAddDatabaseAsync`: create, branch, copy/restore, adoption) and enrollment
   (`ResolveProjectAsync` with `create`) read the fence in their committing transaction, so after a machine's receipt no
   database of the project can be registered on that machine.
+- After the fence, the request erases on its machine the first 100 purges the closure tracks
+  (`project_closure_purges/<project>`, read once): for each it deletes the local files, then destroys the backup
+  key scopes, the database's own first, then each managed snapshot's, as a database DELETE does. A failed file
+  deletion does not stop the key destruction, and a failed key scope does not stop the others. Each scope is
+  recorded as destroyed (`keysShreddedAt` of `backup_purge_progress/<id>`) only after its keys are gone, the
+  database's own once all of its scopes are, so the next request and the purge passes go on from what is not
+  recorded. No new database or key scope starts after 10 seconds; one already started finishes. The request then
+  refreshes this machine's receipt until the purge-history scan stops advancing and answers `200 accepted` only when
+  every holder's receipt is empty. It answers `202 pending`, and the convergence, purge and backup-erasure passes and
+  the next request continue, while a client session holds a database open, a peer region has not confirmed a key
+  destruction, the project has more than 100 databases or tracked purges, the 10 seconds ran out, or a purge found
+  only by the purge-history scan (a peer's shred, a regional import) that is not yet erased and recorded.
 - A replicated version-2 erasure fence whose authority organization conflicts with the local storage binding never
   erases local contents. Convergence records this holder's receipt as non-empty, keeping closure pending until the
   binding agrees and erasure can be verified.

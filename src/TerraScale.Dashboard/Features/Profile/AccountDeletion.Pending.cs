@@ -7,9 +7,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     public static partial class AccountDeletion
     {
-        // ts-auth's closure waits on every storage region; 2, 4, 8, 16 s, then 30 s pauses cover about 8.5 minutes,
-        // so an ordinary closure lands on /account-deleted without the user returning to check.
-        private const int AutomaticChecks = 20;
+        private const int PauseDoublings = 4;
 
         public static Task<IResult> ProgressAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, ITsAuthPlatform platform)
         {
@@ -42,14 +40,14 @@ namespace TerraScale.Dashboard.Features.Profile
                     }
 
                     _ = int.TryParse(form["_retry"], out attempt);
-                    attempt = Math.Min(AutomaticChecks, Math.Clamp(attempt, 0, AutomaticChecks) + 1);
+                    attempt = Math.Min(PauseDoublings, Math.Clamp(attempt, 0, PauseDoublings) + 1);
                 }
                 else
                 {
                     _ = int.TryParse(http.Request.Query["retry"], out attempt);
                 }
 
-                attempt = Math.Clamp(attempt, 0, AutomaticChecks);
+                attempt = Math.Clamp(attempt, 0, PauseDoublings);
                 if (await CompletedAsync(http, storage))
                 {
                     http.Response.Cookies.Delete(Cookie);
@@ -69,7 +67,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
 
                 return PendingPage(http, completed ? "Finalizing dashboard cleanup" : "Account deletion is pending",
-                    completed ? "ts-auth has confirmed account closure. Continue to finish dashboard cleanup and sign out." :
+                    completed ? "ts-auth has confirmed account closure. Finishing dashboard cleanup. This page continues by itself." :
                     "Account closure is still pending. Completion requires project deletion confirmation from every storage region that holds your data. If a required region is unavailable, confirmation waits for recovery. This status does not identify a specific waiting step or region.",
                     attempt, 202);
             }
@@ -91,7 +89,7 @@ namespace TerraScale.Dashboard.Features.Profile
         {
             http.Response.Headers.CacheControl = "no-store";
             var view = AccountDeletionPendingView.Create(new(new(title, DocumentModel.NonceFor(http)), title, message,
-                Csrf.Token(http), attempt, Math.Min(30000, 2000 << Math.Min(attempt, 4)), !attention && attempt < AutomaticChecks, attention));
+                Csrf.Token(http), attempt, Math.Min(30000, 2000 << Math.Min(attempt, PauseDoublings)), !attention, attention));
             view.StatusCode = statusCode;
             return view;
         }

@@ -637,7 +637,7 @@ internal sealed partial class EngineManagedBackupService(
         }
 
         var storage = record.Storage(plan);
-        if (!await shredding.Value.DestroyAsync(storage, CancellationToken.None).ConfigureAwait(false)
+        if (!await shredding.Value.DestroyAsync(storage, DateTimeOffset.MaxValue, CancellationToken.None).ConfigureAwait(false)
             || !await StorageSweep.DeleteFilesAsync(engine, storage, logger).ConfigureAwait(false))
         {
             return new Done();

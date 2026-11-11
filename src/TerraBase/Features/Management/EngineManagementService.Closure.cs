@@ -13,7 +13,41 @@ internal sealed partial class EngineManagementService
 {
     private string? _closuresAfter;
 
-    public async ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken) =>
+    public async ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken)
+    {
+        var result = await FenceProjectAsync(projectId, closureId, authorityOrganizationId, version, cancellationToken).ConfigureAwait(false);
+        if (result is not ProjectClosureStatus { Status: ProjectClosure.Pending })
+        {
+            return result;
+        }
+
+        await EraseClosingDatabasesAsync(projectId, cancellationToken).ConfigureAwait(false);
+        string? scanned = null;
+        while (true)
+        {
+            var step = await WriteAsync<ClosureStep>(transaction => RefreshClosureAsync(transaction, projectId, cancellationToken),
+                static error => new(error, null), cancellationToken).ConfigureAwait(false);
+            if (step.Result is not ProjectClosureStatus { Status: ProjectClosure.Pending } || step.Scan is null or "complete" || step.Scan == scanned)
+            {
+                return step.Result;
+            }
+
+            scanned = step.Scan;
+        }
+    }
+
+    private async ValueTask<ClosureStep> RefreshClosureAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken)
+    {
+        var record = await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("a project closure fence is missing");
+        await RefreshClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);
+        return new(await ClosureStatusAsync(transaction, record, cancellationToken).ConfigureAwait(false),
+            await GetAsync(transaction, ProjectClosure.Scans(projectId), options.MachineId, Id, cancellationToken).ConfigureAwait(false));
+    }
+
+    private sealed record ClosureStep(CloseProjectResult Result, string? Scan);
+
+    private async ValueTask<CloseProjectResult> FenceProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken) =>
         await WriteAsync<CloseProjectResult>(async transaction =>
         {
             if (await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false) is { } existing)

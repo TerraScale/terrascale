@@ -6,11 +6,70 @@ using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
+    private static readonly TimeSpan ErasureBudget = TimeSpan.FromSeconds(10);
+
+    private async ValueTask EraseClosingDatabasesAsync(string project, CancellationToken token)
+    {
+        var until = time.GetUtcNow() + ErasureBudget;
+        var pending = await ReadAsync<IReadOnlyList<ClosingDatabase>>(async transaction =>
+        {
+            var tracked = await transaction.ListAsync(ProjectClosure.Purges(project), null, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
+            List<ClosingDatabase> databases = [];
+            foreach (var stored in tracked.Records)
+            {
+                if (await GetAsync(transaction, DatabasePurge.Kind, stored.Id, ManagementJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false) is not { } purge
+                    || purge.Database.ProjectId != project)
+                {
+                    continue;
+                }
+
+                var dropped = await GetAsync(transaction, DatabasePurge.Receipts(stored.Id), options.MachineId, ManagementJsonContext.Default.DatabasePurgeReceipt, token)
+                    .ConfigureAwait(false) is { } receipt && receipt.Binds(purge, options.MachineId);
+                var shredded = options.Backup is null || (await GetAsync(transaction, DatabaseBackupPurge.ProgressKind, stored.Id,
+                    BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false))?.KeysShreddedAt is not null;
+                if (!dropped || !shredded)
+                {
+                    databases.Add(new(purge.Database, dropped, shredded));
+                }
+            }
+
+            return databases;
+        }, static _ => [], token).ConfigureAwait(false);
+        foreach (var database in pending)
+        {
+            if (time.GetUtcNow() >= until)
+            {
+                return;
+            }
+
+            if (!database.Dropped)
+            {
+                try
+                {
+                    await DropLocalAsync(database.Storage, token).ConfigureAwait(false);
+                }
+                catch (Exception error) when (!token.IsCancellationRequested)
+                {
+                    _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "active_cleanup"));
+                    logger.ZLogWarning(error, $"Deleting the files of database {database.Storage.DatabaseId:@Database} of closing project {project:@Project} failed; the next pass tries again");
+                }
+            }
+
+            if (!database.Shredded)
+            {
+                _ = await shredding.Value.DestroyAsync(database.Storage, until, token).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private sealed record ClosingDatabase(TenantContext Storage, bool Dropped, bool Shredded);
+
     private async ValueTask<bool> EraseProjectBatchAsync(IStorageTransaction transaction, ProjectClosureRecord closure, CancellationToken token)
     {
         var project = closure.ProjectId;

@@ -19,6 +19,8 @@ public sealed record ClosureJob(
     DateTimeOffset? CommittedAt = null,
     int ProjectClosureVersion = 1)
 {
+    private static readonly TimeSpan RequestAttempt = TimeSpan.FromSeconds(30);
+
     public bool Same(ClosureJob other) =>
         other is not null && other.Id == this.Id && other.Scope == this.Scope && other.SubjectId == this.SubjectId && other.Generation == this.Generation
         && other.ProjectClosureVersion == this.ProjectClosureVersion;
@@ -28,7 +30,7 @@ public sealed record ClosureJob(
     {
         ArgumentNullException.ThrowIfNull(clock);
         var now = clock.GetUtcNow();
-        var job = new ClosureJob(closureId ?? AuthIds.New(), instanceId, scope, subjectId, organizationId, requestedBy, now, now, accountId,
+        var job = new ClosureJob(closureId ?? AuthIds.New(), instanceId, scope, subjectId, organizationId, requestedBy, now, now + RequestAttempt, accountId,
             Generation: AuthIds.New(), ProjectClosureVersion: scope == "project" && accountId is not null ? 2 : 1);
         return (job, Change.Insert(job));
     }
