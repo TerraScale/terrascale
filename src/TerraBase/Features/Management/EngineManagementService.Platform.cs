@@ -11,6 +11,9 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
     private const string PlatformCreator = PlatformDatabases.OrganizationId;
     private const string PlatformOrganizationName = "TerraScale";
 
+    private static readonly Unavailable PlatformDatabaseOrphaned = new(
+        "a platform database file has no catalog record; the file audit deletes it 24 hours after it first sees it", "platform_database_orphaned");
+
     public async ValueTask<EnsurePlatformResult> EnsurePlatformAsync(CancellationToken cancellationToken)
     {
         var tenants = await ReadAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: false, cancellationToken), static error => error, cancellationToken)
@@ -53,7 +56,17 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
     {
         var state = await ReadAsync<PlatformState>(transaction => PlatformDatabaseAsync(transaction, name, database, cancellationToken), static error => error, cancellationToken)
             .ConfigureAwait(false);
-        return state is NotFound ? await AddPlatformDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false) : state;
+        if (state is not NotFound)
+        {
+            return state;
+        }
+
+        var tenant = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Enterprise, database.ProjectId, database.Id);
+        return engine.EnumerateDatabaseFiles(cancellationToken).Any(file => file.Database is { } stored && stored.OrganizationId == tenant.OrganizationId
+                && stored.ProjectId == tenant.ProjectId && stored.DatabaseId == tenant.DatabaseId)
+            && !await ReadAsync(transaction => OwnedFileAsync(transaction, tenant, cancellationToken), static _ => true, cancellationToken).ConfigureAwait(false)
+                ? PlatformDatabaseOrphaned
+                : await AddPlatformDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false);
     }
 
     private static EnsurePlatformResult Settled(PlatformState state) => state switch
@@ -114,12 +127,12 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
             return new Conflict("a platform project is closed", "platform_project_closed");
         }
 
-        if (await FindDatabaseAsync(transaction, PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken).ConfigureAwait(false) is { } found)
+        if (await CatalogTables.DatabaseNamedAsync(transaction, database.ProjectId, name, cancellationToken).ConfigureAwait(false) is { } id)
         {
-            return await CatalogTables.DatabaseAsync(transaction, database.ProjectId, found.DatabaseId!, cancellationToken).ConfigureAwait(false) is { } existing
-                && existing.Id == database.Id && existing.HomeRegion == options.Region && !existing.AllRegions && existing.Replicas.Count == 0
+            return id == database.Id && await CatalogTables.DatabaseAsync(transaction, database.ProjectId, id, cancellationToken).ConfigureAwait(false) is { } existing
+                && existing.HomeRegion == options.Region && !existing.AllRegions && existing.Replicas.Count == 0
                     ? new Done()
-                    : new Conflict("a platform database name holds another database", "platform_database_taken");
+                    : new Conflict("a platform database name holds another database, or the platform database with another placement", "platform_database_taken");
         }
 
         return await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false)
