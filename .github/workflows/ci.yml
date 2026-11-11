@@ -78,7 +78,6 @@ jobs:
           filters: |
             shared: &shared
               - .github/workflows/ci.yml
-              - .github/actions/**
               - Makefile
               - Directory.*
               - global.json
@@ -109,6 +108,7 @@ jobs:
               - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
               - docs/auth/*.yaml
               - scripts/auth/{check-nuget-vulnerabilities{,.lib}.cs,export-openapi.sh,packages.lock.json}
+              - scripts/efcore/check-design-host.py
             auth-server:
               - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
               # TerraBase's RPC surface and the contracts it implements.
@@ -120,6 +120,7 @@ jobs:
               - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
             terrabase:
               - *shared
+              - .github/actions/**
               - Dockerfile
               - src/vendor/**/!(*.md|*.patch)
               - scripts/vendor/{download,verify}-turso-native.sh
@@ -131,18 +132,23 @@ jobs:
               - landing-site/static/pricing.json
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - Makefile
               - .github/workflows/ci.yml
             sdk-go:
               - sdk/go/**/!(AGENTS.md|CLAUDE.md)
+              - Makefile
               - .github/workflows/ci.yml
             sdk-js:
               - sdk/js/**/!(AGENTS.md|CLAUDE.md)
+              - Makefile
               - .github/workflows/ci.yml
             sdk-python:
               - sdk/python/**/!(AGENTS.md|CLAUDE.md)
+              - Makefile
               - .github/workflows/ci.yml
             sdk-rust:
               - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
+              - Makefile
               - .github/workflows/ci.yml
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
@@ -162,6 +168,7 @@ jobs:
               - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md|CLAUDE.md)
               - scripts/dashboard/{Makefile,TerraScale.Dashboard.slnx,check-simple-ui.py,check-stripe-dependency.py,verify-sdk.py}
               - scripts/dashboard/ci/format.sh
+              - scripts/efcore/check-design-host.py
               - scripts/ci/release-only.sh
               - *dotnet-sdk
               - Directory.*
@@ -365,16 +372,9 @@ jobs:
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: terrascale/global.json
-      # Restore the pinned native libraries from the Actions cache before make verifies them: with the
-      # pins unchanged the release-CDN download is skipped entirely, so a CDN outage cannot fail every area.
-      - &turso-native-cache
-        name: Cached pinned Turso native libraries
-        uses: ./terrascale/.github/actions/turso-native-cache
-        with:
-          dir: terrascale
-      - name: Locked restore and pinned native libraries
+      - name: Locked restore
         working-directory: terrascale
-        run: make restore turso-native SOLUTION=libs.slnf
+        run: make restore SOLUTION=libs.slnf
       - name: Checked build, whitespace and style
         working-directory: terrascale
         run: |
@@ -390,10 +390,9 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
-      - *turso-native-cache
-      - name: Locked restore and pinned native libraries
+      - name: Locked restore
         working-directory: terrascale
-        run: make restore turso-native SOLUTION=auth.slnf
+        run: make restore SOLUTION=auth.slnf
       - name: Checked build, whitespace, NuGet audit and OpenAPI contract
         working-directory: terrascale
         run: |
@@ -409,7 +408,10 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
-      - *turso-native-cache
+      - name: Cached pinned Turso native libraries
+        uses: ./terrascale/.github/actions/turso-native-cache
+        with:
+          dir: terrascale
       - name: Locked restore and pinned native libraries
         working-directory: terrascale
         run: make restore turso-native SOLUTION=terrabase.slnf

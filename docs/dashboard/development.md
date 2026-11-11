@@ -40,7 +40,7 @@ its flows against the real TerraBase and ts-auth built from the same commit
 ([`e2e/AGENTS.md`](../../e2e/AGENTS.md)); a new page or tab is one state in
 `e2e/pages/inventory.ts`.
 
-Images (GHCR) is the dashboard's only main workflow: every push and dispatch runs
+Images (GHCR) is the dashboard's only main workflow: every push that changes a dashboard input and every dispatch runs
 the dashboard checks (`dashboard-ci.yml`: the lint set, the Release build and the publish of
 that build as the `dashboard-publish` artifact), and the push run waits for that commit's CI, publishes the image and releases it to every region automatically, with
 no manual step and no deploy switch. The release token's sha must equal the image's

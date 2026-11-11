@@ -8,6 +8,9 @@ tag=$(gh api graphql -f query='{repository(owner: "TerraScale", name: "ts-orches
   --jq '[.data.repository.releases.nodes[] | select((.tagName | startswith("ci-")) and (.isDraft | not) and .releaseAssets.totalCount > 0)] | sort_by(.createdAt) | last | .tagName // ""')
 [[ -n $tag ]] || { echo "No published ci- release of $repo carries qualification.json" >&2; exit 1; }
 gh release download "$tag" --repo "$repo" --dir "$work" --pattern "$binary" --pattern qualification.json --clobber
+for file in "$binary" qualification.json; do
+  [[ -f $work/$file ]] || { echo "$repo $tag: $file did not arrive" >&2; exit 1; }
+done
 sha256=$(sha256sum "$work/$binary" | cut -d ' ' -f 1)
 jq -e --arg name "$binary" --arg sha256 "$sha256" 'any(.artifacts[]; .name == $name and .sha256 == $sha256)' \
   "$work/qualification.json" > /dev/null || { echo "$repo $tag: $binary (sha256 $sha256) is not the binary its qualification.json lists" >&2; exit 1; }

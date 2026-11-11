@@ -71,7 +71,7 @@ libs-nativeaot-check: restore
 auth-restore:
 	dotnet restore auth.slnf --locked-mode
 
-auth-build: auth-restore turso-native
+auth-build: auth-restore
 	dotnet build auth.slnf --configuration $(CONFIGURATION) --no-restore --nologo -m
 
 auth-audit: auth-restore

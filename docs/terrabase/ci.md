@@ -19,13 +19,13 @@ check: it fails when any job it needs failed or was cancelled, and a skipped job
   pattern is in the `No test file outside the journey` step of `ci.yml`).
 - The storage train reads the pull request's labels when `checks` runs: after you add or remove a storage-format label,
   re-run `checks` (a label change starts no new run).
-- `libs`, `auth` and `terrabase` restore their own solution filter locked, verify the pinned native libraries and
-  check whitespace format. `libs` and `auth` build their solution filter in Release with analyzers and warnings as
-  errors; `libs` also checks code style, `auth` also runs the NuGet audit and the OpenAPI contract check
-  (`make auth-check`). `terrabase` compiles once: its build is the linux-arm64 single-file release publish
-  (`make terrabase-publish`), which compiles every project of `terrabase.slnf` in Release with the same analyzers and
-  fails when a native library lies beside the file. Each leg then checks that no project fell back to Debug
-  (`scripts/ci/release-only.sh`). Locally: `make terrabase-build`.
+- `libs`, `auth` and `terrabase` restore their own solution filter locked and check whitespace format; `terrabase`,
+  the only leg that builds the native-library driver, also verifies the pinned native libraries. `libs` and `auth`
+  build their solution filter in Release with analyzers and warnings as errors; `libs` also checks code style, `auth`
+  also runs the NuGet audit and the OpenAPI contract check (`make auth-check`). `terrabase` compiles once: its build
+  is the linux-arm64 single-file release publish (`make terrabase-publish`), which compiles every project of
+  `terrabase.slnf` in Release with the same analyzers and fails when a native library lies beside the file. Each leg
+  then checks that no project fell back to Debug (`scripts/ci/release-only.sh`). Locally: `make terrabase-build`.
 - `dashboard` (`dashboard-ci.yml`) builds the dashboard solution in Release and runs its lint set.
 - `sdk` runs `make sdk-<sdk>-check` for each changed SDK: a locked install or restore and a build or type check.
   `sdk-release.yml` and `scripts/sdk` select no SDK: the checks never read them.
