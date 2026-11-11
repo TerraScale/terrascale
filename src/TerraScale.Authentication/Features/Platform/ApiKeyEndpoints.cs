@@ -130,7 +130,7 @@ public sealed class RotateOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
     public override void Configure()
     {
         Post($"{Organization}/api-keys/{{key}}/rotate");
-        this.Describe("rotate_organization_api_key", "Rotate an organization API key", "Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. 409 rotation_pending while the previous secret's grace is active.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
+        this.Describe("rotate_organization_api_key", "Rotate an organization API key", "Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
     }
 
     /// <inheritdoc />
@@ -215,7 +215,7 @@ public sealed class RotateProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
     public override void Configure()
     {
         Post($"{Project}/api-keys/{{key}}/rotate");
-        this.Describe("rotate_project_api_key", "Rotate a project API key", "Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. 409 rotation_pending while the previous secret's grace is active.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
+        this.Describe("rotate_project_api_key", "Rotate a project API key", "Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
     }
 
     /// <inheritdoc />

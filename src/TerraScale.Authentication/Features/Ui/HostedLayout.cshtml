@@ -22,6 +22,12 @@
 </script>
 </head>
 <body>
+@if (Model.ContinueOnly)
+{
+<main class="auth-page"><div class="continue-action">@await RenderBodyAsync()</div></main>
+}
+else
+{
 <main class="auth-page">
 <div class="card">
 <div class="brand"><img src="@(Model.LogoUrl ?? "/admin/logo-icon-blue.svg")" alt="" class="logo-img"><span>@Model.Name</span></div>
@@ -72,5 +78,6 @@ else
 </script>
 <script nonce="@Model.Nonce">@WriteHtml(HostedPageBehavior.Script)</script>
 <script src="/admin/hosted.js" defer></script>
+}
 </body>
 </html>

@@ -26,7 +26,7 @@ The new secret appears once on stdout. Text diagnostics contain no secret.
 immediate replacement. Lists never expose either secret. Store stdout directly
 in a private secret store or file and exclude it from CI logs and shell tracing.
 
-An active prior grace returns `rotation_pending` (409); wait until its deadline.
+Rotation is always available, including during an active grace. A new rotation ends the older previous secret immediately and keeps the current secret for the requested grace; at most two secrets remain valid.
 Project-key rotation requires project member authority. The service can also
 reject stale sign-in credentials with `authentication_conflict` (409); sign in
 again. Operational failures exit 1; invalid arguments exit 2. Errors retain safe

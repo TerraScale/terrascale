@@ -190,7 +190,7 @@ that does not exist. A member whose role is too low gets `403 forbidden_role`.
 Errors use the `{"error":{"code","message"}}` envelope: `400 invalid_request`,
 `401 unauthorized`, `403 forbidden_role` or `email_mismatch`, `404 not_found`,
 `409` `name_taken`, `not_empty`, `last_owner`, `already_member`,
-`invitation_pending`, `invitation_expired`, `not_pending`, `rotation_pending`,
+`invitation_pending`, `invitation_expired`, `not_pending`,
 `closure_conflict` or `binding_conflict`, and
 `503 temporarily_unavailable`. Messages never echo input.
 
@@ -227,10 +227,10 @@ project. It is not a bearer token: code exchanges it at the token endpoint
   recorded at most once per 5 minutes; null until the first exchange.
 - **Rotation.** `POST …/rotate` issues a new secret for the same `id`. The
   previous secret keeps working for `previous_secret_ttl` seconds (0 to 86400,
-  default 0), then only the new one does. While that grace is active, another
-  rotation answers `409 rotation_pending`, including a request with no grace,
-  so concurrent rotations cannot shorten the overlap. Revocation still stops
-  both secrets immediately.
+  default 0), then only the new one does. Rotation is always available, including
+  during an active grace. Each rotation ends any older previous secret immediately;
+  the current secret becomes the previous one for the requested grace. At most two
+  secrets remain valid. Revocation still stops both secrets immediately.
 - **Ownership.** Keys belong to their organization or project, not to their
   creator, so they survive the creator leaving. Deleting the project or
   organization revokes them.

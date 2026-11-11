@@ -197,11 +197,6 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
             var now = clock.GetUtcNow();
-            if (key.Value.PreviousSecretHash is not null && key.Value.PreviousSecretExpiresAt > now)
-            {
-                throw PlatformDirectory.Conflict("rotation_pending", "The previous API key secret is still in its rotation grace period.");
-            }
-
             var secret = $"{keyId}_{RandomNumberGenerator.GetString(Alphabet, 52)}";
             var rotated = key.Value with
             {

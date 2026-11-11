@@ -982,7 +982,7 @@ paths:
       operationId: rotate_organization_api_key
       tags: [API keys]
       summary: Rotate an organization API key
-      description: Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. 409 rotation_pending while the previous secret's grace is active, including a request with no grace.
+      description: "Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid."
       requestBody:
         required: false
         content:
@@ -1117,7 +1117,7 @@ paths:
       operationId: rotate_project_api_key
       tags: [API keys]
       summary: Rotate a project API key
-      description: Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. 409 rotation_pending while the previous secret's grace is active, including a request with no grace.
+      description: "Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid."
       requestBody:
         required: false
         content:
@@ -1609,7 +1609,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     Conflict:
-      description: name_taken, not_empty, last_owner, already_member, invitation_pending, invitation_expired, not_pending, rotation_pending, closure_conflict, binding_conflict or mfa_not_enrolled.
+      description: name_taken, not_empty, last_owner, already_member, invitation_pending, invitation_expired, not_pending, closure_conflict, binding_conflict or mfa_not_enrolled.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

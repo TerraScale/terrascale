@@ -1,5 +1,11 @@
 @inherits RazorSlice<StepUpPageModel>
 @implements IUsesLayout<HostedLayout, HostedLayoutModel>
+@if (Model.ReturnUri is { } returnUri)
+{
+<a class="btn delayed-continue" href="@returnUri">@Model.Copy.Continue</a>
+}
+else
+{
 <div class="head"><h1>@Model.Operation</h1></div>
 <div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span></div>
 @if (Model.Notice is { } notice)
@@ -27,7 +33,7 @@ else
 <button type="submit" name="action" value="send">@Model.Copy.EmailMeCode</button>
 }
 </form>
+}
 @functions {
-    /// <inheritdoc />
-    public HostedLayoutModel LayoutModel => new(Model.Operation, Model.Nonce, locale: Model.ResolvedLocale);
+    public HostedLayoutModel LayoutModel => new(Model.Operation, Model.Nonce, locale: Model.ResolvedLocale) { ContinueOnly = Model.ReturnUri is not null };
 }

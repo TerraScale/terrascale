@@ -99,7 +99,6 @@
     "role_changed",
     "role_exists",
     "role_not_found",
-    "rotation_pending",
     "scim_cleanup_in_progress",
     "scim_link_changed",
     "scim_user_name_taken",

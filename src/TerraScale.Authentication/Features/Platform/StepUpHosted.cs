@@ -111,14 +111,17 @@ internal static class StepUpHosted
             }
         }
 
-        if (record.Approved)
-        {
-            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Continue, "terrascale", Next: record.ReturnUri));
-        }
-
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        var page = StepUpPage.Create(new StepUpPageModel(id, user.Email, record.Purpose, record.PrimaryVerified, user.PasswordHash is not null, record.MailRequested, notice, nonce, locale));
+        if (record.Approved)
+        {
+            context.Response.Headers["Refresh"] = "0;url=" + record.ReturnUri;
+        }
+
+        var page = StepUpPage.Create(new StepUpPageModel(id, user.Email, record.Purpose, record.PrimaryVerified, user.PasswordHash is not null, record.MailRequested, notice, nonce, locale)
+        {
+            ReturnUri = record.Approved ? record.ReturnUri : null,
+        });
         page.StatusCode = context.Response.StatusCode;
         return page;
     }

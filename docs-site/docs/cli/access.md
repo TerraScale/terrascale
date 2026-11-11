@@ -36,6 +36,6 @@ Success returns the same typed database metadata as ordinary `db branch`. The de
 
 See [automation and JSON](./automation) for output and exit contracts.
 
-`ts keys rotate <id> 30m` returns the new secret once with thirty minutes of grace for the previous secret. Grace is required, from `0s` to `24h` in whole seconds; `0s` replaces immediately. Capture stdout privately and never log it. An active grace returns `rotation_pending` (409); inspect state before retrying uncertain failures. Rotation preserves the key ID, scopes and restrictions.
+`ts keys rotate <id> 30m` returns the new secret once with thirty minutes of grace for the previous secret. Grace is required, from `0s` to `24h` in whole seconds; `0s` replaces immediately. Capture stdout privately and never log it. Rotation is always available, including during an active grace. A new rotation ends the older previous secret immediately and keeps the current secret for the requested grace; at most two secrets remain valid. Inspect state before retrying uncertain failures. Rotation preserves the key ID, scopes and restrictions.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

@@ -127,8 +127,6 @@ func keyOperationError(err error, action string, s *session) error {
 	case "step_up_required":
 		return &cliError{code: string(api.Code), status: api.Status,
 			message: action + " needs a fresh sign-in confirmation; run the command again to start one."}
-	case "rotation_pending":
-		code, message = api.Code, "Previous rotation grace is active; wait until previous_secret_expires_at before rotating again."
 	case "authentication_conflict":
 		code, message = api.Code, "Sign in again before issuing another API key secret."
 	case "unauthorized", "forbidden_role", "not_found", "invalid_request", "rate_limited", "temporarily_unavailable":

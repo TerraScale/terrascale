@@ -282,18 +282,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 throw new HttpRequestException("Credential lookup returned a different key.");
             }
 
-            TsAuthPlatformApiKeySecret result;
-            try
-            {
-                result = await ProtectedAsync(() => client.RotateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId,
+            var result = await ProtectedAsync(() => client.RotateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId,
                 stepUpProof, new TsAuthPlatformRotateApiKey(previousSecretTtl), cancellationToken));
-            }
-            catch (TsAuthException error) when (error.ErrorCode == "rotation_pending")
-            {
-                throw new AccountAccessException(current.PreviousSecretExpiresAt is { } grace
-                    ? $"This key's previous secret still works until {Format(grace)}. Rotate again after that."
-                    : "This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
-            }
             var key = Map(context, result.ApiKey);
             if (key.Id != keyId || key.Name != current.Name || key.DatabaseId != current.DatabaseId ||
                 !SameCidrs(current.AllowedCidrs!, key.AllowedCidrs!) || string.IsNullOrEmpty(result.Key) || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
