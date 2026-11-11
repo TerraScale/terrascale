@@ -194,8 +194,9 @@ SHA-256 to its archive's.
   Session's `expires_at` outside 30 minutes to 24 hours from now gets Stripe's 400 `invalid_request_error` for that
   `param` and a line in `unexpected`. Only a `POST` is replayed by its idempotency key, as at Stripe, where a key on
   `GET` or `DELETE` has no effect: a second cancel runs again, and the cancel of a canceled subscription, which Stripe
-  keeps immutable except for its metadata and `cancellation_details`, gets 400 `invalid_request_error` and a line in
-  `unexpected`. Each
+  keeps immutable except for its metadata and `cancellation_details`, gets 400 `invalid_request_error` without a line
+  in `unexpected`, because two cancellers that race send it. Only a cancel that ends a subscription is added to
+  `cancels`, where `journey/paid-finish.spec.ts` waits for exactly one entry of the deleted organization. Each
   line of its call log holds the method, the path, the query keys and the expand paths, and no other query or form
   value.
 

@@ -166,7 +166,15 @@ at once.
 
 Startup (`DashboardStateInitializer`) runs `MigrateAsync`; concurrent replicas apply each migration once through the
 provider's migration lock. Until it succeeds every request answers 503 and the initializer retries with jittered
-backoff from 1 to 30 seconds. `/readyz` reports TerraBase unavailable while a migration is pending.
+backoff from 1 to 30 seconds; `StorageSweeper` and `DeletionReconciler` start their first pass only after it. `/readyz`
+reports TerraBase unavailable while a migration is pending.
+
+`AddDeletionCleanupSettlement` is forward-only. It adds the nullable `acknowledged_at` and `billing_settled_at` columns
+to `deletion_cleanup` in place, but its `Down` cannot run on TerraBase: SQLite drops a column by rebuilding the table,
+and the provider refuses, before any statement runs, to rebuild a table that another table references, as
+`deletion_cleanup_targets` references `deletion_cleanup`. Rolling the code back needs no `Down`: the previous code reads
+and writes `deletion_cleanup` only through EF Core, which names the columns it maps, so it ignores both columns and
+leaves them NULL on the rows it inserts.
 
 ### Expiry
 

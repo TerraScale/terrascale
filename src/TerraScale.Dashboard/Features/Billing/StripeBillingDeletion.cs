@@ -188,7 +188,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return;
             }
 
-            subscription = await client.V1.Subscriptions.CancelAsync(subscription.Id, new(), Idempotent("delete-organization-" + subscription.Id), cancellationToken);
+            subscription = await client.V1.Subscriptions.CancelAsync(subscription.Id, cancellationToken: cancellationToken);
             if (subscription.Id != subscriptionId || subscription.CustomerId != customerId || subscription.Metadata.GetValueOrDefault("organization_id") != organizationId || subscription.Status is not ("canceled" or "incomplete_expired"))
             {
                 throw new IOException("Subscription cancellation is incomplete.");

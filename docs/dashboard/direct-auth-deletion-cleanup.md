@@ -6,11 +6,13 @@ No browser receipt or dashboard deletion operation is required. Only explicit
 account, organization and project proofs authorize new cleanup. A 401, 404 or
 outage never authorizes deletion. Older auth deployments without the outbox route
 are retried; logs contain the exception type, without response bodies or secrets.
-A failing entry is logged once per error with its proof ID, scope, subject ID and
-the Stripe error type and code or the storage error code, never a message text,
-and is counted in `terrascale_deletion_cleanup_failing_entries` on `/metrics`
-until a pass cleans it. The browser deletion logs its own failed attempt to end an
-organization's billing the same way.
+Each dashboard process logs a failing entry when it starts to fail and again
+whenever its error differs from the one of the pass before, with its proof ID,
+scope, subject ID and the Stripe error type and code, the storage error code or
+ts-auth's status and error code, never a message text, and counts it in
+`terrascale_deletion_cleanup_failing_entries` on `/metrics` until a pass cleans
+it. The browser deletion logs its own failed attempt to end an organization's
+billing with the same fields.
 
 Before any cleanup or ACK, the dashboard creates a record keyed by the
 auth erasure ULID in `deletion_cleanup`. It retains the exact proof, and in

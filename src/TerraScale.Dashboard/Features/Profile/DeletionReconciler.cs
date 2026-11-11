@@ -13,7 +13,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     // Local fences guard CAS writers; immutable authorization and enrollment references
     // replay after ACK to repair delayed regional writes.
-    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDbContextFactory<DashboardDbContext> storage, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
+    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
         AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ServiceSloTelemetry telemetry, ILogger<DeletionReconciler> logger) : BackgroundService
     {
         private readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
@@ -23,9 +23,10 @@ namespace TerraScale.Dashboard.Features.Profile
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), clock);
             try
             {
+                await initializer.WhenInitialized.WaitAsync(stoppingToken);
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), clock);
                 do { await RunOnceAsync(stoppingToken); }
                 while (await timer.WaitForNextTickAsync(stoppingToken));
             }
@@ -104,6 +105,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     StripeException { StripeError: { } stripe } => string.Join(' ', stripe.Type, stripe.Code).Trim(),
                     TerraBaseStorageException { ErrorCode: { } storage } => storage,
                     TerraBaseException rpc => rpc.ErrorCode,
+                    AccountAccessException access => string.Join(' ', access.StatusCode, access.Code).Trim(),
                     _ => null,
                 };
                 if (code is not null)

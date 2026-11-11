@@ -71,7 +71,7 @@ const api = [
   ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription)],
   ['DELETE', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [key]) => {
     const subscription = find('sub', key);
-    if (subscription?.status === 'canceled') return { refused: 'canceled subscription', message: 'A canceled subscription can only update its metadata and cancellation_details.' };
+    if (subscription?.status === 'canceled') return { refused: 'A canceled subscription can only update its metadata and cancellation_details.' };
     if (!subscription) return undefined;
     log.cancels.push({ subscription: subscription.id, customer: subscription.customer, organization: subscription.metadata.organization_id });
     return Object.assign(subscription, { status: 'canceled' });
@@ -153,7 +153,7 @@ async function handle(request, response, body) {
   if (invalid) return unexpected(response, request, url, `parameter ${invalid}`, 400, { type: 'invalid_request_error', param: invalid, message: `Invalid ${invalid}.` });
   const found = route?.[2](parameters, route[1].exec(url.pathname).slice(1));
   if (!found) return unexpected(response, request, url, route ? 'no such object' : 'route');
-  if (found.refused) return unexpected(response, request, url, found.refused, 400, { type: 'invalid_request_error', message: found.message });
+  if (found.refused) return reply(response, 400, { error: { type: 'invalid_request_error', message: found.refused } });
   const answer = render(found, parameters);
   if (replay) replays.set(replay, answer);
   const expanded = [...parameters].filter(([key]) => key.startsWith('expand[')).map(([, path]) => path);
