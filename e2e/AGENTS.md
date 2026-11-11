@@ -188,7 +188,10 @@ SHA-256 to its archive's.
   classes of the Stripe.net version `Directory.Packages.props` pins (its `StripeConfiguration.ApiVersion` is the only
   `Stripe-Version` the stand-in accepts). A list route names the filters the dashboard must send (the customer, and
   `status=all` on subscriptions), so a list call without them is unexpected like a call to no route: either gets 404
-  and a line in the stand-in's `unexpected` list, which fails the run when it ends (`support/teardown.ts`). Each
+  and a line in the stand-in's `unexpected` list, which fails the run when it ends (`support/teardown.ts`). A route
+  also checks a parameter whose range Stripe checks, after its idempotency replay as Stripe does: a Checkout
+  Session's `expires_at` outside 30 minutes to 24 hours from now gets Stripe's 400 `invalid_request_error` for that
+  `param` and a line in `unexpected`. Each
   line of its call log holds the method, the path, the query keys and the expand paths, and no other query or form
   value.
 

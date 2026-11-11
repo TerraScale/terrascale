@@ -16,6 +16,18 @@ this same origin. The webhook endpoint is
 `https://dash.terrascale.tech/api/v1/billing/stripe/webhook`. Configure
 one matching enabled endpoint per Stripe account.
 
+## Checkout reservations
+
+Starting a checkout reserves the organization's `billing` row with a new request ID
+and `started_at`. Its Checkout Session expires one hour after `started_at`
+(`StripeBilling.CheckoutLifetime`). A reservation with a saved session is replaced
+only after that hour, or once Stripe confirmed the session expired, so an
+organization never has two sessions open that someone was sent to. Stripe accepts
+an `expires_at` 30 minutes to 24 hours after the session is created, so a
+reservation whose session was never saved creates one only in its first 15 minutes
+(`CheckoutCreationWindow`), which leaves it at least 45 minutes; a later start
+replaces that reservation, whose session nobody was sent to, with a new one.
+
 ## Read-only Stripe audit
 
 Run the app's audit command in an environment where ts-orch has delivered the

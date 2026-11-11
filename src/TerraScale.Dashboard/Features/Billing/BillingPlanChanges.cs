@@ -244,7 +244,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     throw Conflict("Checkout changed concurrently. Reload billing.");
                 }
 
-                current.StartedAt = time.GetUtcNow().AddHours(-1);
+                current.StartedAt = time.GetUtcNow() - CheckoutLifetime;
                 if (current.SubscriptionId.Length == 0)
                 {
                     current.Status = "canceled";

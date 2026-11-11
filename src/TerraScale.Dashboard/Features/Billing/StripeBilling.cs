@@ -15,6 +15,8 @@ namespace TerraScale.Dashboard.Features.Billing
         IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger)
     {
         internal const string Origin = "https://dash.terrascale.tech";
+        internal static readonly TimeSpan CheckoutLifetime = TimeSpan.FromHours(1);
+        private static readonly TimeSpan CheckoutCreationWindow = TimeSpan.FromMinutes(15);
         internal static IReadOnlySet<string> WebhookEvents { get; } = new HashSet<string>(StringComparer.Ordinal)
         {
             "checkout.session.completed", "checkout.session.async_payment_succeeded", "checkout.session.async_payment_failed",
@@ -136,7 +138,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 CancelUrl = Origin + returnPath + (returnPath.Contains('?') ? "&" : "?") + "payment=canceled&plan=" + Uri.EscapeDataString(plan.Key),
                 Mode = plan.PriceCents == 0 ? "setup" : "subscription",
                 BillingAddressCollection = "required",
-                ExpiresAt = binding.StartedAt.UtcDateTime.AddHours(1)
+                ExpiresAt = (binding.StartedAt + CheckoutLifetime).UtcDateTime
             };
             if (plan.PriceCents > 0)
             {
@@ -593,7 +595,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             var endedSubscription = existing.SubscriptionId.Length > 0 && existing.Status is "canceled" or "incomplete_expired";
-            if (!endedSubscription && existing.StartedAt.AddHours(1) > time.GetUtcNow())
+            if (!endedSubscription && existing.StartedAt + (existing.CheckoutId.Length > 0 ? CheckoutLifetime : CheckoutCreationWindow) > time.GetUtcNow())
             {
                 if (existing.Plan != plan || existing.Interval != interval || existing.ReturnPath != returnPath)
                 {
