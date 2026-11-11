@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
@@ -18,56 +17,28 @@ public sealed record TerraBaseScopedKey(string Key, string Id, [property: JsonPr
 
 public sealed partial class TerraBaseSqlClient
 {
-    private const int MoveHomeResends = 5;
-
-    private static readonly TimeSpan MoveHomeTimeout = TimeSpan.FromMinutes(10);
-
     /// <summary>
     /// Creates a database. Optional TTL is 60 to 31,536,000 seconds. Expiry deletes the database, backups and data keys.
-    /// Home region defaults to the region that answers. Pass replica regions or all regions, not both. Requires databases:write.
+    /// Regions default to the region that answers. Pass regions or all regions, not both. Requires databases:write.
     /// </summary>
-    public Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string project, string name, int? ttlSeconds = null, string? homeRegion = null,
-        IReadOnlyList<string>? replicaRegions = null, bool? allRegions = null, CancellationToken cancellationToken = default)
+    public Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string project, string name, int? ttlSeconds = null,
+        IReadOnlyList<string>? regions = null, bool? allRegions = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ValidateDatabaseTtl(ttlSeconds);
-        if (homeRegion is not null) ArgumentException.ThrowIfNullOrEmpty(homeRegion);
-        ValidatePlacement(replicaRegions, allRegions);
+        ValidatePlacement(regions, allRegions);
         return SendDatabaseAsync(project, HttpMethod.Post, DatabasesPath(project),
-            new(name, TtlSeconds: ttlSeconds, HomeRegion: homeRegion, ReplicaRegions: replicaRegions, AllRegions: allRegions), cancellationToken);
+            new(name, TtlSeconds: ttlSeconds, Regions: regions, AllRegions: allRegions), cancellationToken);
     }
 
-    /// <summary>Sets the replica regions (at most 8, turning all-regions mode off) or all-regions mode; pass exactly one. Requires databases:write.</summary>
-    public Task<TerraBaseManagedDatabase> SetDatabasePlacementAsync(string project, string database, IReadOnlyList<string>? replicaRegions = null,
+    /// <summary>Sets the regions that hold the database, or all-regions mode; pass exactly one. Requires databases:write.</summary>
+    public Task<TerraBaseManagedDatabase> SetDatabasePlacementAsync(string project, string database, IReadOnlyList<string>? regions = null,
         bool? allRegions = null, CancellationToken cancellationToken = default)
     {
-        ValidatePlacement(replicaRegions, allRegions);
-        if (replicaRegions is null && allRegions is null) throw new ArgumentException("Pass replicaRegions or allRegions.", nameof(replicaRegions));
+        ValidatePlacement(regions, allRegions);
+        if (regions is null && allRegions is null) throw new ArgumentException("Pass regions or allRegions.", nameof(regions));
         return SendDatabaseAsync(project, HttpMethod.Patch, DatabasePath(project, database),
-            new(ReplicaRegions: replicaRegions, AllRegions: allRegions), cancellationToken);
-    }
-
-    /// <summary>
-    /// Moves the home to one of the database's replica regions and returns when the move is done; the old home becomes a replica.
-    /// Waits up to 10 minutes; the caller's HttpClient.Timeout must allow that. Resends only while TerraBase answers 503 move_unresolved,
-    /// at most 5 times after Retry-After or 1 second. Requires databases:write.
-    /// </summary>
-    public async Task<TerraBaseManagedDatabase> MoveDatabaseHomeAsync(string project, string database, string homeRegion,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(homeRegion);
-        var path = DatabasePath(project, database) + "/move-home";
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                return await SendDatabaseAsync(project, HttpMethod.Post, path, new(HomeRegion: homeRegion), cancellationToken, MoveHomeTimeout).ConfigureAwait(false);
-            }
-            catch (TerraBaseException error) when (error.StatusCode == HttpStatusCode.ServiceUnavailable && error.ErrorCode == "move_unresolved" && attempt < MoveHomeResends)
-            {
-                await Task.Delay(error.RetryAfter ?? TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
-            }
-        }
+            new(Regions: regions, AllRegions: allRegions), cancellationToken);
     }
 
     /// <summary>
@@ -133,11 +104,19 @@ public sealed partial class TerraBaseSqlClient
             json.TerraBaseManagedDatabase, null, cancellationToken, requestTimeout).ConfigureAwait(false)).Value;
     }
 
-    private static void ValidatePlacement(IReadOnlyList<string>? replicaRegions, bool? allRegions)
+    private static void ValidatePlacement(IReadOnlyList<string>? regions, bool? allRegions)
     {
-        if (replicaRegions is not null && allRegions is not null) throw new ArgumentException("Pass replicaRegions or allRegions, not both.", nameof(replicaRegions));
-        if (replicaRegions is not null)
-            foreach (var region in replicaRegions) ArgumentException.ThrowIfNullOrEmpty(region, nameof(replicaRegions));
+        if (regions is not null && allRegions is not null) throw new ArgumentException("Pass regions or allRegions, not both.", nameof(regions));
+        if (regions is not null)
+        {
+            if (regions.Count == 0) throw new ArgumentException("Pass at least one region.", nameof(regions));
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var region in regions)
+            {
+                ArgumentException.ThrowIfNullOrEmpty(region, nameof(regions));
+                if (!seen.Add(region)) throw new ArgumentException("Regions must be distinct.", nameof(regions));
+            }
+        }
     }
 
     private TerraBaseConnection ProjectConnection(string project)
@@ -158,6 +137,6 @@ public sealed partial class TerraBaseSqlClient
 }
 
 internal sealed record TerraBaseAgentDatabaseRequest(string? Name = null, DateTimeOffset? PointInTime = null, int? TtlSeconds = null,
-    string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, bool? AllRegions = null);
+    IReadOnlyList<string>? Regions = null, bool? AllRegions = null);
 
 internal sealed record TerraBaseScopedKeyRequest(string? Project, string Database, string Access, [property: JsonPropertyName("ttl_seconds")] int? TtlSeconds);

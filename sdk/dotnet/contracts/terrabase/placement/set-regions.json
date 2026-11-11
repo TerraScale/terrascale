@@ -1,13 +1,17 @@
 {
   "request": {
-    "method": "POST",
-    "path": "/v1/projects/01JA0000000000000000000001/databases/01JA0000000000000000000004/move-home",
+    "method": "PATCH",
+    "path": "/v1/projects/01JA0000000000000000000001/databases/01JA0000000000000000000004",
     "headers": {
       "Accept": "application/json",
       "Content-Type": "application/json"
     },
     "body": {
-      "homeRegion": "sjc"
+      "regions": [
+        "fra",
+        "gru",
+        "sjc"
+      ]
     }
   },
   "response": {
@@ -19,10 +23,10 @@
       "branchedFrom": null,
       "createdAt": "2026-11-04T12:00:00+00:00",
       "region": "gru",
-      "homeRegion": "sjc",
-      "replicaRegions": [
+      "regions": [
         "fra",
-        "gru"
+        "gru",
+        "sjc"
       ],
       "allRegions": false,
       "expiresAt": null

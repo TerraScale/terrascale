@@ -13,11 +13,12 @@ public sealed record TerraBaseDatabaseRegions(string DatabaseId, string HomeRegi
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Replicas);
 }
 
-/// <summary>Home-observed pull progress of one replica; unknown observations are null.</summary>
-/// <param name="Region">Replica region id.</param>
+/// <summary>Pull progress of one region; unknown observations are null.</summary>
+/// <param name="Region">Region id.</param>
 /// <param name="LagMs">Age of the oldest known commit missing from the last served revision; null without sufficient observations.</param>
 /// <param name="LastPulledAt">When a complete pull was served; null before the first pull.</param>
 /// <param name="LastVerified">Last checksum verification result; null until verification reports.</param>
 /// <param name="Revision">Revision served by the last complete pull; null before the first pull.</param>
+/// <param name="Role">"writer" for the region that commits writes, or null.</param>
 public sealed record TerraBaseReplicaStatus(string Region, double? LagMs = null, DateTimeOffset? LastPulledAt = null,
-    DateTimeOffset? LastVerified = null, string? Revision = null);
+    DateTimeOffset? LastVerified = null, string? Revision = null, string? Role = null);
