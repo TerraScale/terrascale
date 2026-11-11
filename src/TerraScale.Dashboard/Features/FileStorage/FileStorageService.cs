@@ -29,6 +29,14 @@ namespace TerraScale.Dashboard.Features.FileStorage
             return new(buckets, files, selected, bucketAfter);
         }
 
+        public async Task<FileStorageListing> ListBucketsAsync(AccountContext context, string? bucketAfter, CancellationToken token)
+        {
+            var (client, project) = await ProjectAsync(context, false, token);
+            try { return new(await client.ListFileBucketsAsync(project, bucketAfter), null, null, bucketAfter); }
+            catch (TerraBaseNotFoundException error) when (error.ErrorCode == "unknown_database" && bucketAfter is null)
+            { return new(new([], null), null, null, null); }
+        }
+
         private static void ValidBucket(string bucket)
         {
             if (!TerraScaleIds.IsValid(bucket))
@@ -37,16 +45,23 @@ namespace TerraScale.Dashboard.Features.FileStorage
             }
         }
 
-        public async Task CreateBucketAsync(AccountContext context, string name, TerraBaseFileRules rules, CancellationToken token)
+        public async Task<TerraBaseFileBucket> CreateBucketAsync(AccountContext context, string name, TerraBaseFileRules rules, CancellationToken token)
         {
             var (client, project) = await ProjectAsync(context, true, token);
-            _ = await client.CreateFileBucketAsync(project, name.Trim(), rules);
+            return await client.CreateFileBucketAsync(project, name.Trim(), rules);
         }
 
         public async Task SetRulesAsync(AccountContext context, string bucket, TerraBaseFileRules rules, CancellationToken token)
         {
             var (client, project) = await ProjectAsync(context, true, token);
             _ = await client.SetFileBucketRulesAsync(project, bucket, rules);
+        }
+
+        public async Task DeleteBucketAsync(AccountContext context, string bucket, CancellationToken token)
+        {
+            var (client, project) = await ProjectAsync(context, true, token);
+            ValidBucket(bucket);
+            await client.DeleteFileBucketAsync(project, bucket);
         }
 
         public async Task DeleteBucketAsync(AccountContext context, string bucket, string confirmation, CancellationToken token)

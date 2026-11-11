@@ -6,7 +6,10 @@ using TerraScale.TerraBase.Contracts.FileStorage;
 
 namespace TerraScale.Dashboard.Features.FileStorage
 {
-    public sealed record FileStoragePage(ShellModel Shell, FileStorageListing? Listing, string? Error = null);
+    public sealed record FileStoragePage(ShellModel Shell, FileStorageListing? Listing, DateTimeOffset Now, string? Error = null, FileStorageDraft? Draft = null, bool Settings = false);
+    public sealed record FileStorageDraft(string Dialog, string Error, string Name, TerraBaseFileRules Rules);
+    public sealed record FileConfirmDialogModel(string Id, string Action, string Title, string Consequence, string Button, string CsrfToken,
+        IReadOnlyDictionary<string, string> Fields, string? Error = null);
     public sealed record FileRulesFormModel(string Prefix, TerraBaseFileRules Rules, bool Existing = false);
 
     public static class FileStorageEndpoints
@@ -47,9 +50,9 @@ namespace TerraScale.Dashboard.Features.FileStorage
             {
                 switch (operation)
                 {
-                    case "bucket": await files.CreateBucketAsync(context, form["name"].ToString(), Rules(form), http.RequestAborted); break;
-                    case "rules": await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted); break;
-                    case "delete-bucket": await files.DeleteBucketAsync(context, bucket, form["confirmName"].ToString(), http.RequestAborted); bucket = ""; break;
+                    case "bucket": bucket = (await files.CreateBucketAsync(context, form["name"].ToString(), Rules(form), http.RequestAborted)).Id; break;
+                    case "delete-bucket": await files.DeleteBucketAsync(context, bucket, http.RequestAborted); bucket = ""; break;
+                    case "rules": await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted); return HttpRedirects.SeeOther(BucketPath(bucket) + "&tab=settings");
                     case "upload":
                         using (var metadata = JsonDocument.Parse(form["metadata"].ToString()))
                         {
@@ -69,22 +72,32 @@ namespace TerraScale.Dashboard.Features.FileStorage
                         http.Response.Headers.CacheControl = "no-store";
                         return Results.Empty;
                 }
-                return HttpRedirects.SeeOther("/storage" + (bucket.Length == 0 ? "" : "?bucket=" + Uri.EscapeDataString(bucket)));
+                return HttpRedirects.SeeOther(bucket.Length == 0 ? "/storage" : BucketPath(bucket));
             }
             catch (Exception error) when (Known(error, http))
             {
                 var status = Status(error);
+                var message = Message(error, operation);
                 if (operation is "upload" or "complete")
                 {
-                    return Results.Problem(Message(error), statusCode: status);
+                    return Results.Problem(message, statusCode: status);
                 }
 
                 http.Response.StatusCode = status;
-                return await PageAsync(http, context, files, Message(error), bucket);
+                FileStorageDraft? draft = operation switch
+                {
+                    "bucket" => new("create-bucket", message, form["name"].ToString(), Rules(form)),
+                    "rules" => new("", message, "", Rules(form)),
+                    "delete-bucket" => new("delete-bucket", message, "", Rules(form)),
+                    "delete" => new("delete-file-" + file, message, "", Rules(form)),
+                    _ => null
+                };
+                return await PageAsync(http, context, files, draft is null ? message : null, draft, operation is "bucket" ? null : Empty(bucket), operation is "rules" or "delete-bucket");
             }
         }
 
-        private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, FileStorageService files, string? error = null, string? bucket = null)
+        private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, FileStorageService files, string? error = null,
+            FileStorageDraft? draft = null, string? bucket = null, bool? settings = null)
         {
             FileStorageListing? listing = null;
             var bucketAfter = http.Request.Query["bucketAfter"].ToString();
@@ -93,11 +106,23 @@ namespace TerraScale.Dashboard.Features.FileStorage
                 bucketAfter = (await http.Request.ReadFormAsync(http.RequestAborted))["bucketAfter"].ToString();
             }
 
-            try { listing = await files.ListAsync(context, Empty(bucket ?? http.Request.Query["bucket"].ToString()), Empty(http.Request.Query["after"].ToString()), Empty(bucketAfter), http.RequestAborted); }
-            catch (Exception failure) when (Known(failure, http)) { error ??= Message(failure); http.Response.StatusCode = Status(failure); }
-            var page = FileStorageView.Create(new(ShellModel.For(http, context, "File storage"), listing, error));
+            var selected = http.Request.HasFormContentType ? bucket : Empty(http.Request.Query["bucket"].ToString());
+            try
+            {
+                listing = selected is null
+                    ? await files.ListBucketsAsync(context, Empty(bucketAfter), http.RequestAborted)
+                    : await files.ListAsync(context, selected, Empty(http.Request.Query["after"].ToString()), Empty(bucketAfter), http.RequestAborted);
+            }
+            catch (Exception failure) when (Known(failure, http)) { error ??= Message(failure, "list"); http.Response.StatusCode = Status(failure); }
+            var page = FileStorageView.Create(new(ShellModel.For(http, context, "File storage"), listing, DateTimeOffset.UtcNow, error, draft,
+                settings ?? http.Request.Query["tab"] == "settings"));
             page.StatusCode = http.Response.StatusCode;
             return page;
+        }
+
+        internal static string BucketPath(string bucket)
+        {
+            return "/storage?bucket=" + Uri.EscapeDataString(bucket);
         }
         private static string? Empty(string value)
         {
@@ -134,16 +159,20 @@ namespace TerraScale.Dashboard.Features.FileStorage
             };
         }
 
-        private static string Message(Exception error)
+        private static string Message(Exception error, string operation)
         {
-            return error is AccountAccessException { StatusCode: 422 } denied ? denied.Message : Status(error) switch
+            return error is AccountAccessException { StatusCode: 422 } denied ? denied.Message : (Status(error), operation) switch
             {
-                401 => "Sign in again to access project files.",
-                403 => "Your role cannot perform this file operation.",
-                404 => "The bucket or file is unavailable in this project.",
-                409 => "The file is incomplete or the bucket still contains files. Wait for cleanup before deleting a bucket.",
-                429 => "The shared database and file storage allowance is full.",
-                400 or 422 => "Check the bucket name, access rules, file metadata and upload details.",
+                (401, _) => "Sign in again to access project files.",
+                (403, _) => "Your role cannot perform this file operation.",
+                (404, _) => "The bucket or file is unavailable in this project.",
+                (409, "bucket") => "This project already has 100 buckets.",
+                (409, "delete-bucket") => "The bucket still has files, or files deleted in the last 6 minutes. Try again later.",
+                (409, _) => "The file is incomplete. Reload the bucket and try again.",
+                (429, _) => "The shared database and file storage allowance is full.",
+                (400 or 422, "bucket") => "Check the bucket name and access rules. Owner access needs an owner field.",
+                (400 or 422, "rules") => "Check the access rules. Owner access needs an owner field.",
+                (400 or 422, _) => "Check the file and its metadata.",
                 _ => "File storage is temporarily unavailable. Try again."
             };
         }

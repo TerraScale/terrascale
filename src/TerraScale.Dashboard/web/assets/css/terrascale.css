@@ -19,6 +19,7 @@
 /* Feature styles. */
 @import "../../../Features/Home/home.css" layer(features);
 @import "../../../Features/Databases/databases.css" layer(features);
+@import "../../../Features/FileStorage/files.css" layer(features);
 @import "../../../Features/Data/data.css" layer(features);
 @import "../../../Features/Organizations/access.css" layer(features);
 @import "../../../Features/ApiKeys/api-keys.css" layer(features);

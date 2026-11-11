@@ -8,6 +8,7 @@ const chartWindows = new Set(['range', 'reads', 'writes', 'storage', 'latency'])
 
 const journeyPages: readonly PagePattern[] = [
   { path: /^\/onboarding$/ },
+  { path: /^\/storage$/, query: { bucket: /^[0-9A-HJKMNP-TV-Z]{26}$/, tab: /^(settings)?$/ } },
   { path: /^\/account-deleted$/ },
   { path: /^\/profile$/, query: { tab: /^access-tokens$/, status: /^token-revoked$/ } },
   { path: /^\/profile$/, query: { tab: /^profile$/, status: /^profile-saved$/ } },

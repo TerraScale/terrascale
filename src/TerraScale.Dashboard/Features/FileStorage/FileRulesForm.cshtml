@@ -1,12 +1,13 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.FileRulesFormModel>
-<div class="ts-field"><label class="ts-label" for="@(Model.Prefix)-owner">Owner field</label><input class="ts-input" id="@(Model.Prefix)-owner" name="owner" value="@Model.Rules.Owner" placeholder="/userId" readonly="@Model.Existing" /></div>
-<fieldset class="ts-field ts-stack-sm"><legend class="ts-label">Read permissions</legend>
-    <label><input type="checkbox" name="readOwner" value="1" checked="@Model.Rules.Read.Owner" /> File owner</label>
-    <label><input type="checkbox" name="readPublic" value="1" checked="@Model.Rules.Read.Public" /> All authenticated end users</label>
-    <label class="ts-label" for="@(Model.Prefix)-read-roles">Read roles</label><input class="ts-input" id="@(Model.Prefix)-read-roles" name="readRoles" value="@string.Join(", ", Model.Rules.Read.Roles)" placeholder="editor, reviewer" />
-</fieldset>
-<fieldset class="ts-field ts-stack-sm"><legend class="ts-label">Write permissions</legend>
-    <label><input type="checkbox" name="writeOwner" value="1" checked="@Model.Rules.Write.Owner" /> File owner</label>
-    <label><input type="checkbox" name="writePublic" value="1" checked="@Model.Rules.Write.Public" /> All authenticated end users</label>
-    <label class="ts-label" for="@(Model.Prefix)-write-roles">Write roles</label><input class="ts-input" id="@(Model.Prefix)-write-roles" name="writeRoles" value="@string.Join(", ", Model.Rules.Write.Roles)" placeholder="editor" />
-</fieldset>
+<div class="ts-field"><label class="ts-label" for="@(Model.Prefix)-owner">Owner field</label><input class="ts-input ts-mono" id="@(Model.Prefix)-owner" name="owner" value="@Model.Rules.Owner" placeholder="/userId" maxlength="4096" pattern="(\/[^\/]+){1,16}" title="A JSON Pointer into the file metadata, such as /userId." autocomplete="off" spellcheck="false" readonly="@Model.Existing" /></div>
+<div class="ts-files-rules">
+    @foreach (var (key, legend, policy) in new[] { ("read", "Read access", Model.Rules.Read), ("write", "Write access", Model.Rules.Write) })
+    {
+        <fieldset class="ts-files-rule">
+            <legend class="ts-label">@legend</legend>
+            <label class="ts-check"><input type="checkbox" name="@(key + "Owner")" value="1" checked="@policy.Owner" /><span>File owner</span></label>
+            <label class="ts-check"><input type="checkbox" name="@(key + "Public")" value="1" checked="@policy.Public" /><span>All authenticated end users</span></label>
+            <div class="ts-field"><label class="ts-label" for="@(Model.Prefix + "-" + key + "-roles")">Roles</label><input class="ts-input" id="@(Model.Prefix + "-" + key + "-roles")" name="@(key + "Roles")" value="@string.Join(", ", policy.Roles)" placeholder="@(key == "read" ? "editor, reviewer" : "editor")" maxlength="4160" pattern="[^\x00-\x1F\x7F]*" title="Comma-separated role names." autocomplete="off" spellcheck="false" /></div>
+        </fieldset>
+    }
+</div>
