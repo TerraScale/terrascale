@@ -28,7 +28,7 @@ internal sealed partial class EngineManagementService
         string organizationId, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
         string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null, long? ttlSeconds = null)
     {
-        var allowance = sourceId is not null || (placement?.Home ?? options.Region) == options.Region
+        var allowance = !PlatformDatabases.IsPlatform(organizationId) && (sourceId is not null || (placement?.Home ?? options.Region) == options.Region)
             ? await AllowanceAsync(organizationId, cancellationToken).ConfigureAwait(false)
             : null;
 
@@ -299,7 +299,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask<Conflict?> DatabaseLimitAsync(IStorageTransaction transaction, TenantContext tenant, AllowanceCheck allowance, CancellationToken cancellationToken)
     {
         var allowed = allowance.Limit(tenant.Plan);
-        if (allowed == long.MaxValue || PlatformDatabases.IsPlatform(tenant.OrganizationId))
+        if (allowed == long.MaxValue)
         {
             return null;
         }
