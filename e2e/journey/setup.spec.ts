@@ -90,10 +90,6 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   for (const scope of scopes) await page.locator(`#create-key input[name="scopes"][value="${scope}"]`).check();
   await audit.check('new API key dialog');
   await page.locator('#create-key form').getByRole('button', { name: 'Create key', exact: true }).click();
-  await page.waitForURL((url) => url.origin === auth && url.pathname.startsWith('/ui/terrascale/step-up/'));
-  await audit.check('API key confirmation');
-  await enterSecret(page.locator('input[type=password]'), password);
-  await page.locator('form button[type=submit]').first().click();
   const secret = page.locator('.ts-apikeys-secret-value');
   await expect(secret).toBeVisible();
   const apiKey = (await secret.innerText()).trim();
