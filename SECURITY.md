@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report suspected vulnerabilities privately using GitHub's advisory form:
+Report suspected vulnerabilities privately to [security@terrascale.tech](mailto:security@terrascale.tech) or using GitHub's advisory form:
 https://github.com/TerraScale/terrascale/security/advisories/new
 
 Do not disclose vulnerabilities in public issues, pull requests, or discussions.
