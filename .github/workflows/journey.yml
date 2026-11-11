@@ -83,8 +83,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: desktop
-            projects: --project pages-desktop
+          - shard: desktop and paid
+            projects: --project pages-desktop --project paid-invitation
           - shard: phone and flows
             projects: --project pages-mobile --project hosted --project interactions --project invitation
     runs-on: ubuntu-24.04
