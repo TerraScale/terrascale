@@ -7,16 +7,10 @@
     "delete_account",
     "delete_organization",
     "start_ownership_transfer",
-    "create_organization_api_key",
-    "create_project_api_key",
     "rotate_organization_api_key",
     "rotate_project_api_key",
     "create_project_client"
   ],
-  "proof_required": {
-    "create_organization_api_key": false,
-    "create_project_api_key": false
-  },
   "qualification": "Source-inspected pending producer plus synthetic HTTP contracts only; independent security review, producer merge, installed-package and live-service qualification remain separate.",
   "producer_revision": "5cb86e674c77d0142e1263119b6dc1c641a8ca3c",
   "pull_request": "https://github.com/TerraScale/terrascale/pull/767"

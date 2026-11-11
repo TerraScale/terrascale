@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `create_api_key` on the client and the async client no longer takes
+  `step_up_proof`: ts-auth creates an API key without a confirmation proof and
+  issues no proof for key creation. A call that still passes it raises
+  `TypeError` before any request.
 - `execute(Statement(...), args)`, and `query` called that way, on the client,
   the async client and both SQL sessions raise `TypeError` before any request:
   a `Statement` carries its own arguments. Earlier versions dropped `args`.

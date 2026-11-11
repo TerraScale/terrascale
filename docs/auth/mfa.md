@@ -10,9 +10,8 @@ the ts CLI happens on ts-auth's hosted pages (HA1).
 
 Adding a factor is a sensitive credential change: hosted TOTP enrolment and
 passkey enrollment both require a recent sign-in (15 and 10 minutes
-respectively; an older session signs in again first), and a future headless
-enrolment API would consume a purpose-bound `enroll_totp` step-up proof. A
-stolen session alone cannot add a factor that survives sign-out.
+respectively; an older session signs in again first). A stolen session alone
+cannot add a factor that survives sign-out.
 
 ## Credential state
 

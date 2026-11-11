@@ -468,7 +468,6 @@
         503
       ],
       "security": "platform_user_sign_in_bearer",
-      "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "create_api_key", "audience": "ts-auth", "required": false, "provenance": "step-up-provenance.json"},
       "request_media_type": "application/json",
       "response_media_type": "application/json",
       "pagination": null,
@@ -578,7 +577,6 @@
         503
       ],
       "security": "platform_user_sign_in_bearer",
-      "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "create_api_key", "audience": "ts-auth", "required": false, "provenance": "step-up-provenance.json"},
       "request_media_type": "application/json",
       "response_media_type": "application/json",
       "pagination": null,
