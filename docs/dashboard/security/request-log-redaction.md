@@ -22,6 +22,13 @@ rendered without it: <type> at <frames>`, with the same frames and no message.
 New logging calls must follow the same rule: never log arbitrary exception objects,
 messages, request values or user input. Route templates must remain static metadata.
 
+Every request except the readiness probes (`/readyz`, `/health/ready`) writes one
+Information line from the dashboard's own code, EventId 4 of the `ServerTiming`
+category: `Page timing <method> <route template or [unmatched]> <status>: <timing>`.
+The timing starts with `app;dur=<total milliseconds>` and lists each upstream's
+calls and time when the request made any. Static files carry `[unmatched]`. The
+framework's request start and finish lines and per-step lines stay off.
+
 This change affects server diagnostics only; running-app screenshots and videos
 are not applicable because no visual flow changes. CSRF cookie `__Host-` prefix
 hardening remains a separate change; existing CSRF behavior is unchanged.

@@ -167,13 +167,7 @@ namespace TerraScale.Dashboard.Platform.Http
             try { await next(); }
             finally
             {
-                bool called;
-                lock (timing.gate)
-                {
-                    called = timing.upstreams.Count > 0;
-                }
-
-                if (context.GetEndpoint() is not null && called && logger.IsEnabled(LogLevel.Information))
+                if (!timing.probe && logger.IsEnabled(LogLevel.Information))
                 {
                     logger.PageTiming(SafeHttpLogging.Method(context.Request.Method),
                         (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", context.Response.StatusCode, timing.Header());
