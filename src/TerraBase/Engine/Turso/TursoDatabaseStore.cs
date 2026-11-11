@@ -855,17 +855,6 @@ internal sealed partial class TursoDatabaseStore(
 
     internal int Statistics => Volatile.Read(ref _statistics);
 
-    internal int QueuedWrites
-    {
-        get
-        {
-            lock (_queueGate)
-            {
-                return _queued.Count;
-            }
-        }
-    }
-
     public async ValueTask<(T Result, CommitResult Commit)> WriteAsync<T>(
         Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)

@@ -37,8 +37,6 @@ public sealed record TerraBaseOptions
         StringComparer.Ordinal,
         ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "query-budget-seconds", "storage-threads", "nats-token", .. BackupSettings.Keys, .. FileStorageSettings.Keys, .. ShapeStorageSettings.Keys]);
 
-    public static IReadOnlySet<string> SettingNames => Keys;
-
     private static readonly FrozenSet<string> HostArguments = FrozenSet.Create(
         StringComparer.Ordinal, "environment", "applicationName", "contentRoot");
 

@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Platform.Observability
     {
         private static readonly object OutcomeKey = new();
         private static readonly AsyncLocal<Outcome?> Current = new();
-        private static readonly string[] UntrackedPaths = ["/health", "/healthz", "/readyz", "/metrics", "/internal", "/__test", "/css", "/js", "/fonts", "/brand", "/flags", "/favicon.ico"];
+        private static readonly string[] UntrackedPaths = ["/health", "/healthz", "/readyz", "/metrics", "/internal", "/css", "/js", "/fonts", "/brand", "/flags", "/favicon.ico"];
         private sealed class Outcome { public int Bad; }
         private sealed class ObservedLifetime(IHttpRequestLifetimeFeature inner, Outcome outcome) : IHttpRequestLifetimeFeature
         {

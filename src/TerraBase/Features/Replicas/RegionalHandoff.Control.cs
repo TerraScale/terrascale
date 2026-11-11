@@ -19,8 +19,6 @@ internal sealed partial class RegionalHandoff
     private static readonly TimeSpan ActivationBudget = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AttemptBudget = TimeSpan.FromSeconds(2);
 
-    internal static readonly TimeSpan RecoveryBound = TimeSpan.FromSeconds(30);
-
     private async Task RenewWriterAsync(INatsKVStore kv, NatsKVEntry<byte[]> entry, RegionalOwner owner, CancellationToken token)
     {
         if (_writerLease is not { } writer)

@@ -2,29 +2,8 @@ using TerraBase.Features.Shapes;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed partial class TursoStorageTransaction : ICdcRetentionTransaction
+internal sealed partial class TursoStorageTransaction
 {
-    public async ValueTask SetCdcConsumerFloorAsync(string consumer, long? position, CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(consumer);
-        if (consumer.Length > 64 || consumer.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('-' or ':' or '_')))
-        {
-            throw new ArgumentException("a CDC consumer has a bounded internal name", nameof(consumer));
-        }
-
-        if (position is < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(position));
-        }
-
-        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
-        await RunAsync(() =>
-        {
-            SetCdcConsumerFloor(consumer, position);
-            return true;
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
-    }
-
     private void SetCdcConsumerFloor(string consumer, long? position)
     {
         var key = "~cdc:" + consumer;

@@ -28,35 +28,6 @@ public readonly record struct HlcTimestamp(long PhysicalMilliseconds, uint Logic
         _ = Encoding.ASCII.GetBytes(NodeId, node);
     }
 
-    public static HlcTimestamp ReadFrom(ReadOnlySpan<byte> source)
-    {
-        if (source.Length != EncodedLength)
-        {
-            throw new InvalidDataException("the HLC encoding must contain exactly 75 bytes");
-        }
-
-        var node = source[12..];
-        var padding = node.IndexOf((byte)0);
-        if (padding >= 0)
-        {
-            if (node[padding..].IndexOfAnyExcept((byte)0) >= 0)
-            {
-                throw new InvalidDataException("the HLC node padding is invalid");
-            }
-
-            node = node[..padding];
-        }
-
-        var physical = BinaryPrimitives.ReadInt64BigEndian(source);
-        var nodeId = Encoding.ASCII.GetString(node);
-        if (physical < 0 || !TerraBaseOptions.IsMachineId(nodeId))
-        {
-            throw new InvalidDataException("the encoded HLC is invalid");
-        }
-
-        return new HlcTimestamp(physical, BinaryPrimitives.ReadUInt32BigEndian(source[8..]), nodeId);
-    }
-
     public int CompareTo(HlcTimestamp other)
     {
         var physical = PhysicalMilliseconds.CompareTo(other.PhysicalMilliseconds);
