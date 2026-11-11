@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createTerraBaseClientFromEnvironment, generateId, isValidId } from '../../../sdk/js/src/index.js';
 
@@ -145,6 +146,7 @@ const operations = {
   },
   async 'agent.scoped_key'(op) {
     const scoped = await client.createScopedKey({ project, database: state.agent.id, access: op.access, ttlSeconds: op.ttlSeconds });
+    writeFileSync(join(process.env.E2E_SECRETS, 'scoped-key-js'), scoped.key, { mode: 0o600 });
     const narrow = createTerraBaseClientFromEnvironment({ apiKey: scoped.key });
     await narrow.database(state.agent.id).execute(op.sql);
     same(await status(() => narrow.database(fill(op.outside)).execute(op.sql)), op.outsideStatus, 'outside its database');

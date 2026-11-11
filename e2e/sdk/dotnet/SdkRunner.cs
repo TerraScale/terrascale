@@ -1,11 +1,14 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
+
+[assembly: SupportedOSPlatform("linux")]
 
 namespace TerraScale.E2E;
 
@@ -267,6 +270,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
     private async Task ScopedKeyAsync(JsonElement op, CancellationToken cancellationToken)
     {
         var scoped = await client.CreateScopedKeyAsync(Agent.Id, Text(op, "access"), project, op.GetProperty("ttlSeconds").GetInt32(), cancellationToken);
+        RegisterSecret("scoped-key-dotnet", scoped.Key);
         using var http = new HttpClient(TerraBaseHttp.CreateHandler());
         var narrow = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = scoped.Key });
         await narrow.Database(project, Agent.Id).ExecuteAsync(Text(op, "sql"), cancellationToken: cancellationToken);
@@ -274,6 +278,13 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         Same(outside, Canonical(op.GetProperty("outsideStatus")), "outside its database");
         var mint = await StatusAsync(() => narrow.CreateScopedKeyAsync(Agent.Id, "read", project, cancellationToken: cancellationToken));
         Same(mint, Canonical(op.GetProperty("mintStatus")), "minting with a scoped key");
+    }
+
+    private static void RegisterSecret(string name, string value)
+    {
+        var folder = Environment.GetEnvironmentVariable("E2E_SECRETS") ?? throw new InvalidOperationException("E2E_SECRETS names the folder of generated secrets.");
+        using var file = new FileStream(Path.Combine(folder, name), new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite });
+        file.Write(Encoding.UTF8.GetBytes(value));
     }
 
     private async Task DeleteAsync(JsonElement op, CancellationToken cancellationToken)

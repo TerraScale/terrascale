@@ -41,5 +41,13 @@ two shards; a teardown whose setup failed fails once with "setup did not finish"
 - Step-ups: ts-auth issues at most 10 per user in 15 minutes (`StepUpProofs.cs:59-61`); a run spends 1 for the
   desktop owner (account deletion), 6 for the phone-and-flows owner (the access token in `interactions`, 4 in `hosted`,
   account deletion) and none for any other user; API keys need none.
-- Tests that type a password or code or show a key run without trace and video; `env/scrub.py` removes any artifact
-  file that still holds a generated secret. Never print a secret.
+- Secrets: every value the run generates is registered when it exists, through `saveSecret` in `support/state.ts`
+  (passwords, API keys, the access token, every cookie of every context; the runners write their scoped keys to
+  `secrets.d`) or in `$E2E_STATE/secrets` (the service keys of `env/up.sh`), and is masked in the job log. Before
+  anything uploads, `env/scrub.py` replaces each value, raw, URL-encoded and JSON-escaped, with `[redacted]` in every
+  file, inside zip archives and inside the report's embedded zip, then checks none is left; a file it cannot rewrite
+  is deleted and named, and the step fails, so nothing uploads. Text is redacted; pixels are not scanned: screenshots
+  mask the secret fields by selector and videos are off. The 6-digit codes are not redacted (single use, under 16
+  characters). Every secret of a PR run is generated in that run and dies with the VM: `ci.yml` passes no secret to
+  `journey.yml`, which grants `contents: read` only, checks out with `persist-credentials: false` and uses no
+  repository secret. Never print a secret.

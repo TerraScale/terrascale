@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import { browserHome, dash, desktop, mobile, sessionFile } from './support/stack';
 
-const secretFree = { trace: 'off', video: 'off' } as const;
+const secretFree = { trace: 'off' } as const;
 
 export default defineConfig({
   testDir: '.',
@@ -20,7 +20,7 @@ export default defineConfig({
     viewport: desktop,
     screenshot: 'off',
     trace: { mode: 'retain-on-failure', screenshots: false, snapshots: true, sources: true },
-    video: 'retain-on-failure',
+    video: 'off',
     launchOptions: { env: { ...process.env, HOME: browserHome } },
   },
   projects: [

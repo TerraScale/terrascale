@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { e2eRoot, stateDir } from './stack';
-import { journey } from './state';
+import { journey, mask } from './state';
 
 export const sdks = ['dotnet', 'go', 'python', 'js', 'rust'] as const;
 export type Sdk = (typeof sdks)[number];
@@ -36,6 +36,7 @@ async function paced<T>(group: Operation['group'], run: () => Promise<T>): Promi
 const operationsFile = join(e2eRoot, 'sdk', 'operations.json');
 const operations = (JSON.parse(readFileSync(operationsFile, 'utf8')) as { operations: Operation[] }).operations;
 const built = process.env.E2E_SDK_BUILD ?? join(stateDir, 'sdk');
+const secretsDir = join(stateDir, 'secrets.d');
 
 const commands: Record<Sdk, [string, string[]]> = {
   dotnet: ['dotnet', [join(built, 'dotnet', 'Runner.dll')]],
@@ -60,6 +61,7 @@ function execute(sdk: Sdk, env: NodeJS.ProcessEnv): Promise<{ code: number | nul
 
 export async function runOperations(sdk: Sdk, group: 'a' | 'b'): Promise<void> {
   const current = journey();
+  mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
   const planned = operations.filter((op) => op.group === group);
   for (const op of planned.filter((candidate) => candidate.needs)) {
     test.info().annotations.push({ type: 'not run', description: `${op.id} (${op.title}): ${op.needs}` });
@@ -72,8 +74,11 @@ export async function runOperations(sdk: Sdk, group: 'a' | 'b'): Promise<void> {
       E2E_GROUP: group,
       E2E_RUN_ID: `${current.runId}${Date.now().toString(36)}`,
       E2E_OPERATIONS: operationsFile,
+      E2E_SECRETS: secretsDir,
     }),
   );
+  const scoped = join(secretsDir, `scoped-key-${sdk}`);
+  if (existsSync(scoped)) mask(readFileSync(scoped, 'utf8'));
   await test.info().attach(`${sdk} group ${group}`, { body: `${result.stdout}\n${result.stderr}`, contentType: 'text/plain' });
   const lines = result.stdout.split('\n').filter((line) => line.startsWith('{')).map((line) => JSON.parse(line) as Line);
   for (const line of lines) test.info().annotations.push({ type: line.ok ? 'passed' : 'failed', description: `${line.id} ${line.ms} ms${line.error ? `: ${line.error}` : ''}` });

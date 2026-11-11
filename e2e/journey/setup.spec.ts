@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { cloudflareSendCount, nextMail } from '../support/inbox';
-import { ownerSession, saveJourney } from '../support/state';
+import { saveJourney, saveSecret, saveSession } from '../support/state';
 import { shell } from '../support/shell';
 import { auth, dash } from '../support/stack';
 import { enterSecret } from '../support/secret';
@@ -18,6 +18,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   const runId = randomBytes(4).toString('hex');
   const email = `journey-${runId}@example.com`;
   const password = randomBytes(24).toString('base64url');
+  saveSecret('password', password);
   const displayName = `Journey ${runId}`;
   const projectName = `Journey project ${runId}`;
   const databaseName = `journey-${runId}`;
@@ -99,6 +100,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   const secret = page.locator('.ts-apikeys-secret-value');
   await expect(secret).toBeVisible();
   const apiKey = (await secret.innerText()).trim();
+  saveSecret('api-key', apiKey);
   expect(apiKeyFormat.test(apiKey), 'the API key secret has the canonical format').toBe(true);
   await audit.check('API key created');
   await page.reload();
@@ -109,7 +111,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await shell(page, identity);
   await audit.check('API keys after reload');
 
-  await context.storageState({ path: ownerSession() });
+  await saveSession(context);
   saveJourney({
     runId,
     email,

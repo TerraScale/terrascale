@@ -5,6 +5,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from terrascale import Statement, TerraScale, is_valid_id, new_id
 
@@ -247,6 +248,9 @@ def clear_ttl(op):
 def scoped_key(op):
     agent = state["agent"].id
     scoped = client.create_scoped_key(agent, op["access"], ttl_seconds=op["ttlSeconds"])
+    secret = Path(os.environ["E2E_SECRETS"], "scoped-key-python")
+    secret.touch(mode=0o600)
+    secret.write_text(scoped.key, encoding="utf-8")
     narrow = TerraScale(api_key=scoped.key, project=project)
     narrow.database(agent).execute(op["sql"])
     same(

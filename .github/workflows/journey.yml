@@ -218,18 +218,19 @@ jobs:
       - name: Stop the stack
         if: always()
         run: bash e2e/env/down.sh
-      - name: Remove files that hold a generated secret
+      - id: scrub
+        name: Redact every generated secret from the files that upload
         if: always()
         run: python3 e2e/env/scrub.py "$E2E_STATE" e2e/playwright-report e2e/test-results "$E2E_STATE/logs"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
+        if: always() && steps.scrub.outcome == 'success'
         with:
           name: journey-report-${{ strategy.job-index }}
           path: e2e/playwright-report
           retention-days: 7
           if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: failure() || cancelled()
+        if: (failure() || cancelled()) && steps.scrub.outcome == 'success'
         with:
           name: journey-evidence-${{ strategy.job-index }}
           path: |

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -364,6 +365,9 @@ func (r *runner) do(op operation) error {
 		ttl := op.TTLSeconds
 		scoped, err := r.client.CreateScopedKey(ctx, v1.ScopedKeyRequest{Project: r.project, Database: r.agent.ID, Access: v1.ScopedKeyAccess(op.Access), TTLSeconds: &ttl})
 		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(os.Getenv("E2E_SECRETS"), "scoped-key-go"), []byte(scoped.Key), 0o600); err != nil {
 			return err
 		}
 		narrow, err := newClient(scoped.Key)

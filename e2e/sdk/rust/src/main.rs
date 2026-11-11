@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -450,6 +452,15 @@ impl Runner {
                     ttl_seconds: op["ttlSeconds"].as_u64(),
                 };
                 let scoped = self.client.create_scoped_key(&options).await.map_err(e)?;
+                let secrets = std::env::var("E2E_SECRETS").map_err(|error| error.to_string())?;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(std::path::Path::new(&secrets).join("scoped-key-rust"))
+                    .and_then(|mut file| file.write_all(scoped.key.as_bytes()))
+                    .map_err(|error| error.to_string())?;
                 let narrow = Client::for_project_api_key(self.project.clone(), scoped.key.clone())
                     .add_root_ca_pem(self.ca.clone())
                     .build()

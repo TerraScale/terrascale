@@ -3,7 +3,7 @@ import { Audit, auditedContext, expect } from './audit';
 import { confirmWithPassword, onHosted } from './hosted';
 import { enterSecret } from './secret';
 import { auth, dash, desktop } from './stack';
-import { journey } from './state';
+import { journey, saveCookies } from './state';
 
 export async function deleteAccount(page: Page, audit: Audit, browser: Browser, info: TestInfo): Promise<void> {
   const current = journey();
@@ -34,5 +34,6 @@ export async function deleteAccount(page: Page, audit: Audit, browser: Browser, 
   expect(new URL(again.url()).origin, 'the deleted account stays on the hosted sign-in').toBe(auth);
   await refusal.check('sign-in refused');
   await refusal.finish();
+  await saveCookies(fresh);
   await fresh.close();
 }

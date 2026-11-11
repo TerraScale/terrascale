@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { onHosted, signInWithPassword, signUp } from '../support/hosted';
 import { auth, dash, desktop, mobile } from '../support/stack';
-import { journey } from '../support/state';
+import { journey, saveCookies, saveSecret } from '../support/state';
 
 const sizes = [
   { label: '1440x900', options: { viewport: desktop } },
@@ -18,7 +18,9 @@ for (const size of sizes) {
       const page = await context.newPage();
       const audit = new Audit(page, info);
 
-      await signUp(page, audit, `hosted-${owner.runId}-${size.label}-${theme}@example.com`, randomBytes(24).toString('base64url'), label);
+      const password = randomBytes(24).toString('base64url');
+      saveSecret('hosted-password', password);
+      await signUp(page, audit, `hosted-${owner.runId}-${size.label}-${theme}@example.com`, password, label);
 
       await page.goto(`${auth}/ui/terrascale/reset`);
       await expect(page.locator('#reset-email')).toBeVisible();
@@ -40,6 +42,7 @@ for (const size of sizes) {
       await audit.check(`${label} confirmation`);
 
       await audit.finish();
+      await saveCookies(context);
       await context.close();
     });
   }

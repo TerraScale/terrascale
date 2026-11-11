@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { onboard, signInWithPassword, signUp, verify } from '../support/hosted';
 import { shell } from '../support/shell';
-import { ownerSession, saveSecret, journey } from '../support/state';
+import { ownerSession, saveCookies, saveSecret, journey } from '../support/state';
 import { dash, desktop, mobile } from '../support/stack';
 
 const phone = { viewport: mobile, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
@@ -39,6 +39,7 @@ test('a second user signs up on a phone, the Free plan refuses to invite them, a
   await expect(ownerPage.locator('main tr').filter({ hasText: email })).toHaveCount(0);
   await ownerAudit.check('invitation refused on the Free plan');
   await ownerAudit.finish();
+  await saveCookies(ownerContext);
   await ownerContext.close();
 
   await page.locator('#ts-nav-toggle').click();
@@ -51,5 +52,6 @@ test('a second user signs up on a phone, the Free plan refuses to invite them, a
   await shell(page, identity);
   await audit.check('second user back on the dashboard');
   await audit.finish();
+  await saveCookies(second);
   await second.close();
 });

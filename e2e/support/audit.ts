@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test as base, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
 import { checkLinks, type Link } from './links';
 import { stackHosts } from './stack';
+import { saveCookies } from './state';
 
 const wcag = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
 const secrets = 'input[type=password], .ts-apikeys-secret-value, #access-token-secret';
@@ -142,6 +143,7 @@ export const test = base.extend<{ audit: Audit }>({
   context: async ({ context }, use) => {
     await guard(context);
     await use(context);
+    await saveCookies(context);
   },
   audit: async ({ page }, use, info) => {
     const audit = new Audit(page, info);
