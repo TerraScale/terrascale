@@ -609,7 +609,7 @@ namespace TerraScale.Dashboard.Features.Billing
             // preserving the customer's binding.
             return await UpdateAsync(orgId, current =>
             {
-                if (current.RequestId != existing.RequestId)
+                if (current.RequestId != existing.RequestId || current.CheckoutId != existing.CheckoutId)
                 {
                     throw new AccountAccessException("Another checkout is in progress.", 409);
                 }
