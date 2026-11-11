@@ -1,6 +1,7 @@
 using Amazon.Runtime;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Runtime.ExceptionServices;
 using System.Text.Json.Serialization;
 using System.Text.Json;
 using TerraBase.Engine;
@@ -179,22 +180,37 @@ internal sealed class DatabaseBackupPurge(
             return recorded;
         }
 
+        ExceptionDispatchInfo? failure = null;
+        var own = await AttemptScopeAsync(database, DateTimeOffset.MaxValue).ConfigureAwait(false);
+        var complete = true;
         string? after = null;
         do
         {
             var page = await catalog.ReadUncheckedAsync(transaction => UnshreddedSnapshotsAsync(transaction, database, after, token), token).ConfigureAwait(false);
             foreach (var snapshot in page.Items)
             {
-                if (await ShredScopeAsync(snapshot, until, token).ConfigureAwait(false) is null)
-                {
-                    return null;
-                }
+                complete &= await AttemptScopeAsync(snapshot, until).ConfigureAwait(false) is { } destroyed
+                    && await MarkAsync(snapshot, destroyed, token).ConfigureAwait(false) is not null;
             }
             after = page.Next;
         }
         while (after is not null);
 
-        return await ShredScopeAsync(database, until, token).ConfigureAwait(false);
+        failure?.Throw();
+        return complete && own is { } shredded ? await MarkAsync(database, shredded, token).ConfigureAwait(false) : null;
+
+        async Task<ShredRecord?> AttemptScopeAsync(TenantContext scope, DateTimeOffset deadline)
+        {
+            try
+            {
+                return await ShredScopeAsync(scope, deadline, token).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!token.IsCancellationRequested)
+            {
+                failure ??= ExceptionDispatchInfo.Capture(error);
+                return null;
+            }
+        }
     }
 
     private static async ValueTask<ManagementPage<TenantContext>> UnshreddedSnapshotsAsync(IStorageTransaction transaction, TenantContext database, string? after, CancellationToken token)
@@ -214,7 +230,7 @@ internal sealed class DatabaseBackupPurge(
         return new(snapshots, page.Next);
     }
 
-    private async Task<DateTimeOffset?> ShredScopeAsync(TenantContext database, DateTimeOffset until, CancellationToken token)
+    private async Task<ShredRecord?> ShredScopeAsync(TenantContext database, DateTimeOffset until, CancellationToken token)
     {
         if (time.GetUtcNow() >= until)
         {
@@ -238,7 +254,11 @@ internal sealed class DatabaseBackupPurge(
         }
 
         logger.ZLogInformation($"Backup keys of deleted database {database.DatabaseId:@Database} are destroyed");
-        return await catalog.WriteDurableAsync<DateTimeOffset?>(async transaction =>
+        return record;
+    }
+
+    private ValueTask<DateTimeOffset?> MarkAsync(TenantContext database, ShredRecord record, CancellationToken token) =>
+        catalog.WriteDurableAsync<DateTimeOffset?>(async transaction =>
         {
             var progress = await SystemCatalog.GetAsync(transaction, ProgressKind, database.DatabaseId!,
                 BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false)
@@ -246,8 +266,7 @@ internal sealed class DatabaseBackupPurge(
             await SystemCatalog.PutAsync(transaction, ProgressKind, database.DatabaseId!,
                 progress with { KeysShreddedAt = record.ShreddedAt }, BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false);
             return record.ShreddedAt;
-        }, static _ => null, token).ConfigureAwait(false);
-    }
+        }, static _ => null, token);
 
     private async Task<BackupPurgeProgress> PurgeAsync(DatabasePurgeRecord job, BackupPurgeProgress progress, CancellationToken token)
     {
