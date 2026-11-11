@@ -70,7 +70,9 @@ internal sealed class PlatformSeedProgress
         _pending is { } reason ? [new Measurement<int>(1, new KeyValuePair<string, object?>("reason", reason))] : [];
 }
 
-public readonly union EnsurePlatformResult(Done, Conflict, Unavailable);
+public sealed record PlatformConflicts(IReadOnlyList<Conflict> Conflicts);
+
+public readonly union EnsurePlatformResult(Done, PlatformConflicts, Unavailable);
 
 public interface IPlatformCatalog
 {
@@ -102,9 +104,13 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
                         progress.Finish();
                         logger.ZLogInformation($"Platform databases are seeded");
                         return;
-                    case Conflict conflict:
+                    case PlatformConflicts conflicts:
                         progress.Finish();
-                        logger.ZLogError($"Platform databases conflict with existing catalog records: {conflict.Code:@Code}");
+                        foreach (var conflict in conflicts.Conflicts)
+                        {
+                            logger.ZLogError($"Platform databases conflict with existing catalog records: {conflict.Code:@Code}");
+                        }
+
                         return;
                     case Unavailable unavailable:
                         progress.Wait(unavailable.Code);

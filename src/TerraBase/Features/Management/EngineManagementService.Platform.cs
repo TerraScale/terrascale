@@ -13,36 +13,53 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
 
     public async ValueTask<EnsurePlatformResult> EnsurePlatformAsync(CancellationToken cancellationToken)
     {
-        var state = await ReadAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: false, cancellationToken), static error => error, cancellationToken)
+        var tenants = await ReadAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: false, cancellationToken), static error => error, cancellationToken)
             .ConfigureAwait(false);
-        if (state is NotFound)
+        if (tenants is NotFound)
         {
-            state = await WriteAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: true, cancellationToken), static error => error, cancellationToken)
+            tenants = await WriteAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: true, cancellationToken), static error => error, cancellationToken)
                 .ConfigureAwait(false);
         }
 
+        if (tenants is not Done)
+        {
+            return Settled(tenants);
+        }
+
+        List<Conflict> conflicts = [];
+        Unavailable? pending = null;
         foreach (var (name, database) in PlatformDatabases.Databases)
         {
-            if (state is not Done)
+            switch (await SeedDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false))
             {
-                break;
-            }
-
-            state = await ReadAsync<PlatformState>(transaction => PlatformDatabaseAsync(transaction, name, database, cancellationToken), static error => error, cancellationToken)
-                .ConfigureAwait(false);
-            if (state is NotFound)
-            {
-                state = await AddPlatformDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false);
+                case Conflict conflict:
+                    conflicts.Add(conflict);
+                    break;
+                case Unavailable unavailable:
+                    pending ??= unavailable;
+                    break;
             }
         }
 
-        return Settled(state);
+        if (pending is not null)
+        {
+            return pending;
+        }
+
+        return conflicts.Count == 0 ? new Done() : new PlatformConflicts(conflicts);
+    }
+
+    private async ValueTask<PlatformState> SeedDatabaseAsync(string name, (string Id, string ProjectId) database, CancellationToken cancellationToken)
+    {
+        var state = await ReadAsync<PlatformState>(transaction => PlatformDatabaseAsync(transaction, name, database, cancellationToken), static error => error, cancellationToken)
+            .ConfigureAwait(false);
+        return state is NotFound ? await AddPlatformDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false) : state;
     }
 
     private static EnsurePlatformResult Settled(PlatformState state) => state switch
     {
         Done done => done,
-        Conflict conflict => conflict,
+        Conflict conflict => new PlatformConflicts([conflict]),
         Unavailable unavailable => unavailable,
         NotFound => throw new UnreachableException(),
     };
