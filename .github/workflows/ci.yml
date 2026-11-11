@@ -141,6 +141,7 @@ jobs:
               - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
               - tests/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
+              - landing-site/static/pricing.json
               - scripts/terrabase/!(AGENTS.md|CLAUDE.md)
               - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
             sdk-dotnet:
@@ -210,7 +211,7 @@ jobs:
           filters: |
             journey:
               - '!docs-site/**'
-              - '!landing-site/**'
+              - '!landing-site/**/!(pricing.json)'
               - '!status-site/**'
               - '!docs/**'
               - '!**/*.md'
