@@ -8,9 +8,10 @@ const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 for (const state of dashboardStates) {
   test.describe(() => {
+    if (state.signedOut) test.use({ storageState: { cookies: [], origins: [] } });
     test(state.name, async ({ page, audit }) => {
       const current = journey();
-      const target = new URL(state.url(current), dash);
+      const target = new URL(await state.url(current, page), dash);
       if (state.status) audit.expectStatus(new RegExp(`^${literal(target.origin + target.pathname)}(\\?|$)`), state.status);
       const response = await page.goto(target.href);
       expect(response?.status(), `${state.name}: HTTP status`).toBe(state.status ?? 200);

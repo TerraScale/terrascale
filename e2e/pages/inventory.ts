@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { Journey } from '../support/state';
 
@@ -7,12 +8,13 @@ type Identity = (page: Page, journey: Journey) => Locator;
 
 export type PageState = {
   name: string;
-  url: (journey: Journey) => string;
+  url: (journey: Journey, page: Page) => string | Promise<string>;
   covers: PagePattern;
   heading: Identity;
   path?: string;
   status?: number;
   shell?: false;
+  signedOut?: true;
   data?: (page: Page, journey: Journey) => Promise<void>;
 };
 
@@ -21,6 +23,8 @@ const id = new RegExp(`^${ulid}$`);
 const optionalId = new RegExp(`^(${ulid})?$`);
 const database = (journey: Journey) => `/databases/${journey.databaseId}`;
 const databasePath = (tab: string) => new RegExp(`^/databases/${ulid}${tab ? `/${tab}` : ''}$`);
+const mcpRedirect = 'http://127.0.0.1:9/callback';
+const mcpResource = 'https://mcp.terrascale.tech/';
 
 const title =
   (name: string | RegExp, level: 1 | 2 = 1): Identity =>
@@ -60,6 +64,23 @@ async function connectCard(page: Page, journey: Journey): Promise<void> {
     await expect(panel).toBeVisible();
     await expect(panel).toContainText(journey.databaseName);
   }
+}
+
+async function mcpConsent(page: Page): Promise<string> {
+  const registered = await page.request.post('/oauth/register', { data: { client_name: 'Journey MCP client', redirect_uris: [mcpRedirect] } });
+  expect(registered.status(), 'MCP client registration').toBe(201);
+  const client = (await registered.json()) as { client_id: string };
+  const challenge = createHash('sha256').update(randomBytes(32).toString('base64url')).digest('base64url');
+  const query = new URLSearchParams({
+    response_type: 'code',
+    client_id: client.client_id,
+    redirect_uri: mcpRedirect,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state: 'journey',
+    resource: mcpResource,
+  });
+  return `/oauth/authorize?${query}`;
 }
 
 const databaseTabs: [string, string, Identity][] = [
@@ -271,6 +292,13 @@ export const dashboardStates: readonly PageState[] = [
     covers: { path: /^\/organization$/, query: { newOrganization: /^organization$/ } },
     heading: inDialog('create-organization', 'Create organization'),
   },
+  {
+    name: 'organization choice',
+    url: () => '/organizations/choose',
+    covers: { path: /^\/organizations\/choose$/ },
+    heading: title('Choose an organization'),
+    shell: false,
+  },
   { name: 'project settings', url: () => '/project', covers: { path: /^\/project$/ }, heading: title('Project settings') },
   { name: 'project members', url: () => '/project/members', covers: { path: /^\/project\/members$/ }, heading: region('Explicit project grants') },
   { name: 'project invitations', url: () => '/project/invitations', covers: { path: /^\/project\/invitations$/ }, heading: title('Project invitations') },
@@ -297,6 +325,48 @@ export const dashboardStates: readonly PageState[] = [
     url: (journey) => `/support?relatedRequestId=${journey.databaseId}`,
     covers: { path: /^\/support$/, query: { relatedRequestId: id } },
     heading: title('Contact support'),
+  },
+  {
+    name: 'invitation signed in',
+    url: () => `/invitations/${randomBytes(24).toString('base64url')}`,
+    covers: { path: /^\/invitations\/[A-Za-z0-9_-]+$/ },
+    heading: title('This invitation is no longer valid'),
+    status: 404,
+    shell: false,
+  },
+  {
+    name: 'invitation signed out',
+    url: () => `/invitations/${randomBytes(24).toString('base64url')}`,
+    covers: { path: /^\/invitations\/[A-Za-z0-9_-]+$/ },
+    heading: title('Sign in to view this invitation'),
+    shell: false,
+    signedOut: true,
+  },
+  {
+    name: 'account deletion status without a receipt',
+    url: () => '/account-deletion',
+    covers: { path: /^\/account-deletion$/, query: { retry: /^[0-9]*$/ } },
+    heading: title('Deletion status needs attention'),
+    status: 403,
+    shell: false,
+  },
+  {
+    name: 'MCP client consent',
+    url: (_journey, page) => mcpConsent(page),
+    covers: {
+      path: /^\/oauth\/authorize$/,
+      query: {
+        response_type: /^code$/,
+        client_id: id,
+        redirect_uri: new RegExp(`^${mcpRedirect.replaceAll('.', '\\.')}$`),
+        code_challenge: /^[A-Za-z0-9_-]{43}$/,
+        code_challenge_method: /^S256$/,
+        state: /^journey$/,
+        resource: new RegExp(`^${mcpResource.replaceAll('.', '\\.')}$`),
+      },
+    },
+    heading: title('Connect an AI client'),
+    shell: false,
   },
   {
     name: 'api reference',

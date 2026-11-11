@@ -8,9 +8,6 @@ const chartWindows = new Set(['range', 'reads', 'writes', 'storage', 'latency'])
 
 const journeyPages: readonly PagePattern[] = [
   { path: /^\/onboarding$/ },
-  { path: /^\/organizations\/choose$/ },
-  { path: /^\/invitations\/[^/]+$/ },
-  { path: /^\/account-deletion$/ },
   { path: /^\/account-deleted$/ },
 ];
 
