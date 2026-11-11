@@ -1,4 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
+@using TerraScale.Dashboard.Common.Accounts
 @using TerraScale.Dashboard.Features.Organizations
 <section class="ts-card ts-card-boxed @(Model.MemberRows.Count > 0 ? "ts-card-flush" : "")" id="team-members" aria-labelledby="team-members-title">
     <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="team-members-title">Organization members <span class="ts-tab-count">@Model.MemberTotal</span></h2></div></header><div class="ts-card-body">
@@ -11,9 +12,8 @@
     }
     </div>
 </section>
-<div class="@(Model.CanManage ? "ts-access-bottom" : "ts-stack")">
 <section class="ts-card ts-card-boxed @(Model.InvitationRows.Count > 0 ? "ts-card-flush" : "")" id="team-invitations" aria-labelledby="team-invitations-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="team-invitations-title">Invitations <span class="ts-tab-count">@Model.InvitationRows.Count</span></h2></div></header><div class="ts-card-body">
-    @if (Model.InvitationRows.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No invitations have been created.</p></div> }
+    @if (Model.InvitationRows.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No invitations yet.</p>@if (Model.CanManage) { <button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="team-invite">@Icons.Render("UserPlus", 14)<span>Invite</span></button> }</div> }
     else
     {
         <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Organization invitations table"><table class="ts-table ts-table-stacked" role="table"><thead role="rowgroup"><tr role="row"><th role="columnheader">Email</th><th role="columnheader">Role</th><th role="columnheader">Status</th><th role="columnheader">Expires</th><th class="ts-table-actions" role="columnheader">Actions</th></tr></thead><tbody role="rowgroup">@foreach (var invitation in Model.InvitationPageRows)
@@ -26,6 +26,17 @@
 
 @if (Model.CanManage)
 {
-    <section class="ts-card ts-card-boxed" id="team-invite" aria-labelledby="team-invite-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="team-invite-title">Invite a teammate</h2></div></header><div class="ts-card-body"><form class="ts-access-invite" method="post" action="/api/v1/access/invitations?tab=invitations"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="invite-email">Email address</label><input class="ts-input" id="invite-email" name="email" type="email" autocomplete="email" placeholder="teammate@example.com" required /></div><div class="ts-field"><label class="ts-label" for="invite-role">Role</label><select class="ts-select" id="invite-role" name="role"><option value="member">Member</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select></div><button class="ts-btn ts-btn-primary" type="submit">Create invitation</button></form></div></section>
+    var draft = Model.InviteDraft;
+    var open = draft is not null || HttpContext!.Request.Query["invite"] == "1";
+    var role = draft?.Role is "viewer" or "admin" ? draft.Role : "member";
+    var failed = draft is not null && Model.Error.Length > 0;
+    <dialog id="team-invite" class="ts-dialog" closedby="any" aria-labelledby="team-invite-title" data-page-url="@(open ? WorkspaceUrl.For(Model.Shell.Context, "/organization?tab=members", replace: true) : null)" data-init="@(open ? "el.showModal()" : "void 0")" data-on:close="el.dataset.pageUrl &amp;&amp; history.replaceState(null, '', el.dataset.pageUrl)"><div class="ts-dialog-content">
+        <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="team-invite-title">Invite member</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="team-invite">@Icons.Render("X", 18)</button></header>
+        <form method="post" data-submit-once action="/api/v1/access/invitations?tab=invitations" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+            @if (failed) { <div class="ts-alert ts-alert-danger" id="team-invite-error" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
+            <div class="ts-field"><label class="ts-label" for="invite-email">Email</label><input class="ts-input" id="invite-email" name="email" type="email" value="@(draft?.Email ?? "")" placeholder="teammate@example.com" maxlength="254" autocomplete="off" spellcheck="false" required autofocus aria-invalid="@(failed ? "true" : null)" aria-describedby="@(failed ? "team-invite-error" : null)" /></div>
+            <div class="ts-field"><label class="ts-label" for="invite-role">Role</label><select class="ts-select" id="invite-role" name="role" required>@foreach (var option in new[] { ("member", "Member"), ("viewer", "Viewer"), ("admin", "Admin") }) { <option value="@option.Item1" selected="@(role == option.Item1 ? "selected" : null)">@option.Item2</option> }</select></div>
+            <div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="team-invite">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Send invitation</button></div>
+        </form>
+    </div></dialog>
 }
-</div>

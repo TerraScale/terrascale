@@ -40,11 +40,14 @@ test('a second user signs up on a phone, the Free plan refuses to invite them, a
   }
   await ownerPage.reload();
   await expect(ownerPage.locator('#team-invitations'), 'the invitations after two refused form tokens').toHaveText(invitations, { useInnerText: true });
+  await ownerPage.locator('.ts-org-header').getByRole('button', { name: 'Invite', exact: true }).click();
+  await expect(ownerPage.locator('dialog#team-invite')).toBeVisible();
   await ownerPage.locator('#invite-email').fill(email);
   await ownerPage.locator('#invite-role').selectOption('member');
   await ownerPage.locator('#team-invite').locator('button[type=submit]').click();
   await ownerPage.waitForLoadState('load');
-  await expect(ownerPage.locator('main')).toContainText('The Free plan allows 1 member including pending invitations.');
+  await expect(ownerPage.locator('dialog#team-invite[open] [role=alert]')).toContainText('The Free plan allows 1 member including pending invitations.');
+  await expect(ownerPage.locator('#invite-email')).toHaveValue(email);
   await expect(ownerPage.locator('main tr').filter({ hasText: email })).toHaveCount(0);
   await ownerAudit.check('invitation refused on the Free plan');
   await ownerAudit.finish();

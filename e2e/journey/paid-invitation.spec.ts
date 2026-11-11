@@ -22,6 +22,8 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   const ownerPage = await ownerContext.newPage();
   const ownerAudit = new Audit(ownerPage, info);
   await ownerPage.goto(`${dash}/organization?tab=members`);
+  await ownerPage.locator('.ts-org-header').getByRole('button', { name: 'Invite', exact: true }).click();
+  await expect(ownerPage.locator('dialog#team-invite')).toBeVisible();
   await ownerPage.locator('#invite-email').fill(email);
   await ownerPage.locator('#invite-role').selectOption('member');
   await ownerPage.locator('#team-invite').locator('button[type=submit]').click();

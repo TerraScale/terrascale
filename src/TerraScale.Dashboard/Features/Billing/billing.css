@@ -1,0 +1,393 @@
+.ts-billing {
+  display: grid;
+  gap: var(--ts-s4);
+  min-width: 0;
+}
+
+.ts-billing-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: var(--ts-s4);
+  min-width: 0;
+}
+
+.ts-billing-layout > * {
+  min-width: 0;
+}
+
+.ts-billing-layout > .ts-card.ts-card-boxed {
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+}
+
+.ts-billing-layout > .ts-card.ts-card-boxed.ts-card-flush {
+  padding: 0;
+}
+
+.ts-billing-layout > .ts-billing-wide {
+  grid-column: 1 / -1;
+}
+
+.ts-billing-current {
+  display: grid;
+  gap: var(--ts-s4);
+}
+
+.ts-billing-plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s3);
+}
+
+.ts-billing-plan-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
+}
+
+.ts-billing-plan-name {
+  font-size: var(--ts-fs-2xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.ts-billing-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: var(--ts-s4);
+  margin: 0;
+  padding-top: var(--ts-s4);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-billing-facts > div,
+.ts-billing-figures > div {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s1);
+  min-width: 0;
+}
+
+.ts-billing-facts dt,
+.ts-billing-figures dt {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-billing-facts dd,
+.ts-billing-figures dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ts-billing-facts dd {
+  font-weight: 500;
+}
+
+.ts-billing-facts-stacked {
+  grid-template-columns: minmax(0, 1fr);
+  padding-top: 0;
+  border-top: 0;
+}
+
+.ts-billing-facts-stacked address {
+  font-style: normal;
+}
+
+.ts-billing-tax {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-billing-usage {
+  color: var(--ts-ink-2);
+}
+
+.ts-billing-figures {
+  display: grid;
+  gap: var(--ts-s4);
+  margin: 0;
+}
+
+.ts-billing-figures dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-billing-figures .ts-svg-sharebar {
+  margin-block: var(--ts-s1);
+}
+
+.ts-billing-scheduled {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3);
+}
+
+.ts-billing-history-filters {
+  flex-wrap: wrap;
+}
+
+.ts-billing-history-filters > .ts-select {
+  width: auto;
+  min-width: 140px;
+}
+
+#recent-invoices > .ts-card-body {
+  gap: 0;
+}
+
+#recent-invoices .ts-billing-inset {
+  margin: var(--ts-s4) var(--ts-s5) 0;
+}
+
+#recent-invoices > .ts-card-body > .ts-empty {
+  padding: var(--ts-s8) var(--ts-s5);
+}
+
+#recent-invoices > .ts-card-body > .ts-pager {
+  padding: var(--ts-s3) var(--ts-s5);
+}
+
+.ts-billing-date {
+  white-space: nowrap;
+}
+
+.ts-billing-number-narrow {
+  display: none;
+}
+
+.ts-billing-invoices .ts-num {
+  white-space: nowrap;
+}
+
+.ts-billing-invoices .ts-table-actions .ts-row {
+  flex-wrap: nowrap;
+}
+
+.ts-billing-plans {
+  gap: var(--ts-s4);
+  padding-top: var(--ts-s2);
+}
+
+.ts-billing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr));
+  gap: var(--ts-s4);
+}
+
+.ts-plan {
+  display: grid;
+  grid-row: span 4;
+  grid-template-rows: subgrid;
+  gap: var(--ts-s4);
+  min-width: 0;
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-plan-current {
+  border-color: var(--ts-accent);
+}
+
+.ts-plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2);
+}
+
+.ts-plan-name {
+  font-size: var(--ts-fs-lg);
+  font-weight: 600;
+}
+
+.ts-plan-pricing {
+  display: grid;
+  gap: var(--ts-s1);
+}
+
+.ts-plan-price {
+  font-size: var(--ts-fs-xl);
+  white-space: nowrap;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.ts-plan-price small,
+.ts-billing-option-price small {
+  margin-left: 2px;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.ts-plan-features {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s2);
+  margin: 0;
+  padding: var(--ts-s4) 0 0;
+  border-top: 1px solid var(--ts-line);
+  list-style: none;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-plan-features > li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s2);
+}
+
+.ts-plan-features svg {
+  margin-top: 3px;
+  color: var(--ts-success);
+}
+
+.ts-plan-action {
+  display: grid;
+}
+
+.ts-billing-options {
+  display: grid;
+  gap: var(--ts-s2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ts-billing-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s3) var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface);
+  cursor: pointer;
+  transition: border-color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-billing-option:hover {
+  background: var(--ts-surface-2);
+}
+
+.ts-billing-option:has(input:checked) {
+  border-color: var(--ts-accent);
+}
+
+.ts-billing-option:has(input:focus-visible) {
+  outline: 2px solid var(--ts-focus);
+  outline-offset: 2px;
+}
+
+.ts-billing-option > input {
+  margin: 0;
+  accent-color: var(--ts-accent);
+}
+
+.ts-billing-option-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ts-billing-option-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  font-weight: 600;
+}
+
+.ts-billing-option-price {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ts-billing-review {
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface);
+}
+
+@media (max-width: 68.75rem) {
+  .ts-billing-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .ts-billing-layout > .ts-card.ts-card-boxed {
+    padding: var(--ts-s4);
+  }
+
+  .ts-billing-layout > .ts-card.ts-card-boxed.ts-card-flush {
+    padding: 0;
+  }
+
+  .ts-billing-period,
+  .ts-billing-number {
+    display: none;
+  }
+
+  .ts-billing-number-narrow {
+    display: block;
+  }
+
+  .ts-table.ts-billing-invoices th,
+  .ts-table.ts-billing-invoices td {
+    padding-inline: var(--ts-s2);
+  }
+
+  .ts-table.ts-billing-invoices th:first-child,
+  .ts-table.ts-billing-invoices td:first-child {
+    padding-left: var(--ts-s4);
+  }
+
+  .ts-table.ts-billing-invoices th:last-child,
+  .ts-table.ts-billing-invoices td:last-child {
+    padding-right: var(--ts-s3);
+  }
+
+  .ts-billing-invoices .ts-table-actions .ts-row {
+    gap: 0;
+  }
+
+  .ts-billing-history-filters > .ts-select {
+    flex: 1 1 140px;
+  }
+
+  .ts-billing-option {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ts-billing-option-price {
+    grid-column: 2;
+  }
+
+  #recent-invoices .ts-billing-inset {
+    margin-inline: var(--ts-s4);
+  }
+
+  #recent-invoices > .ts-card-body > .ts-pager {
+    padding-inline: var(--ts-s4);
+  }
+}
