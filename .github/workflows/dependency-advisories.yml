@@ -1,0 +1,107 @@
+name: Dependency advisories
+
+on:
+  schedule:
+    - cron: "41 7 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: Dependency advisories
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-go@924b54b5c33e4db22c992f9c07a6ace671a59a21 # v6.5.0
+        with:
+          go-version-file: sdk/go/go.mod
+          cache: false
+      - id: findings
+        name: List vulnerable packages
+        run: |
+          set -euo pipefail
+          dotnet restore TerraScale.slnx --locked-mode
+          dotnet list TerraScale.slnx package --vulnerable --include-transitive > findings.txt
+          dotnet build src/TerraScale.Endpoints/TerraScale.Endpoints.csproj --no-restore -c Release -v q
+          runtime=$(python3 - <<'PY'
+          import json, pathlib
+          assets = json.loads(pathlib.Path("src/TerraScale.Endpoints/obj/project.assets.json").read_text())
+          graph = pathlib.Path(assets["project"]["frameworks"]["net11.0"]["runtimeIdentifierGraphPath"])
+          root = graph.parents[2]
+          refs = sorted(path.name for path in (root / "packs/Microsoft.NETCore.App.Ref").iterdir() if path.name.startswith("11.0.") and "-" not in path.name)
+          print(refs[-1])
+          PY
+          )
+          python3 - "$runtime" >> findings.txt <<'PY'
+          import gzip, json, sys, urllib.request
+          version = sys.argv[1]
+
+          def parts(value):
+              core, _, pre = value.partition("-")
+              return tuple(int(piece) for piece in core.split(".")), pre
+
+          def before(left, right):
+              return left[0] < right[0] or (left[0] == right[0] and left[1] < right[1])
+
+          def inside(spec, value):
+              low, high = spec[1:-1].split(",")
+              current = parts(value)
+              if low and (before(current, parts(low)) or (current == parts(low) and spec[0] == "(")):
+                  return False
+              if high and (before(parts(high), current) or (current == parts(high) and spec[-1] == ")")):
+                  return False
+              return True
+
+          def load(url):
+              body = urllib.request.urlopen(urllib.request.Request(url, headers={"Accept": "application/json"})).read()
+              body = gzip.decompress(body) if body[:2] == b"\x1f\x8b" else body
+              return json.loads(body)
+
+          index = load("https://api.nuget.org/v3/vulnerabilities/index.json")
+          base = next(item["@id"] for item in index if item["@name"] == "base")
+          advisories = load(base).get("microsoft.netcore.app.runtime.linux-x64", [])
+          hits = [item for item in advisories if inside(item["versions"], version)]
+          print(f"Pinned runtime pack Microsoft.NETCore.App.Runtime.linux-x64 {version}")
+          if not hits:
+              print("The pinned runtime pack has no vulnerable package given the current sources.")
+          for item in hits:
+              print(f"has the following vulnerable packages: Microsoft.NETCore.App.Runtime.linux-x64 {version} {item['url']}")
+          PY
+          (cd sdk/go && go install golang.org/x/vuln/cmd/govulncheck@v1.9.0 && "$(go env GOPATH)/bin/govulncheck" ./...) >> findings.txt
+          if grep -E 'has the following vulnerable packages|Vulnerability #' findings.txt; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open, update or close the issue
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GH_REPO/issues?state=open&per_page=100" --jq '.[] | select(.title == env.TITLE and .pull_request == null) | .number' > open.txt
+          open=$(head -1 open.txt)
+          if [ "${{ steps.findings.outputs.found }}" != true ]; then
+            if [ -n "$open" ]; then gh issue close "$open" --reason completed --comment "The weekly scan found no vulnerable package."; fi
+            exit 0
+          fi
+          {
+            echo "The weekly scan found a vulnerable package."
+            echo
+            echo '````'
+            cat findings.txt
+            echo '````'
+          } > issue.md
+          if [ -z "$open" ]; then
+            gh issue create --title "$TITLE" --body-file issue.md --label dependency-advisories
+          else
+            gh issue edit "$open" --body-file issue.md
+          fi
