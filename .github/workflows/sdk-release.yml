@@ -154,7 +154,7 @@ jobs:
             ./*.tar.gz ./*.zip checksums.txt ts.rb install.sh
 
   qualify:
-    if: startsWith(github.ref, 'refs/tags/sdk/') && !startsWith(github.ref, 'refs/tags/sdk/go/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sdk/') && !startsWith(github.ref, 'refs/tags/sdk/go/')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
