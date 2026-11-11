@@ -55,7 +55,7 @@ jobs:
         with:
           dotnet-version: |
             10.0.401
-            11.0.100-rc.3.26522.148
+            11.0.100
       - id: version
         run: |
           version=$(dotnet msbuild src/TerraScale.DotNet -getProperty:Version)
@@ -142,7 +142,7 @@ jobs:
         with:
           dotnet-version: |
             10.0.401
-            11.0.100-rc.3.26522.148
+            11.0.100
       - env:
           SHA256: ${{ needs.package.outputs.sha256 }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

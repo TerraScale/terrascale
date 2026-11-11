@@ -103,7 +103,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
         private static async Task<string> CreateKeyAsync(HttpClient client)
         {
-            using var response = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+            using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
             {
                 ["_csrf"] = await HttpJourney.CsrfAsync(client, "/api-keys"),
                 ["name"] = "Agent MCP",

@@ -483,6 +483,8 @@ A `serialization_conflict` is resent at most twice; nothing else is.
 
 For a repeatable read, wait as directed by the server, bound attempts and honor cancellation. Validation, authorization and conflict failures need a fix before another attempt. Do not hide those failures in an infinite retry loop.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Uncertain writes
 
 A write whose response was lost may have committed. Read the data that the write would have produced before you repeat it. A conditional write, such as one that fails when a key already exists or when a row has changed, can prevent a duplicate; do not turn a rejected conditional write into an unconditional one.

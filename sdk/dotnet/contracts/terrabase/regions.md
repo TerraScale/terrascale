@@ -28,3 +28,5 @@ var catalog = await new TerraBaseRegionsClient(http).ListRegionsAsync(cancellati
 Types are in `TerraScale.DotNet.TerraBase`; JSON metadata is source generated with required-constructor and nullable checks. Calls preserve cancellation, deadlines, response bounds and disposal through the existing connection. Contract tests use HTTP fakes only; .NET compilation and execution remain CI-owned.
 
 The constructor accepts only a caller-owned `HttpClient` and always targets `TerraBaseRegion.PublicOrigin`. Default Authorization or Cookie headers cause an actionable exception before dispatch; use a separate credential-free client and the cookie/redirect-disabled handler above. The SDK does not clear or mutate caller defaults. Shared transport origin validation remains unchanged.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

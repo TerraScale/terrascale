@@ -13,10 +13,15 @@
                     <div class="ts-auth-heading"><h1 class="ts-auth-title">@Model.Heading</h1><p class="ts-auth-subtitle" role="alert">@Model.Detail</p></div>
                 </div>
                 <p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p>
-                @if (Model.Heading == "Something went wrong on our side" && HttpContext?.Request.Method == "GET")
-                { <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="">Try again</a> }
-                <a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/">Back to dashboard</a>
-                <a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/login">Sign in again</a>
+                @if (Model.Back is { } back)
+                { <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@back">Open the form again</a> }
+                else
+                {
+                    if (Model.Heading == "Something went wrong on our side" && HttpContext?.Request.Method == "GET")
+                    { <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="">Try again</a> }
+                    <a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/">Back to dashboard</a>
+                    <a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/login">Sign in again</a>
+                }
             </div>
         </div>
     </div>

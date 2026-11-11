@@ -56,3 +56,5 @@ Collaborator reads never write organization state and never publish a plan.
   client's secret once.
 
 See [MCP server](mcp.md) for transport, authentication and scope rules.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

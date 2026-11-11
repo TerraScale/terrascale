@@ -12,6 +12,7 @@ import time
 
 import httpx
 from terrascale import TerraScale, new_id
+from terrascale.auth import DEFAULT_ISSUER
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -52,7 +53,7 @@ def client(region, headers=None):
         if r.request.url.host.endswith('api.terrascale.tech'):
             last.update(response_received_at=received, status=r.status_code, headers={k:v for k,v in r.headers.items() if k.startswith(('x-terrabase', 'terrascale-', 'server-timing', 'cf-ray', 'cf-cache-status', 'age', 'x-request-id'))})
     h = httpx.Client(timeout=30, http2=True, headers=headers, event_hooks={'request':[request],'response':[response]})
-    c = TerraScale(config['key'], project=config['project'], base_url=f'https://{region}.api.terrascale.tech', region=region, http_client=h, max_attempts=1)
+    c = TerraScale(config['key'], project=config['project'], base_url=f'https://{region}.api.terrascale.tech', issuer=DEFAULT_ISSUER, region=region, http_client=h, max_attempts=1)
     return c, h, last
 
 def attempt(kind, region, fn, last, **extra):

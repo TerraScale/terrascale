@@ -80,10 +80,12 @@ export function encodeStatement(statement, index) {
   return encoded;
 }
 
-/** @param {string} sql @param {V1SqlArguments | undefined} args @returns {V1SqlStatement} */
-export function sqlStatement(sql, args) {
-  if (args === undefined) return { sql };
-  return Array.isArray(args) ? { sql, args } : { sql, named: /** @type {Readonly<Record<string, V1SqlArgument>>} */ (args) };
+export function sqlStatement(/** @type {string | V1SqlStatement} */ sql, /** @type {V1SqlArguments | undefined} */ args) {
+  if (typeof sql === "string")
+    return /** @type {V1SqlStatement} */ (args === undefined ? { sql } : Array.isArray(args) ? { sql, args } : { sql, named: args });
+  if (args !== undefined || typeof sql !== "object" || sql === null || Array.isArray(sql))
+    throw new TypeError("SQL is a string with optional args, or one { sql, args, named } statement.");
+  return sql;
 }
 
 /** @param {JsonValue | undefined} value @returns {V1SqlValue} */

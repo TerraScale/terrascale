@@ -73,7 +73,7 @@ class AsyncTerraScale:
         max_attempts: int = _spec.MAX_ATTEMPTS,
         http_client: httpx.AsyncClient | None = None,
     ):
-        api_key, self.project, self.base_url = _settings(api_key, project, token, base_url)
+        api_key, self.project, self.base_url = _settings(api_key, project, token, base_url, issuer)
         self._http = http_client or httpx.AsyncClient(timeout=timeout, follow_redirects=False, http2=True)
         self._owns_http = http_client is None
         self._max_attempts = max(1, max_attempts)
@@ -473,8 +473,7 @@ class AsyncDatabase:
 
     async def execute(self, sql: str | Statement, args: Args = None) -> StatementResult:
         """Run one statement, reads and writes, with positional or named arguments."""
-        item = sql if isinstance(sql, Statement) else Statement(sql, args)
-        return (await self._c._send(_spec.execute(*self._p, _sql.statements([item]))))[0]
+        return (await self._c._send(_spec.execute(*self._p, _sql.statements([_sql.statement(sql, args)]))))[0]
 
     async def batch(self, statements: Sequence[str | tuple[str, Args] | Statement]) -> builtins.list[StatementResult]:
         """Run 1 to 256 statements as one all-or-nothing transaction; one result per statement."""

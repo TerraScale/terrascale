@@ -97,6 +97,8 @@ For custom upload code, call `bucket.createUpload({ name, contentType, size, sha
 
 The SDK does not automatically retry mutations or signed transfers. If a response is lost, inspect the file's state before repeating an operation.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Shared storage allowance and cleanup
 
 Files and database data count together against the organization's existing [plan storage allowance](/pricing). Reserving an upload immediately counts its full declared size. Project usage exposes `fileBytes`, and includes those bytes in `storageBytes` and `logicalBytes`.

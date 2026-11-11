@@ -214,7 +214,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             var form = await context.Request.ReadFormAsync(context.RequestAborted);
             if (!Csrf.Validate(context, form))
             {
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+                return RequestError.FormExpired(context, "/", Results.StatusCode(StatusCodes.Status403Forbidden));
             }
 
             var request = await ReadRequestAsync(context, storage, form.ToDictionary(pair => pair.Key, pair => pair.Value.ToString()));

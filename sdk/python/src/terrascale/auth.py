@@ -277,8 +277,8 @@ class _Exchange:
         issuer = (issuer or DEFAULT_ISSUER).rstrip("/")
         url = httpx.URL(issuer)
         loopback = url.host in ("localhost", "127.0.0.1", "::1")
-        if url.scheme != "https" and not (url.scheme == "http" and loopback):
-            raise ValueError("issuer must be an https URL")
+        if (url.scheme != "https" and not (url.scheme == "http" and loopback)) or url.userinfo or "?" in issuer or "#" in issuer:
+            raise ValueError("issuer must be an https URL without user info, a query or a fragment")
         self.endpoint = issuer + "/oauth/token"
         self.form: dict[str, str] = {"grant_type": "client_credentials"}
         if project:

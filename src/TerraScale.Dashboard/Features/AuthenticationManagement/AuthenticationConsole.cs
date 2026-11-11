@@ -47,7 +47,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, "/auth/" + key, Results.StatusCode(403));
             }
 
             if (!context.CanManageProject || context.Project is null)

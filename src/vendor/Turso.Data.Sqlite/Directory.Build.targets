@@ -1,4 +1,8 @@
 <Project>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
+    <Features>$(Features);runtime-async=on</Features>
+  </PropertyGroup>
+
   <PropertyGroup>
     <!-- Keep the vendored assembly's project identity instead of upstream's native package id. -->
     <PackageId>$(MSBuildProjectName)</PackageId>

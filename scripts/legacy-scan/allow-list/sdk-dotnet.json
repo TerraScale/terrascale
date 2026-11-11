@@ -1,3 +1,4 @@
 [
+  {"path": "^sdk/dotnet/(?:contracts/auth/security\\.json|docs/auth-step-up\\.md)$", "repo": "terrascale", "terms": ["webhooks"], "match": "create_webhook_endpoint|rotate_webhook_secret", "reason": "Step-up purposes of ts-auth's end-user lifecycle webhook endpoints (T221), listed with every other purpose ts-auth accepts; not the retired database event API."},
   {"path": "^sdk/dotnet/src/TerraScale\\.DotNet/TerraBase/Data/", "repo": "terrascale", "terms": ["collections"], "match": "\\b\\w*DbParameterCollection\\b", "reason": "ADO.NET requires deriving from DbParameterCollection; unrelated to the retired collections API."}
 ]

@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using MailKit;
 using MailKit.Net.Smtp;
 using MailKit.Security;
@@ -29,7 +30,9 @@ public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSen
             using var client = new SmtpClient();
             client.CheckCertificateRevocation = false;
             client.Timeout = (int)ConnectTimeout.TotalMilliseconds;
-            await client.ConnectAsync(email.Host, email.Port, email.RequireTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None, timeout.Token).ConfigureAwait(false);
+            using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            await socket.ConnectAsync(email.Host, email.Port, timeout.Token).ConfigureAwait(false);
+            await client.ConnectAsync(socket, email.Host, email.Port, email.RequireTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None, timeout.Token).ConfigureAwait(false);
             try
             {
                 await client.AuthenticateAsync(email.Username, email.Password, timeout.Token).ConfigureAwait(false);

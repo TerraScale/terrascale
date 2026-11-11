@@ -46,7 +46,7 @@ Every green main push that touches `sdk/go/**`, `scripts/sdk/**` or the Go relea
 and publish workflows releases the CLI automatically; there is no manual tag step and no
 deploy switch. The path is:
 
-1. Push the change to main; SDK Go Fast runs in GitHub Actions.
+1. Push the change to main; the `CI` leg `sdk (sdk-go) / fast` runs in GitHub Actions.
 2. The `SDK Go Release` workflow fires on every main push that touches the Go
    SDK paths. It waits until the pushed commit's other push workflows are green. Its
    `autorelease` job runs `python3 scripts/sdk/build-release.py go`: the release
