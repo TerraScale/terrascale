@@ -71,7 +71,8 @@ const api = [
   ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription)],
   ['DELETE', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [key]) => {
     const subscription = find('sub', key);
-    if (!subscription || subscription.status === 'canceled') return undefined;
+    if (subscription?.status === 'canceled') return { refused: 'canceled subscription', message: 'A canceled subscription can only update its metadata and cancellation_details.' };
+    if (!subscription) return undefined;
     log.cancels.push({ subscription: subscription.id, customer: subscription.customer, organization: subscription.metadata.organization_id });
     return Object.assign(subscription, { status: 'canceled' });
   }],
@@ -146,12 +147,13 @@ async function handle(request, response, body) {
   const route = api.find(([method, path]) => method === request.method && path.test(url.pathname));
   const unfiltered = Object.entries(route?.[3] ?? {}).find(([key, value]) => !value.test(parameters.get(key) ?? ''))?.[0];
   if (unfiltered) return unexpected(response, request, url, `filter ${unfiltered}`);
-  const replay = request.method !== 'GET' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';
+  const replay = request.method === 'POST' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';
   if (replays.has(replay)) return reply(response, 200, replays.get(replay));
   const invalid = Object.entries(route?.[4] ?? {}).find(([key, valid]) => !valid(parameters.get(key)))?.[0];
   if (invalid) return unexpected(response, request, url, `parameter ${invalid}`, 400, { type: 'invalid_request_error', param: invalid, message: `Invalid ${invalid}.` });
   const found = route?.[2](parameters, route[1].exec(url.pathname).slice(1));
   if (!found) return unexpected(response, request, url, route ? 'no such object' : 'route');
+  if (found.refused) return unexpected(response, request, url, found.refused, 400, { type: 'invalid_request_error', message: found.message });
   const answer = render(found, parameters);
   if (replay) replays.set(replay, answer);
   const expanded = [...parameters].filter(([key]) => key.startsWith('expand[')).map(([, path]) => path);

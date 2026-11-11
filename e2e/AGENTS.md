@@ -192,7 +192,10 @@ SHA-256 to its archive's.
   and a line in the stand-in's `unexpected` list, which fails the run when it ends (`support/teardown.ts`). A route
   also checks a parameter whose range Stripe checks, after its idempotency replay as Stripe does: a Checkout
   Session's `expires_at` outside 30 minutes to 24 hours from now gets Stripe's 400 `invalid_request_error` for that
-  `param` and a line in `unexpected`. Each
+  `param` and a line in `unexpected`. Only a `POST` is replayed by its idempotency key, as at Stripe, where a key on
+  `GET` or `DELETE` has no effect: a second cancel runs again, and the cancel of a canceled subscription, which Stripe
+  keeps immutable except for its metadata and `cancellation_details`, gets 400 `invalid_request_error` and a line in
+  `unexpected`. Each
   line of its call log holds the method, the path, the query keys and the expand paths, and no other query or form
   value.
 
