@@ -139,10 +139,14 @@ internal sealed class DatabaseBackupPurge(
         {
             return await ShredAsync(database, until, cancellationToken).ConfigureAwait(false) is not null;
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
             _failures.Add(1, new KeyValuePair<string, object?>("reason", "key_shred_unavailable"));
-            logger.ZLogWarning($"Shredding the backup keys of deleted database {database.DatabaseId:@Database} failed; the erasure pass retries");
+            if (_pending.Report(database.DatabaseId!, "keys", error.GetType().Name))
+            {
+                logger.ZLogWarning($"Shredding the backup keys of deleted database {database.DatabaseId:@Database} failed: {error.GetType().Name:@Error}; the erasure pass retries");
+            }
+
             return false;
         }
     }
@@ -406,7 +410,7 @@ internal sealed class DatabaseBackupPurge(
     {
         private readonly ConcurrentDictionary<string, DateTimeOffset> _requested = new(StringComparer.Ordinal);
         private readonly HashSet<string> _swept = [with(StringComparer.Ordinal)];
-        private readonly Dictionary<(string Database, string Slot), string> _reported = [];
+        private readonly ConcurrentDictionary<(string Database, string Slot), string> _reported = new();
 
         public PendingErasures(Meter meter, TimeProvider time)
         {
@@ -430,7 +434,7 @@ internal sealed class DatabaseBackupPurge(
             _requested.TryRemove(database, out _);
             foreach (var key in _reported.Keys.Where(key => key.Database == database).ToArray())
             {
-                _reported.Remove(key);
+                _reported.TryRemove(key, out _);
             }
         }
 

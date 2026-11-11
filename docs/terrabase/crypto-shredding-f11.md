@@ -29,6 +29,10 @@ Managed backup snapshots have independent storage IDs and envelope-key scopes. S
 records in bounded pages, including pending and expiring snapshots, and destroys every snapshot scope before returning
 204. Snapshot expiry also destroys its keys before discarding the ownership record, so a concurrent sweep cannot hide
 a scope from source deletion. Each scope leaves the same permanent authority for regional and external-copy cleanup.
+Every attempt writes the database's own `shredded` record and deletes its keys first, then destroys each snapshot scope
+not yet recorded; a failing scope does not stop the others, and a closure request starts none after its 10-second
+budget. A snapshot scope is recorded as destroyed only once custody, every peer and the shape index confirm it, the
+database only once all of its scopes are.
 
 This is a greenfield custody and push-format cutover. Old Tigris key objects and bucket snapshots are not a migration
 source. The required format bump and reset need the user's approval; historical restore points from the old format

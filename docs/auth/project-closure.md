@@ -39,7 +39,8 @@ ts-auth's half of the closure handoff; the TerraBase fence and its acceptance ru
 - `ClosureWorker` resumes due intents at startup and every 2 seconds. A new intent is first due 30 seconds after it is
   created: the request that created it makes the first attempt, and its callers wait at most 30 seconds for it. A
   pending intent is due again 2 seconds after its attempt, doubling to 1 minute; after 65 attempts it is parked and due
-  every 15 minutes.
+  every 15 minutes. An account deletion makes the first attempt for each of its projects in turn, all within the
+  dashboard's one 30-second wait, so an owner with several projects can still see the pending page.
 
 Limit: TerraBase writes its fence once and never removes it, and answers `accepted`/`pending` for it on every machine
 that holds it. A refusal can still meet an intent whose `fenceSeen` was never recorded: the answer that showed the
