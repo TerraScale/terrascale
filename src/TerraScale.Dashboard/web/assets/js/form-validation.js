@@ -62,7 +62,7 @@ function enhance(root) {
   root.querySelectorAll?.('form').forEach(form => { form.noValidate = true; });
 }
 
-enhance(document);
+enhance(document.documentElement);
 new MutationObserver(records => {
   for (const record of records) for (const node of record.addedNodes) if (node instanceof Element) enhance(node);
 }).observe(document.documentElement, { childList: true, subtree: true });
