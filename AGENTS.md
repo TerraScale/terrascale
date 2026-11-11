@@ -77,6 +77,8 @@ Step-by-step guides live in `.agents/skills/` (also linked from `.claude/skills/
 - Every HTTP endpoint, including health, admin and examples, uses `TerraScale.Endpoints` via ProjectReference: one endpoint class per file; register with `AddTerraScaleEndpoints()`, `MapTerraScaleEndpoints()` and `MapTerraScaleOpenApi()`. No raw minimal API handlers or controllers. Exceptions: gRPC, Prometheus scraping and OpenAPI/Scalar documents.
 - Public HTTP APIs need OpenAPI rendered by Scalar.
 - Manage versions only in `Directory.Packages.props`; no Version on PackageReference. Prerelease packages only where .NET 11 requires them. Commit lock files; restore locked. `NuGet.config` uses nuget.org; keep source mappings correct if a source is added.
+- `Microsoft.CodeAnalysis.*` stays at or below the compiler of the SDK pinned in `global.json`, or the analyzers fail to load (CS8032).
+- `System.Formats.Cbor` is pinned centrally only because Fido2 4.3.2 asks for 9.0.0 (GHSA-vmv3-wvjp-wqpj); the pin goes when Fido2 asks for a patched version.
 - Keep project files minimal. Use ProjectReference for libraries not consumed as packages.
 - Warnings are errors in every configuration. Never lower warning levels or weaken analyzer/style enforcement. `NoWarn` is limited to existing justified entries in shared build files. No global suppressions, assembly suppressions, enforced-rule severity reductions or warning pragmas outside generated code. Any necessary local suppression needs a documented justification and human approval.
 
