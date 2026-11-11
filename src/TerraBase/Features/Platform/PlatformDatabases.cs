@@ -1,5 +1,7 @@
+using System.Diagnostics.Metrics;
 using TerraBase.Errors;
 using TerraBase.Features.Catalog;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -45,10 +47,27 @@ internal static class PlatformDatabases
 internal sealed class PlatformSeedProgress
 {
     private volatile bool _finished;
+    private volatile string? _pending;
+
+    public PlatformSeedProgress(IMeterFactory meters)
+    {
+        ArgumentNullException.ThrowIfNull(meters);
+        meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.platform.seed_pending", Observe,
+            description: "One, labelled with its reason, while the platform database seed holds readiness.");
+    }
 
     internal bool Finished => _finished;
 
-    internal void Finish() => _finished = true;
+    internal void Wait(string reason) => _pending = reason;
+
+    internal void Finish()
+    {
+        _finished = true;
+        _pending = null;
+    }
+
+    private IEnumerable<Measurement<int>> Observe() =>
+        _pending is { } reason ? [new Measurement<int>(1, new KeyValuePair<string, object?>("reason", reason))] : [];
 }
 
 public readonly union EnsurePlatformResult(Done, Conflict, Unavailable);
@@ -60,11 +79,18 @@ public interface IPlatformCatalog
 
 internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, PlatformSeedProgress progress, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
 {
+    private const string CatalogUnverified = "catalog_unverified";
+    private const string Failed = "internal_error";
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await gate.Opened.WaitAsync(stoppingToken).ConfigureAwait(false);
+        if (!gate.IsOpen)
+        {
+            progress.Wait(CatalogUnverified);
+            await gate.Opened.WaitAsync(stoppingToken).ConfigureAwait(false);
+        }
+
         string? failure = null;
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -80,14 +106,20 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
                         progress.Finish();
                         logger.ZLogError($"Platform databases conflict with existing catalog records: {conflict.Code:@Code}");
                         return;
-                    case Unavailable unavailable when failure != unavailable.Message:
-                        failure = unavailable.Message;
-                        logger.ZLogWarning($"Platform databases not seeded yet: {unavailable.Message:@Reason}; retrying");
+                    case Unavailable unavailable:
+                        progress.Wait(unavailable.Code);
+                        if (failure != unavailable.Message)
+                        {
+                            failure = unavailable.Message;
+                            logger.ZLogWarning($"Platform databases not seeded yet: {unavailable.Message:@Reason}; retrying");
+                        }
+
                         break;
                 }
             }
             catch (Exception error) when (error is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
             {
+                progress.Wait(Failed);
                 if (failure != error.GetType().Name)
                 {
                     failure = error.GetType().Name;
