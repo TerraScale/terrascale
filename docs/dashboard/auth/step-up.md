@@ -32,9 +32,10 @@ owner and the typed name; only then does the dashboard set the deletion mark, en
 billing and delete the projects, and its final organization `DELETE` sends the
 same consumed proof, which ts-auth spends. A missing, unapproved, expired or
 replayed proof, or one minted for another organization, changes nothing. When
-ts-auth cannot check the confirmation (an error or no answer), the danger tab
-asks the owner to start the deletion again and the organization is untouched; an
-interrupted deletion is finished by starting it again with a new confirmation.
+ts-auth cannot check the confirmation (an error or no answer), nothing starts: the
+danger tab, or the dashboard's error page if ts-auth cannot serve that tab either,
+asks the owner to start the deletion again; an interrupted deletion is finished by
+starting it again with a new confirmation.
 API-key creation sends no proof: the CSRF-checked form and its API create the
 key at once, and ts-auth binds the new secret to its creator's account
 authentication state. The MCP `create_api_key` tool validates its input and
