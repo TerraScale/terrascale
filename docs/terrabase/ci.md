@@ -26,7 +26,8 @@ check: it fails when any job it needs failed or was cancelled, and a skipped job
   is the linux-arm64 single-file release publish (`make terrabase-publish`), which compiles every project of
   `terrabase.slnf` in Release with the same analyzers and fails when a native library lies beside the file. Each leg
   then checks that no project fell back to Debug (`scripts/ci/release-only.sh`). Locally: `make terrabase-build`.
-- `dashboard` (`dashboard-ci.yml`) builds the dashboard solution in Release and runs its lint set.
+- `dashboard` (`dashboard-ci.yml`) compiles once: it builds the dashboard solution in Release with analyzers and
+  warnings as errors, then runs its lint set, whose format check is whitespace only and compiles nothing.
 - `sdk` runs `make sdk-<sdk>-check` for each changed SDK: a locked install or restore and a build or type check.
   `sdk-release.yml` and `scripts/sdk` select no SDK: the checks never read them.
 - `docs` (`make docs-build`) compares `docs-site/data/canonical/{pricing,regions}.json` with the same commit's
