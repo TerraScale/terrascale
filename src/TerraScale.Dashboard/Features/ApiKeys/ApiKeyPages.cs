@@ -142,7 +142,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         }
     }
 
-    public sealed record ApiKeyActions(ShellModel Shell, ProjectCredential Key, string Query, string View, string Reopen, string Error, string DraftGrace);
+    public sealed record ApiKeyActions(ShellModel Shell, ProjectCredential Key, string Query, string View, string Reopen, string Error, string DraftGrace, DateTimeOffset Now);
 
     public sealed record ApiKeySecret(CreatedProjectCredential Revealed, bool Rotated, string DoneUrl, string Warning);
 
@@ -159,7 +159,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public string DatabaseFilterTitle => Context.Project?.Databases.GetValueOrDefault(DatabaseId)?.Name ?? "All databases";
         public bool ErrorInDialog => Create.Length > 0 || Filtered.Any(key => Reopen == "rotate-" + key.Id || Reopen == "revoke-" + key.Id);
         public ApiKeySecret? Secret => Revealed is null ? null : new(Revealed, Rotated, WorkspaceUrl.For(Context, With("/api-keys", clear: true)), Warning);
-        public ApiKeyActions Actions(ProjectCredential key) => new(Shell, key, With(""), "", Reopen, Error, DraftGrace);
+        public ApiKeyActions Actions(ProjectCredential key) => new(Shell, key, With(""), "", Reopen, Error, DraftGrace, Now);
 
         public string With(string path, bool clear = false, string? create = null)
         {
@@ -191,6 +191,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public bool CidrsFailed => Error.Length > 0 && Reopen == CidrsDialog;
         public bool ErrorInDialog => Error.Length > 0 && (CidrsFailed || Reopen == "rotate-" + Key.Id || Reopen == "revoke-" + Key.Id);
         public ApiKeySecret? Secret => Revealed is null ? null : new(Revealed, Rotated, Path, Warning);
-        public ApiKeyActions Actions => new(Shell, Key, "", ApiKeyPages.DetailsView, Reopen, Error, DraftGrace);
+        public ApiKeyActions Actions => new(Shell, Key, "", ApiKeyPages.DetailsView, Reopen, Error, DraftGrace, Now);
     }
 }

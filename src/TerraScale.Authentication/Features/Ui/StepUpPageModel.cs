@@ -5,6 +5,8 @@ namespace TerraScale.Authentication.Features.Ui;
 /// <summary>Hosted step-up display state; never contains the backend's bearer proof.</summary>
 public sealed record StepUpPageModel(string Id, string Email, string Purpose, bool Mfa, bool Password, bool MailRequested, string? Notice, string Nonce, string? Locale = null)
 {
+    public string? ReturnUri { get; init; }
+
     public string ResolvedLocale => Locale == AuthEmails.Portuguese ? AuthEmails.Portuguese : AuthEmails.English;
 
     public HostedPageCopy Copy => HostedCopies.For(this.ResolvedLocale);

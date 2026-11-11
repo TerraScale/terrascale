@@ -21,6 +21,10 @@ Supported pairs are `delete_account` with `ts-dashboard` or `ts-auth`,
 `change_email`, `add_passkey` or `delete_passkey` with `ts-auth` (see `email-change.md`). Starting an ownership transfer consumes its proof exactly like API-key rotation. Organization deletion and ownership-transfer proofs additionally bind the exact `organization_id`: the minting request carries it and consumption refuses a proof minted for another organization. Organization deletion consumes its `delete_organization/ts-auth` proof at the step-up consume endpoint, naming the organization in `organization_id`, before any other effect, then the organization `DELETE` requires that consumed proof in `X-TerraScale-Step-Up-Proof` for the same organization, account and authentication state before the proof's deadline, and spends it; a retry needs a new proof. Dashboard plan changes consume their `change_plan/ts-auth` proof single-use at the step-up consume endpoint for the signed-in user and the organization named in `organization_id` before any Stripe effect; the dashboard names the organization the proof was minted for, from its one-use encrypted, organization-pinned intent. The hosted page identifies the operation
 and account. It requires a fresh password, or one explicitly requested email
 code for a passwordless account, followed by a fresh active MFA factor.
+Approval immediately navigates to the validated callback with a Refresh header.
+The no-store hosted response also contains a Continue link that becomes visible
+after 1.5 seconds if automatic refresh is blocked. Its visibility changes without
+motion, including when reduced motion is preferred.
 Opening the page sends no email. An attempt requests at most one code and uses
 the existing mail and credential budgets. Email codes are bound to that attempt
 and cannot sign in or approve another attempt.

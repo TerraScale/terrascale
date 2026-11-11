@@ -67,22 +67,29 @@ test('an API key is shown once and rotates twice during grace without another cl
   await page.goto('/api-keys?create=key');
   await page.locator('#key-name').fill(name);
   await page.locator('#create-key form').getByRole('button', { name: 'Create key', exact: true }).click();
-  const secret = page.locator('.ts-apikeys-secret-value');
+  const secret = page.locator('#key-secret #api-key-secret');
   await expect(secret).toBeVisible();
   const key = (await secret.innerText()).trim();
   saveSecret('second-api-key', key);
   expect(apiKeyFormat.test(key), 'the second API key has the canonical format').toBe(true);
   await audit.check('second API key created');
 
+  await page.locator('#key-secret').getByRole('link', { name: 'Done', exact: true }).click();
   const secrets = [key];
   for (let generation = 1; generation <= 2; generation += 1) {
-    await page.goto('/api-keys');
+    const target = generation === 1 ? '/api-keys' : `/api-keys/${key.slice(0, 26)}`;
+    await page.goto(target);
     expect((await page.content()).includes(secrets.at(-1)!), 'the previous reveal is gone').toBe(false);
-    const rotating = page.locator('main tr').filter({ hasText: name });
+    const rotating = generation === 1 ? page.locator('main tr').filter({ hasText: name }) : page.locator('main');
     await rotating.getByRole('button', { name: 'Rotate', exact: true }).click();
     const dialog = page.locator('dialog[open]');
+    const warning = dialog.getByText(/The previous secret still works until .*Rotating now ends it immediately\./);
+    if (generation === 1) await expect(warning).toHaveCount(0);
+    else await expect(warning).toBeVisible();
+    await expect(dialog.locator('[name=dialog]')).toHaveValue(`rotate-${key.slice(0, 26)}`);
+    if (generation === 2) await expect(dialog.locator('[name=view]')).toHaveValue('details');
     await dialog.locator('[name=previousSecretTtl]').selectOption('3600');
-    await dialog.getByRole('button', { name: 'Rotate secret', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Rotate key', exact: true }).click();
     const approved = page.waitForResponse((response) => response.request().method() === 'POST'
       && new URL(response.url()).pathname.startsWith('/ui/terrascale/step-up/'));
     await confirmWithPassword(page, audit, current.password, `rotation ${generation}`);
@@ -90,7 +97,10 @@ test('an API key is shown once and rotates twice during grace without another cl
     expect(confirmation.status()).toBe(200);
     expect(confirmation.headers()['cache-control']).toBe('no-store');
     expect(confirmation.headers()['refresh']).toBe(`0;url=${dash}/auth/step-up/callback`);
-    expect(confirmation.headers()['content-length']).toBe('0');
+    expect(confirmation.headers()['content-security-policy']).toContain("style-src 'self' 'nonce-");
+    const fallback = await confirmation.text();
+    expect(fallback).toContain(`href="${dash}/auth/step-up/callback"`);
+    expect(fallback).toContain('class="btn delayed-continue"');
     await expect(secret).toBeVisible();
     expect(new URL(page.url()).origin).toBe(dash);
     const rotated = (await secret.innerText()).trim();
@@ -99,6 +109,8 @@ test('an API key is shown once and rotates twice during grace without another cl
     expect(rotated === secrets.at(-1), 'rotation changes the secret').toBe(false);
     expect(rotated.slice(0, 26), 'rotation preserves the key id').toBe(key.slice(0, 26));
     secrets.push(rotated);
+    await page.locator('#key-secret').getByRole('link', { name: 'Done', exact: true }).click();
+    await expect(page).toHaveURL((url) => url.pathname === target);
   }
 
   for (const [generation, credential] of secrets.entries()) {
@@ -117,8 +129,8 @@ test('an API key is shown once and rotates twice during grace without another cl
 
   const replay = await page.request.get(`${dash}/auth/step-up/callback`);
   expect(replay.status(), 'a consumed callback fails closed').toBe(403);
-  const mismatched = await page.request.get(`${dash}/auth/step-up/callback?keyId=${key.slice(0, 26)}`);
-  expect(mismatched.status(), 'callback parameters cannot replace the saved intent').toBe(403);
+  const queryCallback = await page.request.get(`${dash}/auth/step-up/callback?keyId=${key.slice(0, 26)}`);
+  expect(queryCallback.status(), 'a callback with a query string is refused').toBe(403);
   await audit.check('API key rotated twice');
 
   await page.goto('/api-keys');
