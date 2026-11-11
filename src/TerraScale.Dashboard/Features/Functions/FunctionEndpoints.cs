@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.Features.Functions
             catch (Exception error) when (KnownFailure(error, http))
             {
                 var missing = error is AccountAccessException { StatusCode: 404 };
-                return View(http, context, database, items, null, [], missing ? error.Message : Message(error), missing ? 404 : Status(error) is 401 or 403 ? 200 : Status(error), noAccess: Status(error) is 401 or 403);
+                return View(http, context, database, items, null, [], missing ? error.Message : Message(error), missing ? 404 : Status(error) == 403 ? 200 : Status(error), noAccess: Status(error) == 403);
             }
         }
 
@@ -77,11 +77,6 @@ namespace TerraScale.Dashboard.Features.Functions
                 items = await functions.ListAsync(context, database, http.RequestAborted);
                 selected = await functions.ReadAsync(context, database, name, http.RequestAborted);
                 logs = selected is null ? [] : await functions.LogsAsync(context, database, name, http.RequestAborted);
-                if (!string.Equals(name, form["confirmName"].ToString(), StringComparison.Ordinal))
-                {
-                    throw new AccountAccessException("Confirm the function name before deleting it.", 422);
-                }
-
                 if (!await functions.DeleteAsync(context, database, name, http.RequestAborted))
                 {
                     throw new AccountAccessException("This function no longer exists.", 404);
@@ -92,7 +87,7 @@ namespace TerraScale.Dashboard.Features.Functions
             catch (Exception error) when (KnownFailure(error, http))
             {
                 return View(http, context, database, items, selected, logs, "The function was not deleted. " + Message(error), Status(error),
-                    noAccess: Status(error) is 401 or 403, deleteName: name);
+                    noAccess: Status(error) == 403, deleteName: name);
             }
         }
 
