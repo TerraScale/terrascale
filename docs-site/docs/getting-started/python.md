@@ -92,6 +92,8 @@ refused: primary_key_violation statement 0 sqlstate 23505
 - **Arguments are parameters, not string interpolation.** Positional `?` lists and named (`:name`) dicts are sent as typed JSON; `bytes` travel as base64 and integers stay exact. `Row` reads by ordinal or column name (`get_int64`, `get_string`, …).
 - **Refused statements raise `SqlError`.** It carries `code` (a `SqlErrorCodes` constant), `statement` (zero-based) and `sqlstate`; the request rolled back. A `serialization_conflict` is resent at most twice; nothing else is.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Next steps
 
 - [SDK reference](/guides/sdks) — the five SDKs and their install commands
