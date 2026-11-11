@@ -22,10 +22,7 @@ The new method is additive; no package version or storage format changes here.
 Both operations share transport and response validation, and use the existing
 `closeProject` route-manifest entry because the HTTP method and path are the same.
 
-Coverage uses the established SDK HTTP handlers to verify both versions' wire
-requests, accepted/pending responses, response mismatches and conflict handling.
-The version 2 server patch is not available to this SDK suite; these tests do not
-prove producer integration, database purge or live erasure. The parent task owns
+Nothing in this SDK proves producer integration, database purge or live erasure. The parent task owns
 the TerraBase implementation, integration evidence and producer pin after this
 SDK change merges.
 

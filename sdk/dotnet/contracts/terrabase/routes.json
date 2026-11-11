@@ -1,5 +1,5 @@
 {
-  "description": "Every TerraBase route this SDK calls. tests/TerraScale.DotNet.Tests checks the clients send exactly these; the monorepo (ts-auth Fast, TerraBaseSdkContractTests) checks the TerraBase built from the same commit serves each one. database, project, sql and platform routes are served on the public listener, management routes on the administrative listener (management service credential) and the client listener (ts-auth access token).",
+  "description": "Every TerraBase route this SDK calls. database, project, sql and platform routes are served on the public listener, management routes on the administrative listener (management service credential) and the client listener (ts-auth access token).",
   "operations": [
     {
       "client": "database",
