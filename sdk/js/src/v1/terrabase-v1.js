@@ -332,7 +332,7 @@ export function createTerraBaseV1ClientFromEnvironment(/** @type {Partial<TerraB
     return value;
   });
   const config = /** @type {TerraBaseV1ClientConfig} */ ({ ...overrides, project: overrides.project ?? fromEnv("TERRASCALE_PROJECT_ID"), apiKey: overrides.apiKey ?? fromEnv("TERRASCALE_API_KEY") });
-  if (config.baseUrl === undefined && config.endpointResolver === undefined)
-    config.baseUrl = process.env.TERRASCALE_BASE_URL || "https://api.terrascale.tech";
+  const base = process.env.TERRASCALE_BASE_URL;
+  if (config.baseUrl === undefined && config.endpointResolver === undefined && base !== undefined && base !== "") config.baseUrl = base;
   return new TerraBaseV1Client(config);
 }

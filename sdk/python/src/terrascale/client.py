@@ -50,7 +50,8 @@ __all__ = ["TerraScale", "Database"]
 T = TypeVar("T")
 
 
-def _settings(api_key: str | None, project: str | None, token: Any, base_url: str | None) -> tuple[str | None, str, str]:
+def _settings(api_key: str | None, project: str | None, token: Any, base_url: str | None,
+              issuer: str | None) -> tuple[str | None, str, str]:
     api_key = api_key if api_key is not None else os.environ.get("TERRASCALE_API_KEY")
     project = project if project is not None else os.environ.get("TERRASCALE_PROJECT_ID")
     if not project:
@@ -62,6 +63,9 @@ def _settings(api_key: str | None, project: str | None, token: Any, base_url: st
     url = httpx.URL(base)
     if url.scheme != "https" and not (url.scheme == "http" and url.host in ("localhost", "127.0.0.1", "::1")):
         raise ValueError("base_url must be an https URL")
+    if api_key and issuer is None and url != httpx.URL(_spec.DEFAULT_BASE_URL):
+        raise ValueError("set issuer to the ts-auth that exchanges the API key from api_key= or TERRASCALE_API_KEY: with a "
+                         "base_url other than https://api.terrascale.tech the key is not sent to production ts-auth")
     return api_key, project, base
 
 
@@ -89,7 +93,7 @@ class TerraScale:
         max_attempts: int = _spec.MAX_ATTEMPTS,
         http_client: httpx.Client | None = None,
     ):
-        api_key, self.project, self.base_url = _settings(api_key, project, token, base_url)
+        api_key, self.project, self.base_url = _settings(api_key, project, token, base_url, issuer)
         self._http = http_client or httpx.Client(timeout=timeout, follow_redirects=False, http2=True)
         self._owns_http = http_client is None
         self._max_attempts = max(1, max_attempts)
@@ -490,8 +494,7 @@ class Database:
 
     def execute(self, sql: str | Statement, args: Args = None) -> StatementResult:
         """Run one statement, reads and writes, with positional or named arguments."""
-        item = sql if isinstance(sql, Statement) else Statement(sql, args)
-        return (self._c._send(_spec.execute(*self._p, _sql.statements([item]))))[0]
+        return (self._c._send(_spec.execute(*self._p, _sql.statements([_sql.statement(sql, args)]))))[0]
 
     def batch(self, statements: Sequence[str | tuple[str, Args] | Statement]) -> builtins.list[StatementResult]:
         """Run 1 to 256 statements as one all-or-nothing transaction; one result per statement."""

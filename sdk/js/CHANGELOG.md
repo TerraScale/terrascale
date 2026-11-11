@@ -12,6 +12,28 @@ transactions share the mapping.
 Drizzle's `sqlite-proxy` driver expects, mapped from a root database handle's
 `execute` and atomic `batch`. The SDK adds no `drizzle-orm` dependency.
 
+A client built with neither `baseUrl` nor `endpointResolver` sends to
+`https://api.terrascale.tech`, like the other SDKs; passing both is still
+refused.
+
+An `apiKey` is exchanged at `https://auth.terrascale.tech` only when the client
+sends to `https://api.terrascale.tech`. With any other `baseUrl`, or with an
+`endpointResolver`, the client throws a `TypeError` before any request unless
+the new `authBaseUrl` option names the bare ts-auth origin that exchanges the
+key; `createScopedKey` uses the same origin. `authBaseUrl` without `apiKey` is
+refused. Earlier versions sent the key to `https://auth.terrascale.tech` for
+every TerraBase origin.
+
+`execute` on a database, on a SQL session and inside `transaction` also takes
+one `{ sql, args }` or `{ sql, named }` statement value. Arguments next to a
+statement value, or any other value, are refused with a `TypeError` before
+anything is sent.
+
+`createTerraBaseClientFromEnvironment` sends to `TERRASCALE_BASE_URL` when
+neither `baseUrl` nor `endpointResolver` is passed, and to
+`https://api.terrascale.tech` when that variable is unset too; passing both
+`baseUrl` and `endpointResolver` is refused.
+
 `deleteOrganization` and `startOwnershipTransfer` now require
 `options.stepUpProof` and send it as `X-TerraScale-Step-Up-Proof`, matching the
 purpose-bound, organization-bound proofs ts-auth requires since #1341. The proof

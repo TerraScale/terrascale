@@ -15,6 +15,7 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "sdk/python/src"))
 import httpx
 from terrascale import TerraScale
+from terrascale.auth import DEFAULT_ISSUER
 from terrascale.errors import APIError
 from terrascale.ids import new_id
 
@@ -52,7 +53,7 @@ def main():
         http = clients.enter_context(httpx.Client(http2=True, timeout=90,
                                      event_hooks={"response": [response_hook]}))
         return clients.enter_context(TerraScale(api_key=key, project=project,
-                       base_url=f"https://{region}.api.terrascale.tech",
+                       base_url=f"https://{region}.api.terrascale.tech", issuer=DEFAULT_ISSUER,
                        region=region if pin else None, http_client=http, max_attempts=1))
 
     try:

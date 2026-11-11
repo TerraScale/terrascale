@@ -184,6 +184,7 @@ class Connection:
         token: str | None = None,
         base_url: str | None = None,
         region: str | None = None,
+        issuer: str | None = None,
         timeout: float = 30.0,
         http_client: Any = None,
     ) -> None:
@@ -193,6 +194,7 @@ class Connection:
             token=token,
             base_url=base_url,
             region=region,
+            issuer=issuer,
             timeout=timeout,
             http_client=http_client,
         )

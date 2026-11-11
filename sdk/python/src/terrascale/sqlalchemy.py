@@ -51,7 +51,7 @@ class TerraScaleDialect(SQLiteDialect_pysqlite):
         opts: dict[str, Any] = {"project": url.host, "database": url.database}
         if url.password:
             opts["api_key"] = url.password
-        for key in ("base_url", "region"):
+        for key in ("base_url", "region", "issuer"):
             value = url.query.get(key)
             if value:
                 opts[key] = value

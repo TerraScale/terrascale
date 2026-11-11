@@ -69,7 +69,8 @@ For live data, `db.shape("todos").subscribe(({ rows }) => …)` keeps every row 
 ## Databases for agents
 
 On your server, pass `apiKey` instead of `token`. The key is exchanged at ts-auth for a project access token
-on each request; the raw key goes only to `https://auth.terrascale.tech`. Keep keys out of browser code and logs.
+on each request; the raw key goes only to `https://auth.terrascale.tech`, or to the `authBaseUrl` you name, which an
+`apiKey` needs with any other `baseUrl` or with an `endpointResolver`. Keep keys out of browser code and logs.
 
 ```js
 const client = createTerraBaseClient({
@@ -127,8 +128,8 @@ access tokens remain required. This release has not implemented automatic Atlas
 integration (TS-507); the endpoint examples show the current API boundary and
 are not a first-party production setup recipe. No new resolver API is implied.
 
-The current implementation requires exactly one of `baseUrl` or
-`endpointResolver`. In these examples, `discoveredOrigin` is a trusted HTTPS
+Without `baseUrl` or `endpointResolver` the client sends to
+`https://api.terrascale.tech`; passing both is refused. In these examples, `discoveredOrigin` is a trusted HTTPS
 origin supplied by an authorized integration, not an SDK-created value.
 A resolver receives
 `{ project, database?, signal }` and returns the service URL, synchronously or asynchronously.
@@ -138,7 +139,10 @@ Shared resolution expires after 30 seconds and supplies a cancellation signal
 to the resolver; a later operation can retry an expired or failed resolution.
 Cancelling one operation leaves other callers' shared resolution running.
 HTTPS is required except for loopback HTTP in isolated tests; no regional
-host is hardcoded and no implicit production endpoint is selected.
+host is hardcoded. With an `apiKey`, a `baseUrl` other than
+`https://api.terrascale.tech` or an `endpointResolver` needs `authBaseUrl`, the
+bare ts-auth origin that exchanges the key; without it the client throws before
+any request instead of sending the key to `https://auth.terrascale.tech`.
 
 ```js
 import { createTerraBaseV1Client, staticBaseUrlResolver } from "@terrascale/sdk";
@@ -154,7 +158,8 @@ const db = client.database("app");
 Atlas discovers the closest eligible
 region and the location of a project/database. The resolver seam allows that
 choice to stay pinned for the session. Atlas discovery integration is deferred
-to TS-507; this release requires an explicit URL or caller-supplied resolver.
+to TS-507; this release sends to `https://api.terrascale.tech` unless a URL or
+resolver is supplied.
 
 ## SQL and catalog
 
@@ -187,7 +192,8 @@ scope, checked per statement. Keep service credentials private and out of logs a
 `createTerraBaseClient` is an alias of `createTerraBaseV1Client`. A region sends `X-TerraScale-Region-Pin`, and a missing, empty, or whitespace region omits it.
 On a server, `createTerraBaseClientFromEnvironment(overrides?)` reads `TERRASCALE_PROJECT_ID`, `TERRASCALE_API_KEY` and
 `TERRASCALE_BASE_URL`. Without that variable, a `baseUrl` or an `endpointResolver` it sends to
-`https://api.terrascale.tech`; passing both `baseUrl` and `endpointResolver` is refused.
+`https://api.terrascale.tech`; passing both `baseUrl` and `endpointResolver` is refused. With a
+`TERRASCALE_BASE_URL` other than `https://api.terrascale.tech`, pass `authBaseUrl` in the overrides.
 
 `client.databases.create({ name })` uses the called region as the home; `homeRegion` selects another serving region.
 
