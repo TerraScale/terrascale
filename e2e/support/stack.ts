@@ -12,6 +12,7 @@ export const auth = 'https://auth.terrascale.tech';
 export const mailpit = 'http://127.0.0.1:8025';
 export const cloudflareSink = 'http://127.0.0.1:8026';
 export const stripeStandIn = 'http://127.0.0.1:8027';
+export const r2StandIn = 'http://127.0.0.1:8028';
 export const mailWait = production ? 120_000 : 30_000;
 export const browserHome = production ? join(stateDir, 'browser-home') : join(stateDir, 'pki', 'browser-home');
 export const sessionFile = (setup: string) => join(stateDir, `${setup}.session.json`);

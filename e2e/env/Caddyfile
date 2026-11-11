@@ -35,6 +35,11 @@ https://api.cloudflare.com {
 	reverse_proxy 127.0.0.1:8026
 }
 
+https://journey.r2.cloudflarestorage.com {
+	import edge
+	reverse_proxy 127.0.0.1:8028
+}
+
 https://status.terrascale.tech {
 	import edge
 	respond 404
