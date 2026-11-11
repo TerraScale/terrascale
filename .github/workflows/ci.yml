@@ -204,7 +204,7 @@ jobs:
           ordered=$(jq 'index("auth-server") != null and index("auth-client") != null' <<< "$CHANGES")
           [[ $GITHUB_EVENT_NAME != workflow_dispatch ]] || ordered=true
           echo "ordered=$ordered" >> "$GITHUB_OUTPUT"
-          [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES='[]'
+          [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
           echo "dotnet=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
           echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
@@ -423,9 +423,9 @@ jobs:
           scripts/ci/release-only.sh
 
   main:
-    needs: [changes, test]
+    needs: [changes, terrabase, test]
     if: >-
-      !cancelled() && needs.test.result == 'success'
+      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
@@ -594,9 +594,9 @@ jobs:
   # ts-auth releases in parallel with TerraBase, except after it when one push changes both TerraBase's server and
   # what ts-auth calls it with (changes.outputs.ordered): shared scope and contract changes reach TerraBase first.
   main-auth:
-    needs: [changes, test]
+    needs: [changes, auth, test]
     if: >-
-      !cancelled() && needs.test.result == 'success'
+      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered != 'true'
     concurrency:
@@ -615,9 +615,9 @@ jobs:
     steps: *production-steps
 
   main-auth-ordered:
-    needs: [changes, test, main]
+    needs: [changes, auth, test, main]
     if: >-
-      !cancelled() && needs.test.result == 'success'
+      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered == 'true'
       && (!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')

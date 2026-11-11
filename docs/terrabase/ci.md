@@ -29,11 +29,15 @@ check: it fails when any job it needs failed or was cancelled, and a skipped job
 
 ## Pushes to main
 
-No leg runs on a push: the pull request already built and checked its merge commit. `changes` and `checks` (the
-legacy-name scan) run; when the push changes TerraBase or ts-auth, `test` then means that `changes` and `checks`
-passed. `main` publishes TerraBase and `main-auth` (or `main-auth-ordered`, after `main`, when one push changes both
-TerraBase's server and what ts-auth calls it with) publishes ts-auth, each from its own Release build
-(`scripts/ci/image-payloads.sh publish`); a failed build stops its release. A `workflow_dispatch` on `main` selects both
-services the same way.
+A branch need not be up to date with `main` before it merges, so a push runs the legs of its changed areas again on
+the merged commit: `changes` selects `libs`, `auth`, `terrabase` and `sdk` as on a pull request, and a change to
+TerraBase's server (`src/TerraBase`, its contracts, `src/vendor`) also selects `auth`. `checks` runs the legacy-name
+scan; `dashboard`, the sites and `journey` run on pull requests only. `test` passes when `changes`, `checks` and every
+selected leg passed. `main` publishes TerraBase once `test` and `terrabase` passed; `main-auth` (or
+`main-auth-ordered`, after `main`, when one push changes both TerraBase's server and what ts-auth calls it with)
+publishes and releases ts-auth once `test` and `auth` passed. Each publishes from its own Release build
+(`scripts/ci/image-payloads.sh publish`); a failed leg or build stops its release. TerraBase reaches the regions only
+through a `release-only` dispatch. A `workflow_dispatch` on `main` selects all three .NET legs and both services
+(`build-only`: the `terrabase` leg and `main`).
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
