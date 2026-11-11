@@ -81,7 +81,11 @@ func (d *Database) Connect(ctx context.Context) (*SQLSession, error) {
 
 // Execute runs one statement; sql.NamedArg values bind by name.
 func (s *SQLSession) Execute(ctx context.Context, query string, args ...any) (*Result, error) {
-	out, err := s.Batch(ctx, []Statement{statementOf(query, args)})
+	return s.ExecuteStatement(ctx, statementOf(query, args))
+}
+
+func (s *SQLSession) ExecuteStatement(ctx context.Context, statement Statement) (*Result, error) {
+	out, err := s.Batch(ctx, []Statement{statement})
 	if err != nil {
 		return nil, err
 	}

@@ -1,13 +1,13 @@
 # CLI compiler and advisory checks
 
 The SDK language and consumer floor remains Go 1.25.0 in `go.mod`. The release
-compiler is independently pinned to Go 1.27.3 in `.go-version`; `GOTOOLCHAIN=local`
-prevents an implicit compiler replacement. The Go download catalog listed
-1.27.3 as the latest stable version on 2026-10-26.
+compiler is independently pinned to the version in `.go-version`; `GOTOOLCHAIN=local`
+prevents an implicit compiler replacement. The Go download catalog listed that
+version as the latest stable release when it was pinned.
 
 The existing test and release jobs cache only the pinned govulncheck v1.9.0
-executable, never advisory results. Its Go 1.27.3 trimpath build is checksum-verified
-on every use and self-scanned; only trusted-main CI saves the scanner cache.
+executable, never advisory results. Its trimpath build with the Go version in
+`.go-version` is checksum-verified on every use and self-scanned.
 Every ready PR (including documentation-only changes) queries the current Go advisory
 database. Automatic discovery covers every committed Go module. Source symbol analysis
 covers every package and includes tests. `go list -deps -test` independently

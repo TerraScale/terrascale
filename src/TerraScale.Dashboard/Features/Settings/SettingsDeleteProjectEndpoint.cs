@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.Features.Settings
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/organization", Results.BadRequest("Invalid form token."));
             }
 
             try

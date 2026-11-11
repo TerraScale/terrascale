@@ -1,4 +1,5 @@
 using System.Net.Mail;
+using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.TsAuth;
 
@@ -257,7 +258,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var limit = PlanCatalog.ResourceLimits(org).Members;
             if (limit > 0 && memberEmails.Union(pending).Union(reserved).Append(email).Distinct(StringComparer.Ordinal).Count() > limit)
             {
-                throw new AccountAccessException($"The {plan.Name} plan allows {limit} members including pending invitations.", 409);
+                throw new AccountAccessException($"The {plan.Name} plan allows {ValueFormat.Plural(limit, "member")} including pending invitations.", 409);
             }
         }
     }

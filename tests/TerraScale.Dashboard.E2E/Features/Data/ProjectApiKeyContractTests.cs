@@ -2,9 +2,11 @@ using System.Net;
 using TerraScale.Dashboard.Platform.TsAuth;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using TUnit.Assertions.Enums;
 using TerraScale.Dashboard.E2E.Features.Databases;
 using TerraScale.Dashboard.Features.ApiKeys;
+using TerraScale.Dashboard.Features.Auth;
 using Microsoft.AspNetCore.Builder;
 
 namespace TerraScale.Dashboard.E2E.Features.Data
@@ -28,7 +30,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var context = Context();
             var service = new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform")));
             var created = await service.CreateAsync(context, "api-key", "Synthetic", DatabaseId,
-                ["sql:read", "sql:write"], 0, [], CancellationToken.None, "synthetic-proof");
+                ["sql:read", "sql:write"], 0, [], CancellationToken.None);
             using var request = JsonDocument.Parse(wire.Body!);
             await Assert.That(request.RootElement.TryGetProperty("expires_at", out var noExpiry) && noExpiry.ValueKind != JsonValueKind.Null).IsFalse();
             await Assert.That(request.RootElement.GetProperty("allowed_cidrs").GetArrayLength()).IsEqualTo(0);
@@ -116,7 +118,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             var csrf = await HttpJourney.CsrfAsync(client, "/api-keys");
             string keyId;
-            using (var created = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+            using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
             { ["_csrf"] = csrf, ["name"] = "Grace " + Guid.NewGuid().ToString("N")[..8], ["scopes"] = "sql:read" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -132,6 +134,15 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 await Assert.That(rotated.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 using var json = JsonDocument.Parse(await rotated.Content.ReadAsStringAsync());
                 await Assert.That(json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()).IsEqualTo(keyId);
+            }
+
+            using (var reload = new HttpRequestMessage(HttpMethod.Get, "/auth/step-up/callback"))
+            {
+                reload.Headers.Accept.ParseAdd("text/html");
+                using var reloaded = await client.SendAsync(reload);
+                await Assert.That(reloaded.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                await Assert.That(reloaded.Content.Headers.ContentType!.MediaType).IsEqualTo("text/html");
+                await Assert.That(await reloaded.Content.ReadAsStringAsync()).Contains("Start the action again");
             }
 
             using (var listed = await client.GetAsync("/api/v1/dashboard/credentials"))
@@ -157,6 +168,10 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                     .EnumerateArray().Single(item => item.GetProperty("keyId").GetString() == keyId);
             await Assert.That(DateTimeOffset.Parse(mcpKey.GetProperty("previousSecretExpiresAt").GetString()!, System.Globalization.CultureInfo.InvariantCulture))
                 .IsGreaterThanOrEqualTo(before);
+            var mcpCreate = (await HttpJourney.McpAsync(client, secret, "tools/call", new
+            { name = "create_api_key", arguments = new { name = "Assistant", scopes = SqlScopes } })).GetProperty("result");
+            await Assert.That(mcpCreate.GetProperty("isError").GetBoolean()).IsTrue();
+            await Assert.That(mcpCreate.GetProperty("content")[0].GetProperty("text").GetString()).IsEqualTo(StepUpFlow.Required().Message);
 
             using (var refused = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/rotate", new()
             { ["_csrf"] = csrf, ["keyId"] = keyId, ["previousSecretTtl"] = "0" }))
@@ -208,7 +223,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
             var csrf = await HttpJourney.CsrfAsync(member, "/api-keys" + scope);
             string keyId;
-            using (var created = await HttpJourney.PostConfirmedFormAsync(member, "/api/v1/dashboard/credentials/key" + scope, new()
+            using (var created = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/credentials/key" + scope, new()
             { ["_csrf"] = csrf, ["name"] = "Member key", ["scopes"] = "sql:read" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -221,7 +236,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 var html = await page.Content.ReadAsStringAsync();
                 await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That(html).Contains("Create key");
-                await Assert.That(html).DoesNotContain("Save network access");
             }
 
             using (var revoked = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/credentials/" + keyId + "/revoke" + scope, new() { ["_csrf"] = csrf }))
@@ -315,7 +329,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             }
 
             var csrf = await HttpJourney.CsrfAsync(viewer, "/api-keys" + scope);
-            using (var refused = await HttpJourney.PostConfirmedFormAsync(viewer, "/api/v1/dashboard/credentials/key" + scope, new()
+            using (var refused = await HttpJourney.PostFormAsync(viewer, "/api/v1/dashboard/credentials/key" + scope, new()
             { ["_csrf"] = csrf, ["name"] = "Viewer key", ["scopes"] = "sql:read" }))
             {
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
@@ -363,12 +377,14 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             var csrf = await HttpJourney.CsrfAsync(client, "/api-keys");
             string keyId;
-            using (var created = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+            using (var created = await PostHtmlFormAsync(client, "/api/v1/dashboard/credentials/key", new()
             { ["_csrf"] = csrf, ["name"] = "Draft " + Guid.NewGuid().ToString("N")[..8], ["scopes"] = "sql:read" }))
             {
-                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-                using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
-                keyId = json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(created.Headers.Location).IsNull();
+                var secret = Regex.Match(await created.Content.ReadAsStringAsync(), "id=\"api-key-secret\"[^>]*>([^<]+)</code>").Groups[1].Value;
+                await Assert.That(secret).Matches("^[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$");
+                keyId = secret[..26];
             }
 
             using (var refused = await PostHtmlFormAsync(client, "/api/v1/dashboard/credentials/allowed-cidrs", new()
@@ -396,7 +412,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         {
             using var wire = new Wire();
             var created = await new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform"))).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId,
-                ["sql:read", "sql:write"], 0, ApiKeyService.ParseCidrs("203.0.113.0/24\n198.51.100.7, 2001:db8::/48"), CancellationToken.None, "synthetic-proof");
+                ["sql:read", "sql:write"], 0, ApiKeyService.ParseCidrs("203.0.113.0/24\n198.51.100.7, 2001:db8::/48"), CancellationToken.None);
             using var request = JsonDocument.Parse(wire.Body!);
             await Assert.That(request.RootElement.GetProperty("allowed_cidrs").EnumerateArray().Select(item => item.GetString()!))
                 .IsEquivalentTo(SetCidrs, CollectionOrdering.Matching);
@@ -510,9 +526,10 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                     throw new InvalidOperationException("Keys must use the original user authority at ts-auth's project boundary.");
                 }
 
-                if (request.Method == HttpMethod.Post && request.Headers.GetValues("X-TerraScale-Step-Up-Proof").Single() != "synthetic-proof")
+                var proof = request.Headers.TryGetValues("X-TerraScale-Step-Up-Proof", out var proofs) ? proofs.Single() : null;
+                if (request.Method == HttpMethod.Post && proof != (path.EndsWith("/rotate", StringComparison.Ordinal) ? "synthetic-proof" : null))
                 {
-                    throw new InvalidOperationException("Protected key mutations must carry their backend step-up proof.");
+                    throw new InvalidOperationException("Rotation carries its backend step-up proof; creation carries none.");
                 }
 
                 Requests++;

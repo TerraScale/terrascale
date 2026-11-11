@@ -86,7 +86,13 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var html = WebUtility.HtmlDecode(await client.GetStringAsync("/databases"));
             await Assert.That(html).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"");
             await Assert.That(html).Contains(DatabaseService.NameHint);
-            await Assert.That(Regex.Match(html, "<option value=\"GRU\"[^>]*>").Value).Contains("selected");
+            var form = Regex.Match(html, "<form method=\"post\" action=\"/api/v1/dashboard/databases\".*?</form>", RegexOptions.Singleline).Value;
+            await Assert.That(form).Contains("<input type=\"hidden\" name=\"homeRegion\" value=\"GRU\" />").And.DoesNotContain("name=\"ttlHours\"");
+            await Assert.That(Regex.Match(form, "<button [^>]*data-region=\"GRU\"[^>]*>").Value).Contains("aria-pressed=\"true\"").And.Contains(" data-home");
+            foreach (var code in new[] { "FRA", "SFO" })
+            {
+                await Assert.That(Regex.Match(form, $"<button [^>]*data-region=\"{code}\"[^>]*>").Value).Contains("aria-pressed=\"false\"").And.DoesNotContain("data-home");
+            }
             await Assert.That(html.Contains("name=\"region\"", StringComparison.Ordinal)).IsFalse();
             foreach (var name in new[] { "1database", "con", "com0", "lpt9" })
             {

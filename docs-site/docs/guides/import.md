@@ -54,3 +54,5 @@ The [export](/guides/sql-http#export-a-database) endpoint returns one SQL script
 Imports from PostgreSQL, and from another SQLite database, are a dump you load. There is no live link, attached database, replica, or continuous sync from either source, and TerraScale does not run a hosted migration service.
 
 Statements use the SQLite dialect, and Postgres-only syntax is refused over HTTP. A `pg_dump --data-only --inserts --column-inserts` dump must be converted to SQLite SQL first — table definitions are not translated. The [Postgres wire](/guides/postgres-clients) accepts a few Postgres spellings (`SERIAL`, `ILIKE`, `now()`, `expr::type`), but only on that transport, and `COPY … FROM STDIN` and psql's `\copy` are not supported there either: the wire serves queries only. Convert the dump's `INSERT` statements to batches like the ones above. Another SQLite database is dumped to SQL the same way as a local file, then loaded with `ts db import`.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

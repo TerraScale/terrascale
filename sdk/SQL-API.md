@@ -9,8 +9,31 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 
 | Concept | .NET | Notes |
 |---|---|---|
-| Client | `new TerraBaseSqlClient(http, options)` | options: `BaseAddress` or `Region` (default origin `https://api.terrascale.tech`), `ApiKey` or `AccessTokenProvider` |
+| Client | `new TerraBaseSqlClient(http, options)` | options: `BaseAddress` or `Region` (default origin `https://api.terrascale.tech`), `ApiKey` or `AccessTokenProvider`, and `AuthAddress`, the ts-auth origin that exchanges an `ApiKey` |
+| Client from the environment | `TerraBaseSqlClient.FromEnvironment()` | `TERRASCALE_API_KEY`; optional `TERRASCALE_BASE_URL`, default `https://api.terrascale.tech`, and `TERRASCALE_REGION`, which pins every request to that region |
 | Database | `client.Database(projectId, database)` | name or ULID; no request |
+
+| .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|
+| `TerraBaseSqlClient.FromEnvironment()` | `createTerraBaseClientFromEnvironment()` | `v1.NewFromEnvironment()` | `TerraScale()` | `Client::from_environment()` |
+
+JS/TS, Python and Rust also read `TERRASCALE_PROJECT_ID`; .NET and Go take the project per database. Only .NET reads
+`TERRASCALE_REGION`. Without `TERRASCALE_BASE_URL` every SDK sends to `https://api.terrascale.tech`.
+
+A client built from an API key (`ApiKey`, `apiKey`, `Config.APIKey`, `api_key`, `for_project_api_key`) sends the key to
+`https://auth.terrascale.tech` unless the caller names another ts-auth. With a TerraBase origin other than
+`https://api.terrascale.tech`, or an endpoint resolver, every SDK refuses to build such a client, before any request,
+unless the caller names the ts-auth that exchanges the key:
+
+| .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|
+| `AuthAddress` | `authBaseUrl` | `Config.TSAuthBaseURL` | `issuer=` (the issuer, `<origin>/terrascale`) | `.auth_base_url(origin)` |
+
+The environment clients take no such variable: with another `TERRASCALE_BASE_URL`, pass the option (JS/TS overrides,
+Python `issuer=`); .NET, Go and Rust refuse.
+
+A token source built separately (Go `tsauth.NewAPIKeySource`, Python `APIKeyTokenSource`) sends the key to the issuer
+it is given, `https://auth.terrascale.tech/terrascale` by default, whatever origin the client that uses it sends to.
 
 ## Databases for agents
 
@@ -25,7 +48,7 @@ only that database. Server contract: `docs/terrabase/agent-databases.md`; record
 | `setDatabaseTtl(project, database, ttlSeconds)` | `PUT …/databases/{database}/ttl` `{"ttlSeconds"}` | `ManagedDatabase` (200) |
 | `clearDatabaseTtl(project, database)` | `DELETE …/databases/{database}/ttl` | `ManagedDatabase` (200) |
 | `deleteDatabase(project, database)` | `DELETE …/databases/{database}` | nothing (204) |
-| `createScopedKey({ project?, database, access, ttlSeconds? })` | `POST https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys`, `Authorization: Basic base64(keyId:key)` of the client's `ApiKey`, `{"project","database","access","ttl_seconds"}` | `ScopedKey` (201) |
+| `createScopedKey({ project?, database, access, ttlSeconds? })` | `POST https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys`, or the same path on the ts-auth the client names, `Authorization: Basic base64(keyId:key)` of the client's `ApiKey`, `{"project","database","access","ttl_seconds"}` | `ScopedKey` (201) |
 
 `ManagedDatabase` is the existing database body (`id`, `projectId`, `name`, `branchedFrom`, `createdAt`, `region`,
 `homeRegion`, …) plus `expiresAt` (RFC 3339, or null without a TTL).
@@ -100,6 +123,13 @@ home) and `allRegions` (boolean).
 | `query<T>(sql, args, mapper)` | `T[]` | typed rows; the row becomes an object keyed by column name, blobs as base64 strings |
 | `batch(statements)` | `StatementResult[]` | 1 to 256 statements, all or nothing, one result per statement |
 
+`execute(statement)` runs one statement value, the shape `batch` takes, on the database, on a session and inside a
+transaction:
+
+| .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|
+| `ExecuteAsync(new TerraBaseSqlStatement(sql, args))` | `execute({ sql, args })` / `execute({ sql, named })` | `ExecuteStatement(ctx, v1.Statement{SQL: sql, Args: args})` | `execute(Statement(sql, args))` | `execute_statement(SqlStatement::new(sql).args(args))` |
+
 ## WebSocket: interactive transactions
 
 `GET /v1/projects/{project}/databases/{database}/sql/ws`, subprotocol `terrascale.sql.v1`.
@@ -153,8 +183,13 @@ Failures before execution keep each SDK's generic HTTP error types (401, 404, 42
 
 ## IDs
 
-Primary keys are ULIDs from the SDK's ULID generator (`TerraScaleIdGenerator`, `TerraScaleIds.Validate`). Tables that
-take local writes avoid `AUTOINCREMENT`.
+Primary keys are ULIDs from the SDK's ULID generator. Tables that take local writes avoid `AUTOINCREMENT`. A valid ID is
+a plain 26-character uppercase Crockford ULID whose first character is 0 to 7.
+
+| | .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|---|
+| New ID | `new TerraScaleIdGenerator().NewId()` | `generateId()` | `v1.NewID()` | `new_id()` | `new_id()` |
+| Validate | `TerraScaleIds.IsValid(id)`, `TerraScaleIds.Validate(id)` | `isValidId(id)` | `v1.ValidateID(id)` | `is_valid_id(id)` | `is_valid_id(id)` |
 
 ## Multi-region write conflicts
 

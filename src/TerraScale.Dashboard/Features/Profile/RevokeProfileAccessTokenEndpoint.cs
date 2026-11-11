@@ -20,7 +20,7 @@ namespace TerraScale.Dashboard.Features.Profile
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(http, "/profile?tab=access-tokens", Results.StatusCode(403));
             }
 
             try { await tokens.RevokeAsync(context, http.Request.RouteValues["id"]?.ToString() ?? "", http.RequestAborted); }

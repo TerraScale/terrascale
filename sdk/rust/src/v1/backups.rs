@@ -3,7 +3,7 @@ use super::{
     client::{Client, Req},
     database::{Database, ProjectDatabaseInfo},
     errors::{Error, Result},
-    ids::{check_database_selector, check_name, valid_entity_id},
+    ids::{check_database_selector, check_name, is_valid_id},
     management::ManagementPage,
 };
 use reqwest::{Method, StatusCode};
@@ -224,7 +224,7 @@ impl Client {
 impl Database {
     /// `GET D/restores/{operation}`; one background restore's status.
     pub async fn get_restore_operation(&self, operation: &str) -> Result<RestoreOperation> {
-        if !valid_entity_id(operation) {
+        if !is_valid_id(operation) {
             return Err(Error::InvalidInput(
                 "operation must be a canonical uppercase ULID".into(),
             ));
@@ -306,7 +306,7 @@ impl Database {
         backup: &str,
         name: Option<&str>,
     ) -> Result<RestoredDatabase> {
-        if !valid_entity_id(backup) {
+        if !is_valid_id(backup) {
             return Err(Error::InvalidInput(
                 "backup must be a canonical uppercase ULID".into(),
             ));

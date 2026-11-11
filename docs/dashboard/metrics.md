@@ -17,3 +17,5 @@ The dashboard owns plans, subscriptions, spending caps and internal billing repo
 ## Display
 
 Stats show a label and value. Preserve unavailable values explicitly. Fetch authorized observations for the selected organization, project and database and retain their time window and source. Do not derive global convergence, durability or erasure from a count or a lag sample.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
