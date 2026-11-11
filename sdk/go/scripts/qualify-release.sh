@@ -40,6 +40,6 @@ go vet ./...
 consumer_go_root=$(mise where go@1.25.0)
 GOROOT="$consumer_go_root" PATH="$consumer_go_root/bin:$PATH" bash scripts/check-consumer.sh
 "$(mise where goreleaser@2.19.0)/goreleaser" release --snapshot --clean
-python3 scripts/test-release.py
+python3 scripts/check-release.py
 cp dist/*.tar.gz dist/*.zip dist/checksums.txt dist/homebrew/Formula/ts.rb scripts/install.sh "$output/"
 printf '%s\n' "$version" > "$output/version.txt"

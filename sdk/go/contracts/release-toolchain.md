@@ -26,7 +26,7 @@ Windows amd64/arm64 binary before packaging or publication. The hook checks the
 embedded compiler using `go version -m`, then runs native module and package
 advisory scans. Module scanning covers stripped binaries even when symbol-level
 reachability is unavailable. A finding stops packaging and release. Existing
-archive checksum, installer and native snapshot checks remain in place.
+archive checksum and native snapshot checks remain in place.
 
 The test job separately compiles an isolated consumer importing all three public
 SDK packages under Go 1.25.0. This verifies source compatibility at the supported
@@ -37,7 +37,7 @@ To qualify an unsigned candidate without publication:
 ```sh
 # Install Go from .go-version and govulncheck v1.9.0 first; add it to PATH.
 nice -n 19 goreleaser release --snapshot --clean --skip=sign,publish
-nice -n 19 python3 scripts/test-release.py
+nice -n 19 python3 scripts/check-release.py
 ```
 
 Snapshot checks execute only the candidate built from the checked-out source.
