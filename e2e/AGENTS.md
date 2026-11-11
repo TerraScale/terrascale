@@ -45,7 +45,8 @@ never for a pull request: once after the last release of each commit (the rule i
   CA bundle itself;
 - asks mail.tm for an active domain before the first request to production ("inbox provider … production was not
   contacted" when it cannot), records both `/readyz` answers in `production-report/readyz.txt`, then runs the projects
-  of both pull-request shards (179 tests). A new project runs against production only once it is added there.
+  of both pull-request shards but the paid flow (179 tests). A new project runs against production only once it is
+  added there; `paid`, `paid-invitation` and `paid-finish` stay local because they pay through the Stripe stand-in.
 
 What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 
@@ -58,8 +59,9 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
   password and token are registered secrets. Errors name the "inbox provider".
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
-  sender, and the sign-up submission of the four `hosted` tests: each would send a production mail, and `setup`,
-  `desktop-setup` and `invitation` already audit the verify page.
+  sender; the sign-up submission of the four `hosted` tests: each would send a production mail, and `setup`,
+  `desktop-setup` and `invitation` already audit the verify page; and the global teardown's check of the Stripe
+  stand-in's unexpected calls (`support/teardown.ts`), because production has no stand-in.
 - The SDK stage keeps the pacing and every per-operation check. TerraBase's lane counters (`127.0.0.1:9091`) exist only
   on the local target, so a refused request that an SDK resends itself (Go and Rust REST calls, JavaScript and .NET
   reads) is caught on pull requests only; on production a refusal fails the run when it reaches the runner.
