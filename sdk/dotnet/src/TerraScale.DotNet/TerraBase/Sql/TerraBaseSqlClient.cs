@@ -78,8 +78,8 @@ public sealed partial class TerraBaseSqlClient
         }
 
         ArgumentNullException.ThrowIfNull(httpClient);
-        var baseAddress = options is { BaseAddress: null, EndpointResolver: null, AuthAddress: null }
-            ? TerraBaseRegion.PublicOrigin
+        var baseAddress = options.AuthAddress is null
+            ? TerraBaseRegion.OriginOrPublic(options.BaseAddress, options.EndpointResolver)
             : options.BaseAddress;
         connect = provider => new TerraBaseConnection(httpClient, baseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
             TerraBaseConnection.DefaultMaxResponseBytes, provider, region: options.Region);

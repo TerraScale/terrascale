@@ -10,7 +10,15 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 | Concept | .NET | Notes |
 |---|---|---|
 | Client | `new TerraBaseSqlClient(http, options)` | options: `BaseAddress` or `Region` (default origin `https://api.terrascale.tech`), `ApiKey` or `AccessTokenProvider` |
+| Client from the environment | `TerraBaseSqlClient.FromEnvironment()` | `TERRASCALE_API_KEY`; optional `TERRASCALE_BASE_URL`, default `https://api.terrascale.tech` |
 | Database | `client.Database(projectId, database)` | name or ULID; no request |
+
+| .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|
+| `TerraBaseSqlClient.FromEnvironment()` | `createTerraBaseClientFromEnvironment()` | `v1.NewFromEnvironment()` | `TerraScale()` | `Client::from_environment()` |
+
+JS/TS, Python and Rust also read `TERRASCALE_PROJECT_ID`; .NET and Go take the project per database. Without
+`TERRASCALE_BASE_URL` every SDK sends to `https://api.terrascale.tech`.
 
 ## Databases for agents
 
@@ -100,6 +108,13 @@ home) and `allRegions` (boolean).
 | `query<T>(sql, args, mapper)` | `T[]` | typed rows; the row becomes an object keyed by column name, blobs as base64 strings |
 | `batch(statements)` | `StatementResult[]` | 1 to 256 statements, all or nothing, one result per statement |
 
+`execute(statement)` runs one statement value, the shape `batch` takes, on the database, on a session and inside a
+transaction:
+
+| .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|
+| `ExecuteAsync(new TerraBaseSqlStatement(sql, args))` | `execute({ sql, args })` / `execute({ sql, named })` | `ExecuteStatement(ctx, v1.Statement{SQL: sql, Args: args})` | `execute(Statement(sql, args))` | `execute_statement(SqlStatement::new(sql).args(args))` |
+
 ## WebSocket: interactive transactions
 
 `GET /v1/projects/{project}/databases/{database}/sql/ws`, subprotocol `terrascale.sql.v1`.
@@ -153,8 +168,13 @@ Failures before execution keep each SDK's generic HTTP error types (401, 404, 42
 
 ## IDs
 
-Primary keys are ULIDs from the SDK's ULID generator (`TerraScaleIdGenerator`, `TerraScaleIds.Validate`). Tables that
-take local writes avoid `AUTOINCREMENT`.
+Primary keys are ULIDs from the SDK's ULID generator. Tables that take local writes avoid `AUTOINCREMENT`. A valid ID is
+a plain 26-character uppercase Crockford ULID whose first character is 0 to 7.
+
+| | .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|---|
+| New ID | `new TerraScaleIdGenerator().NewId()` | `generateId()` | `v1.NewID()` | `new_id()` | `new_id()` |
+| Validate | `TerraScaleIds.IsValid(id)`, `TerraScaleIds.Validate(id)` | `isValidId(id)` | `v1.ValidateID(id)` | `is_valid_id(id)` | `is_valid_id(id)` |
 
 ## Multi-region write conflicts
 

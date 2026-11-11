@@ -60,7 +60,7 @@ internal sealed class TerraBaseConnection
             }
 
             // Without an explicit origin the public origin routes the pinned request; with one, the pin still holds the request to it.
-            baseAddress ??= endpointResolver is null ? TerraBaseRegion.PublicOrigin : null;
+            baseAddress = TerraBaseRegion.OriginOrPublic(baseAddress, endpointResolver);
             regionPin = region;
         }
 
