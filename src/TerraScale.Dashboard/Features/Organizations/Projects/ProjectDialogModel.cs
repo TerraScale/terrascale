@@ -5,14 +5,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
         public string Id => Project is null ? "create-project" : "rename-project-" + Project.Id;
         public string NameId => Project is null ? "project-name" : "rename-" + Project.Id;
         public string RegionsId => "project-regions" + (Project is null ? "" : "-" + Project.Id);
-        public string PrimaryId => "project-region" + (Project is null ? "" : "-" + Project.Id);
-        public string BackupId => "project-backup" + (Project is null ? "" : "-" + Project.Id);
         public string Title => Project is null ? "Create project" : "Edit " + Project.Name;
         public string Action => Project is null ? "/api/v1/dashboard/organization/projects" : "/api/v1/dashboard/organization/projects/" + Project.Id + "/rename";
-        public bool Open => Project is null && Page.OpenCreateProject;
-        public IReadOnlyList<string> Selected => Project is null ? Page.ProjectDraftRegions ?? Page.Regions : Project.Regions;
-        public string Primary => Project?.Region ?? (Page.ProjectDraftPrimaryRegion.Length > 0 ? Page.ProjectDraftPrimaryRegion : (Page.Regions is [var firstRegion, ..] ? firstRegion ?? "" : ""));
-        public string Backup => Project?.BackupRegion is { Length: > 0 } backup ? backup :
-            Page.ProjectDraftBackupRegion.Length > 0 ? Page.ProjectDraftBackupRegion : (Page.Regions is [var firstRegion, ..] ? firstRegion ?? "" : "");
+        public bool Open => Project is null ? Page.OpenCreateProject : Page.ProjectDraftId == Project.Id && Page.Error.Length > 0;
+        public IReadOnlyList<string> Selected => Project is null ? Page.ProjectDraftRegions ?? Page.Regions
+            : Page.ProjectDraftId == Project.Id && Page.ProjectDraftRegions is { } drafted ? drafted : Project.Regions;
+
+        public string Name => Project is null ? Page.ProjectDraftName : Page.ProjectDraftId == Project.Id ? Page.ProjectDraftName : Project.Name;
     }
 }

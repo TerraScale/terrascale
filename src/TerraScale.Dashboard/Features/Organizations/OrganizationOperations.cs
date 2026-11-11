@@ -19,13 +19,13 @@ namespace TerraScale.Dashboard.Features.Organizations
             }, cancellationToken);
         }
 
-        public async Task<ProjectRecord> CreateProjectAsync(AccountContext context, string name, string region,
-            string backupRegion, IReadOnlyList<string>? regions, CancellationToken cancellationToken)
+        public async Task<ProjectRecord> CreateProjectAsync(AccountContext context, string name,
+            IReadOnlyList<string>? regions, CancellationToken cancellationToken)
         {
             context = await FreshManagerAsync(context, cancellationToken);
             name = AccountService.ValidName(name);
             CanCreate(context.Organization!, context.UserId, name);
-            var (Primary, Backup, Regions) = await LocationsAsync(region, backupRegion, regions, cancellationToken);
+            var chosen = await LocationsAsync(regions, cancellationToken);
             // ts-auth refuses a duplicate name (409 name_taken), so a repeated submit fails clearly.
             var remote = await platform.CreateProjectAsync(context.Session, context.Organization!.Id, name, cancellationToken);
             var project = new ProjectRecord
@@ -35,9 +35,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 Name = remote.Name,
                 Slug = AccountService.Slug(remote.Name),
                 CreatedAt = remote.CreatedAt,
-                Region = Primary,
-                BackupRegion = Backup,
-                Regions = Regions
+                Regions = chosen
             };
             await accounts.UpdateOrganizationAsync(context, org =>
             {
@@ -64,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             return project;
         }
 
-        public async Task UpdateProjectAsync(AccountContext context, string name, string region, string backupRegion,
+        public async Task UpdateProjectAsync(AccountContext context, string name,
             IReadOnlyList<string>? regions, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
@@ -73,7 +71,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 throw new AccountAccessException("Project admin access is required to rename this project.");
             }
 
-            var placementRequested = region.Length > 0 || backupRegion.Length > 0 || regions is { Count: > 0 };
+            var placementRequested = regions is { Count: > 0 };
             if (!context.CanManage && placementRequested)
             {
                 throw new AccountAccessException("Organization management is required to change project placement. Submit only a project name.");
@@ -92,21 +90,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 return;
             }
             Duplicate(context.Organization!, name, project.Id);
-            // A primary or backup region alone moves within the project's current regions; it is never ignored.
-            if (regions is not { Count: > 0 })
-            {
-                regions = project.Regions.Count > 0 ? project.Regions.ToList() : [project.Region];
-                if (region.Length == 0)
-                {
-                    region = project.Region;
-                }
-
-                if (backupRegion.Length == 0)
-                {
-                    backupRegion = project.BackupRegion;
-                }
-            }
-            var (Primary, Backup, Regions) = await LocationsAsync(region, backupRegion, regions, cancellationToken);
+            var chosen = await LocationsAsync(regions, cancellationToken);
             if (project.Name != name)
             {
                 await platform.RenameProjectAsync(context.Session, context.Organization!.Id, project.Id, name, cancellationToken);
@@ -124,9 +108,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 
                 current.Name = name;
                 current.Slug = AccountService.Slug(name);
-                current.Region = Primary;
-                current.BackupRegion = Backup;
-                current.Regions = Regions;
+                current.Regions = chosen;
                 org.AuditEvents.Add(Event(context, "project.renamed", name, "project"));
             }, cancellationToken);
         }
@@ -259,8 +241,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
         }
 
-        private async Task<(string Primary, string Backup, List<string> Regions)> LocationsAsync(string primary, string backup,
-            IReadOnlyList<string>? requested, CancellationToken cancellationToken)
+        private async Task<List<string>> LocationsAsync(IReadOnlyList<string>? requested, CancellationToken cancellationToken)
         {
             var catalog = await placement.RegionsAsync(cancellationToken);
             if (catalog.Count == 0)
@@ -268,26 +249,29 @@ namespace TerraScale.Dashboard.Features.Organizations
                 throw new IOException("Serving regions could not be discovered.");
             }
 
-            var regions = requested is { Count: > 0 } ? [.. requested.Select(value => value.Trim().ToUpperInvariant()).Distinct()]
-                : new List<string> { string.IsNullOrWhiteSpace(primary) ? catalog[0] : primary.Trim().ToUpperInvariant() };
-            if (regions.Any(region => !catalog.Contains(region)))
+            if (requested is not { Count: > 0 })
             {
-                throw new AccountAccessException("Choose serving project regions.", 422);
+                throw new AccountAccessException("Choose at least one serving region.", 422);
             }
 
-            primary = primary.Trim().ToUpperInvariant();
-            backup = backup.Trim().ToUpperInvariant();
-            if (primary.Length > 0 && !regions.Contains(primary))
+            var regions = new List<string>(requested.Count);
+            foreach (var value in requested)
             {
-                throw new AccountAccessException("Choose a primary region from the project's regions.", 422);
+                var region = value.Trim().ToUpperInvariant();
+                if (region.Length == 0 || regions.Contains(region))
+                {
+                    throw new AccountAccessException("Choose each serving region once.", 422);
+                }
+
+                if (!catalog.Contains(region))
+                {
+                    throw new AccountAccessException("Choose serving project regions.", 422);
+                }
+
+                regions.Add(region);
             }
 
-            if (backup.Length > 0 && !regions.Contains(backup))
-            {
-                throw new AccountAccessException("Choose a backup region from the project's regions.", 422);
-            }
-
-            return (regions.Contains(primary) ? primary : regions[0], regions.Contains(backup) ? backup : regions[0], regions);
+            return regions;
         }
 
         private AuditRecord Event(AccountContext context, string action, string target, string type)

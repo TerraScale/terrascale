@@ -14,8 +14,8 @@ namespace TerraScale.Dashboard.Features.Organizations
 {
     public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
         OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
-        BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null,
-        string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0, InvitationDraft? InviteDraft = null);
+        BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null, string ProjectDraftId = "",
+        string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0, InvitationDraft? InviteDraft = null);
 
     public static class OrganizationEndpoints
     {
@@ -252,13 +252,6 @@ namespace TerraScale.Dashboard.Features.Organizations
                     return HttpRedirects.SeeOther("/organization");
                 }
                 var regions = form["regions"].Select(item => item ?? "").Where(item => item.Length > 0).ToArray();
-                var primary = form["region"].ToString();
-                var backup = form["backupRegion"].ToString();
-                if (regions.Length == 0 && primary.Length > 0)
-                {
-                    regions = [primary];
-                }
-
                 if (regions.Length == 0)
                 {
                     throw new AccountAccessException("Choose at least one serving region.", 422);
@@ -266,29 +259,28 @@ namespace TerraScale.Dashboard.Features.Organizations
 
                 if (operation == "projects")
                 {
-                    await operations.CreateProjectAsync(context, name, primary, backup, regions, http.RequestAborted);
+                    await operations.CreateProjectAsync(context, name, regions, http.RequestAborted);
                 }
                 else
                 {
                     var project = context.Organization?.Projects.GetValueOrDefault(projectId ?? "") ?? throw new AccountAccessException("Project is unavailable.", 404);
-                    await operations.UpdateProjectAsync(context with { Project = project }, name, primary, backup, regions, http.RequestAborted);
+                    await operations.UpdateProjectAsync(context with { Project = project }, name, regions, http.RequestAborted);
                 }
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
             }
             catch (AccountAccessException error)
             {
-                if (operation != "projects")
+                if (operation is not ("projects" or "rename-project"))
                 {
                     return await PageAsync(http, context, placement, error.Message, error.StatusCode);
                 }
 
-                var page = await PageModelAsync(http, context, placement, error.Message, openCreateProject: true);
+                var page = await PageModelAsync(http, context, placement, error.Message, openCreateProject: operation == "projects");
                 var slice = OrganizationView.Create(page with
                 {
                     ProjectDraftName = form["name"].ToString(),
                     ProjectDraftRegions = [.. form["regions"].Select(value => value ?? "").Where(page.Regions.Contains)],
-                    ProjectDraftPrimaryRegion = form["region"].ToString(),
-                    ProjectDraftBackupRegion = form["backupRegion"].ToString()
+                    ProjectDraftId = operation == "rename-project" ? projectId ?? "" : ""
                 });
                 slice.StatusCode = error.StatusCode;
                 return slice;

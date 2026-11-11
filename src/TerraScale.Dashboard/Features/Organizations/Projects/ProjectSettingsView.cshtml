@@ -1,5 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.ProjectSettingsPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
+@inject AssetUrls Assets
 <main class="ts-page" aria-labelledby="project-settings-title">
     <h1 class="ts-sr-only" id="project-settings-title">Project settings</h1>
     <a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/members", replace: true))">Members</a>
@@ -8,7 +9,7 @@
     @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" id="project-settings-error" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Reload project settings</a></p> }
     <section class="ts-card ts-card-boxed" aria-labelledby="project-details-title" data-signals="{_renamingProject: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_renamingProject = true)" data-on:pageshow__window="$_renamingProject = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_renamingProject = false)">
         <h2 id="project-details-title">Selected project</h2>
-        <dl class="ts-kv"><dt>Name</dt><dd>@Model.Shell.Context.Project!.Name</dd><dt>Project ID</dt><dd class="ts-mono">@Model.Shell.Context.Project.Id</dd><dt>Your effective project role</dt><dd>@Model.Shell.Context.Project.Role</dd></dl>
+        <dl class="ts-kv"><dt>Name</dt><dd>@Model.Shell.Context.Project!.Name</dd><dt>Project ID</dt><dd class="ts-mono">@Model.Shell.Context.Project.Id</dd><dt>Your effective project role</dt><dd>@Model.Shell.Context.Project.Role</dd><dt>Regions</dt><dd>@if (Model.Shell.Context.Project.Regions.Count == 0) { <span class="ts-meta">None</span> } else { foreach (var code in Model.Shell.Context.Project.Regions) { var label = code.ToLowerInvariant(); var country = Regions.Country(label); <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@label</span></span> } }</dd></dl>
         @if (Model.CanRename)
         {
             <form class="ts-form" method="post" action="@(WorkspaceUrl.For(Model.Shell.Context, "/api/v1/dashboard/project/rename", replace: true))" data-submit-once data-attr:aria-busy="$_renamingProject ? 'true' : 'false'">

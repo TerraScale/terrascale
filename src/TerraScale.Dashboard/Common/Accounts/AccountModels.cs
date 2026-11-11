@@ -113,9 +113,9 @@ namespace TerraScale.Dashboard.Common.Accounts
         [JsonIgnore] public string OrganizationId { get; set; } = "";
         [JsonIgnore] public string Name { get; set; } = "";
         [JsonIgnore] public string Slug { get; set; } = "";
-        public string Region { get; set; } = "";
-        public string BackupRegion { get; set; } = "";
         public List<string> Regions { get; set; } = [];
+
+        public string Region => Regions.Count > 0 ? Regions[0] : "";
         public string Status { get; set; } = "active";
         public bool IsDefault { get; set; }
         public long SpendCapCents { get; set; }

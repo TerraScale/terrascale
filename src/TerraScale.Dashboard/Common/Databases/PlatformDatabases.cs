@@ -46,7 +46,10 @@ namespace TerraScale.Dashboard.Common.Databases
                 }
 
                 var home = item.GetProperty("homeRegion").GetString() ?? "";
-                project.Region = project.Region.Length > 0 ? project.Region : home;
+                if (project.Regions.Count == 0 && home.Length > 0)
+                {
+                    project.Regions = [home];
+                }
                 project.Databases[id] = new DatabaseRecord
                 {
                     Id = id,

@@ -66,10 +66,6 @@ public sealed class OrganizationProjectRow
 
     public required string OrganizationId { get; init; }
 
-    public required string Region { get; set; }
-
-    public required string BackupRegion { get; set; }
-
     public required string Regions { get; set; }
 
     public required string Status { get; set; }

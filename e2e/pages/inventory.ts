@@ -338,6 +338,13 @@ export const dashboardStates: readonly PageState[] = [
     url: () => '/organization?newProject=1',
     covers: { path: /^\/organization$/, query: { newProject: /^1$/ } },
     heading: inDialog('create-project', 'Create project'),
+    data: async (page) => {
+      const regions = page.locator('#create-project input[name="regions"]');
+      await expect(regions.first()).toBeVisible();
+      expect(await regions.count()).toBeGreaterThan(0);
+      await expect(page.locator('#create-project').getByText('Primary region')).toHaveCount(0);
+      await expect(page.locator('#create-project').getByText('Backup region')).toHaveCount(0);
+    },
   },
   {
     name: 'new organization dialog',
@@ -352,7 +359,17 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Choose an organization'),
     shell: false,
   },
-  { name: 'project settings', url: () => '/project', covers: { path: /^\/project$/ }, heading: title('Project settings') },
+  {
+    name: 'project settings',
+    url: () => '/project',
+    covers: { path: /^\/project$/ },
+    heading: title('Project settings'),
+    data: async (page) => {
+      await expect(page.locator('main').getByText('Regions', { exact: true })).toBeVisible();
+      await expect(page.locator('main').getByText('Primary region')).toHaveCount(0);
+      await expect(page.locator('main').getByText('Backup region')).toHaveCount(0);
+    },
+  },
   { name: 'project members', url: () => '/project/members', covers: { path: /^\/project\/members$/ }, heading: region('Explicit project grants') },
   { name: 'project invitations', url: () => '/project/invitations', covers: { path: /^\/project\/invitations$/ }, heading: title('Project invitations') },
   { name: 'profile', url: () => '/profile', covers: { path: /^\/profile$/ }, heading: title('Profile details', 2) },

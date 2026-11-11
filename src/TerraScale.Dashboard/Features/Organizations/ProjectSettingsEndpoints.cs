@@ -40,8 +40,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 
             try
             {
-                await operations.UpdateProjectAsync(context, name, form["region"].ToString(), form["backupRegion"].ToString(),
-                    [.. form["regions"].Select(value => value ?? "")], http.RequestAborted);
+                await operations.UpdateProjectAsync(context, name, null, http.RequestAborted);
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project?renamed=1", replace: true));
             }
             catch (AccountAccessException error) { return Page(http, context, name, error.Message, error.StatusCode); }

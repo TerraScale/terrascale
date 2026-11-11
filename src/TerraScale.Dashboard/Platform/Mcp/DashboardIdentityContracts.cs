@@ -28,7 +28,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? DeletionRequested,
         IReadOnlyList<DashboardMcpProject> Projects);
 
-    public sealed record DashboardMcpProject(string Id, string Name, string Region, string BackupRegion,
+    public sealed record DashboardMcpProject(string Id, string Name,
         IReadOnlyList<string> Regions, bool IsDefault, int Databases,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Role, bool CanWriteProjectData);
 
