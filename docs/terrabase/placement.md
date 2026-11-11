@@ -1,10 +1,6 @@
-# Database placement (PIVOT R9)
+# Database placement
 
-Each database chooses where it lives: one **home region** and **replica regions**
-([region replicas](region-replicas.md)). A replica region can commit some SQL REST writes locally; every other write
-runs at the home. The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same
-transaction id and the home applies that write once. A database can move its home to one of its replica regions while it
-takes writes.
+A database has one set of selected regions. All regions are equal in the public placement model. TerraBase internally keeps one writer and synchronizes the other selected regions; this API change does not add independent multi-writer consensus or change SQL write routing.
 
 ## API
 
@@ -13,11 +9,17 @@ request that reached another region (`421 wrong_region`, `ts-replay: region=<hom
 
 | Operation | Request | Answer |
 |---|---|---|
-| `createDatabase` | `POST /v1/projects/{project}/databases` `{"name","homeRegion"?,"replicaRegions"?,"allRegions"?}` | `201` database |
-| `updateDatabase` | `PATCH /v1/projects/{project}/databases/{database}` `{"replicaRegions":[…]}` or `{"allRegions":true}` | `200` database |
+| `createDatabase` | `POST /v1/projects/{project}/databases` `{"name":"main","regions":["gru","sjc"]}` | `201` database |
+| `updateDatabase` | `PATCH /v1/projects/{project}/databases/{database}` `{"regions":["sjc"]}` | `200` database |
 | `moveDatabaseHome` | `POST /v1/projects/{project}/databases/{database}/move-home` `{"homeRegion":"sjc"}` | `200` database |
 
-The database body carries `homeRegion`, `replicaRegions` (sorted) and `allRegions`.
+`regions` is a JSON array with at least one serving region id, without duplicates. Unknown, non-serving, duplicate and empty sets answer the existing `400 invalid_request` envelope. Database responses include `regions` sorted by region id, the catalog order. Response order carries no meaning and does not identify the writer.
+
+On create, the first region in the caller's array is the initial writer. On update, the writer stays if it remains selected. Otherwise TerraBase tries selected regions in region-id order through the existing move and uses the first target that accepts promotion. Newly selected regions are staged as members before promotion so they can synchronize. If every target refuses as not ready, staged additions are undone and the original membership and writer remain. After a successful move, the same placement request is forwarded to the new writer, which removes the old writer and other unselected regions. Repeating the same set continues or completes the change; a completed set preserves its placement version. An unresolved move returns its existing retryable refusal and is settled by the existing move mechanism before the caller continues. A rename is sent separately from placement. Explicit `regions` turns off all-regions placement.
+
+Transitional: the old fields and the move-home endpoint are removed by category C23 of batch db4a5ba7 once every consumer sends `regions`.
+
+Until then, requests using `homeRegion`, `replicaRegions` or `allRegions`, and responses containing the old fields, keep working unchanged. Combining `regions` with any of those placement fields is invalid. The transitional fields retain these rules:
 
 - `replicaRegions` names at most 8 distinct serving regions other than the home, and turns all-regions mode off.
 - `allRegions: true` places a replica in every serving region other than the home. The home keeps the replica set equal
@@ -84,27 +86,3 @@ All-regions placement remains authoritative when a lease observation carries an 
 Catalog discovery, following, revision notices, replica status and home sessions use the all-regions membership
 rule; revision notices go to the currently discovered peer regions. This preserves replication after a home move
 and automatically includes newly serving regions. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
-## Region-set API prerequisite (batch db4a5ba7, C18)
-
-The proposed `regions` request needs durable membership order: responses must retain the order regions were added,
-and removing the writer must select the remaining region that has held the database longest. This contract is not
-implemented yet. The current catalog cannot establish that order:
-
-- `CatalogTables` stores only `(database_id, region)` for replicas, deletes and reinserts those rows on each placement
-  write, and reads them ordered by region id. It records no per-region membership time or ordinal.
-- `DatabasePlacement` and `ReplicaCatalogEntry` carry the current writer, replica ids, placement version and
-  all-regions membership, without membership history.
-- `HomeMoves.MoveAsync` and `CompleteHomeMoveAsync` sort the membership after promotion. The target adopts a
-  `DatabasePlacement` from `HomePromoteRequest`; it receives no independent membership-order metadata.
-
-The existing move can promote a selected replica, but composing it alone cannot preserve the proposed age-based
-selection and response ordering across subsequent moves or restarts. A new local JSON record, like database TTL
-metadata, does not itself require a SQLite schema change, but also does not add that metadata to the existing
-promotion or replica catalog contracts. Alphabetical order is not evidence of how long a region held the database.
-
-Before C18 implementation resumes, decide how durable membership order reaches the promoted writer and how existing
-memberships acquire an initial order when their historical order was never recorded. One option is a separately
-reviewed engine change that persists and propagates membership order, with an explicit initialization policy for
-existing databases. Another is to amend the proposed contract to permit deterministic region-id ordering instead of
-historical age. The public API, existing move protocol and storage version remain unchanged by this investigation.

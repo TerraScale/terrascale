@@ -9,15 +9,19 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply) : Endpoint<DatabaseRegionsRequest, IResult>
+internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply, RegionSetPlacement placement) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     public override void Configure()
     {
         Patch(ProjectApiRoute.Database);
         Metadata(AnchoredRevocation.Instance);
         Name("updateDatabase");
-        Summary("Renames a database or sets its replica regions");
-        Description("Renames a database or sets its replica regions (up to 8 regions other than the home, which pull its pages and serve SQL reads). allRegions places a replica in every serving region, including regions that join later. The home moves with move-home. " + ProjectApiRoute.IdentityDescription);
+        Summary("Renames a database or sets its regions");
+        Description("Sets regions to a nonempty set of distinct serving region ids. Response regions are sorted by id; their order carries no meaning. "
+            + "If the set drops the current writer, TerraBase tries the remaining regions in region-id order through the existing writer move, "
+            + "then removes the old writer after promotion. Repeat the same set to continue a change that answers an existing retryable refusal. "
+            + "Transitional: homeRegion and replicaRegions, the existing response fields and move-home keep their behavior until category C23 of batch db4a5ba7 removes them once every consumer sends regions. "
+            + "Send regions separately from homeRegion, replicaRegions and allRegions. A name change must be sent separately. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -54,7 +58,7 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
 
         if (request.Name is not null)
         {
-            return request.HomeRegion is not null || request.ReplicaRegions is not null || request.AllRegions is not null
+            return request.HomeRegion is not null || request.ReplicaRegions is not null || request.AllRegions is not null || request.HasRegions
                 ? ErrorResponse.From(new Validation("name cannot be combined with placement fields"))
                 : ManagementRoute.CheckDatabaseName(new NameRequest(request.Name)) switch
                 {
@@ -64,6 +68,16 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         }
 
         var serving = await regions.ServingAsync(cancellationToken).ConfigureAwait(false);
+        if (request.HasRegions && DatabaseRegions.CheckSet(request, serving) is { } invalidSelection)
+        {
+            return ErrorResponse.From(invalidSelection);
+        }
+
+        if (request.Regions is { } selected)
+        {
+            return await placement.UpdateAsync(HttpContext, database, selected, cancellationToken).ConfigureAwait(false);
+        }
+
         var all = request.AllRegions == true;
         Valid<IReadOnlyList<string>> checkedRegions = request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change here: use move-home")
             : all && request.ReplicaRegions is not null ? new Validation("send replicaRegions or allRegions, not both")

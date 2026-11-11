@@ -21,7 +21,11 @@ internal sealed class CreateManagedDatabaseEndpoint(
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("Creates a database in its home region. replicaRegions names up to 8 other regions that hold replicas: they pull the home's pages, serve SQL reads, and accept local SQL REST writes that the home applies. allRegions places a replica in every serving region, including regions that join later." + DatabaseTtl.Description + " " + ProjectApiRoute.IdentityDescription);
+        Description("Creates a database in regions, a nonempty set of distinct serving region ids. The first requested region is the initial writer; "
+            + "response regions are sorted by id and their order carries no meaning. TerraBase manages its writer internally. "
+            + "Transitional: homeRegion and replicaRegions, the existing response fields and move-home keep their behavior until category C23 of batch db4a5ba7 removes them once every consumer sends regions. "
+            + "Send regions separately from homeRegion, replicaRegions and allRegions. The transitional replicaRegions field allows up to 8 regions other than homeRegion; "
+            + "allRegions includes every serving region, including regions that join later." + DatabaseTtl.Description + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -57,14 +61,20 @@ internal sealed class CreateManagedDatabaseEndpoint(
             return ErrorResponse.From(new Validation("send replicaRegions or allRegions, not both"));
         }
 
-        var home = request.HomeRegion ?? options.Region;
         var serving = await regions.ServingAsync(cancellationToken).ConfigureAwait(false);
+        if (request.HasRegions && DatabaseRegions.CheckSet(request, serving) is { } invalidSet)
+        {
+            return ErrorResponse.From(invalidSet);
+        }
+
+        var home = request.Regions is { } selected ? selected[0] : request.HomeRegion ?? options.Region;
         if (TerraBaseOptions.IsRegion(home) && DatabaseRegions.Unserved("homeRegion", [home], serving) is { } unservedHome)
         {
             return ErrorResponse.From(unservedHome);
         }
 
-        IReadOnlyList<string> replicas = all ? DatabaseRegions.AllBut(serving, home) : request.ReplicaRegions ?? [];
+        IReadOnlyList<string> replicas = request.Regions is { } chosen ? DatabaseRegions.AllBut(chosen, home)
+            : all ? DatabaseRegions.AllBut(serving, home) : request.ReplicaRegions ?? [];
         if (home != options.Region)
         {
             return TerraBaseOptions.IsRegion(home)
@@ -72,7 +82,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
                 : ErrorResponse.From(new Validation("homeRegion must name a region"));
         }
 
-        if (!all)
+        if (!all && request.Regions is null)
         {
             var checkedRegions = DatabaseRegions.Check(replicas, home);
             if (checkedRegions is Validation invalid)

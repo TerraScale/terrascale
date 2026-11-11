@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -6,7 +7,22 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Management;
 
-public sealed record DatabaseRegionsRequest(string? Name, string? HomeRegion, IReadOnlyList<string>? ReplicaRegions, bool? AllRegions = null, long? TtlSeconds = null);
+public sealed record DatabaseRegionsRequest(string? Name, string? HomeRegion, IReadOnlyList<string>? ReplicaRegions, bool? AllRegions = null, long? TtlSeconds = null)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Regions
+    {
+        get;
+        init
+        {
+            field = value;
+            HasRegions = true;
+        }
+    }
+
+    [JsonIgnore]
+    public bool HasRegions { get; private set; }
+}
 
 internal static class DatabaseRegions
 {
@@ -24,6 +40,14 @@ internal static class DatabaseRegions
         : replicas.Contains(home, StringComparer.Ordinal) ? new Validation("replicaRegions cannot name the home region")
         : replicas.Distinct(StringComparer.Ordinal).Count() != replicas.Count ? new Validation("replicaRegions names a region twice")
         : (IReadOnlyList<string>)[.. replicas.Order(StringComparer.Ordinal)];
+
+    internal static Validation? CheckSet(DatabaseRegionsRequest request, IReadOnlyList<string> serving) =>
+        request.HomeRegion is not null || request.ReplicaRegions is not null || request.AllRegions is not null
+            ? new Validation("send regions or homeRegion, replicaRegions and allRegions, not both")
+        : request.Regions is not { Count: > 0 } selected ? new Validation("regions must name at least one serving region, without duplicates")
+        : selected.Any(region => !TerraBaseOptions.IsRegion(region)) || selected.Distinct(StringComparer.Ordinal).Count() != selected.Count
+            ? new Validation("regions must name at least one serving region, without duplicates")
+        : Unserved("regions", selected, serving);
 
     internal static IReadOnlyList<string> AllBut(IEnumerable<string> serving, string home) =>
         [.. serving.Where(region => region != home).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];

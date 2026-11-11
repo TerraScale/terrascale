@@ -19,8 +19,10 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
     {
         Get(ProjectApiRoute.Database + "/regions");
         Name("getDatabaseRegions");
-        Summary("Reads a database's home and replica progress");
-        Description("Home-observed successful page pulls, not application or checksum acknowledgements. lagMs is the age of the oldest known commit "
+        Summary("Reads a database's regions and sync progress");
+        Description("regions lists every selected region in region-id order, with role writer on the current writer entry. Its order carries no meaning. "
+            + "Transitional: homeRegion and replicas keep their behavior until category C23 of batch db4a5ba7 removes the old placement fields once every consumer sends regions. "
+            + "Writer-observed successful page pulls, not application or checksum acknowledgements. lagMs is the age of the oldest known commit "
             + "missing from the last served revision, zero when caught up, and null without sufficient observations. lastPulledAt is when a complete "
             + "pull was served. lastVerified is null until checksum verification reports a result. Observations reset when the database reopens. "
             + ProjectApiRoute.IdentityDescription);
@@ -60,9 +62,11 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
         var tenant = new TenantContext(ManagementRoute.OrganizationId(HttpContext), PlanTier.Hobby, record.ProjectId, record.Id);
         var observations = await revisions.ReplicaStatusAsync(tenant, replicas, cancellationToken).ConfigureAwait(false);
         var verification = status.Local(tenant, replicas).ToDictionary(row => row.Region, row => row.VerifiedAt, StringComparer.Ordinal);
+        IReadOnlyList<TerraBaseReplicaStatus> observed = [.. observations.Select(row => new TerraBaseReplicaStatus(row.Region, row.LagMs, row.LastPulledAt,
+            verification.GetValueOrDefault(row.Region), row.Revision))];
+        IReadOnlyList<TerraBaseReplicaStatus> placed = [.. observed.Append(new TerraBaseReplicaStatus(home, Role: "writer")).OrderBy(row => row.Region, StringComparer.Ordinal)];
         return TypedResults.Json(new TerraBaseDatabaseRegions(record.Id, home, time.GetUtcNow(),
-            [.. observations.Select(row => new TerraBaseReplicaStatus(row.Region, row.LagMs, row.LastPulledAt,
-                verification.GetValueOrDefault(row.Region), row.Revision))]),
+            observed, placed),
             ManagementJson.Default.TerraBaseDatabaseRegions);
     }
 }

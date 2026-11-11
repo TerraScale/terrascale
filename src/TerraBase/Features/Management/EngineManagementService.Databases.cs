@@ -88,6 +88,16 @@ internal sealed partial class EngineManagementService
             return ManagementErrors.WrongRegion;
         }
 
+        if (await HomeMovePendingAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
+        {
+            return MoveInProgress;
+        }
+
+        if (database.AllRegions == allRegions && database.Replicas.SequenceEqual(replicaRegions.Order(StringComparer.Ordinal)))
+        {
+            return database;
+        }
+
         var placed = database with
         {
             HomeRegion = options.Region,

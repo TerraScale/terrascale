@@ -16,6 +16,7 @@ public static class ApiReferenceExtensions
     public static IServiceCollection AddTerraBaseApiReference(this IServiceCollection services, string name) =>
         services.AddOpenApi(name, options =>
         {
+            options.AddSchemaTransformer(PlacementSchemas.ApplyAsync);
             options.ShouldInclude = description => description.ActionDescriptor.EndpointMetadata.OfType<ListenerMetadata>()
                 .Any(metadata => metadata.Listeners.Contains(TerraBaseListener.Client))
                 && description.RelativePath?.StartsWith("v1/management/", StringComparison.OrdinalIgnoreCase) != true
