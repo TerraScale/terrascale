@@ -101,7 +101,9 @@ namespace TerraScale.Dashboard.Features.Profile
         private static Entry Read(DeletionCleanupRow row, IEnumerable<DeletionCleanupTargetRow> targets)
         {
             var kept = targets.ToLookup(target => target.Kind, StringComparer.Ordinal);
-            return new(new(row.Id, row.Scope, row.SubjectId, row.Scope == DeletionCleanupRow.Organization ? row.SubjectId : row.OrganizationId),
+            var organizationId = row.Scope != DeletionCleanupRow.Organization ? row.OrganizationId
+                : row.OrganizationId is null ? row.SubjectId : throw new IOException("Cleanup journal organization row names another organization.");
+            return new(new(row.Id, row.Scope, row.SubjectId, organizationId),
                 [.. kept[DeletionCleanupTargetRow.Project].Select(target => target.TargetId).Order(StringComparer.Ordinal)],
                 [.. kept[DeletionCleanupTargetRow.Customer].Select(target => target.TargetId).Order(StringComparer.Ordinal)]);
         }
