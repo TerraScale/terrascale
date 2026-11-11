@@ -93,7 +93,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     Name = org.Name,
                     Email = context.Account.Email,
                     Metadata = new() { ["organization_id"] = org.Id }
-                }, Idempotent("customer-" + org.Id), cancellationToken);
+                }, Idempotent("customer-" + binding.RequestId), cancellationToken);
                 binding = await UpdateAsync(org.Id, current =>
                 {
                     if (current.CustomerId.Length != 0 && current.CustomerId != customer.Id)

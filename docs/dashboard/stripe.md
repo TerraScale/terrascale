@@ -27,6 +27,12 @@ an `expires_at` 30 minutes to 24 hours after the session is created, so a
 reservation whose session was never saved creates one only in its first 15 minutes
 (`CheckoutCreationWindow`), which leaves it at least 45 minutes; a later start
 replaces that reservation, whose session nobody was sent to, with a new one.
+The organization's Stripe customer and the session are both created with the
+reservation's request ID in their idempotency keys. Stripe replays a saved answer,
+a 500 included, for 24 hours under one key, so a failed create blocks only its own
+reservation, for at most those 15 minutes, and the next reservation sends a new
+request. Concurrent starts of one reservation share its key, and the `billing` row
+and `stripe_customers` bind one customer to the organization.
 
 ## Read-only Stripe audit
 
