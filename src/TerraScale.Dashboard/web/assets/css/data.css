@@ -1,4 +1,4 @@
-/* Tables, lists, key-value definitions, pagination, progress, code, and charts. */
+/* Tables, lists, key-value definitions, pagination, code, and charts. */
 
 .ts-table-wrap {
   position: relative;
@@ -6,14 +6,13 @@
   overflow-x: auto;
 }
 
-/* The shared placement helper lifts open row panels out of scroll clipping. */
 .ts-table-wrap details.ts-menu[open] > .ts-menu-panel {
   position: fixed;
   animation: none;
   inset: auto;
   margin: 0;
-  max-width: calc(100vw - 16px);
-  max-height: calc(100dvh - 16px);
+  max-width: calc(100vw - var(--ts-s4));
+  max-height: calc(100dvh - var(--ts-s4));
   overflow: auto;
 }
 
@@ -21,19 +20,21 @@
   width: 100%;
   border-collapse: collapse;
   font-size: var(--ts-fs-md);
+  font-variant-numeric: tabular-nums;
 }
 
 .ts-table th,
 .ts-table td {
-  height: 48px;
-  padding: var(--ts-s2) var(--ts-s4);
+  height: var(--ts-s12);
+  padding: var(--ts-s2) var(--ts-s3);
   border-bottom: 1px solid var(--ts-line);
+  line-height: var(--ts-s5);
   text-align: left;
   vertical-align: middle;
 }
 
 .ts-table th {
-  height: 36px;
+  height: var(--ts-control-h);
   padding-block: 0;
   color: var(--ts-ink-3);
   font-family: var(--ts-label-font);
@@ -49,7 +50,7 @@
 }
 
 .ts-table tbody tr:hover {
-  background: var(--ts-surface);
+  background: var(--ts-hover);
 }
 
 .ts-table tbody tr:last-child > * {
@@ -73,23 +74,37 @@
   font-size: var(--ts-fs-sm);
 }
 
+.ts-table :is(th, td) > :is(.ts-badge, .ts-dot, code, .ts-btn, .ts-icon-btn) {
+  vertical-align: middle;
+}
+
+.ts-table :is(th, td).ts-break {
+  max-width: 36ch;
+  overflow-wrap: break-word;
+}
+
+.ts-table .ts-list-main {
+  grid-template-columns: minmax(min-content, 1fr);
+}
+
+.ts-table .ts-list-main > * {
+  overflow-wrap: break-word;
+}
+
 .ts-table .ts-table-actions {
   text-align: right;
   white-space: nowrap;
 }
 
-/* An inline form in the actions cell (role select + save) stays on one
-   line; the cell's own actions wrap after it, right-aligned. */
 .ts-table-actions > .ts-row {
   justify-content: flex-end;
-  gap: var(--ts-s1);
+  gap: var(--ts-s2);
 }
 
 .ts-table-actions form.ts-row {
   flex-wrap: nowrap;
 }
 
-/* Tables align with the section edge: no outer cell padding. */
 .ts-table th:first-child,
 .ts-table td:first-child {
   padding-left: 0;
@@ -146,7 +161,6 @@
   }
 }
 
-
 /* Divided rows: members, keys, steps. */
 .ts-list {
   display: grid;
@@ -161,7 +175,8 @@
   align-items: center;
   gap: var(--ts-s3);
   min-width: 0;
-  padding: var(--ts-s3) 0;
+  min-height: var(--ts-s12);
+  padding: var(--ts-s2) 0;
   border-bottom: 1px solid var(--ts-line);
 }
 
@@ -219,31 +234,6 @@
   font-size: var(--ts-fs-sm);
 }
 
-/* Progress. */
-.ts-progress {
-  height: 6px;
-  overflow: hidden;
-  border-radius: var(--ts-radius-pill);
-  background: var(--ts-surface-3);
-}
-
-.ts-progress-bar {
-  width: 0;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--ts-accent);
-  transition: width var(--ts-base) var(--ts-ease);
-}
-
-/* Finite progress values keep the strict style-src policy intact. */
-.ts-progress-bar[data-progress="33"] { width: 33%; }
-.ts-progress-bar[data-progress="66"] { width: 66%; }
-.ts-progress-bar[data-progress="100"] { width: 100%; }
-
-.ts-progress-bar-success { background: var(--ts-success); }
-.ts-progress-bar-warning { background: var(--ts-warning); }
-.ts-progress-bar-danger { background: var(--ts-danger); }
-
 /* Code. */
 .ts-code,
 .ts-snippet {
@@ -284,7 +274,7 @@
 }
 
 code:not(pre code) {
-  padding: 1px 6px;
+  padding: 1px var(--ts-s1);
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-sm);
   background: var(--ts-surface-2);
@@ -337,7 +327,7 @@ code:not(pre code) {
    hover and keyboard focus. Keep a solid ring as well as the band tint so
    keyboard focus does not depend on a subtle background change. */
 .ts-chart-column:focus-visible {
-  outline: 2px solid var(--ts-focus);
+  outline: var(--ts-ring);
   outline-offset: -2px;
 }
 
@@ -418,7 +408,7 @@ code:not(pre code) {
 .ts-chart-legend-item {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ts-s2);
 }
 
 .ts-chart-swatch {
@@ -463,13 +453,13 @@ svg.ts-chart-swatch {
    edge never push them out of view. */
 .ts-chart-tooltip {
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + var(--ts-s2));
   left: 0;
   z-index: var(--ts-z-tooltip);
   display: flex;
   align-items: baseline;
   gap: var(--ts-s3);
-  padding: 6px var(--ts-s3);
+  padding: var(--ts-s2) var(--ts-s3);
   border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius);
   background: var(--ts-surface-2);
