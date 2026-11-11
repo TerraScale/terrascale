@@ -132,23 +132,18 @@ jobs:
               - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-dotnet-*.yml
               - .github/workflows/ci.yml
             sdk-go:
               - sdk/go/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-go-*.yml
               - .github/workflows/ci.yml
             sdk-js:
               - sdk/js/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-js-*.yml
               - .github/workflows/ci.yml
             sdk-python:
               - sdk/python/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-python-*.yml
               - .github/workflows/ci.yml
             sdk-rust:
               - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
-              - .github/workflows/sdk-rust-*.yml
               - .github/workflows/ci.yml
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
