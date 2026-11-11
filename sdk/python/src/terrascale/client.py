@@ -52,7 +52,10 @@ T = TypeVar("T")
 
 def _settings(api_key: str | None, project: str | None, token: Any, base_url: str | None,
               issuer: str | None) -> tuple[str | None, str, str]:
-    api_key = api_key if api_key is not None else os.environ.get("TERRASCALE_API_KEY")
+    if api_key is not None and token is not None:
+        raise ValueError("pass either api_key or token, not both")
+    if token is None and api_key is None:
+        api_key = os.environ.get("TERRASCALE_API_KEY")
     project = project if project is not None else os.environ.get("TERRASCALE_PROJECT_ID")
     if not project:
         raise ValueError("project is required: pass project= or set TERRASCALE_PROJECT_ID")

@@ -9,8 +9,8 @@
 - `execute(Statement(...), args)`, and `query` called that way, on the client,
   the async client and both SQL sessions raise `TypeError` before any request:
   a `Statement` carries its own arguments. Earlier versions dropped `args`.
-- A client that holds an API key (`api_key=` or `TERRASCALE_API_KEY`, also next
-  to `token=`) with a `base_url` other than `https://api.terrascale.tech` needs
+- A client that holds an API key (`api_key=` or `TERRASCALE_API_KEY`) with a
+  `base_url` other than `https://api.terrascale.tech` needs
   `issuer=`, the ts-auth issuer that exchanges the key, and raises `ValueError`
   before any request without it. Earlier versions sent the key to
   `https://auth.terrascale.tech` for every `base_url`, in the token exchange,
@@ -18,6 +18,10 @@
   user info, a query or a fragment raises `ValueError` before the key is sent;
   earlier versions appended `/oauth/token` to it as given. The DB-API `connect`
   and the SQLAlchemy URL query take `issuer` too.
+- `TerraScale` and `AsyncTerraScale` raise `ValueError` when both `api_key=` and
+  `token=` are passed, like the other SDKs, and read `TERRASCALE_API_KEY` only
+  when neither is passed. Earlier versions sent the token and kept the key for
+  `create_scoped_key`.
 - `base_url`, `issuer` and the origin of the platform calls follow the origin
   rule every SDK shares (`sdk/SQL-API.md`): https, or http only for
   `localhost`, `127.0.0.0/8` and `[::1]`; no user info, query, fragment or path;
