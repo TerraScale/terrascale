@@ -69,12 +69,12 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, PlatformSeedProgres
                 switch (await catalog.EnsurePlatformAsync(stoppingToken).ConfigureAwait(false))
                 {
                     case Done:
-                        logger.ZLogInformation($"Platform databases are seeded");
                         progress.Finish();
+                        logger.ZLogInformation($"Platform databases are seeded");
                         return;
                     case Conflict conflict:
-                        logger.ZLogError($"Platform databases conflict with existing catalog records: {conflict.Code:@Code}");
                         progress.Finish();
+                        logger.ZLogError($"Platform databases conflict with existing catalog records: {conflict.Code:@Code}");
                         return;
                     case Unavailable unavailable when failure != unavailable.Message:
                         failure = unavailable.Message;
