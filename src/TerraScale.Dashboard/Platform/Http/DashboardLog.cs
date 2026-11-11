@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "Page timing {Method} {Route} {Status}: {Timing}")]
         internal static partial void PageTiming(this ILogger logger, object? method, object? route, object? status, object? timing);
 
-        [LoggerMessage(EventId = 5, Level = LogLevel.Information, Message = "Upstream timing {Upstream} {Host} {Method} {Operation} {Status}: start {StartMs} ms, duration {DurationMs} ms")]
+        [LoggerMessage(EventId = 5, Level = LogLevel.Debug, Message = "Upstream timing {Upstream} {Host} {Method} {Operation} {Status}: start {StartMs} ms, duration {DurationMs} ms")]
         internal static partial void UpstreamTimingStartMsDurationMs(this ILogger logger, object? upstream, object? host, object? method, object? operation, object? status, object? startMs, object? durationMs);
 
 

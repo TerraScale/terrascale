@@ -212,7 +212,7 @@ namespace TerraScale.Dashboard.Platform.Http
                 }
                 var ended = timing.clock.Elapsed.TotalMilliseconds;
                 timing.Record("terrabase", started, ended);
-                if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(LogLevel.Information))
+                if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(LogLevel.Debug))
                 {
                     logger.UpstreamTimingStartMsDurationMs("terrabase", "rpc", "RPC", operation, status, started, ended - started);
                 }
@@ -270,7 +270,7 @@ namespace TerraScale.Dashboard.Platform.Http
                     timing.Record(upstream, started, ended);
                     // Only fixed operation names escape: no URL, query, token, record ID or customer name.
                     var operation = Operation(request.RequestUri);
-                    if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(LogLevel.Information))
+                    if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(LogLevel.Debug))
                     {
                         logger.UpstreamTimingStartMsDurationMs(upstream, upstream == "other" ? "[other]" : request.RequestUri?.Host, SafeHttpLogging.Method(request.Method.Method), operation,
                         response is null ? 0 : (int)response.StatusCode, started, ended - started);

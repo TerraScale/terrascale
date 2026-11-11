@@ -70,10 +70,8 @@ namespace TerraScale.Dashboard
             builder.Services.Configure<Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions>(options =>
                 options.QueueFullMode = Microsoft.Extensions.Logging.Console.ConsoleLoggerQueueFullMode.DropWrite);
             builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
-            // Other framework per-request events are redacted to bare event IDs; request start/finish (status and
-            // elapsed time) and the ServerTiming page line stay.
             builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-            builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Information);
+            builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
             builder.Services.AddSafeHttpLogging();
             builder.Services.AddSingleton<AssetUrls>();
