@@ -28,7 +28,7 @@ namespace TerraScale.Dashboard.Features.Auth
     // This intent exists only inside encrypted auth-flows. Its browser cookie contains
     // a random correlation bearer, never the proof. Taking the intent is single use.
     public sealed record StepUpIntent(string UserId, string Browser, string? OrganizationId, string? ProjectId, string Purpose, string Audience,
-        string Path, string Query, Dictionary<string, string[]> Form, StepUpChallenge Challenge, string? Receipt = null, McpAuthorization? Mcp = null)
+        string Path, string Query, string Referer, Dictionary<string, string[]> Form, StepUpChallenge Challenge, string? Receipt = null, McpAuthorization? Mcp = null)
     {
         public override string ToString()
         {
@@ -113,7 +113,7 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             await http.RequestServices.GetRequiredService<AuthFlows>().StoreStepUpAsync(http, new(context.UserId, Browser(http), context.Organization?.Id,
-                context.Project?.Id, purpose, audience, http.Request.Path, ScopeQuery(http, context), form.ToDictionary(pair => pair.Key, pair => pair.Value.Select(value => value ?? "").ToArray()), challenge, receipt, mcp));
+                context.Project?.Id, purpose, audience, http.Request.Path, ScopeQuery(http, context), http.Request.Headers.Referer.ToString(), form.ToDictionary(pair => pair.Key, pair => pair.Value.Select(value => value ?? "").ToArray()), challenge, receipt, mcp));
             return Results.Redirect(challenge.StepUpUrl);
         }
 
@@ -148,6 +148,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 // continuation. The cross-site callback does not depend on a Strict CSRF cookie.
                 http.Request.Method = "POST";
                 http.Request.Path = intent.Path;
+                http.Request.Headers.Referer = intent.Referer;
                 http.Request.ContentType = "application/x-www-form-urlencoded";
                 http.Request.Form = new FormCollection(intent.Form.ToDictionary(pair => pair.Key, pair => new StringValues(pair.Value)));
                 var services = http.RequestServices;

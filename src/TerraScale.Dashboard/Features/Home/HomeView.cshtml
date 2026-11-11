@@ -1,5 +1,7 @@
 @inject AssetUrls Assets
 @using System.Globalization
+@using System.Text.Encodings.Web
+@using System.Text.Json
 @using TerraScale.Dashboard.Common.Charts
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.HomePage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
@@ -67,5 +69,5 @@
         var signal = "$_" + key + "Copy";
         <div class="ts-snippet" data-signals="@("{_" + key + "Copy: ''}")"><div class="ts-snippet-header ts-row-between"><span>@label</span><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" aria-label="@("Copy " + label)" aria-describedby="@("connect-" + id + "-status")" data-on:click="@("Promise.resolve().then(() => navigator.clipboard.writeText(document.getElementById('connect-" + id + "').textContent)).then(() => { " + signal + " = 'Copied'; setTimeout(() => " + signal + " = '', 2000) }, () => { const snippet = document.getElementById('connect-" + id + "'); snippet.focus(); const range = document.createRange(); range.selectNodeContents(snippet); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); " + signal + " = 'Copy failed — text selected, press Ctrl+C'; })")">@Icons.Render("Copy", 14)<span data-text="@(signal + " === 'Copied' ? 'Copied' : 'Copy'")">Copy</span></button></div><pre class="ts-snippet-body" id="@("connect-" + id)" tabindex="0"><code>@code</code></pre><span class="ts-sr-only" id="@("connect-" + id + "-status")" role="status" aria-live="polite" aria-atomic="true" data-text="@signal"></span></div>
     }
-    private string McpConfig => System.Text.Json.JsonSerializer.Serialize(new { mcpServers = new { terrascale = new { type = "http", url = "https://mcp.terrascale.tech/", headers = new { Authorization = "Bearer <your-access-token>" } } } }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+    private string McpConfig => JsonSerializer.Serialize(new { mcpServers = new { terrascale = new { type = "http", url = "https://mcp.terrascale.tech/", headers = new { Authorization = "Bearer <your-access-token>" } } } }, new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 }

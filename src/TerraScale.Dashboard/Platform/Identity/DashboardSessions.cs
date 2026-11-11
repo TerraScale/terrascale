@@ -13,6 +13,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 {
     internal const string Cookie = "ts-dashboard-session";
     private const int MaxBrowserSessions = 1000;
+    private static readonly TimeSpan RenewBeforeExpiry = TimeSpan.FromSeconds(30);
 
     public async Task StartAsync(HttpContext context, SessionRecord record)
     {
@@ -183,6 +184,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
         var credentials = await identity.ReadAsync(cancellationToken);
         var waitDeadline = Stopwatch.StartNew();
         var accessOnEntry = initialAccessToken;
+        var renewBefore = RenewBeforeExpiry;
         while (true)
         {
             var row = await FindAsync(lookup, cancellationToken);
@@ -200,7 +202,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
                 return null;
             }
 
-            if (record.ExpiresAt <= now || forceRefresh && record.AccessToken == accessOnEntry)
+            if (record.ExpiresAt <= now + renewBefore || forceRefresh && record.AccessToken == accessOnEntry)
             {
                 if (string.IsNullOrWhiteSpace(record.RefreshToken))
                 {
@@ -255,7 +257,14 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
                     {
                         await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, rotating);
                     }
-                    throw;
+
+                    if (forceRefresh || record.ExpiresAt <= time.GetUtcNow())
+                    {
+                        throw;
+                    }
+
+                    renewBefore = TimeSpan.Zero;
+                    continue;
                 }
 
                 if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now ||

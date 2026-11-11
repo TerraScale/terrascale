@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace TerraScale.Dashboard.Common.UI
 {
-    public sealed record RequestError(DocumentModel Document, string Heading, string Detail, string? Back = null)
+    public sealed record RequestError(DocumentModel Document, int Status, string Heading, string Detail, string? Back = null)
     {
         private const string FormExpiredHeading = "This form expired";
         private const string FormExpiredDetail = "Nothing was changed. Open the form again to send it.";
@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.Common.UI
                 return refused;
             }
 
-            var view = Slices.RequestErrorPage.Create(new RequestError(new DocumentModel(FormExpiredHeading, DocumentModel.NonceFor(http)), FormExpiredHeading, FormExpiredDetail, page));
+            var view = Slices.RequestErrorPage.Create(new RequestError(new DocumentModel(FormExpiredHeading, DocumentModel.NonceFor(http)), StatusCodes.Status400BadRequest, FormExpiredHeading, FormExpiredDetail, page));
             view.StatusCode = StatusCodes.Status400BadRequest;
             return view;
         }
@@ -58,7 +58,7 @@ namespace TerraScale.Dashboard.Common.UI
                 extensions: new Dictionary<string, object?> { ["requestId"] = http.TraceIdentifier });
             }
 
-            var view = Slices.RequestErrorPage.Create(new RequestError(new DocumentModel(heading, DocumentModel.NonceFor(http)), heading, detail));
+            var view = Slices.RequestErrorPage.Create(new RequestError(new DocumentModel(heading, DocumentModel.NonceFor(http)), status, heading, detail));
             view.StatusCode = status;
             return view;
         }

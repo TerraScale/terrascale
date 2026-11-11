@@ -100,7 +100,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 AccessToken = tokens.AccessToken,
                 RefreshToken = string.IsNullOrWhiteSpace(tokens.RefreshToken) ? session.RefreshToken : tokens.RefreshToken,
                 IdToken = tokens.IdToken is { Length: > 0 } ? tokens.IdToken : session.IdToken,
-                ExpiresAt = time.GetUtcNow().AddSeconds(tokens.ExpiresIn),
+                ExpiresAt = AccessTokenExpiry(tokens.AccessToken, TrustedIssuer((await metadataRead).Issuer), await keysRead),
                 RefreshLease = "",
                 RefreshLeaseUntil = null
             };
@@ -149,7 +149,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
             var client = Client();
             var metadata = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
-            _ = TrustedIssuer(metadata.Issuer);
+            var issuer = TrustedIssuer(metadata.Issuer);
             if (!metadata.IdTokenSigningAlgValuesSupported.Contains("ES256", StringComparer.Ordinal))
             {
                 throw new SignInRejectedException();
@@ -157,7 +157,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
             var keys = await client.Oidc.GetJwksAsync(cancellationToken);
             var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, nonce, keys, time.GetUtcNow());
-            var session = new SessionRecord(claims.Subject, claims.Name, claims.Email, tokens.AccessToken, tokens.RefreshToken, time.GetUtcNow().AddSeconds(tokens.ExpiresIn))
+            var session = new SessionRecord(claims.Subject, claims.Name, claims.Email, tokens.AccessToken, tokens.RefreshToken, AccessTokenExpiry(tokens.AccessToken, issuer, keys))
             { IdToken = tokens.IdToken };
             // The session's own userinfo read, so the activity check below reuses this answer instead of a second
             // sequential ts-auth round trip on every sign-in.
@@ -173,6 +173,13 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             return session;
+        }
+
+        private DateTimeOffset AccessTokenExpiry(string accessToken, string issuer, TsAuthJwkSet keys)
+        {
+            var now = time.GetUtcNow();
+            var expiry = AuthJwtClaims.Read(accessToken, issuer, issuer, keys, now, "at+jwt").GetProperty("exp").GetInt64();
+            return expiry <= now.AddDays(1).ToUnixTimeSeconds() ? DateTimeOffset.FromUnixTimeSeconds(expiry) : throw new SignInRejectedException();
         }
 
         private static string TrustedIssuer(string issuer)

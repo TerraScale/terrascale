@@ -48,10 +48,10 @@ namespace TerraScale.Dashboard.Platform.Http
 
             public IDisposable? BeginScope<TState>(TState state) where TState : notnull
             {
-                var safe = Fields(state).Where(field => field.Value is string value &&
+                var safe = new SafeFields(Fields(state).Where(field => field.Value is string value &&
                     (field.Key == "RequestId" && TerraScaleIds.IsValid(value) ||
-                     field.Key is "TraceId" or "SpanId" or "ParentId" && value.Length is 16 or 32 && value.All(char.IsAsciiHexDigit))).ToArray();
-                return inner.BeginScope(safe);
+                     field.Key is "TraceId" or "SpanId" or "ParentId" && value.Length is 16 or 32 && value.All(char.IsAsciiHexDigit))));
+                return safe.Count == 0 ? null : inner.BeginScope(safe);
             }
 
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
@@ -62,7 +62,7 @@ namespace TerraScale.Dashboard.Platform.Http
                 }
 
                 if (!framework) { inner.Log(logLevel, eventId, state, exception, formatter); return; }
-                var safe = new List<KeyValuePair<string, object?>> { new("DiagnosticEvent", eventId.Id) };
+                var safe = new SafeFields([new("DiagnosticEvent", eventId.Id)]);
                 foreach (var field in Fields(state))
                 {
                     if (field.Key is "StatusCode" or "ElapsedMilliseconds" or "Elapsed" && field.Value is int or long or double or float or decimal)
@@ -80,12 +80,20 @@ namespace TerraScale.Dashboard.Platform.Http
                     safe.Add(new("ErrorType", exception.GetType().Name));
                 }
                 // Never invoke the original formatter or pass its exception/state to a provider.
-                inner.Log(logLevel, eventId, safe, null, (fields, _) => string.Join(" ", fields.Select(field => field.Key + "=" + field.Value)));
+                inner.Log(logLevel, eventId, safe, null, (fields, _) => fields.ToString());
             }
 
             private static IEnumerable<KeyValuePair<string, object?>> Fields<TState>(TState state)
             {
                 return state is IEnumerable<KeyValuePair<string, object?>> fields ? fields : [];
+            }
+        }
+
+        private sealed class SafeFields(IEnumerable<KeyValuePair<string, object?>> fields) : List<KeyValuePair<string, object?>>(fields)
+        {
+            public override string ToString()
+            {
+                return string.Join(" ", this.Select(field => field.Key + "=" + field.Value));
             }
         }
     }
