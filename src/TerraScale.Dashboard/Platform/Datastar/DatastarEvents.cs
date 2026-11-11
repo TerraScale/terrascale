@@ -15,12 +15,7 @@ namespace TerraScale.Dashboard.Platform.Datastar
             await context.Response.WriteAsync(html, context.RequestAborted);
         }
 
-        public static Task PatchSignalsAsync(HttpContext context, object signals)
-        {
-            return SendAsync(context, "datastar-patch-signals", "signals", JsonSerializer.Serialize(signals));
-        }
-
-        private static async Task SendAsync(HttpContext context, string type, string key, string value)
+        public static async Task PatchSignalsAsync(HttpContext context, object signals)
         {
             if (!context.Response.HasStarted)
             {
@@ -28,13 +23,7 @@ namespace TerraScale.Dashboard.Platform.Datastar
                 context.Response.Headers.CacheControl = "no-store";
                 context.Response.Headers["X-Accel-Buffering"] = "no";
             }
-            await context.Response.WriteAsync($"event: {type}\n", context.RequestAborted);
-            foreach (var line in value.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
-            {
-                await context.Response.WriteAsync($"data: {key} {line}\n", context.RequestAborted);
-            }
-
-            await context.Response.WriteAsync("\n", context.RequestAborted);
+            await context.Response.WriteAsync($"event: datastar-patch-signals\ndata: signals {JsonSerializer.Serialize(signals)}\n\n", context.RequestAborted);
             await context.Response.Body.FlushAsync(context.RequestAborted);
         }
     }
