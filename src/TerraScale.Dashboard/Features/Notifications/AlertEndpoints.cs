@@ -71,7 +71,6 @@ namespace TerraScale.Dashboard.Features.Notifications
                 else
                 {
                     var (rule, secret) = await rules.CreateAsync(context, form, http.RequestAborted);
-                    http.Response.Headers["Referrer-Policy"] = "no-referrer";
                     return await PageAsync(http, context, rules, created: rule, secret: secret, status: 201);
                 }
             }
