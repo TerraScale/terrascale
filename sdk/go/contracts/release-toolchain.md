@@ -5,11 +5,11 @@ compiler is independently pinned to the version in `.go-version`; `GOTOOLCHAIN=l
 prevents an implicit compiler replacement. The Go download catalog listed that
 version as the latest stable release when it was pinned.
 
-The existing test and release jobs cache only the pinned govulncheck v1.9.0
+The release qualification caches only the pinned govulncheck v1.9.0
 executable, never advisory results. Its trimpath build with the Go version in
 `.go-version` is checksum-verified on every use and self-scanned.
-Every ready PR (including documentation-only changes) queries the current Go advisory
-database. Automatic discovery covers every committed Go module. Source symbol analysis
+Every release qualification (`scripts/qualify-release.sh`) queries the current Go
+advisory database; pull request and main-push CI only build and vet. Automatic discovery covers every committed Go module. Source symbol analysis
 covers every package and includes tests. `go list -deps -test` independently
 discovers imported modules; one package per module becomes an explicit scan root
 so internal-test package deduplication cannot hide test-only dependencies.
@@ -28,7 +28,7 @@ advisory scans. Module scanning covers stripped binaries even when symbol-level
 reachability is unavailable. A finding stops packaging and release. Existing
 archive checksum and native snapshot checks remain in place.
 
-The test job separately compiles an isolated consumer importing all three public
+The release qualification separately compiles an isolated consumer importing all three public
 SDK packages under Go 1.25.0. This verifies source compatibility at the supported
 floor; it does not qualify that old compiler for shipping CLI executables.
 

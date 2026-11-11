@@ -42,26 +42,28 @@ The original `0.0.2`–`0.0.10` CLI downloads retain the `history/ts-go/v0.0.X` 
 
 ## Release
 
-Every green main push that touches `sdk/go/**`, `scripts/sdk/**` or the Go release
-and publish workflows releases the CLI automatically; there is no manual tag step and no
-deploy switch. The path is:
+Every green main commit whose `sdk/go/**`, `scripts/sdk/**` or
+`.github/workflows/sdk-release.yml` (outside `AGENTS.md` and `CLAUDE.md`) differs from
+the newest `sdk/go/v0.0.X` tag releases the CLI automatically; there is no manual tag
+step and no deploy switch. The path is:
 
 1. Push the change to main; the `CI` leg `sdk (sdk-go)` runs in GitHub Actions.
-2. The `SDK Go Release` workflow fires on every main push that touches the Go
-   SDK paths. It waits until the pushed commit's other push workflows are green. Its
-   `autorelease` job runs `python3 scripts/sdk/build-release.py go`: the release
-   gates, all six GoReleaser targets (version = highest existing
-   `sdk/go/v0.0.X` tag + 1) and `python3 scripts/check-release.py`. It then
-   creates the `sdk/go/v0.0.X` tag on that exact revision. Queue delays and busy main
-   sections heal on the next trigger; an already-released version is skipped.
-3. A tag created with the job token starts no workflow, so the same run then
-   calls `SDK Go Publish` for the new tag. Publish also runs on a pushed
-   `sdk/go/v0.0.X` tag and by dispatch with a `tag` input. It verifies the tag
-   points into main, takes the bytes autorelease built (a tag push or dispatch
-   rebuilds them from the tag) and publishes them as the release assets with the workflow's `GITHUB_TOKEN`. A failed publish is rerun from its
-   job or dispatched for the tag. This requires no paid GoReleaser monorepo support.
+2. When that `CI` run of the push succeeds, it starts the `SDK Release` workflow
+   (`.github/workflows/sdk-release.yml`) for the same commit. Its `go-due` job stops
+   unless the newest `sdk/go/v0.0.X` tag is an ancestor of the commit and the release
+   inputs changed since that tag. A red `CI` run starts no release; its changes ship
+   with the next green main commit. The `go` job, one at a time, then runs
+   `python3 scripts/sdk/build-release.py go`: the release gates, all six GoReleaser
+   targets (version = highest existing `sdk/go/v0.0.X` tag + 1) and
+   `python3 scripts/check-release.py`. It creates the `sdk/go/v0.0.X` tag on that exact
+   commit unless the newest tag is no longer its ancestor.
+3. The `github-release` job of the same run publishes the bytes the `go` job built as
+   the release assets with the workflow's `GITHUB_TOKEN`. A pushed `sdk/go/v0.0.X` tag,
+   or a dispatch of `sdk-release.yml` with a `tag` input, rebuilds that tag and
+   publishes it. Rerun a failed job with "Re-run failed jobs". This requires no paid
+   GoReleaser monorepo support.
 4. Confirm the release assets, checksums and installed `ts --version`. The
-   homebrew-tap syncs the new `ts.rb` on its own 15-minute schedule.
+   homebrew-tap takes the new `ts.rb` on its next scheduled sync.
 
 Credential-free package checks run `goreleaser release --snapshot --clean` and check the archives, the Homebrew formula and `ts --version` with `python3 scripts/check-release.py`. This does not run or download TerraBase. For release packaging set `TS_GO_VERSION` to the numeric `0.0.X` version; the default snapshot version stays `0.0.0-dev`.
 
@@ -74,9 +76,10 @@ brew install terrascale/tap/ts
 Each release generates `ts.rb` as a release asset. The pinned GoReleaser still
 supports `brews`; it is kept because formulas cover Linux and macOS, whereas
 casks only cover macOS. **TerraScale/homebrew-tap** pulls the formula itself:
-its sync workflow runs every 15 minutes, checks that every URL and SHA-256 in
-`ts.rb` matches the latest release's `checksums.txt`, and commits
-`Formula/ts.rb` with the tap's own token. To publish sooner, run it by hand:
+its sync workflow is scheduled every 15 minutes, but GitHub starts it every few
+hours (7 scheduled runs in the 48 hours before 2026-11-11 11:35 UTC). It checks that
+every URL and SHA-256 in `ts.rb` matches the latest release's `checksums.txt`, and
+commits `Formula/ts.rb` with the tap's own token. To publish sooner, run it by hand:
 
 ```sh
 gh workflow run sync.yml --repo TerraScale/homebrew-tap

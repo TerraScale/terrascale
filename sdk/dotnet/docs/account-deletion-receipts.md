@@ -44,15 +44,3 @@ completed and that organization's atomic deletion fence exists. A 202 returns
 it does not promise eventual removal. A noncandidate organization returns 404
 and throws. Remove each local organization only after its explicit 204; account
 completion alone does not prove every original organization was removed.
-
-The release target is `0.0.8`: the dashboard already consumes qualified `0.0.7`
-bytes, which must retain their package identity even though the latest stable tag
-checked was `v0.0.6`. After the owning auth contract and SDK PR land with required checks,
-tag the merged SDK main commit `v0.0.8`. The release workflow qualifies and tests
-the package, publishes it to GitHub Packages, verifies a fresh installed consumer,
-then publishes the same qualified artifact to nuget.org. Download the qualified
-artifact with `gh run download <run-id> --repo TerraScale/ts-dotnet --name package
---dir <staging-dir>`. It contains `TerraScale.DotNet.0.0.8.nupkg` and
-`provenance.json`. The dashboard maps this package exclusively to `vendor/dotnet`:
-replace its package/provenance, update its central pin and lockfiles to `0.0.8`,
-and run its `scripts/verify-sdk.py` as documented by that repository.

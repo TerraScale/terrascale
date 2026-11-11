@@ -72,8 +72,7 @@
     "check:vulnerabilities": "node scripts/check-vulnerabilities.js",
     "generate:v1-route-manifest": "node scripts/generate-v1-route-manifest.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "npm run typecheck",
-    "qualify:auth-authority": "node scripts/qualify-auth-authority.js"
+    "lint": "npm run typecheck"
   },
   "peerDependencies": {
     "react": ">=18.2.0 <20.0.0"

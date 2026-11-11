@@ -1,8 +1,8 @@
 # Isolated dependency audit toolchain
 
 `requirements-audit.txt` pins the pip-audit CLI and its complete graph for Linux
-Python 3.12. CI and publication install it into `$RUNNER_TEMP/ts-audit` outside the source tree, separate from the
-SDK's Python 3.10–3.13 build environment. Both exact hashed locks are audited
+Python 3.12. The release qualification installs it into a temporary virtual environment outside the source
+tree, separate from the SDK's build environment. Both exact hashed locks are audited
 at every severity, without advisory exclusions. Both input graphs are checked.
 
 CVE-2026-112909 and CVE-2026-112910 also affect filelock 3.20.3. The previous
@@ -11,7 +11,7 @@ filelock requires Python 3.11+, so the audit tool uses 3.12 while SDK support
 continues unchanged. filelock is absent from the SDK build lock.
 
 Regenerate the SDK lock with `scripts/compile-ci-lock.sh`. Regenerate the audit
-lock using uv 0.13.5:
+lock using uv 0.13.7:
 
 ```sh
 uv pip compile requirements-audit.in --python-version 3.12 \

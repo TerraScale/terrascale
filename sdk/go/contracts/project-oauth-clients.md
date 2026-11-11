@@ -36,5 +36,5 @@ Requests are sent once, with the shared fixed 30-second deadline and 8 MiB
 response cap; registration JSON is capped at 16 KiB. Caller cancellation and
 typed HTTP errors are retained. A lost creation response has an unknown outcome;
 list before deciding whether to issue another creation. Deterministic denials
-and mutations are never automatically replayed. No paid fixture or signup is
-required by the HTTP tests; live qualification and cleanup remain separate gates.
+and mutations are never automatically replayed. Live qualification and cleanup
+remain separate gates.

@@ -29,7 +29,6 @@ sign-in and password-reset mail. It is omitted when null; as with other
 branding fields, sending branding without it clears it. Existing constructor
 calls and positional deconstruction are unchanged.
 
-Evidence: `fixtures/project-tenant.json` (`export_users`) and
-`TerraScaleAuthProjectsContractTests`, HTTP fakes only. Producer revision and
+Evidence: `fixtures/project-tenant.json` (`export_users`), HTTP fakes only. Producer revision and
 source hashes are in `user-export-provenance.json`. Live-service and installed
 package qualification follow the SDK merge.

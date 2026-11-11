@@ -37,7 +37,6 @@ brews:
     url_template: 'https://github.com/TerraScale/terrascale/releases/download/sdk/go/v{{ .Version }}/{{ .ArtifactName }}'
     homepage: https://terrascale.tech
     description: TerraScale CLI
-    # Generate for the release; the dependent Homebrew job publishes to the tap.
     skip_upload: true
     install: bin.install "ts"
     test: |
