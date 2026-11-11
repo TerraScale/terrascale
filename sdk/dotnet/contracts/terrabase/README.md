@@ -21,3 +21,5 @@ Usage JSON carries 64-bit totals, a `period` (`from`, `to`, `granularity`, `read
 ## Routing errors
 
 `TerraBaseWrongRegionException` preserves 421 and exposes the validated answering `Region`, `HomeRegion`, `Regions` and `ErrorCode`. The SDK never redirects, retries or changes hosts on 421.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

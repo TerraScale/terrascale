@@ -18,3 +18,5 @@ for a visible manual check. Permanent receipt/authorization errors retain the jo
 and stop automatic checks; temporary failures remain recoverable. All checks require
 the existing opaque operation cookie, POSTs retain CSRF checks, and pages use no-store.
 No typed auth/SDK status fields or public service API contracts changed.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

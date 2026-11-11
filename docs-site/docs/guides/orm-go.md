@@ -177,3 +177,5 @@ err = bunDB.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 - A transaction lives at most 5 seconds; past the limit the server rolls it back, so keep transactions small ([limits](/limits)).
 - Each open transaction holds one SQL session, and a connection runs one transaction at a time.
 - `LISTEN`/`NOTIFY` are Postgres features and do not exist in the SQLite dialect.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

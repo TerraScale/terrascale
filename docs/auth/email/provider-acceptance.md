@@ -9,6 +9,10 @@ account's token. The From address is fixed in code:
 `no-reply@terrascale.tech`, with the display name and Reply-To of the rendered
 message. One admission is spent per message, not per provider.
 
+Every ts-auth host needs outbound TCP 587 to that SMTP endpoint. A firewall
+that silently drops it makes every message wait the SMTP sender's whole
+30 second budget before the Cloudflare fallback takes it.
+
 The SMTP sender classifies the provider's answer from the SMTP reply: a 2xx
 after DATA is Accepted. A 4xx reply code on any command is Retryable: nothing
 was accepted for delivery, so the outbox may try again later. A 5xx reply code

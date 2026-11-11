@@ -14,8 +14,10 @@ show a banner; catalog sync refreshes and clears it, including same-label update
 API-key create sends the database ULID to ts-auth. Returned restrictions match
 by database ID and show the current display name, or “Deleted database” when
 that database is absent locally. Legacy name restrictions are marked unusable.
-Key creation and rotation keep their hosted step-up confirmation; rename uses
+Key rotation keeps its hosted step-up confirmation; rename uses
 management authorization and current-name confirmation without step-up.
 
 The dashboard uses main’s TerraScale.DotNet 0.0.20 package. HTTP fake journeys
 verify the consumer contract; they do not qualify live convergence.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

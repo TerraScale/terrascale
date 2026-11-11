@@ -11,7 +11,7 @@ Run area commands from `sdk/go` in the monorepo.
 
 ## API rules
 
-- Use one fixed global API and auth origin, with no regional discovery or failover. `ListRegions` reads the placement catalog, not an endpoint discovery service.
+- Use one global API and auth origin, with no regional discovery or failover: `https://api.terrascale.tech` and `https://auth.terrascale.tech` are the defaults, and `Config.TSAuthBaseURL` names the ts-auth of another deployment. `ListRegions` reads the placement catalog, not an endpoint discovery service.
 
 ## Configuration
 

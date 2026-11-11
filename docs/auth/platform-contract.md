@@ -382,6 +382,8 @@ tokens expire:
 ### 6.7 Limits
 
 - Token requests per API key: 1,000 per minute (`429 rate_limited`).
+- API keys created per user: 20 per hour, organization and project keys
+  together (`429 rate_limited` with `Retry-After`). Rotation is not counted.
 - SDKs cache a token until 60 seconds before `expires_in` and exchange again
   after a `401` from the resource server, once.
 

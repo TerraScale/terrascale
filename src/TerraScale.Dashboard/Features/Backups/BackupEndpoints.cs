@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Backups
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "backups"), Results.BadRequest("Invalid form token."));
             }
 
             var databaseId = form["databaseId"].ToString();
@@ -95,7 +95,7 @@ namespace TerraScale.Dashboard.Features.Backups
                 { restore = new(restoreOperation, "failed", ErrorMessage: Message(failure)); }
             }
 
-            return new(ShellModel.For(http, context, database.Name + " · backups"), database, listing, error,
+            return new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title("backups")), database, listing, error,
                 form?["backupId"].ToString() ?? "", form?["name"].ToString() ?? http.Request.Query["name"].ToString(),
                 form is not null && form.ContainsKey("fullBackupCron") ? form["fullBackupCron"].ToString() : null,
                 form is not null && form.ContainsKey("retentionDays") ? form["retentionDays"].ToString() : null)

@@ -13,6 +13,9 @@ public static class TerraBaseRegion
     /// <summary>The public origin that routes pinned requests to every serving region.</summary>
     public static readonly Uri PublicOrigin = new("https://api.terrascale.tech/");
 
+    internal static Uri? OriginOrPublic(Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver) =>
+        baseAddress ?? (endpointResolver is null ? PublicOrigin : null);
+
     /// <summary>Whether <paramref name="region"/> is a region id: a lowercase letter, then lowercase letters, digits or hyphens, at most 63 characters, not ending in a hyphen.</summary>
     public static bool IsValid(string? region) =>
         region is { Length: >= 1 and <= 63 } && region[0] is >= 'a' and <= 'z' && region[^1] != '-'

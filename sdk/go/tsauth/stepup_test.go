@@ -1,6 +1,7 @@
 package tsauth
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,14 @@ func TestOrganizationStepUpProofs(t *testing.T) {
 	const org, user = "01ARZ3NDEKTSV4RRFFQ69G5FA3", "01ARZ3NDEKTSV4RRFFQ69G5FA7"
 	var proofs []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/terrascale/step-up/consume" {
+			body, _ := io.ReadAll(r.Body)
+			if string(body) != `{"proof":"fixture-proof","purpose":"delete_organization","audience":"ts-auth","organization_id":"`+org+`"}` || r.Header.Get(StepUpProofHeader) != "" {
+				t.Errorf("consume body = %s, proof header = %q", body, r.Header.Get(StepUpProofHeader))
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		proofs = append(proofs, r.Header.Get(StepUpProofHeader))
 		if r.Header.Get("Authorization") != "Bearer fixture-sign-in" {
 			t.Errorf("authorization = %q", r.Header.Get("Authorization"))

@@ -1,7 +1,5 @@
 //! File reservations and metadata. Signed capabilities are private credentials.
-use super::{
-    client::Req, errors::from_project_response, ids::valid_entity_id, Client, Error, Result,
-};
+use super::{client::Req, errors::from_project_response, ids::is_valid_id, Client, Error, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -80,7 +78,7 @@ fn file_size<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Err
 }
 fn file_cursor<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Option<String>, D::Error> {
     let next = Option::<String>::deserialize(d)?;
-    if next.as_deref().is_some_and(|id| !valid_entity_id(id)) {
+    if next.as_deref().is_some_and(|id| !is_valid_id(id)) {
         return Err(serde::de::Error::custom(
             "file cursor must be a canonical ULID or null",
         ));
@@ -93,7 +91,7 @@ fn file_req<'a>(
     file: Option<&'a str>,
     suffix: Option<&'a str>,
 ) -> Result<Req<'a>> {
-    if !valid_entity_id(bucket) || file.is_some_and(|id| !valid_entity_id(id)) {
+    if !is_valid_id(bucket) || file.is_some_and(|id| !is_valid_id(id)) {
         return Err(Error::InvalidInput(
             "bucket and file IDs must be canonical ULIDs".into(),
         ));
@@ -126,7 +124,7 @@ fn capability_error(error: Error) -> Error {
     from_project_response(
         status,
         None,
-        error.request_id().filter(|id| valid_entity_id(id)),
+        error.request_id().filter(|id| is_valid_id(id)),
         body.as_bytes(),
     )
 }
@@ -139,7 +137,7 @@ impl Client {
     ) -> Result<FileObjectPage> {
         let mut request = file_req(Method::GET, bucket, None, None)?;
         if let Some(after) = after {
-            if !valid_entity_id(after) {
+            if !is_valid_id(after) {
                 return Err(Error::InvalidInput(
                     "file cursor must be a canonical ULID".into(),
                 ));

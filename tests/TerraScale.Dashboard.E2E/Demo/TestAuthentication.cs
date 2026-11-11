@@ -185,7 +185,7 @@ namespace TerraScale.Dashboard.E2E.Demo
 
         public async Task<TsAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TsAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken)
         {
-            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "create_oauth_client", "ts-auth", null, cancellationToken);
+            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "create_oauth_client", "ts-auth", null, null, cancellationToken);
             Interlocked.Increment(ref createdClients);
             var tenant = For(projectId);
             var client = new TsAuthProjectOAuthClient(ids.NewId(), request.Name!, request.Type!, request.RedirectUris!.ToArray(), DateTimeOffset.UtcNow);
@@ -202,7 +202,7 @@ namespace TerraScale.Dashboard.E2E.Demo
 
         public async Task<TsAuthProjectOAuthClient> UpdateClientAsync(SessionRecord session, string projectId, string clientId, TsAuthProjectClientUpdate request, string proof, CancellationToken cancellationToken)
         {
-            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "update_oauth_client", "ts-auth", null, cancellationToken);
+            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "update_oauth_client", "ts-auth", null, null, cancellationToken);
             var tenant = For(projectId);
             return Locked(tenant, () =>
             {
@@ -218,7 +218,7 @@ namespace TerraScale.Dashboard.E2E.Demo
 
         public async Task<TsAuthProjectClientSecret> RotateClientSecretAsync(SessionRecord session, string projectId, string clientId, string proof, CancellationToken cancellationToken)
         {
-            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "rotate_oauth_client", "ts-auth", null, cancellationToken);
+            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "rotate_oauth_client", "ts-auth", null, null, cancellationToken);
             Interlocked.Increment(ref rotatedClients);
             var tenant = For(projectId);
             return Locked(tenant, () =>
@@ -240,7 +240,7 @@ namespace TerraScale.Dashboard.E2E.Demo
 
         public async Task<TsAuthWebhookEndpoint> CreateWebhookEndpointAsync(SessionRecord session, string projectId, TsAuthCreateWebhookEndpoint request, string proof, CancellationToken cancellationToken)
         {
-            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "create_webhook_endpoint", "ts-auth", null, cancellationToken);
+            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "create_webhook_endpoint", "ts-auth", null, null, cancellationToken);
             var tenant = For(projectId);
             return Locked(tenant, () =>
             {
@@ -258,7 +258,7 @@ namespace TerraScale.Dashboard.E2E.Demo
 
         public async Task<TsAuthWebhookSecret> RotateWebhookSecretAsync(SessionRecord session, string projectId, string webhookEndpointId, string proof, CancellationToken cancellationToken)
         {
-            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "rotate_webhook_secret", "ts-auth", null, cancellationToken);
+            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "rotate_webhook_secret", "ts-auth", null, null, cancellationToken);
             var tenant = For(projectId);
             return Locked(tenant, () =>
             {

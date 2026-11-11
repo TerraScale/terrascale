@@ -168,3 +168,5 @@ are dropped. It sends the request once, never retries or redirects it,
 changes no stored record, and answers the user `409` with "The database is
 managed in <home>. Nothing was changed." (a browser treats `421` as a
 connection retry signal, so it is not passed through).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
