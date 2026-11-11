@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
@@ -37,7 +38,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             [Description(ApiKeyService.ScopeDescription)] string[] scopes,
             string databaseId = "", int expiresInDays = 0, string[]? allowedCidrs = null, string? organizationId = null, string? projectId = null)
         {
-            return CreateCredentialAsync(Scope(organizationId, projectId), "api-key", name, scopes, databaseId, expiresInDays, allowedCidrs ?? []);
+            _ = keys.PrepareCreate(Scope(organizationId, projectId), "api-key", name, databaseId, scopes, expiresInDays, allowedCidrs ?? []);
+            throw StepUpFlow.Required();
         }
 
         [McpServerTool(Name = "create_scoped_key", Title = "Create scoped key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Mint a short-lived key for one database from the API key authenticating this MCP connection. access is read or read_write; ttlSeconds is 60 to 2,592,000, default 3600, capped by the parent key. The secret is returned once. Scoped keys cannot mint keys or manage databases. OAuth and personal access tokens cannot mint scoped keys.")]
@@ -89,13 +91,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         }
 
         private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
-
-        private async Task<ProjectApiKeySecret> CreateCredentialAsync(AccountContext context, string kind, string name, string[] scopes, string databaseId, int expiresInDays, string[] allowedCidrs)
-        {
-            var result = await keys.CreateAsync(context, kind, name, databaseId, scopes, expiresInDays, allowedCidrs, Cancellation);
-            await keys.RecordAsync(accounts, context, result.Key.Id, true, Cancellation);
-            return new(ApiKeyService.Metadata(result.Key), result.Secret);
-        }
     }
 
     public sealed record McpCredentialList(IReadOnlyList<ProjectCredentialMetadata> Credentials, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);

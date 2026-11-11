@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard.Features.Accounts
 {
@@ -21,7 +22,7 @@ namespace TerraScale.Dashboard.Features.Accounts
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/", Results.BadRequest("Invalid form token."));
             }
 
             AccountContext selected;

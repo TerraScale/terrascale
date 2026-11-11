@@ -1,13 +1,17 @@
 # Database placement
 
 Database creation accepts a home region and either replica regions or **All regions**. All-regions placement follows
-new serving regions automatically. The database's **Replication** tab owns the replica set and **Move home** action.
+new serving regions automatically. The dashboard's create dialog picks regions only on the map: the first region picked
+is the home and each later one a replica; **All regions** is set afterwards under **Placement** on the **Replication** tab.
+The database's **Replication** tab owns the replica set and **Move home** action.
 Only organization members with management access can change placement; platform databases keep their placement.
 
 The dashboard calls TerraBase's placement API through the management RPC contract using the current user's
 `databases:write` authority. Moving to a replica waits for TerraBase to complete the move, then saves the returned
 home, replicas and endpoint. The old home becomes a replica. A failed or unresolved move displays TerraBase's error;
 the dashboard does not assume that a failed response changed the home.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 Catalog reconciliation also refreshes the home and replica set after a move made through a CLI or SDK. When regional
 catalogs disagree, it prefers the record returned by the database's home region. Each update

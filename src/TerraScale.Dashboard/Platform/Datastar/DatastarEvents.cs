@@ -10,7 +10,9 @@ namespace TerraScale.Dashboard.Platform.Datastar
             slice.HttpContext = context;
             slice.ServiceProvider = context.RequestServices;
             var html = await slice.RenderAsync(cancellationToken: context.RequestAborted);
-            await SendAsync(context, "datastar-patch-elements", "elements", html);
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.Headers.CacheControl = "no-store";
+            await context.Response.WriteAsync(html, context.RequestAborted);
         }
 
         public static Task PatchSignalsAsync(HttpContext context, object signals)

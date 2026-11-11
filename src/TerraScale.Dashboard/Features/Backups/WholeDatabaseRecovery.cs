@@ -230,10 +230,10 @@ namespace TerraScale.Dashboard.Features.Backups
                     var form = HttpMethods.IsPost(http.Request.Method) ? await FormRequests.ReadAsync(http, http.RequestAborted) : null;
                     if (form is not null && !Csrf.Validate(http, form))
                     {
-                        return Results.BadRequest("Invalid form token.");
+                        return RequestError.FormExpired(http, DatabaseService.Path(database.Id, "point-in-time"), Results.BadRequest("Invalid form token."));
                     }
 
-                    var page = new WholeDatabaseRecoveryPage(ShellModel.For(http, context, "Point-in-time recovery"), database,
+                    var page = new WholeDatabaseRecoveryPage(ShellModel.For(http, context, database.Name + " · Point-in-time recovery"), database,
                         form?["destination"].ToString() ?? http.Request.Query["destination"].FirstOrDefault() ?? "platform",
                         form?["point"].ToString() ?? "", form?["name"].ToString() ?? "", form?["confirmName"].ToString() ?? "",
                         ConfirmDatabase: form?["confirmDatabase"].ToString() ?? "");

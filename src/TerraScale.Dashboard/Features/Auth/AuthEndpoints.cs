@@ -141,7 +141,7 @@ namespace TerraScale.Dashboard.Features.Auth
             var form = await FormRequests.ReadAsync(context, context.RequestAborted);
             if (!Csrf.Validate(context, form))
             {
-                return Results.StatusCode(403);
+                return RequestError.FormExpired(context, "/", Results.StatusCode(403));
             }
 
             return await SignOutAsync(context);

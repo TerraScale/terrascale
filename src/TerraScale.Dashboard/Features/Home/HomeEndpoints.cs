@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.Features.Home
 
             if (context.Project is null)
             {
-                return Results.Redirect(context.Organization.Kind == "business" && !context.Organization.CanProvision(context.UserId) ? "/organization?newOrganization=payment" : "/organization?tab=projects&newProject=1");
+                return Results.Redirect(context.Organization.Kind == "business" && !context.Organization.CanProvision(context.UserId) ? "/organization" : "/organization?tab=projects");
             }
 
             var range = HomePage.NormalizeRange(http.Request.Query["range"]);

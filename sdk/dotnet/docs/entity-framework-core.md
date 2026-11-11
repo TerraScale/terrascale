@@ -32,12 +32,12 @@ options.UseTerraBase("Endpoint=https://api.terrascale.tech;Project=01JA…;Datab
 
 | Key | Meaning |
 |---|---|
-| `Endpoint` | Origin of the TerraBase client listener. Set this or `Region`. |
+| `Endpoint` | Origin of the TerraBase client listener. Without it and `AuthEndpoint`, requests go to `https://api.terrascale.tech`. |
 | `Region` | A region id such as `gru`; requests go to `https://api.terrascale.tech` pinned to that region. |
 | `Project` | The project ULID. Required. |
 | `Database` | The database name or ULID. Required. |
 | `ApiKey` | An API key with `sql:read` and `sql:write`. Required. |
-| `AuthEndpoint` | Origin of the ts-auth that exchanges the API key. Defaults to `https://auth.terrascale.tech` only when requests go to `https://api.terrascale.tech` (`Region`, or that `Endpoint`); any other `Endpoint` needs it, so the key never goes to production by accident. |
+| `AuthEndpoint` | Origin of the ts-auth that exchanges the API key. Defaults to `https://auth.terrascale.tech` only when requests go to `https://api.terrascale.tech` (no `Endpoint`, `Region`, or that `Endpoint`); any other `Endpoint` needs it, so the key never goes to production by accident. |
 
 All connection strings share one connection pool. The provider keeps the SQL client of the 64 most recently used
 connection strings, so each API key's access token is reused across contexts.

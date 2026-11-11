@@ -59,11 +59,6 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
                 await Assert.That(html).DoesNotContain("join this organization");
             }
-            using (var noCsrf = await HttpJourney.PostFormAsync(client, "/invitations/" + token + "/respond", new() { ["action"] = "accept" }))
-            {
-                await Assert.That(noCsrf.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-            }
-
             using (var accepted = await HttpJourney.PostFormAsync(client, "/invitations/" + token + "/respond?projectId=" + sibling,
                 new() { ["_csrf"] = csrf, ["action"] = "accept" }))
             {

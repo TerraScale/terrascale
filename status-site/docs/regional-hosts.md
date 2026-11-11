@@ -9,3 +9,5 @@ a host silently answered by another region fails this check.
 New regions join automatically. A discovery outage retains existing checks;
 it cannot remove failing hosts from monitoring. These cheap checks use no
 account, API key, database or paid capacity.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

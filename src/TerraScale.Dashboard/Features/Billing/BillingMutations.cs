@@ -22,7 +22,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return Results.Text("Invalid CSRF token.", statusCode: 403);
+                return RequestError.FormExpired(http, "/organization?tab=billing", Results.Text("Invalid CSRF token.", statusCode: 403));
             }
 
             try
@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 var intent = StepUpFlow.Intent(http, context, "change_plan");
                 if (intent is null)
                 {
-                    return await StepUpFlow.StartAsync(http, context, "change_plan", "ts-auth");
+                    return await StepUpFlow.StartAsync(http, context, "change_plan", "ts-auth", boundOrganizationId: context.Organization.Id);
                 }
 
                 await StepUpFlow.ConsumeAsync(http, context, intent);

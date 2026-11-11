@@ -41,6 +41,8 @@ inspect current state before retrying, especially for credentials and billing.
 No public rate-limit budget or rate-limit-header contract is established here;
 respect `Retry-After` when supplied and never automatically replay an uncertain write.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Public service APIs and removed routes
 
 The former Go platform billing API at `platform.terrascale.tech`, including

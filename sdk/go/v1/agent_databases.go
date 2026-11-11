@@ -138,7 +138,7 @@ func (c *Client) CreateScopedKey(ctx context.Context, in ScopedKeyRequest) (*Sco
 		method: http.MethodPost,
 		body:   body,
 		header: http.Header{"Authorization": {"Basic " + base64.StdEncoding.EncodeToString([]byte(c.apiKey[:26]+":"+c.apiKey))}},
-	}, "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys")
+	}, c.authOrigin+"/v1/terrascale/api-keys/self/scoped-keys")
 	if err != nil {
 		if resp != nil && (resp.status < 200 || resp.status >= 300) {
 			apiErr := scopedKeyError(resp)
@@ -174,7 +174,7 @@ func (c *Client) projectClient(project string) (*Client, error) {
 	if cached, ok := c.projects.Load(project); ok {
 		return cached.(*Client), nil
 	}
-	source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: c.apiKey, Project: project, HTTPClient: c.hc})
+	source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: c.authOrigin + "/terrascale", Key: c.apiKey, Project: project, HTTPClient: c.hc})
 	if err != nil {
 		return nil, err
 	}

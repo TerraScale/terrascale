@@ -1,0 +1,13 @@
+name: CI time
+on:
+  workflow_run:
+    workflows: [CI, Sites, "Images (GHCR)"]
+    types: [completed]
+permissions:
+  actions: read
+  issues: write
+jobs:
+  ci-time:
+    uses: TerraScale/.github/.github/workflows/ci-time.yml@e6820e417b26b154a613aa22f7365ca3def253ad
+    with:
+      scan-limit: 15

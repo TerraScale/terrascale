@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/notifications/alerts", Results.BadRequest("Invalid form token."));
             }
 
             try
@@ -71,7 +71,6 @@ namespace TerraScale.Dashboard.Features.Notifications
                 else
                 {
                     var (rule, secret) = await rules.CreateAsync(context, form, http.RequestAborted);
-                    http.Response.Headers["Referrer-Policy"] = "no-referrer";
                     return await PageAsync(http, context, rules, created: rule, secret: secret, status: 201);
                 }
             }

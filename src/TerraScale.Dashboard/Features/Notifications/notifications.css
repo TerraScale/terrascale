@@ -131,3 +131,7 @@
     grid-column: 2;
   }
 }
+
+.ts-alerts-threshold {
+  width: 112px;
+}

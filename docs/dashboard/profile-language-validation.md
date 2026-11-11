@@ -19,3 +19,5 @@ included. HTTP journeys cover preference persistence and rejected field state;
 browser journeys observe native submit events and real HTTP requests to verify
 busy and duplicate-submit behavior, then check correction and retry against
 the running fixture.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

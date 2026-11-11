@@ -72,3 +72,16 @@ func (u *User) requestStepUp(ctx context.Context, purpose, organization string) 
 func (u *User) WithStepUpProof(proof string) *User {
 	return &User{c: u.c, token: u.token, proof: proof}
 }
+
+type stepUpConsume struct {
+	Proof          string `json:"proof"`
+	Purpose        string `json:"purpose"`
+	Audience       string `json:"audience"`
+	OrganizationID string `json:"organization_id"`
+}
+
+func (u *User) consumeStepUp(ctx context.Context, proof, purpose, organization string) error {
+	consumer := &User{c: u.c, token: u.token}
+	return consumer.none(ctx, http.MethodPost, []string{"step-up", "consume"}, nil,
+		stepUpConsume{Proof: proof, Purpose: purpose, Audience: "ts-auth", OrganizationID: organization})
+}

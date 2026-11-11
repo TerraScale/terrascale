@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/api-keys", Results.BadRequest("Invalid form token."));
             }
 
             var cidrs = ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString());

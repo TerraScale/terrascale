@@ -20,3 +20,5 @@ a new sign-in flow. Pending project and organization forms continue automaticall
 with their original organization scope. Project deletion markers persist outside
 the hydrated project list until dashboard finalization. No storage engine format
 bump or production reset is required; the new table is seeded at startup.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Organizations.Sso
@@ -210,7 +211,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return Results.BadRequest("Invalid form token.");
+                return RequestError.FormExpired(http, "/organization?tab=sso", Results.BadRequest("Invalid form token."));
             }
 
             try
