@@ -490,8 +490,7 @@ class Database:
 
     def execute(self, sql: str | Statement, args: Args = None) -> StatementResult:
         """Run one statement, reads and writes, with positional or named arguments."""
-        item = sql if isinstance(sql, Statement) else Statement(sql, args)
-        return (self._c._send(_spec.execute(*self._p, _sql.statements([item]))))[0]
+        return (self._c._send(_spec.execute(*self._p, _sql.statements([_sql.statement(sql, args)]))))[0]
 
     def batch(self, statements: Sequence[str | tuple[str, Args] | Statement]) -> builtins.list[StatementResult]:
         """Run 1 to 256 statements as one all-or-nothing transaction; one result per statement."""

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `execute(Statement(...), args)`, and `query` called that way, on the client,
+  the async client and both SQL sessions raise `TypeError` before any request:
+  a `Statement` carries its own arguments. Earlier versions dropped `args`.
 - Added the optional `sqlalchemy` extra (`pip install terrascale[sqlalchemy]`): a
   `terrascale://<project_id>/<database>` SQLAlchemy dialect and PEP 249 DBAPI
   over the SQL HTTP API, running in autocommit — each statement is one request
