@@ -54,9 +54,12 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 - Mail: `newAddress` creates a fresh mail.tm inbox for each sign-up on the domain the preflight found
   (`E2E_INBOX_DOMAIN`), and `nextMail` waits for its mail for at most 120 s (`mailWait`; the test timeout is 60 s plus
   that wait), reading the message inside that bounded poll. mail.tm refuses bursts from one address (its
-  `RateLimit-Policy` is 10 requests a minute, and one a minute for `POST /accounts`), so the workers share two slot
-  series in the state: inbox creations are 60 s apart and every other call 6 s apart. A test's wait for its slot is
-  added to its timeout. Inboxes are never deleted: a deleted address can be registered again by anyone, while the
+  `RateLimit-Policy` is 10 requests a minute, and one a minute for `POST /accounts`), so every mail.tm call takes the
+  next free slot of one series in the state (`inbox-requests`, slots 7 s apart, in `support/inbox.ts` and
+  `env/production.sh`): eleven consecutive calls span at least ten gaps, 70 s, so they never share a 60-s window even
+  when one reaches mail.tm up to 10 s later than another. Inbox creations take only every tenth slot, 70 s apart. The
+  preflight's `GET /domains` claims the run's first slot and calls at once. A test's wait for its slot is added to
+  its timeout. Inboxes are never deleted: a deleted address can be registered again by anyone, while the
   account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
   password and token are registered secrets. Errors name the "inbox provider".
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no

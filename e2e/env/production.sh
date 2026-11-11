@@ -5,6 +5,7 @@ state=$e2e/.state/production
 report=$e2e/production-report
 ca=/etc/ssl/certs/ca-certificates.crt
 projects=(pages-desktop pages-mobile hosted interactions invitation)
+slot_ms=7000
 domain=
 
 refuse() {
@@ -28,6 +29,8 @@ isolated() {
 
 inbox() {
   local domains
+  mkdir -p "$state/inbox-requests"
+  : > "$state/inbox-requests/$(( ($(date +%s%3N) + slot_ms - 1) / slot_ms ))"
   domains=$(curl -fsS --max-time 15 -H 'accept: application/json' https://api.mail.tm/domains) || {
     echo "inbox provider mail.tm: GET /domains failed; production was not contacted"
     return 3

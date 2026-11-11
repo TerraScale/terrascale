@@ -33,21 +33,22 @@ const mailpitInbox: Inbox = {
 };
 
 const mailTm = 'https://api.mail.tm';
-const requestSpacing = { series: 'inbox-requests', ms: 6_000 };
-const accountSpacing = { series: 'inbox-accounts', ms: 60_000 };
+const slotMs = 7_000;
+const requestSpacing = { every: 1 };
+const accountSpacing = { every: 10 };
 const opened = new Map<string, string>();
 
-async function turn(spacing: { series: string; ms: number }): Promise<void> {
-  const slots = join(stateDir, spacing.series);
+async function turn(spacing: { every: number }): Promise<void> {
+  const slots = join(stateDir, 'inbox-requests');
   mkdirSync(slots, { recursive: true });
-  for (let slot = Math.ceil(Date.now() / spacing.ms); ; slot += 1) {
+  for (let slot = spacing.every * Math.ceil(Date.now() / (spacing.every * slotMs)); ; slot += spacing.every) {
     try {
       writeFileSync(join(slots, String(slot)), '', { flag: 'wx' });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
       throw error;
     }
-    const wait = Math.max(0, slot * spacing.ms - Date.now());
+    const wait = Math.max(0, slot * slotMs - Date.now());
     test.info().setTimeout(test.info().timeout + wait);
     await new Promise((resolve) => setTimeout(resolve, wait));
     return;
