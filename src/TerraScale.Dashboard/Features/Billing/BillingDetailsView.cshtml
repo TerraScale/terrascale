@@ -1,20 +1,23 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Billing.BillingPage>
-@if (Model.CanManage && Model.InternalBill is null)
-{
-    <section class="ts-card" aria-labelledby="billing-details-title">
-        <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-details-title">Billing details and tax IDs</h2></div></header>
-        <div class="ts-card-body ts-stack">
-        @if (Model.DetailsUnavailable) { <p class="ts-alert ts-alert-warning" role="status">Billing details could not be loaded. Reload billing to retry.</p> }
-        else if (Model.Details is { } details)
-        {
-            @if (details.Name.Length > 0) { <p>@details.Name</p> }
-            @if (details.Address.Count == 0) { <p class="ts-meta">No billing address recorded.</p> }
-            else { <address>@foreach (var line in details.Address) { <span>@line</span><br /> }</address> }
-            @if (details.TaxIds.Count == 0) { <p class="ts-meta">No tax IDs recorded.</p> }
-            else { <ul>@foreach (var id in details.TaxIds) { <li>@id.Type.ToUpperInvariant().Replace('_', ' '): @id.Value <span class="ts-meta">(@id.Verification)</span></li> }</ul> }
-        }
-        else { <p class="ts-meta">Your billing address and applicable VAT or tax ID are collected during checkout.</p> }
-        @if (Model.Binding?.CustomerId is { Length: > 0 }) { <a class="ts-btn ts-btn-secondary" href="@TerraScale.Dashboard.Common.Accounts.WorkspaceUrl.For(Model.Shell.Context, "/billing/portal")">Edit billing details</a> }
-        </div>
-    </section>
+@{
+    var org = Model.Shell.Context.Organization!;
+    var subscribed = Model.Binding?.SubscriptionId is { Length: > 0 } && Model.Binding.Status is not ("canceled" or "incomplete_expired");
+    var details = Model.CanManage && Model.InternalBill is null;
+    var portal = Model.CanManage && (subscribed || Model.Binding?.CustomerId is { Length: > 0 });
 }
+<section class="ts-card ts-card-boxed" id="billing-payment" aria-labelledby="billing-payment-title">
+    <header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-payment-title">Payment method</h2></div>@if (portal) { <div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@TerraScale.Dashboard.Common.Accounts.WorkspaceUrl.For(Model.Shell.Context, "/billing/portal")">Manage payment</a></div> }</header>
+    <div class="ts-card-body">
+        @if (Model.PaymentMethodUnavailable) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Payment method could not be loaded. Reload billing to retry.</p></div> }
+        <dl class="ts-billing-facts ts-billing-facts-stacked">
+            <div><dt>Payment method</dt><dd>@(Model.PaymentMethodUnavailable ? "Not reported" : Model.PaymentMethod?.Label ?? (org.PaymentMethodValidated ? "On file" : "Not set"))</dd></div>
+            @if (details && !Model.DetailsUnavailable && Model.Details is { } recorded)
+            {
+                <div><dt>Billing address</dt><dd>@if (recorded.Name.Length > 0) { <span>@recorded.Name</span><br /> }@if (recorded.Address.Count == 0) { <span class="ts-meta">Not recorded</span> } else { <address>@foreach (var line in recorded.Address) { <span>@line</span><br /> }</address> }</dd></div>
+                <div><dt>Tax IDs</dt><dd>@if (recorded.TaxIds.Count == 0) { <span class="ts-meta">None</span> } else { <ul class="ts-billing-tax">@foreach (var id in recorded.TaxIds) { <li>@id.Type.ToUpperInvariant().Replace('_', ' '): @id.Value <span class="ts-meta">(@id.Verification)</span></li> }</ul> }</dd></div>
+            }
+        </dl>
+        @if (details && Model.DetailsUnavailable) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Billing details could not be loaded. Reload billing to retry.</p></div> }
+        else if (details && Model.Details is null) { <p class="ts-meta">Your billing address and applicable VAT or tax ID are collected during checkout.</p> }
+    </div>
+</section>
