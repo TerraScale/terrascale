@@ -22,7 +22,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 
 .PHONY: restore turso-native build fmt fmt-check lint check clean \
 	libs-build libs-check libs-nativeaot-check \
-	auth-restore auth-build auth-audit auth-openapi-check auth-mail-delivery-check auth-check auth-publish auth-dev \
+	auth-restore auth-build auth-audit auth-openapi-check auth-check auth-publish auth-dev \
 	terrabase-build terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check region-sim
 
@@ -84,10 +84,6 @@ auth-openapi-check: auth-build
 	$(REDOCLY) lint artifacts/openapi.json docs/auth/platform-api.openapi.yaml
 
 auth-check: auth-audit auth-openapi-check
-
-# One production signup email, fetched from a disposable inbox; no account is verified.
-auth-mail-delivery-check:
-	python3 scripts/auth/signup-mail-check.py
 
 # Self-contained ts-auth (JIT): $(PUBLISH_DIR)/ts-auth
 auth-publish:

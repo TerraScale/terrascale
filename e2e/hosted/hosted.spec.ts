@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
-import { onHosted, signInWithPassword, signUp } from '../support/hosted';
-import { auth, dash, desktop, mobile } from '../support/stack';
+import { onHosted, openSignUp, signInWithPassword, submitSignUp } from '../support/hosted';
+import { auth, dash, desktop, mobile, onLocalStack } from '../support/stack';
 import { journey, saveCookies, saveSecret } from '../support/state';
 
 const sizes = [
@@ -18,9 +18,12 @@ for (const size of sizes) {
       const page = await context.newPage();
       const audit = new Audit(page, info);
 
-      const password = randomBytes(24).toString('base64url');
-      saveSecret('hosted-password', password);
-      await signUp(page, audit, `hosted-${owner.runId}-${size.label}-${theme}@example.com`, password, label);
+      await openSignUp(page, audit, label);
+      await onLocalStack(async () => {
+        const password = randomBytes(24).toString('base64url');
+        saveSecret('hosted-password', password);
+        await submitSignUp(page, audit, `hosted-${owner.runId}-${size.label}-${theme}@example.com`, password, label);
+      });
 
       await page.goto(`${auth}/ui/terrascale/reset`);
       await expect(page.locator('#reset-email')).toBeVisible();

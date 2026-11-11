@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { onboard, signInWithPassword, signUp, verify } from '../support/hosted';
+import { newAddress } from '../support/inbox';
 import { shell } from '../support/shell';
 import { ownerSession, saveCookies, saveSecret, journey } from '../support/state';
 import { dash, desktop, mobile } from '../support/stack';
@@ -9,7 +10,7 @@ const phone = { viewport: mobile, isMobile: true, hasTouch: true, deviceScaleFac
 
 test('a second user signs up on a phone, the Free plan refuses to invite them, and after signing out a protected page leads through a password sign-in back to the dashboard', async ({ browser }, info) => {
   const owner = journey();
-  const email = `second-${owner.runId}${Date.now().toString(36)}@example.com`;
+  const email = await newAddress(`second-${owner.runId}${Date.now().toString(36)}`);
   const password = randomBytes(24).toString('base64url');
   saveSecret('second-user-password', password);
   const name = `Second ${owner.runId}`;

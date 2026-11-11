@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test as base, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
 import { checkLinks, type Link } from './links';
-import { stackHosts } from './stack';
+import { production, stackHosts } from './stack';
 import { saveCookies } from './state';
 
 const wcag = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
@@ -37,6 +37,13 @@ export class Audit {
       this.generation += 1;
       for (const [request, generation] of this.inflight) if (generation < this.generation && !request.isNavigationRequest()) this.inflight.delete(request);
     });
+    if (production) {
+      const reached = { type: 'url', description: page.url() };
+      info.annotations.push(reached);
+      page.on('framenavigated', (frame) => {
+        if (frame === page.mainFrame()) reached.description = frame.url();
+      });
+    }
   }
 
   async quiet(): Promise<void> {
@@ -81,10 +88,12 @@ export class Audit {
     const axe = await new AxeBuilder({ page }).withTags(wcag).analyze();
     found.push(...axe.violations.map((violation) => `axe ${violation.id}: ${violation.help} (${violation.nodes.map((node) => node.target.join(' ')).join(', ')})`));
     found.push(...checkLinks(await links(page), page.url()));
-    await this.info.attach(`${name}.png`, {
-      body: await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide', mask: [page.locator(secrets)] }),
-      contentType: 'image/png',
-    });
+    if (!production) {
+      await this.info.attach(`${name}.png`, {
+        body: await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide', mask: [page.locator(secrets)] }),
+        contentType: 'image/png',
+      });
+    }
     const problems = [...this.problems.splice(0), ...found];
     expect(problems, `${name} at ${page.url()}`).toEqual([]);
   }
@@ -151,7 +160,7 @@ export const test = base.extend<{ audit: Audit }>({
     await use(audit);
     if (info.status === info.expectedStatus) {
       await audit.finish();
-    } else if (!page.isClosed()) {
+    } else if (!production && !page.isClosed()) {
       await info.attach('failure.png', {
         body: await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide', mask: [page.locator(secrets)] }),
         contentType: 'image/png',

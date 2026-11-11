@@ -1,5 +1,5 @@
 import { defineConfig } from '@playwright/test';
-import { browserHome, dash, desktop, mobile, sessionFile } from './support/stack';
+import { browserHome, dash, desktop, mailWait, mobile, production, sessionFile } from './support/stack';
 
 const secretFree = { trace: 'off' } as const;
 
@@ -10,16 +10,16 @@ export default defineConfig({
   forbidOnly: true,
   retries: 0,
   workers: 6,
-  timeout: 90_000,
+  timeout: 60_000 + mailWait,
   expect: { timeout: 20_000 },
-  reporter: [['list'], ['html', { open: 'never' }]],
+  reporter: production ? [['list'], ['json', { outputFile: 'production-report/report.json' }]] : [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: dash,
     locale: 'en-US',
     timezoneId: 'UTC',
     viewport: desktop,
     screenshot: 'off',
-    trace: { mode: 'retain-on-failure', screenshots: false, snapshots: true, sources: true },
+    trace: production ? 'off' : { mode: 'retain-on-failure', screenshots: false, snapshots: true, sources: true },
     video: 'off',
     launchOptions: { env: { ...process.env, HOME: browserHome } },
   },

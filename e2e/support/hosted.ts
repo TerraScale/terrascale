@@ -6,15 +6,23 @@ import { enterSecret } from './secret';
 
 export const onHosted = (path: string) => (url: URL) => url.origin === auth && url.pathname === `/ui/terrascale/${path}`;
 
-export async function signUp(page: Page, audit: Audit, email: string, password: string, label: string): Promise<void> {
+export async function openSignUp(page: Page, audit: Audit, label: string): Promise<void> {
   await page.goto(`${dash}/register`);
   await page.waitForURL(onHosted('sign-up'));
   await audit.check(`${label} sign-up`);
+}
+
+export async function submitSignUp(page: Page, audit: Audit, email: string, password: string, label: string): Promise<void> {
   await page.locator('#sign-up-email').fill(email);
   await enterSecret(page.locator('#sign-up-password'), password);
   await page.locator('form[action="/ui/terrascale/sign-up"] button[type=submit]').click();
   await expect(page).toHaveTitle('Verify your email · TerraScale');
   await audit.check(`${label} sign-up verify`);
+}
+
+export async function signUp(page: Page, audit: Audit, email: string, password: string, label: string): Promise<void> {
+  await openSignUp(page, audit, label);
+  await submitSignUp(page, audit, email, password, label);
 }
 
 export async function verify(page: Page, email: string): Promise<void> {

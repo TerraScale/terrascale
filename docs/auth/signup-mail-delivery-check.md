@@ -1,15 +1,18 @@
 # Live signup email delivery check
 
-`nice -n 19 make auth-mail-delivery-check` checks production delivery with a fresh free disposable inbox. The independent **Live signup email delivery** workflow runs it daily and on manual dispatch; it is not a merge or release gate. Failures create or update an open GitHub issue, including sanitized evidence and the run URL.
+The production journey checks signup email delivery; there is no separate check. Its `setup` test creates a fresh
+mail.tm inbox, submits the hosted sign-up form of `https://auth.terrascale.tech/ui/terrascale/sign-up` once, waits at
+most 120 seconds for the message, and checks the sender (`no-reply@terrascale.tech`), the subject and the 6-digit code
+on its own line before it verifies the account with that code (`e2e/journey/setup.spec.ts`, `e2e/support/inbox.ts`).
+Provider acceptance alone cannot pass it, and it does not tell which provider sent the message.
 
-Before spending authentication mail, the check verifies a non-null public MX record using Google DNS over HTTPS. It prefers an active public mail.tm domain. If mail.tm is unavailable or advertises only expired domains, it reserves a cryptographically random address in an independent Guerrilla Mail session and validates that domain's MX. Fallback happens only before creating the primary mailbox or submitting signup; an ambiguous signup or delivery failure never triggers another send. If neither inbox can receive mail, the check still fails visibly.
+`.github/workflows/production-journey.yml` runs it after every release and daily at 13:23 UTC; it is not a merge or
+release gate. Each run sends three authentication emails (the two owners and the invitation's second user, each to its
+own inbox). A failure opens or comments on the `Production journey failure` issue with the run link and the failing
+step, and the next green run closes it. When mail.tm fails before the first request to production, the run says
+"inbox provider" and production was not contacted.
 
-The check loads `/ui/terrascale/sign-up`, submits its same-origin form once, checks the pending verification form, then polls the inbox for up to 120 seconds. It fetches the full message and checks the sender, fresh recipient and verification code. Provider acceptance alone cannot pass it. It never redeems the code, so it creates no permanent ts-auth account; the pending challenge expires normally. Each run spends one authentication email. Cleanup deletes the mail.tm account, or deletes all Guerrilla Mail messages, confirms the empty inbox and releases its session. Guerrilla Mail addresses expire automatically; releasing a session does not delete the address. The output distinguishes these cleanup results.
-
-Credentials, cookies, pending tokens, codes, subjects containing codes and message bodies stay in memory. Output contains only status, fixed failure reasons, recipient and message SHA-256 hashes, the sender, receipt/verification times and elapsed time. A missing provider timestamp does not invalidate fetched-message evidence. Cleanup failures fail the check but preserve any delivery evidence. No production credential or repository secret is needed. The script rejects redirects to prevent forwarding credentials.
-
-Manual workflow dispatch must select `main`; other branches are skipped so unreviewed code cannot spend production mail capacity.
-
-The mail.tm API paths are documented in `https://api.mail.tm/docs.jsonopenapi`: `GET /domains`, `POST /accounts`, `POST /token`, `GET /me`, `GET /messages`, `GET /messages/{id}` and `DELETE /accounts/{id}`. If creation's response is lost, cleanup authenticates with the generated credentials and recovers the account ID through `/me`. Guerrilla Mail's session, message retrieval, deletion and release operations are documented at `https://www.guerrillamail.com/GuerrillaMailAPI.html`; the client uses its HTTPS `www.guerrillamail.com/ajax.php` endpoint and maintains the session cookies in memory. The script uses Python's standard library and does not install packages.
-
-Run `python3 -m unittest discover -s scripts/auth/tests -v` to exercise primary/fallback inbox contracts, recipient validation, one-send behavior and cleanup failures without contacting production.
+The inboxes stay on mail.tm, so nobody can register an address again while an account a run leaves behind still uses
+it; the journey's last steps delete the owners' accounts. No production credential or repository secret is needed; the
+inbox addresses and credentials are generated per run and redacted from everything that uploads. `e2e/AGENTS.md` ("The production target") describes the run. It replaced the daily
+`auth-mail-delivery.yml` workflow and `scripts/auth/signup-mail-check.py`, which never verified an account.

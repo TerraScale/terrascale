@@ -5,7 +5,8 @@ and the dashboard behind a Caddy edge that serves the production host names, a p
 server and a Cloudflare send-API sink that must stay empty. CI runs it through `.github/workflows/journey.yml` on the
 merge commit GitHub tests for a pull request, unless every file the pull request changes is a `*.md` file or sits
 under `docs/`, `docs-site/`, `status-site/` or `landing-site/` other than `landing-site/static/pricing.json` (the
-`journey` filter of `.github/workflows/ci.yml`). Pushes to `main` and dispatches never run it.
+`journey` filter of `.github/workflows/ci.yml`). Pushes to `main` and dispatches of `CI` never run it on a local stack;
+after each release the same specs run against production ("The production target" below).
 
 ## Run it on your machine (no root)
 
@@ -28,6 +29,51 @@ first process ends (`stop` fails if one is still there 10 s after the kill). CI 
 To iterate: `bash e2e/env/local.sh prepare`, `bash e2e/env/local.sh start`,
 `bash e2e/env/local.sh exec bash e2e/env/up.sh`, then from `e2e/`
 `bash env/local.sh exec npx playwright test --project pages-desktop`, and `bash e2e/env/local.sh stop`.
+
+## The production target
+
+`bash e2e/env/production.sh` runs the same specs and config against production from the machine's own network: no
+namespace, no stack, no argument and no URL to set. `.github/workflows/production-journey.yml` runs it on `main` only,
+never for a pull request: once after the last release of each commit (the rule is in the root `AGENTS.md`), daily at
+13:23 UTC and on dispatch, one run at a time. It is not a gate. `production.sh`:
+
+- refuses to run when an `E2E_*`, `TERRASCALE_*`, `NODE_EXTRA_CA_CERTS` or proxy variable is set, or when a
+  `*.terrascale.tech` name of `env/hostnames` resolves to a loopback address (the namespace of `local.sh`); it sets
+  `E2E_TARGET=production`, the state (`.state/production`, emptied first), the runners (`.state/sdk`) and the system
+  CA bundle itself;
+- asks mail.tm for an active domain before the first request to production ("inbox provider … production was not
+  contacted" when it cannot), records both `/readyz` answers in `production-report/readyz.txt`, then runs the projects
+  of both pull-request shards (179 tests). A new project runs against production only once it is added there.
+
+What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
+
+- Mail: `newAddress` creates a fresh mail.tm inbox for each sign-up on the domain the preflight found
+  (`E2E_INBOX_DOMAIN`), and `nextMail` waits for its mail for at most 120 s (`mailWait`; the test timeout is 60 s plus
+  that wait), reading the message inside that bounded poll. mail.tm refuses bursts from one address (its
+  `RateLimit-Policy` is 10 requests a minute, and one a minute for `POST /accounts`), so the workers share two slot
+  series in the state: inbox creations are 60 s apart and every other call 6 s apart. A test's wait for its slot is
+  added to its timeout. Inboxes are never deleted: a deleted address can be registered again by anyone, while the
+  account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
+  password and token are registered secrets. Errors name the "inbox provider".
+- Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
+  sender, and the sign-up submission of the four `hosted` tests: each would send a production mail, and `setup`,
+  `desktop-setup` and `invitation` already audit the verify page.
+- The SDK stage keeps the pacing and every per-operation check. TerraBase's lane counters (`127.0.0.1:9091`) exist only
+  on the local target, so a refused request that an SDK resends itself (Go and Rust REST calls, JavaScript and .NET
+  reads) is caught on pull requests only; on production a refusal fails the run when it reaches the runner.
+- The browser may reach only the `*.terrascale.tech` names of `env/hostnames`, never Stripe, Cloudflare or the SMTP
+  host, with a fresh home and no extra CA.
+- Evidence: no trace, video or screenshot. The run writes `production-report/list.txt` (everything it printed, with
+  the list reporter), `report.json` (JSON reporter) and `readyz.txt`; each audited page adds a `url` annotation and
+  the SDK runners print their output. `env/scrub.py` redacts them before they upload.
+- Accounts: a run signs up three users (`setup`, `desktop-setup`, `invitation`); its last steps delete the two
+  owners, the invitation's second user stays.
+
+A failed run opens the `Production journey failure` issue, or comments on the open one, with the run link, the trigger
+and suite commit, both `/readyz` versions, each failed test with its page and error (from `report.json`), or the last
+lines it printed when the suite did not start, and "inbox provider" when mail.tm failed first. The next green run
+closes it. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
+then `bash e2e/env/production.sh`; each run makes three production accounts.
 
 ## Stages
 

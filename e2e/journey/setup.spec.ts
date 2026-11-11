@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
-import { cloudflareSendCount, nextMail } from '../support/inbox';
+import { cloudflareSendCount, newAddress, nextMail } from '../support/inbox';
 import { saveJourney, saveSecret, saveSession } from '../support/state';
 import { shell } from '../support/shell';
-import { auth, dash } from '../support/stack';
+import { auth, dash, onLocalStack } from '../support/stack';
 import { enterSecret } from '../support/secret';
 
 function stat(page: Page, label: string) {
@@ -16,7 +16,7 @@ const scopes = ['sql:read', 'sql:write', 'databases:read', 'databases:write'];
 
 test('sign up, verify the email, onboard on Free, create a database and an API key', async ({ page, context, audit }) => {
   const runId = randomBytes(4).toString('hex');
-  const email = `journey-${runId}@example.com`;
+  const email = await newAddress(`journey-${runId}`);
   const password = randomBytes(24).toString('base64url');
   saveSecret('password', password);
   const displayName = `Journey ${runId}`;
@@ -41,7 +41,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   expect(code, 'a 6-digit code on its own line').toMatch(/^\d{6}$/);
   expect(mail.from).toBe('no-reply@terrascale.tech');
   expect(mail.subject.replace(code, '<code>')).toBe('<code> is your TerraScale verification code');
-  expect(await cloudflareSendCount(), 'messages sent through the Cloudflare fallback').toBe(0);
+  await onLocalStack(async () => expect(await cloudflareSendCount(), 'messages sent through the Cloudflare fallback').toBe(0));
 
   await enterSecret(page.locator('#sign-up-code-digit'), code);
   await page.getByRole('button', { name: 'Verify email' }).click();

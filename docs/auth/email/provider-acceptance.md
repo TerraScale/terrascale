@@ -59,5 +59,6 @@ Acceptance does not prove inbox delivery. This change adds no durable queue or
 provider retry. [Queue admission](queue-admission.md) refuses known-full or
 stopping authentication queues before accepting work. A process crash or an
 expired shutdown timeout can still lose pending work.
-The live delivery check (`.github/workflows/auth-mail-delivery.yml`) signs up a
-real account into a disposable inbox daily and is provider-neutral.
+The production journey (`.github/workflows/production-journey.yml`) signs up
+real accounts into fresh mail.tm inboxes after every release and daily, and is
+provider-neutral: it proves delivery, not which provider sent the message.
