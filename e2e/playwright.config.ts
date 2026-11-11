@@ -50,9 +50,10 @@ export default defineConfig({
       use: { storageState: sessionFile('setup'), ...secretFree },
     },
     { name: 'invitation', testMatch: 'journey/invitation.spec.ts', dependencies: ['setup'], metadata: { setup: 'setup' }, use: secretFree },
-    { name: 'paid', testMatch: 'journey/paid.spec.ts', metadata: { setup: 'paid' }, use: secretFree },
+    { name: 'paid', testMatch: 'journey/paid.spec.ts', teardown: 'paid-finish', metadata: { setup: 'paid' }, use: secretFree },
     { name: 'paid-invitation', testMatch: 'journey/paid-invitation.spec.ts', dependencies: ['paid'], metadata: { setup: 'paid' }, use: secretFree },
     { name: 'finish', testMatch: 'journey/finish.spec.ts', metadata: { setup: 'setup' }, use: { storageState: sessionFile('setup'), ...secretFree } },
+    { name: 'paid-finish', testMatch: 'journey/paid-finish.spec.ts', metadata: { setup: 'paid' }, use: { storageState: sessionFile('paid'), ...secretFree } },
     {
       name: 'desktop-close',
       testMatch: 'journey/close.spec.ts',

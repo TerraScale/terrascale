@@ -131,6 +131,18 @@ func status(err error) int {
 	return 0
 }
 
+func code(err error) string {
+	var api *v1.APIError
+	var sqlErr *v1.SQLError
+	switch {
+	case errors.As(err, &sqlErr):
+		return string(sqlErr.Code)
+	case errors.As(err, &api):
+		return string(api.Code)
+	}
+	return ""
+}
+
 func refused(err error) error {
 	if err == nil {
 		return errors.New("the call was accepted")
@@ -377,6 +389,54 @@ func (r *runner) do(op operation) error {
 		}
 		_, mint := narrow.CreateScopedKey(ctx, v1.ScopedKeyRequest{Project: r.project, Database: r.agent.ID, Access: v1.ScopedKeyRead})
 		return same(status(mint), op.MintStatus, "minting with a scoped key")
+	case "agent.fork":
+		if _, err := r.db.Execute(ctx, r.fill(op.Setup)); err != nil {
+			return err
+		}
+		if _, err := r.db.Execute(ctx, r.fill(op.SQL)); err != nil {
+			return err
+		}
+		forked, err := r.client.ForkDatabase(ctx, r.project, os.Getenv("TERRASCALE_DATABASE_NAME"), r.fill(op.Name), v1.ForkDatabaseOptions{})
+		if err != nil {
+			return err
+		}
+		lineage := ""
+		if forked.BranchedFrom != nil {
+			lineage = *forked.BranchedFrom
+		}
+		if err := same([]string{forked.Name, lineage}, []string{r.fill(op.Name), os.Getenv("E2E_DATABASE_ID")}, "fork"); err != nil {
+			return err
+		}
+		rows, err := r.client.Database(r.project, forked.ID).Query(ctx, r.fill(op.Check))
+		if err != nil {
+			return err
+		}
+		if err := same(cells(rows), grid(op.CheckRows), "rows of the fork"); err != nil {
+			return err
+		}
+		return r.client.DeleteDatabase(ctx, r.project, forked.ID)
+	case "agent.scoped_key_outside":
+		ttl := op.TTLSeconds
+		source := os.Getenv("E2E_DATABASE_ID")
+		scoped, err := r.client.CreateScopedKey(ctx, v1.ScopedKeyRequest{Project: r.project, Database: source, Access: v1.ScopedKeyAccess(op.Access), TTLSeconds: &ttl})
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(os.Getenv("E2E_SECRETS"), "scoped-key-go-outside"), []byte(scoped.Key), 0o600); err != nil {
+			return err
+		}
+		narrow, err := newClient(scoped.Key)
+		if err != nil {
+			return err
+		}
+		if _, err := narrow.Database(r.project, source).Query(ctx, op.SQL); err != nil {
+			return err
+		}
+		_, err = narrow.Database(r.project, os.Getenv("E2E_OTHER_DATABASE")).Query(ctx, op.SQL)
+		if err := refused(err); err != nil {
+			return err
+		}
+		return same([]any{status(err), code(err)}, []any{op.Status, op.Code}, "the other database")
 	case "agent.delete":
 		if err := r.client.DeleteDatabase(ctx, r.project, r.agent.ID); err != nil {
 			return err
@@ -409,7 +469,7 @@ func main() {
 	run := os.Getenv("E2E_RUN_ID")
 	r := &runner{ctx: ctx, client: client, project: project, run: run, table: strings.NewReplacer("{sdk}", "go", "{run}", run).Replace(spec.Table)}
 	group := os.Getenv("E2E_GROUP")
-	if group == "a" {
+	if group == "a" || group == "c" {
 		r.db = client.Database(project, os.Getenv("TERRASCALE_DATABASE_NAME"))
 	}
 	failed := false

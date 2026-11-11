@@ -23,7 +23,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
     private TerraBaseSqlSession? session;
     private TerraBaseManagedDatabase? agent;
 
-    private TerraBaseSqlDatabase Db => database ?? throw new InvalidOperationException("Group a has a database.");
+    private TerraBaseSqlDatabase Db => database ?? throw new InvalidOperationException("Groups a and c have a database.");
 
     private TerraBaseSqlSession Session => session ?? throw new InvalidOperationException("The session is not connected.");
 
@@ -37,7 +37,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         var table = Text(spec.RootElement, "table").Replace("{sdk}", "dotnet", StringComparison.Ordinal).Replace("{run}", run, StringComparison.Ordinal);
         var project = Required("TERRASCALE_PROJECT_ID");
         var client = TerraBaseSqlClient.FromEnvironment();
-        var runner = new SdkRunner(client, project, run, table, group == "a" ? client.Database(project, Required("TERRASCALE_DATABASE_NAME")) : null);
+        var runner = new SdkRunner(client, project, run, table, group is "a" or "c" ? client.Database(project, Required("TERRASCALE_DATABASE_NAME")) : null);
 
         var failed = false;
         foreach (var op in spec.RootElement.GetProperty("operations").EnumerateArray())
@@ -90,6 +90,8 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         "agent.clear_ttl" => ClearTtlAsync(cancellationToken),
         "agent.scoped_key" => ScopedKeyAsync(op, cancellationToken),
         "agent.delete" => DeleteAsync(op, cancellationToken),
+        "agent.fork" => ForkAsync(op, cancellationToken),
+        "agent.scoped_key_outside" => ScopedKeyOutsideAsync(op, cancellationToken),
         var other => throw new InvalidOperationException($"No implementation for {other}."),
     };
 
@@ -290,6 +292,28 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         await client.DeleteDatabaseAsync(project, Agent.Id, cancellationToken);
         var deleted = await StatusAsync(() => client.Database(project, Agent.Id).ExecuteAsync(Text(op, "sql"), cancellationToken: cancellationToken));
         Same(deleted, Canonical(op.GetProperty("deletedStatus")), "the deleted database");
+    }
+
+    private async Task ForkAsync(JsonElement op, CancellationToken cancellationToken)
+    {
+        await Db.ExecuteAsync(Fill(op, "setup"), cancellationToken: cancellationToken);
+        await Db.ExecuteAsync(Fill(op, "sql"), cancellationToken: cancellationToken);
+        var fork = await client.ForkDatabaseAsync(project, Required("TERRASCALE_DATABASE_NAME"), Fill(op, "name"), cancellationToken: cancellationToken);
+        Same($"{fork.Name} from {fork.BranchedFrom}", $"{Fill(op, "name")} from {Required("E2E_DATABASE_ID")}", "fork");
+        Same(Rows(await client.Database(project, fork.Id).QueryAsync(Fill(op, "check"), cancellationToken: cancellationToken)), Canonical(op.GetProperty("checkRows")), "rows of the fork");
+        await client.DeleteDatabaseAsync(project, fork.Id, cancellationToken);
+    }
+
+    private async Task ScopedKeyOutsideAsync(JsonElement op, CancellationToken cancellationToken)
+    {
+        var source = Required("E2E_DATABASE_ID");
+        var scoped = await client.CreateScopedKeyAsync(source, Text(op, "access"), project, op.GetProperty("ttlSeconds").GetInt32(), cancellationToken);
+        RegisterSecret("scoped-key-dotnet-outside", scoped.Key);
+        using var http = new HttpClient(TerraBaseHttp.CreateHandler());
+        var narrow = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = scoped.Key });
+        await narrow.Database(project, source).QueryAsync(Text(op, "sql"), cancellationToken: cancellationToken);
+        var refusal = await RefusedAsync<TerraBaseException>(() => narrow.Database(project, Required("E2E_OTHER_DATABASE")).QueryAsync(Text(op, "sql"), cancellationToken: cancellationToken));
+        Same($"{((int?)refusal.StatusCode)?.ToString(CultureInfo.InvariantCulture)} {refusal.ErrorCode}", $"{Canonical(op.GetProperty("status"))} {Text(op, "code")}", "the other database");
     }
 
     private async Task CheckAsync(JsonElement op, CancellationToken cancellationToken) =>

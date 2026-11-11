@@ -151,6 +151,23 @@ const operations = {
     await narrow.database(state.agent.id).execute(op.sql);
     same(await status(() => narrow.createScopedKey({ project, database: state.agent.id, access: 'read' })), op.mintStatus, 'minting with a scoped key');
   },
+  async 'agent.fork'(op) {
+    await state.db.execute(fill(op.setup));
+    await state.db.execute(fill(op.sql));
+    const fork = await client.forkDatabase(project, process.env.TERRASCALE_DATABASE_NAME, fill(op.name));
+    same([fork.name, fork.branchedFrom], [fill(op.name), process.env.E2E_DATABASE_ID], 'fork');
+    same(cells(await client.database(fork.id).query(fill(op.check))), op.checkRows, 'rows of the fork');
+    await client.deleteDatabase(project, fork.id);
+  },
+  async 'agent.scoped_key_outside'(op) {
+    const source = process.env.E2E_DATABASE_ID;
+    const scoped = await client.createScopedKey({ project, database: source, access: op.access, ttlSeconds: op.ttlSeconds });
+    writeFileSync(join(process.env.E2E_SECRETS, 'scoped-key-js-outside'), scoped.key, { mode: 0o600 });
+    const narrow = createTerraBaseClientFromEnvironment({ apiKey: scoped.key });
+    await narrow.database(source).query(op.sql);
+    const error = await refused(() => narrow.database(process.env.E2E_OTHER_DATABASE).query(op.sql));
+    same([error.status, error.code], [op.status, op.code], 'the other database');
+  },
   async 'agent.delete'(op) {
     await client.deleteDatabase(project, state.agent.id);
     same(await status(() => client.database(state.agent.id).execute(op.sql)), op.deletedStatus, 'the deleted database');
@@ -158,7 +175,7 @@ const operations = {
 };
 
 const group = spec.operations.filter((op) => op.group === process.env.E2E_GROUP && !op.needs);
-state.db = process.env.E2E_GROUP === 'a' ? client.database(process.env.TERRASCALE_DATABASE_NAME) : undefined;
+state.db = ['a', 'c'].includes(process.env.E2E_GROUP) ? client.database(process.env.TERRASCALE_DATABASE_NAME) : undefined;
 let failed = false;
 for (const op of group) {
   const started = performance.now();

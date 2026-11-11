@@ -6,9 +6,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use terrascale::v1::{
-    is_valid_id, new_id, Client, CreateDatabaseOptions, Database, Error, ManagedDatabase,
-    ScopedKeyAccess, ScopedKeyOptions, SqlRecord, SqlSession, SqlStatement, SqlStatementResult,
-    SqlValue,
+    is_valid_id, new_id, Client, CreateDatabaseOptions, Database, Error, ForkDatabaseOptions,
+    ManagedDatabase, ScopedKeyAccess, ScopedKeyOptions, SqlRecord, SqlSession, SqlStatement,
+    SqlStatementResult, SqlValue,
 };
 
 type Outcome = Result<(), String>;
@@ -79,6 +79,18 @@ fn status(result: Result<impl Sized, Error>) -> Value {
     }
 }
 
+fn register_secret(name: &str, value: &str) -> Outcome {
+    let secrets = std::env::var("E2E_SECRETS").map_err(|error| error.to_string())?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(std::path::Path::new(&secrets).join(name))
+        .and_then(|mut file| file.write_all(value.as_bytes()))
+        .map_err(|error| error.to_string())
+}
+
 fn records(records: &[SqlRecord]) -> Value {
     Value::Array(
         records
@@ -136,7 +148,7 @@ impl Runner {
     }
 
     fn db(&self) -> &Database {
-        self.db.as_ref().expect("group a has a database")
+        self.db.as_ref().expect("groups a and c have a database")
     }
 
     fn session(&self) -> Result<&SqlSession, String> {
@@ -452,15 +464,7 @@ impl Runner {
                     ttl_seconds: op["ttlSeconds"].as_u64(),
                 };
                 let scoped = self.client.create_scoped_key(&options).await.map_err(e)?;
-                let secrets = std::env::var("E2E_SECRETS").map_err(|error| error.to_string())?;
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .mode(0o600)
-                    .open(std::path::Path::new(&secrets).join("scoped-key-rust"))
-                    .and_then(|mut file| file.write_all(scoped.key.as_bytes()))
-                    .map_err(|error| error.to_string())?;
+                register_secret("scoped-key-rust", &scoped.key)?;
                 let narrow = Client::for_project_api_key(self.project.clone(), scoped.key.clone())
                     .add_root_ca_pem(self.ca.clone())
                     .build()
@@ -482,6 +486,74 @@ impl Runner {
                     &op["mintStatus"],
                     "minting with a scoped key",
                 )
+            }
+            "agent.fork" => {
+                let sql = self.db().sql();
+                sql.execute(&fill("setup"), &[]).await.map_err(e)?;
+                sql.execute(&fill("sql"), &[]).await.map_err(e)?;
+                let forked = self
+                    .client
+                    .fork_database(
+                        &std::env::var("TERRASCALE_DATABASE_NAME")
+                            .map_err(|error| error.to_string())?,
+                        &fill("name"),
+                        &ForkDatabaseOptions::default(),
+                    )
+                    .await
+                    .map_err(e)?;
+                same(
+                    json!([forked.name, forked.branched_from]),
+                    &json!([
+                        fill("name"),
+                        std::env::var("E2E_DATABASE_ID").map_err(|error| error.to_string())?
+                    ]),
+                    "fork",
+                )?;
+                let rows = self
+                    .client
+                    .database(forked.id.clone())
+                    .sql()
+                    .query(&fill("check"), &[])
+                    .await
+                    .map_err(e)?;
+                same(records(&rows), &op["checkRows"], "rows of the fork")?;
+                self.client.delete_database(&forked.id).await.map_err(e)
+            }
+            "agent.scoped_key_outside" => {
+                let source = std::env::var("E2E_DATABASE_ID").map_err(|error| error.to_string())?;
+                let options = ScopedKeyOptions {
+                    project: Some(self.project.clone()),
+                    database: source.clone(),
+                    access: ScopedKeyAccess::Read,
+                    ttl_seconds: op["ttlSeconds"].as_u64(),
+                };
+                let scoped = self.client.create_scoped_key(&options).await.map_err(e)?;
+                register_secret("scoped-key-rust-outside", &scoped.key)?;
+                let narrow = Client::for_project_api_key(self.project.clone(), scoped.key.clone())
+                    .add_root_ca_pem(self.ca.clone())
+                    .build()
+                    .map_err(e)?;
+                narrow
+                    .database(source)
+                    .sql()
+                    .query(&text(op, "sql"), &[])
+                    .await
+                    .map_err(e)?;
+                let other =
+                    std::env::var("E2E_OTHER_DATABASE").map_err(|error| error.to_string())?;
+                match narrow
+                    .database(other)
+                    .sql()
+                    .query(&text(op, "sql"), &[])
+                    .await
+                {
+                    Ok(_) => Err("the other database accepted the scoped key".into()),
+                    Err(error) => same(
+                        json!([error.status(), error.code()]),
+                        &json!([op["status"], op["code"]]),
+                        "the other database",
+                    ),
+                }
             }
             "agent.delete" => {
                 let agent = self.agent.as_ref().ok_or("no agent database")?.id.clone();
@@ -525,7 +597,8 @@ async fn run() -> i32 {
         .expect("client");
     let group = env("E2E_GROUP");
     let run = env("E2E_RUN_ID");
-    let db = (group == "a").then(|| client.database(env("TERRASCALE_DATABASE_NAME")));
+    let db =
+        (group == "a" || group == "c").then(|| client.database(env("TERRASCALE_DATABASE_NAME")));
     let table = spec["table"]
         .as_str()
         .unwrap_or_default()

@@ -1,24 +1,29 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
+import type { PaidJourney } from './paid';
 import { e2eRoot, production, stateDir } from './stack';
-import { journey, mask } from './state';
+import { journey, mask, type Journey } from './state';
 
 export const sdks = ['dotnet', 'go', 'python', 'js', 'rust'] as const;
 export type Sdk = (typeof sdks)[number];
 
-type Operation = { id: string; group: 'a' | 'b'; title: string; needs?: string };
+type Group = 'a' | 'b' | 'c';
+type Operation = { id: string; group: Group; title: string; needs?: string };
 type Line = { id: string; ok: boolean; ms: number; error?: string };
+type Plan = { label: string; requestsPerSecond: number; burst: number };
 
-const freePlan = { requestsPerSecond: 50, burst: 100 };
+const hobby: Plan = { label: 'hobby', requestsPerSecond: 50, burst: 100 };
+const pro: Plan = { label: 'pro', requestsPerSecond: 500, burst: 1000 };
+const plans: Record<Group, Plan> = { a: hobby, b: hobby, c: pro };
 const headroom = 20;
-const requestsPerRunner: Record<Operation['group'], number> = { a: 37, b: 6 };
+const requestsPerRunner: Record<Group, number> = { a: 37, b: 6, c: 7 };
 const terrabaseMetrics = 'http://127.0.0.1:9091/metrics';
 
 type Lane = { admitted: number; refused: Record<string, number>; body: string };
 
-let budget: { group: Operation['group']; tokens: number; at: number } | undefined;
+let budget: { group: Group; tokens: number; at: number } | undefined;
 let lastReading = '';
 
 function laneBucket(organizationId: string): string {
@@ -27,7 +32,7 @@ function laneBucket(organizationId: string): string {
   return String(hash & 63);
 }
 
-async function lane(organizationId: string): Promise<Lane> {
+async function lane(organizationId: string, plan: Plan): Promise<Lane> {
   let body = lastReading;
   await expect
     .poll(async () => (body = await (await fetch(terrabaseMetrics)).text()) !== lastReading, {
@@ -36,7 +41,7 @@ async function lane(organizationId: string): Promise<Lane> {
     })
     .toBe(true);
   lastReading = body;
-  const series = new RegExp(`^terrabase_qos_(request_duration_seconds_count|rejected_total)\\{(?=[^}]*plan="hobby")(?=[^}]*tenant_bucket="${laneBucket(organizationId)}")[^}]*\\} (\\S+)$`);
+  const series = new RegExp(`^terrabase_qos_(request_duration_seconds_count|rejected_total)\\{(?=[^}]*plan="${plan.label}")(?=[^}]*tenant_bucket="${laneBucket(organizationId)}")[^}]*\\} (\\S+)$`);
   const reading: Lane = { admitted: 0, refused: {}, body };
   for (const line of body.split('\n')) {
     const match = series.exec(line);
@@ -61,19 +66,20 @@ function since(after: Lane, before: Lane): { admitted: number; refused: number; 
   };
 }
 
-function tokensAt(time: number): number {
-  return budget ? Math.min(freePlan.burst, budget.tokens + ((time - budget.at) / 1000) * freePlan.requestsPerSecond) : 0;
+function tokensAt(time: number, plan: Plan): number {
+  return budget ? Math.min(plan.burst, budget.tokens + ((time - budget.at) / 1000) * plan.requestsPerSecond) : 0;
 }
 
-async function paced<T>(group: Operation['group'], run: () => Promise<T>): Promise<T> {
+async function paced<T>(group: Group, run: () => Promise<T>): Promise<T> {
   if (budget?.group !== group) budget = { group, tokens: 0, at: Date.now() };
   const requests = requestsPerRunner[group];
-  const wait = Math.max(0, ((requests + headroom - tokensAt(Date.now())) / freePlan.requestsPerSecond) * 1000);
+  const plan = plans[group];
+  const wait = Math.max(0, ((requests + headroom - tokensAt(Date.now(), plan)) / plan.requestsPerSecond) * 1000);
   test.info().annotations.push({ type: 'paced', description: `waited ${Math.ceil(wait)} ms for ${requests + headroom} tokens` });
   await new Promise((resolve) => setTimeout(resolve, wait));
   const result = await run();
   const end = Date.now();
-  budget = { group, tokens: tokensAt(end) - requests, at: end };
+  budget = { group, tokens: tokensAt(end, plan) - requests, at: end };
   return result;
 }
 
@@ -103,34 +109,36 @@ function execute(sdk: Sdk, env: NodeJS.ProcessEnv): Promise<{ code: number | nul
   });
 }
 
-export async function runOperations(sdk: Sdk, group: 'a' | 'b'): Promise<void> {
-  const current = journey();
+export async function runOperations(sdk: Sdk, group: Group): Promise<void> {
+  const current = journey<Journey & Partial<Pick<PaidJourney, 'secondDatabaseName'>>>();
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
   const planned = operations.filter((op) => op.group === group);
   for (const op of planned.filter((candidate) => candidate.needs)) {
     test.info().annotations.push({ type: 'not run', description: `${op.id} (${op.title}): ${op.needs}` });
   }
   const { before, result } = await paced(group, async () => ({
-    before: production ? undefined : await lane(current.organizationId),
+    before: production ? undefined : await lane(current.organizationId, plans[group]),
     result: await execute(sdk, {
       TERRASCALE_API_KEY: current.apiKey,
       TERRASCALE_PROJECT_ID: current.projectId,
       TERRASCALE_DATABASE_NAME: current.databaseName,
+      E2E_DATABASE_ID: current.databaseId,
+      ...(current.secondDatabaseName ? { E2E_OTHER_DATABASE: current.secondDatabaseName } : {}),
       E2E_GROUP: group,
       E2E_RUN_ID: `${current.runId}${Date.now().toString(36)}`,
       E2E_OPERATIONS: operationsFile,
       E2E_SECRETS: secretsDir,
     }),
   }));
-  const used = before && since(await lane(current.organizationId), before);
+  if (before) await lane(current.organizationId, plans[group]);
+  const used = before && since(await lane(current.organizationId, plans[group]), before);
   const booked = requestsPerRunner[group];
   if (used) {
     const summary = `${sdk} group ${group}: TerraBase admitted ${used.admitted} of the ${booked} requests booked and refused ${used.refused}${used.reasons ? ` (${used.reasons})` : ''}`;
     process.stdout.write(`${summary}\n`);
     test.info().annotations.push({ type: 'lane', description: summary });
   }
-  const scoped = join(secretsDir, `scoped-key-${sdk}`);
-  if (existsSync(scoped)) mask(readFileSync(scoped, 'utf8'));
+  for (const file of readdirSync(secretsDir).filter((name) => name.startsWith(`scoped-key-${sdk}`))) mask(readFileSync(join(secretsDir, file), 'utf8'));
   if (production) process.stdout.write(`${sdk} group ${group} runner output:\n${result.stdout}\n${result.stderr}\n`);
   else await test.info().attach(`${sdk} group ${group}`, { body: `${result.stdout}\n${result.stderr}`, contentType: 'text/plain' });
   const lines = result.stdout.split('\n').filter((line) => line.startsWith('{')).map((line) => JSON.parse(line) as Line);

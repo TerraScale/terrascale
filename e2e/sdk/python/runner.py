@@ -252,6 +252,28 @@ def scoped_key(op):
     )
 
 
+def fork(op):
+    db = state["db"]
+    db.execute(fill(op["setup"]))
+    db.execute(fill(op["sql"]))
+    forked = client.fork_database(os.environ["TERRASCALE_DATABASE_NAME"], fill(op["name"]))
+    same([forked.name, forked.branched_from], [fill(op["name"]), os.environ["E2E_DATABASE_ID"]], "fork")
+    same(cells(client.database(forked.id).query(fill(op["check"]))), op["checkRows"], "rows of the fork")
+    client.delete_database(forked.id)
+
+
+def scoped_key_outside(op):
+    source = os.environ["E2E_DATABASE_ID"]
+    scoped = client.create_scoped_key(source, op["access"], ttl_seconds=op["ttlSeconds"])
+    secret = Path(os.environ["E2E_SECRETS"], "scoped-key-python-outside")
+    secret.touch(mode=0o600)
+    secret.write_text(scoped.key, encoding="utf-8")
+    narrow = TerraScale(api_key=scoped.key, project=project)
+    narrow.database(source).query(op["sql"])
+    error = refused(lambda: narrow.database(os.environ["E2E_OTHER_DATABASE"]).query(op["sql"]))
+    same([getattr(error, "status", None), getattr(error, "code", None)], [op["status"], op["code"]], "the other database")
+
+
 def delete(op):
     client.delete_database(state["agent"].id)
     same(
@@ -285,10 +307,12 @@ operations = {
     "agent.clear_ttl": clear_ttl,
     "agent.scoped_key": scoped_key,
     "agent.delete": delete,
+    "agent.fork": fork,
+    "agent.scoped_key_outside": scoped_key_outside,
 }
 
 group = [op for op in spec["operations"] if op["group"] == os.environ["E2E_GROUP"] and "needs" not in op]
-if os.environ["E2E_GROUP"] == "a":
+if os.environ["E2E_GROUP"] in ("a", "c"):
     state["db"] = client.database(os.environ["TERRASCALE_DATABASE_NAME"])
 failed = False
 for op in group:
