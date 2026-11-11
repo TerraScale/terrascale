@@ -116,6 +116,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      packages: read
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -124,6 +125,29 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: 10.0.401
+      - name: GitHub Packages holds the qualified bytes
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+          SHA256: ${{ needs.package.outputs.sha256 }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > "$RUNNER_TEMP/github-packages.config" <<EOF
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="github" value="$GITHUB_FEED" />
+            </packageSources>
+            <packageSourceCredentials>
+              <github>
+                <add key="Username" value="$GITHUB_ACTOR" />
+                <add key="ClearTextPassword" value="%GITHUB_TOKEN%" />
+              </github>
+            </packageSourceCredentials>
+          </configuration>
+          EOF
+          NUGET_PACKAGES="$RUNNER_TEMP/github-packages-cache" NUGET_HTTP_CACHE_PATH="$RUNNER_TEMP/github-packages-http" \
+            dotnet package download "TerraScale.DotNet@$VERSION" --configfile "$RUNNER_TEMP/github-packages.config" --output "$RUNNER_TEMP/github-packages"
+          echo "$SHA256  $RUNNER_TEMP/github-packages/terrascale.dotnet/$VERSION/terrascale.dotnet.$VERSION.nupkg" | sha256sum --check
       - env:
           VERSION: ${{ needs.package.outputs.version }}
           SHA256: ${{ needs.package.outputs.sha256 }}
