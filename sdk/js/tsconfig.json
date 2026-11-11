@@ -24,11 +24,7 @@
   "include": [
     "src/**/*.js",
     "src/**/*.d.ts",
-    "test/**/*.js",
-    "scripts/**/*.js",
-    "slow/**/*.js",
-    "browser-tests/**/*.js",
-    "*.config.js"
+    "scripts/**/*.js"
   ],
   "exclude": ["types", "node_modules"]
 }

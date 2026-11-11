@@ -40,18 +40,6 @@ name = "postgres_journey"
 path = "examples/postgres_journey.rs"
 required-features = ["postgres"]
 
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "test-util", "net"] }
-rcgen = "0.14"
-rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
-tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"] }
-hyper = { version = "1", features = ["server", "http1", "http2"] }
-hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
-http-body-util = "0.1"
-caseless = "0.2"
-base64 = "0.22"
-sha2 = "0.10"
-
 [lints.clippy]
 # The single crate Error type carries every diagnostic field in full (never
 # boxed) so callers can match without dereferencing; that keeps it above
