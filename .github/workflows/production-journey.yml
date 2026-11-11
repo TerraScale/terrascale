@@ -15,7 +15,7 @@ jobs:
   release:
     if: >-
       github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run'
-      || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository
+      || (github.event.workflow_run.head_repository.full_name == github.repository
       && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -31,6 +31,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           RUN_UPDATED: ${{ github.event.workflow_run.updated_at }}
           COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
@@ -40,6 +41,10 @@ jobs:
           if [ "$EVENT" != workflow_run ]; then
             echo "$EVENT: the journey runs the suite of $COMMIT"
             echo "journey=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$RUN_ATTEMPT" -gt 1 ] && [ "$COMMIT" != "$GITHUB_SHA" ]; then
+            echo "$COMMIT: attempt $RUN_ATTEMPT of run $RUN_ID re-ran a commit that is no longer main's head ($GITHUB_SHA); its suite would audit a newer production, so no journey runs"
             exit 0
           fi
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$COMMIT&per_page=100" --jq '[.workflow_runs[]
