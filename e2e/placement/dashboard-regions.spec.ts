@@ -51,8 +51,12 @@ async function renameInDashboard(page: Page, cells: Cells, id: string): Promise<
   await page.goto(`/databases/${id}/settings`);
   await page.locator('#rename-name').fill(renamed);
   await page.locator('#rename-confirm').fill(current);
+  const answer = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/dashboard/databases/rename');
   await page.getByRole('button', { name: 'Rename database', exact: true }).click();
-  await page.waitForURL((url) => url.pathname === `/databases/${id}/settings` && url.searchParams.get('renamed') === '1');
+  const status = (await answer).status();
+  await page.waitForLoadState('load');
+  await expect(page.locator('#rename-error'), 'the rename shows no error').toHaveCount(0);
+  expect(status, 'the rename saves and redirects').toBe(303);
   await expect(page.locator('.ts-db-head .ts-db-title')).toHaveText(renamed);
   await expect(page.locator('main .ts-alert-success .ts-alert-title')).toHaveText(`Database renamed to ${renamed}`);
   expect((await read(cells, id)).name).toBe(renamed);
@@ -60,6 +64,7 @@ async function renameInDashboard(page: Page, cells: Cells, id: string): Promise<
 }
 
 async function deleteFromStaleDangerPage(page: Page, cells: Cells, id: string, current: string): Promise<void> {
+  await page.goto('about:blank');
   await moveToSaoPaulo(cells, id);
   const fresh = await page.context().newPage();
   try {
