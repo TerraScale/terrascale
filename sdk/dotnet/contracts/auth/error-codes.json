@@ -92,6 +92,7 @@
     "origin_rejected",
     "passkey_not_found",
     "payload_too_large",
+    "platform_project_protected",
     "quota_exceeded",
     "rate_limited",
     "registration_failed",

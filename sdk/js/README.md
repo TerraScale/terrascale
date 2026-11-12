@@ -280,13 +280,12 @@ rows.
 Ouroboros means TerraScale services store their data in the same production
 TerraBase that customers use. Qualification requires an authorized, isolated
 real-service allocation, independently verified producer release provenance,
-and current generated-contract and route-manifest parity. HTTP fakes, local
-SQLite and typed builds cannot establish deployed
-producer compatibility.
+and current generated-contract and route-manifest parity. Local SQLite and
+typed builds cannot establish deployed producer compatibility.
 
-This SDK repository does not download or launch a TerraBase binary. Keep real
-HTTP tests environment-gated; missing live configuration is skipped, never
-successful integration evidence.
+The package downloads and launches no TerraBase binary. The journey in the
+monorepo's `e2e/` drives this SDK against the TerraBase, ts-auth and dashboard
+built from the same commit.
 
 Existing live tests consume `TB_V1_URL`, `TB_V1_PROJECT`, `TB_V1_DATA_KEY` and
 optionally `TB_V1_DATABASE` (default `app`) from an independently provisioned
@@ -338,14 +337,14 @@ See the [operation map](docs/evidence/management-operation-map.md) for contract
 pins and omitted producer operations. Durable schema plans, public billing REST
 and administration mutations still need their owning public contracts.
 
-`@terrascale/sdk/ts-auth` retains its separate hosted identity management and OIDC
-client, with its own origin, instance and credentials. A server-only Better Auth
+`@terrascale/sdk/ts-auth` exports the ts-auth OIDC and project client, with its
+own origin and instance. A server-only Better Auth
 database adapter is planned; the package exports no `./better-auth` entrypoint.
 `@terrascale/sdk/ts-auth/webhooks` exports the server-only `verifyWebhook`, which checks
 a Standard Webhooks `v1` delivery and returns the parsed event or throws `TsAuthWebhookError`.
 The optional live catalog check needs `TB_V1_MANAGEMENT_TOKEN` with `databases:read`
 in addition to `TB_V1_URL` and `TB_V1_PROJECT`; data-only keys are insufficient.
-Entity pages reject null and primitive records; recovery-code pages contain strings.
+Entity pages reject null and primitive records.
 
 `tsAuth.projects` administers one project's hosted sign-in tenant over `/v1/{project}`
 with the caller's TerraScale account sign-in token: `getSettings`, `updateSettings`,
@@ -353,12 +352,9 @@ with the caller's TerraScale account sign-in token: `getSettings`, `updateSettin
 `setProvider`, `deleteProvider` (providers are listed in the settings),
 `listSessions`, `revokeSession`, `listClients`, `createClient`, `updateClient`,
 `rotateClientSecret` and `deleteClient`; the client write operations carry a
-step-up proof. Project OAuth clients are distinct from the instance-scoped
-`tsAuth.oauthClients`, which manages the tenant's own `/v1/{slug}/oauth/clients`
-with its management key.
+step-up proof.
 
-Hosted identity and OIDC network methods accept a final `{ signal }` argument;
-list methods keep it in their existing options. Failures retain `kind: "transport"`:
+OIDC and project network methods accept a final `{ signal }` argument. Failures retain `kind: "transport"`:
 `request_aborted` identifies caller cancellation, `request_timeout` the SDK deadline,
 and `transport_error` an ordinary transport failure. Abort details carry a sanitized cause.
 
@@ -411,11 +407,9 @@ handle. React/Svelte exports retain generic observer, hook and store utilities. 
 retired `createDatabaseQuery` binding is removed; current bounded-query service
 and framework integration remains planned, without a replacement adapter claim.
 
-Hosted OAuth resource requests use one exact registered HTTPS `resource`. `oidc.authorizationUrl`, `oidc.deviceAuthorization`, and the code, device, refresh, and client-credentials token grants retain its bytes, including path and query. Omission on a browser code or refresh flow preserves the stored no-resource binding; it never repairs a rejected audience or falls back to browser login. Refresh requests can ask for narrower scopes. Client credentials require explicit resource and scope values. Token and originating-client introspection methods use `client_secret_post`; originating-client Basic token authentication is not currently exposed by this SDK. `oidc.refreshPublic(clientId, refreshToken)` refreshes a public client (like the CLI device client) sending `grant_type=refresh_token` with `client_id` and no client secret; ts-auth rotates the refresh token on every use, so persist the returned `refresh_token`. Confidential clients keep `oidc.token` with `client_secret_post`.
+Hosted OAuth resource requests use one exact registered HTTPS `resource`. `oidc.authorizationUrl` and the code, device, refresh, and client-credentials token grants retain its bytes, including path and query. Omission on a browser code or refresh flow preserves the stored no-resource binding; it never repairs a rejected audience or falls back to browser login. Refresh requests can ask for narrower scopes. Client credentials require explicit resource and scope values. The token method uses `client_secret_post`; client Basic authentication is not exposed by this SDK. `oidc.refreshPublic(clientId, refreshToken)` refreshes a public client (like the CLI device client) sending `grant_type=refresh_token` with `client_id` and no client secret; ts-auth rotates the refresh token on every use, so persist the returned `refresh_token`. Confidential clients keep `oidc.token` with `client_secret_post`.
 
-`oauthClients` and `oauthResources` provide the producer's snake_case policy records and named management operations. Resource PATCH requires `expected_auth_epoch`; client PATCH accepts it. JSON epochs outside JavaScript's exact integer range are rejected. Client PATCH returns a bare client view unless `rotate_secret` is true, when it returns the client and its one-time secret. Resource create/PATCH always return the resource and nullable one-time introspection secret.
-
-Use `oidc.introspectResource` with independently configured `issuer`, exact `audience`, `introspection_client_id`, and `introspection_secret`. It uses resource Basic authentication only, with each credential component form encoded before Base64. An active result requires the exact configured issuer/audience, `Bearer`, integer timestamps valid at the local clock with no default skew, and the required user/service session shape. Inactive results contain only `active: false`. Resource results expose no internal epochs, refresh family, or token-use fields. The provider checks current durable token/session/resource state; an active principal or scope does not grant project ownership or management authority. Product authorization remains at the caller's existing authorization boundary. ts-auth has one global issuer per tenant, `{apiBaseUrl}/{slug}` (the platform issuer is `https://auth.terrascale.tech/terrascale`, with no regional host and no trailing slash); every call goes to `apiBaseUrl`. Platform tokens for TerraBase use audience `https://api.terrascale.tech` and only the scopes `databases:read`, `databases:write` and the two data scopes, sent as one space-separated `scope` string.
+ts-auth has one global issuer per tenant, `{apiBaseUrl}/{slug}` (the platform issuer is `https://auth.terrascale.tech/terrascale`, with no regional host and no trailing slash); every call goes to `apiBaseUrl`. Platform tokens for TerraBase use audience `https://api.terrascale.tech` and only the scopes `databases:read`, `databases:write` and the two data scopes, sent as one space-separated `scope` string.
 
 ### Permanent API key errors
 

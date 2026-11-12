@@ -1,8 +1,7 @@
 # Purpose-bound step-up proofs
 
-The pending contract is recorded in `contracts/auth/step-up-provenance.json`.
-The owning auth contract must merge before the SDK is published. HTTP-fake tests
-verify wire behavior; they do not qualify a live auth/dashboard journey.
+ts-auth serves `POST /v1/terrascale/step-up` and `POST /v1/terrascale/step-up/consume`;
+the journey in `e2e/` spends step-up proofs through the dashboard.
 
 Call `auth.Platform.BeginStepUpAsync(accessToken, new(purpose, audience, returnUri))`.
 Keep the returned `Proof` on the backend; navigate the browser only to `StepUpUrl`.

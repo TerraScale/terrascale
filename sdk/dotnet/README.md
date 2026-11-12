@@ -347,8 +347,7 @@ See [TerraBase consumers](docs/terrabase-consumers.md).
 operations. Platform methods use the signed-in user's bearer and role; project backend
 operations carry their documented project-key authority. Hosted/device or registered-client
 OIDC sign-in establishes the user's token; the SDK does not invent callbacks or sign-in grants.
-Historical instance management and headless surfaces are unsupported; retained legacy types
-are not evidence that their routes exist. See [the supported contract](contracts/auth/README.md).
+The historical instance management clients are retired. See [the supported contract](contracts/auth/README.md).
 
 ```csharp
 using TerraScale.DotNet;

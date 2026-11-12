@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace TerraScale.DotNet;
 
 /// <summary>ts-auth route construction helpers. Path segments are data-bound
@@ -19,30 +17,5 @@ internal static class TerraScaleAuthPaths
         }
 
         return Uri.EscapeDataString(trimmed);
-    }
-
-    public static string Query(int? limit, string? startingAfter)
-    {
-        if (limit is null && startingAfter is null)
-        {
-            return string.Empty;
-        }
-
-        var query = "?";
-        if (limit is { } limitValue)
-        {
-            query += "limit=" + limitValue.ToString(CultureInfo.InvariantCulture);
-            if (startingAfter is not null)
-            {
-                query += "&";
-            }
-        }
-
-        if (startingAfter is not null)
-        {
-            query += "starting_after=" + Uri.EscapeDataString(startingAfter);
-        }
-
-        return query;
     }
 }

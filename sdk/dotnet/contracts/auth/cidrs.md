@@ -1,6 +1,6 @@
 # Project and API-key IP allowlists
 
-Source: [cidr-provenance.json](cidr-provenance.json), producer `a3cbf8b1c73d304189a489fa8033d41f3b508de3`. The supplemental pin owns the CIDR fields and setter operations in `dtos.json`, `routes.json` and the platform fixtures; older contract entries keep their existing provenance.
+Producer `a3cbf8b1c73d304189a489fa8033d41f3b508de3`: the CIDR fields and setter operations are in `dtos.json`, `routes.json` and the platform fixtures.
 
 `Platform.SetProjectAllowedCidrsAsync` requires project admin. `SetProjectApiKeyAllowedCidrsAsync` requires project member, and `SetOrganizationApiKeyAllowedCidrsAsync` requires organization admin. All take the user's sign-in token first, a `TerraScaleAuthPlatformAllowedCidrs` record and optional cancellation token. Requests use JSON, return 200 with project/key metadata, and are sent once; 400/401/403/404/503 remain typed exceptions. No setter is paginated.
 

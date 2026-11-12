@@ -18,7 +18,7 @@ The SDK takes an immutable database ULID. The CLI accepts a current name or ULID
 resolves a name once, then sends PATCH by ULID with only `{"name":"orders_new"}`.
 The region that writes accepts the mutation; other regions return `421 wrong_region`.
 Errors retain the server code, including `name_taken`, `unknown_database` and
-`platform_placement_locked`. An uncertain write is not automatically replayed.
+`platform_database_protected`. An uncertain write is not automatically replayed.
 
 The ID, data, placement, backups and keys stay with the database. Update
 name-based connection strings and handles; after convergence the old name has

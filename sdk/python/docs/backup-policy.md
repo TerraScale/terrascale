@@ -21,4 +21,4 @@ database rather than modifying the recovery/core modules. GET can retry; PUT
 never replays after transport/server failure or an invalid acknowledgement.
 Re-read policy after `CommitUncertainError` before retrying. Diagnostics retain
 only known error codes/status and a validated correlation ID, with values and
-exception chains suppressed. HTTP-fake checks do not qualify live scheduling.
+exception chains suppressed.

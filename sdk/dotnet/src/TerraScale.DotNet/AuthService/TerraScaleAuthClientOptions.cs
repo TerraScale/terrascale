@@ -3,7 +3,7 @@ using System.Net;
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// Configures origin, instance and credentials for a <see cref="TerraScaleAuthClient"/>.
+/// Configures origin and instance for a <see cref="TerraScaleAuthClient"/>.
 /// Transport deadlines, body bounds and the no-retry policy are fixed by the SDK.
 /// </summary>
 public sealed record TerraScaleAuthClientOptions
@@ -17,15 +17,7 @@ public sealed record TerraScaleAuthClientOptions
     public Uri? BaseAddress { get; set; }
 
     /// <summary>
-    /// The instance's management API key (<c>sk_...</c>, returned once when the key
-    /// is created). Required for every <c>/v1/{slug}/...</c> management operation;
-    /// the public OIDC endpoints authenticate with client credentials instead.
-    /// </summary>
-    public string? ApiKey { get; set; }
-
-    /// <summary>
-    /// The ts-auth instance slug every route is scoped to. It must match the
-    /// instance the <see cref="ApiKey"/> belongs to; the service rejects mismatches.
+    /// The ts-auth instance slug the OIDC routes and the deletion handoff are scoped to.
     /// </summary>
     public string? InstanceSlug { get; set; }
 
@@ -41,16 +33,6 @@ public sealed record TerraScaleAuthClientOptions
 
         BaseAddress = TerraScaleOrigin.Parse(BaseAddress, "The ts-auth base address", nameof(BaseAddress), TerraScaleService.Auth);
         InstanceSlug = ValidateSlug(InstanceSlug);
-
-        if (ApiKey is not null && string.IsNullOrWhiteSpace(ApiKey))
-        {
-            throw new ArgumentException("The ts-auth API key cannot be blank; leave it null for OIDC-only clients.", nameof(ApiKey));
-        }
-
-        if (!string.IsNullOrWhiteSpace(ApiKey))
-        {
-            ValidateAuthToken(ApiKey!, nameof(ApiKey));
-        }
     }
 
     private static string ValidateSlug(string? slug)
@@ -79,13 +61,5 @@ public sealed record TerraScaleAuthClientOptions
         }
 
         return trimmed;
-    }
-
-    private static void ValidateAuthToken(string value, string name)
-    {
-        if (value.Any(char.IsControl))
-        {
-            throw new ArgumentException($"{name} must contain printable characters and no control characters.", name);
-        }
     }
 }

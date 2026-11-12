@@ -2,8 +2,8 @@
 
 This source candidate covers project and database usage through
 `terrascale.reporting`. Root-client integration awaits the
-concurrent safety changes. Contract tests use HTTP fakes; live qualification
-and package publication remain separate work.
+concurrent safety changes. The journey does not call it yet; package
+publication remains separate work.
 
 ```python
 from terrascale.reporting import Reporting, UsageQuery

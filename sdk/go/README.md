@@ -310,12 +310,12 @@ from the last 24 hours; recording is best effort. See the [pinned contract](cont
 
 ### Legacy Management API
 
-The hidden legacy `/v1/management` aliases still manage organizations, projects, databases, members,
-invitations, ownership transfers and the audit log as one ts-auth user.
+The hidden legacy `/v1/management` aliases still create, list, read and delete organizations and projects, and set
+an organization's plan, as one ts-auth user.
 `WithToken` presents the user's ts-auth access token on the client listener.
 `As` names the user in `X-TerraBase-User-Id` with the management service
 credential (`Config.Token`), which TerraBase accepts only on its loopback admin
-listener, for bootstrap work such as `AddMember`. Take the user id from the
+listener. Take the user id from the
 session, never from browser input. These existing methods retain membership
 and catalog-ID semantics. New identity workflows belong in `tsauth`; public
 TerraBase tooling uses the project/name methods above.
@@ -326,8 +326,6 @@ u := m.WithToken(session.AccessToken)
 org, err := u.CreateOrganization(ctx, "Acme")
 project, err := u.CreateProject(ctx, org.ID, "Production")
 db, err := u.CreateDatabase(ctx, org.ID, project.ID, "main") // then c.Database(project.ID, "main")
-inv, err := u.CreateInvitation(ctx, org.ID, "bia@example.com", tb.RoleAdmin)
-page, err := u.Members(ctx, org.ID, tb.PageOptions{After: next})
 usage, err := u.Usage(ctx, org.ID, project.ID, "", tb.UsageOptions{Granularity: "day", From: monthStart})
 ```
 
@@ -338,16 +336,9 @@ used for a monthly bill. Organization usage is the sum of its ts-auth projects.
 The pinned server accepts at most seven fractional timestamp digits; truncate
 window boundaries to milliseconds before passing them to `Usage`.
 
-It also covers `Organizations`, `RenameOrganization`, `SetPlan`,
-`DeleteOrganization`, `CurrentOrganization`/`SetCurrentOrganization`, project
-and database reads, renames and deletes, `BranchDatabase`, `SetMemberRole`,
-`RemoveMember`, `Leave`, `Invitations`, `RevokeInvitation`,
-`AcceptInvitation` (the access token's verified email must match),
-`OwnershipTransfer` and its start, cancel and confirm,
-`AuditRetention`/`SetAuditRetention`, `AuditEvents`, `DatabaseUsage` and
-project data API keys:
-`CreateProjectAPIKey` (the `tb_…` secret is returned only once),
-`ProjectAPIKeys` and `RevokeProjectAPIKey`. A 404 (`ErrNotFound`)
+It also covers `Organizations`, `Organization`, `SetPlan`,
+`DeleteOrganization`, `Projects`, `Project`, `DeleteProject`, database reads
+and deletes, `BranchDatabase` and `DatabaseUsage`. A 404 (`ErrNotFound`)
 means an unknown id or an organization the user is not a member of.
 Management errors carry structured codes, including `ErrNameTaken` for name
 collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
@@ -364,15 +355,6 @@ A region that does not serve the database answers 421 `ErrWrongRegion`, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
 it elsewhere: send the request to a region in `Regions`. Customer
 placement/residency does not enable or disable serving regions.
-Cross-region project registration is manual: call `PrepareProjectRegistration(ctx, org, project)` using that
-region's admin listener, management service credential and `As(userID)`, then
-`registration.Commit(ctx)`. Supplied IDs require the service credential.
-That manual path is an inventoried implementation gap, not first-party startup
-guidance or proof of automatic node admission. Its handle captures one ULID and
-the missing organization/project operations under their home-region IDs.
-If Commit returns `ErrCommitUncertain`, retry the same handle with a fresh
-context; it resends the exact body without repeating existence checks or
-creating a new commit ID. Retain the handle until the outcome is resolved.
 
 ### Analytics (TS-762)
 

@@ -2,7 +2,6 @@
 
 Dependency: the owning contract is [terrascale PR 822](https://github.com/TerraScale/terrascale/pull/822).
 Merge and qualify the producer before publishing or activating this SDK operation.
-HTTP-fake coverage does not prove live email delivery or hosted verification.
 
 1. Call `auth.Platform.BeginStepUpAsync(bearer, new("change_email", "ts-auth", returnUri))`.
    `returnUri` is the registered dashboard origin's `/auth/step-up/callback`.

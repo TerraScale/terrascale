@@ -1,8 +1,8 @@
 # SDK-auth integration contract
 
-Unproven: these are source-derived contracts and HTTP-fake fixtures, not producer integration or live-service qualification. I5 must run producer parity with the selected SDK SHA and package; COS owns independent review.
+These are source-derived contracts and contract samples, not producer integration or live-service qualification. I5 must run producer parity with the selected SDK SHA and package; COS owns independent review.
 
-Producer: TerraScale/terrascale `e30ffdc287530551b161b0130220be53d3c0475e` (fresh origin/main at execution). `provenance.json` hashes the inspected files. All fixture values are synthetic and authorize no live resource. `security.json` records trust/scope/error/boundary details. `routes.json` records exact operation IDs, paths, methods, request/response DTOs, statuses, media types, security and pagination. `dtos.json` records exact producer wire fields/types/nullability; SDK names are distinct from the retained legacy instance clients.
+Producer: TerraScale/terrascale `e30ffdc287530551b161b0130220be53d3c0475e` (fresh origin/main at execution). All fixture values are synthetic and authorize no live resource. `security.json` records trust/scope/error/boundary details. `routes.json` records exact operation IDs, paths, methods, request/response DTOs, statuses, media types, security and pagination. `dtos.json` records exact producer wire fields/types/nullability; SDK names are distinct from the retained legacy instance clients.
 
 ## Interface handoff to I3/I5
 
@@ -34,7 +34,7 @@ Use existing Oidc.RefreshTokenAsync, RevokeTokenAsync and GetUserInfoAsync for r
 
 ## Dashboard collaboration operation map
 
-These eleven existing producer operations were missing from the initial `d6fbd4f`. I3's invitation, organization-access, ownership-transfer and audit services consume them, so I1 implements them in this same SDK scope with serializer metadata, manifests and HTTP-fake fixtures. I3 replaces its temporary HTTP calls with `.Platform` methods; I5 supplies the qualified package/composition and uses the corrected exact-head fixtures. Current-head CI, independent re-review, combined-package consumer qualification and producer parity remain acceptance dependencies.
+These eleven existing producer operations were missing from the initial `d6fbd4f`. I3's invitation, organization-access, ownership-transfer and audit services consume them, so I1 implements them in this same SDK scope with serializer metadata, manifests and contract samples. I3 replaces its temporary HTTP calls with `.Platform` methods; I5 supplies the qualified package/composition and uses the corrected exact-head fixtures. Current-head CI, independent re-review, combined-package consumer qualification and producer parity remain acceptance dependencies.
 
 All methods take the original user sign-in `accessToken` first and optional `CancellationToken` last. Organization-scoped methods next take `organizationId`. DTO names below omit the `TerraScaleAuthPlatform` prefix; lists return `TerraScaleAuthPlatformPage<T>`.
 
@@ -63,7 +63,7 @@ Invitation tokens redact `ToString`; never log/persist creation tokens or token 
 - `ApiKeys.cs`: `PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? now + previousTtl : null`; the endpoint exposes this only while it is in the future. Both 60-second rotation fixtures expose `2026-10-13T00:01:00+00:00`.
 - `Invitations.cs` / `PlatformDirectory.cs`: creation/transfer expiry is fixed clock + seven days, invitation status is pending, confirmation grants owner. Invitation tokens use the producer `tsi_` prefix and 52 synthetic alphabet characters. Test ID placeholders are replaced by independent ULIDs.
 
-`fixtures/project-invitation.json` covers `create_invitation`, `lookup_invitation` and `accept_invitation` with a viewer role, non-null `project_id` and named project. Opaque pagination cursors and secrets are controlled HTTP-fake values; fake success does not prove a connected producer journey.
+`fixtures/project-invitation.json` covers `create_invitation`, `lookup_invitation` and `accept_invitation` with a viewer role, non-null `project_id` and named project. Opaque pagination cursors and secrets are synthetic values.
 
 ## Bounds and safety
 
@@ -80,11 +80,11 @@ Platform bodies: 16 KiB. Token forms and success responses: 1 MiB. Error respons
 
 ## I5 requests
 
-Package all `contracts/auth` manifests/fixtures with the SDK candidate and register them for compatibility checking; this slice does not edit csproj or root files. Keep package version 0.0.X (provisional 0.0.3 belongs to I5). Update root README/release notes to point consumers here and distinguish the C# platform client from legacy instance management. Run matching monorepo producer tests against the exact selected SDK K; do not infer parity from SDK fake tests. No dashboard endpoint/fixture composition or pin changes are made here.
+Package all `contracts/auth` manifests/fixtures with the SDK candidate and register them for compatibility checking; this slice does not edit csproj or root files. Keep package version 0.0.X (provisional 0.0.3 belongs to I5). Update root README/release notes to point consumers here and distinguish the C# platform client from legacy instance management. Run matching monorepo producer tests against the exact selected SDK K. No dashboard endpoint/fixture composition or pin changes are made here.
 
 ## Project tenant management
 
-`auth.Projects` is `TerraScaleAuthProjectsClient` for the producer's project tenant management API (`docs/auth/project-tenant-management.md` section 2, base `/v1/{project}`). Every method takes the caller's terrascale sign-in `accessToken` and the project ULID first and an optional `CancellationToken` last; viewer reads, admin changes, 404 hides projects the caller cannot see and 403 `forbidden` reports a role too low. Lists return `TerraScaleAuthPlatformPage<T>`. `TerraScaleAuthProjectOAuthClient.ClientSecret` appears only when creating a confidential client and is redacted from `ToString`. `fixtures/project-tenant.json` holds the HTTP-fake fixtures, with each operation's method, path and status; producer parity remains unproven. `ExportUsersAsync` returns one audited, admin-only directory page; see `user-export.md`.
+`auth.Projects` is `TerraScaleAuthProjectsClient` for the producer's project tenant management API (`docs/auth/project-tenant-management.md` section 2, base `/v1/{project}`). Every method takes the caller's terrascale sign-in `accessToken` and the project ULID first and an optional `CancellationToken` last; viewer reads, admin changes, 404 hides projects the caller cannot see and 403 `forbidden` reports a role too low. Lists return `TerraScaleAuthPlatformPage<T>`. `TerraScaleAuthProjectOAuthClient.ClientSecret` appears only when creating a confidential client and is redacted from `ToString`. `fixtures/project-tenant.json` holds the contract samples, with each operation's method, path and status; producer parity remains unproven. `ExportUsersAsync` returns one audited, admin-only directory page; see `user-export.md`.
 
 ## Retired instance clients
 
@@ -94,7 +94,9 @@ The unsupported `auth.Billing` client and its exclusive plan, seat-quota, checko
 
 Instance `auth.ApiKeys` and its exclusive `sk_` DTOs are retired. Use only existing producer-backed `Platform` organization/project key operations for their documented authority. Their models, CIDRs, credentials and routes are preserved; no legacy key is silently reinterpreted.
 
-The legacy instance `auth.Organizations` client and its exclusive membership, invitation and domain DTOs are retired. `TerraScaleAuthOrganization` remains only because the not-yet-retired user membership result embeds it. Existing `Platform` organization/member/invitation and `Projects` APIs retain their exact authority and DTOs.
+The legacy instance `auth.Organizations` client and its exclusive membership, invitation and domain DTOs are retired. Existing `Platform` organization/member/invitation and `Projects` APIs retain their exact authority and DTOs.
+
+The instance `auth.Users` and `auth.Sessions` clients, their exclusive user, session, MFA factor, passkey, recovery-code, impersonation, membership and `TerraScaleAuthOrganization` DTOs, and the `TerraScaleAuthClientOptions.ApiKey` instance key are retired: ts-auth serves no `/v1/{slug}/users` or `/v1/{slug}/sessions` route and accepts no instance key.
 
 The unsupported instance `auth.Connections` (OIDC/SAML) and `auth.Directories` (SCIM) clients and their exclusive DTOs are retired. This removes only the old instance management authority; supported organization OIDC SSO administration and project provider/export APIs keep their own contracts and DTOs. No SAML or SCIM adapter is introduced.
 

@@ -19,7 +19,6 @@ import { isValidId } from "./ids.js";
  *   readonly formBody?: URLSearchParams | string | undefined;
  *   readonly userinfoAccessToken?: string | undefined;
  *   readonly projectAccessToken?: string | undefined;
- *   readonly resourceIntrospectionBasic?: string | undefined;
  *   readonly deletionReceipt?: string | undefined;
  *   readonly stepUpProof?: string | undefined;
  *   readonly signal?: AbortSignal | undefined;
@@ -110,7 +109,7 @@ export class TsAuthHttp {
             headers.set("X-TerraScale-Step-Up-Proof", options.stepUpProof);
           }
           if (receiptRead && (options.deletionReceipt === undefined || this.#accessToken !== undefined ||
-              options.userinfoAccessToken !== undefined || options.resourceIntrospectionBasic !== undefined))
+              options.userinfoAccessToken !== undefined))
             throw new TypeError("Account deletion reads require a receipt without bearer credentials.");
           const oidc = options.routeName.startsWith("tsauth.oidc.");
           const project = options.projectAccessToken !== undefined;
@@ -141,22 +140,6 @@ export class TsAuthHttp {
               "authorization",
               `Bearer ${options.userinfoAccessToken}`,
             );
-          }
-          if (options.resourceIntrospectionBasic !== undefined) {
-            if (
-              options.routeName !== "tsauth.oidc.resourceIntrospect" ||
-              options.method !== "POST" ||
-              !/^[^/]+\/oauth\/introspect$/u.test(options.path) ||
-              options.formBody === undefined ||
-              options.userinfoAccessToken !== undefined ||
-              !/^Basic [A-Za-z0-9+/]+={0,2}$/u.test(
-                options.resourceIntrospectionBasic,
-              )
-            )
-              throw new TypeError(
-                "Resource Basic credentials belong to named resource introspection only.",
-              );
-            headers.set("authorization", options.resourceIntrospectionBasic);
           }
           if (body !== undefined)
             headers.set(
@@ -360,16 +343,7 @@ function buildUrl(origin, path, query) {
  * @returns {boolean}
  */
 function strictOauthRoute(routeName) {
-  return (
-    routeName.startsWith("tsauth.oauthClients.") ||
-    routeName.startsWith("tsauth.oauthResources.") ||
-    [
-      "tsauth.oidc.token",
-      "tsauth.oidc.introspect",
-      "tsauth.oidc.resourceIntrospect",
-      "tsauth.oidc.deviceAuthorization",
-    ].includes(routeName)
-  );
+  return routeName === "tsauth.oidc.token";
 }
 
 /** @param {TsAuthRequest<unknown>} request */
@@ -460,18 +434,7 @@ async function readResponseBody(response, request, signal) {
            * @returns {unknown}
            */
           (key, value, context) => {
-            if (
-              typeof value === "number" &&
-              [
-                "auth_epoch",
-                "created_at",
-                "updated_at",
-                "exp",
-                "iat",
-                "expires_in",
-                "interval",
-              ].includes(key)
-            ) {
+            if (typeof value === "number" && key === "expires_in") {
               if (
                 !Number.isSafeInteger(value) ||
                 context?.source === undefined ||

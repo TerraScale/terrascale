@@ -28,15 +28,14 @@ features.
 Tests never use a fake TerraBase (human decision, 2026-10-04): every TerraScale
 service persists in the same production TerraBase release end users use.
 Superseded 2026-10-11 (user rule: no repository other than the monorepo depends on
-TerraBase): this repository tests the clients over HTTP fakes against the route
-manifest `contracts/terrabase/routes.json`; the monorepo runs ts-auth's suites
-against the TerraBase built from the same commit and checks it serves every route
-in the manifest. `TerraScale.DotNet.Testing` and the pinned release are deleted.
+TerraBase): the clients keep the route manifest `contracts/terrabase/routes.json`,
+and the journey in `e2e/` drives them against the TerraBase built from the same
+commit. `TerraScale.DotNet.Testing` and the pinned release are deleted.
 
 ## Exit evidence
 
-The monorepo's ts-auth Fast suite (TerraBaseSdkContractTests and the store tests)
-runs against the TerraBase built from its own commit at the pinned ts-dotnet revision.
+The journey's .NET runner (`e2e/sdk/dotnet`) runs the SDK against the TerraBase
+built from the same commit.
 
 ## Update (2026-10-12)
 

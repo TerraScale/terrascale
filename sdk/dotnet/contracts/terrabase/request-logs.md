@@ -35,8 +35,7 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 The SDK uses the existing connection deadline, response bound, response disposal
 and cancellation. It does not poll, cache, retry or dispose the caller's HttpClient.
 The new feature has its own source-generated JSON context with required
-constructor and nullable-member enforcement. TUnit fixtures use HTTP fakes only;
-no TerraBase binaries are referenced. Source pinning is not live qualification.
+constructor and nullable-member enforcement. No TerraBase binaries are referenced. Source pinning is not live qualification.
 Broad generated manifest/export parity remains separately tracked under TS1274;
 these exact handler, DTO and route constants establish this operation's contract.
 

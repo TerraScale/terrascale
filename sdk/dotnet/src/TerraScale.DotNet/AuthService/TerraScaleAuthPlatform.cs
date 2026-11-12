@@ -241,8 +241,8 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
     /// <summary>
     /// delete_project: DELETE /v1/terrascale/organizations/{organization}/projects/{project}. True once the project is
     /// removed (204: TerraBase accepted its closure); false while the closure is pending (202; ts-auth finishes it in the
-    /// background, and calling again resumes it). 409 <c>not_empty</c>, <c>closure_conflict</c> or <c>binding_conflict</c>
-    /// changes nothing.
+    /// background, and calling again resumes it). 409 <c>not_empty</c>, <c>closure_conflict</c>, <c>binding_conflict</c> or
+    /// <c>platform_project_protected</c> (TerraScale's own projects) changes nothing.
     /// </summary>
     public Task<bool> DeleteProjectAsync(
         string accessToken,

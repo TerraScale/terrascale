@@ -10,7 +10,7 @@ database claims it. There is no alias. Existing handles keep their original rout
 A database-restricted API key or token must carry the database ULID, never its name.
 
 Invalid names return 400 `invalid_request`, observed duplicates 409 `name_taken`,
-platform databases 409 `platform_placement_locked`, unknown databases 404
+platform databases 409 `platform_database_protected`, unknown databases 404
 `unknown_database`, and other regions 421 `wrong_region` with
 `X-TerraBase-Database-Home`. The SDK surfaces typed exceptions. Only documented
 pre-execution 503 refusals may be resent; reconcile uncertain outcomes with a GET

@@ -3,8 +3,7 @@
 - `routes.json` records every client method and path.
 - `current-public-routes.json` is the full public route inventory of TerraBase's `/openapi/v1.json` at its `serverCommit`.
 - `sql/` holds the SQL error codes and WebSocket session contract shared by every SDK; see [`sdk/SQL-API.md`](../../../SQL-API.md), [`sql-execute.md`](sql-execute.md) and [`sql-websocket.md`](sql-websocket.md).
-- `fixtures/` holds synthetic database, branch and usage JSON.
-- `functions.json`, `function-invocations.json`, `file-storage/`, `project-metrics.json`, `public-health*.{md,json}`, `regions.md`, `request-logs.md`, `database-rename.md` and `project-erasure.md` pin their scoped producer sources.
+- `functions.json`, `function-invocations.json`, `file-storage/`, `project-metrics.json`, `public-health.md`, `regions.md`, `request-logs.md`, `database-rename.md` and `project-erasure.md` pin their scoped producer sources.
 
 ## Route, identity and scope
 

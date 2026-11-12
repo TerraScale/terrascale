@@ -85,18 +85,6 @@ const (
 	PlanEnterprise Plan = "enterprise"
 )
 
-// Role is a member's role in an organization, from least to most privileged:
-// viewer, member, admin, owner. A viewer only reads.
-type Role string
-
-// Roles.
-const (
-	RoleViewer Role = "viewer"
-	RoleMember Role = "member"
-	RoleAdmin  Role = "admin"
-	RoleOwner  Role = "owner"
-)
-
 // Organization is a TerraBase organization, the tenant that owns projects.
 type Organization struct {
 	ID        string    `json:"id" ulid:"required"`
@@ -147,87 +135,6 @@ type DatabaseUsage struct {
 	StorageBytes int64  `json:"storageBytes"`
 	Reads        int64  `json:"reads"`
 	Writes       int64  `json:"writes"`
-}
-
-// ProjectAPIKey is a project's data API key without its secret.
-type ProjectAPIKey struct {
-	ID        string   `json:"id" ulid:"required"`
-	ProjectID string   `json:"projectId" ulid:"required"`
-	Name      string   `json:"name"`
-	Scopes    []string `json:"scopes"`
-	// DatabaseID is the only database the key reaches; empty for every
-	// database of the project.
-	DatabaseID string    `json:"databaseId" ulid:"optional"`
-	LastFour   string    `json:"lastFour"`
-	CreatedAt  time.Time `json:"createdAt"`
-}
-
-// ProjectAPIKeyRequest describes a key to issue: Name is 1-128 characters and
-// Scopes a non-empty set drawn from sql:read, sql:write, databases:read and
-// databases:write. An empty DatabaseID reaches every database of the project.
-type ProjectAPIKeyRequest struct {
-	Name       string   `json:"name"`
-	Scopes     []string `json:"scopes"`
-	DatabaseID string   `json:"databaseId,omitempty" ulid:"optional"`
-}
-
-// CreatedProjectAPIKey is a new key with its secret, returned only once.
-type CreatedProjectAPIKey struct {
-	Key    ProjectAPIKey `json:"key"`
-	Secret string        `json:"secret"`
-}
-
-// Member is a user's membership in an organization.
-type Member struct {
-	UserID   string    `json:"userId" ulid:"required"`
-	Role     Role      `json:"role"`
-	JoinedAt time.Time `json:"joinedAt"`
-}
-
-// Invitation is an invitation; a pending one expires after 7 days.
-type Invitation struct {
-	ID        string           `json:"id" ulid:"required"`
-	Email     string           `json:"email"`
-	Role      Role             `json:"role"`
-	InvitedBy string           `json:"invitedBy" ulid:"required"`
-	CreatedAt time.Time        `json:"createdAt"`
-	ExpiresAt time.Time        `json:"expiresAt"`
-	Status    InvitationStatus `json:"status"`
-}
-
-// InvitationStatus is the state of an invitation.
-type InvitationStatus string
-
-// Invitation states.
-const (
-	InvitationPending  InvitationStatus = "pending"
-	InvitationAccepted InvitationStatus = "accepted"
-	InvitationDeclined InvitationStatus = "declined"
-	InvitationRevoked  InvitationStatus = "revoked"
-)
-
-// CreatedInvitation is a new invitation with its token, returned only once.
-type CreatedInvitation struct {
-	Invitation Invitation `json:"invitation"`
-	Token      string     `json:"token"`
-}
-
-// OwnershipTransfer is an organization's pending ownership transfer.
-type OwnershipTransfer struct {
-	FromUserID string    `json:"fromUserId" ulid:"required"`
-	ToUserID   string    `json:"toUserId" ulid:"required"`
-	CreatedAt  time.Time `json:"createdAt"`
-	ExpiresAt  time.Time `json:"expiresAt"`
-}
-
-// AuditEvent is one recorded access change.
-type AuditEvent struct {
-	ID         string    `json:"id" ulid:"required"`
-	Actor      string    `json:"actor" ulid:"required"`
-	Action     string    `json:"action"`
-	Target     string    `json:"target"`
-	Detail     string    `json:"detail"`
-	OccurredAt time.Time `json:"occurredAt"`
 }
 
 // Page is one page of a Management list.
@@ -347,11 +254,6 @@ func (u *ManagementUser) Organization(ctx context.Context, org string) (*Organiz
 	return get[Organization](ctx, u, orgPath(org), nil)
 }
 
-// RenameOrganization renames an organization; it needs the admin role.
-func (u *ManagementUser) RenameOrganization(ctx context.Context, org, name string) (*Organization, error) {
-	return send[Organization](ctx, u, http.MethodPatch, orgPath(org), nameBody{name})
-}
-
 // SetPlan sets an organization's plan; it needs the owner role.
 func (u *ManagementUser) SetPlan(ctx context.Context, org string, plan Plan) (*Organization, error) {
 	return send[Organization](ctx, u, http.MethodPut, orgPath(org, "plan"), map[string]Plan{"plan": plan})
@@ -361,16 +263,6 @@ func (u *ManagementUser) SetPlan(ctx context.Context, org string, plan Plan) (*O
 // owner role.
 func (u *ManagementUser) DeleteOrganization(ctx context.Context, org string) error {
 	return u.call(ctx, http.MethodDelete, orgPath(org), nil, nil, nil)
-}
-
-// CurrentOrganization reads the organization the user last switched to.
-func (u *ManagementUser) CurrentOrganization(ctx context.Context) (*Organization, error) {
-	return get[Organization](ctx, u, managementPath("current-organization"), nil)
-}
-
-// SetCurrentOrganization switches the user to one of their organizations.
-func (u *ManagementUser) SetCurrentOrganization(ctx context.Context, org string) (*Organization, error) {
-	return send[Organization](ctx, u, http.MethodPut, managementPath("current-organization"), map[string]string{"organizationId": org})
 }
 
 // CreateProject creates a project in an organization.
@@ -388,75 +280,9 @@ func (u *ManagementUser) Project(ctx context.Context, org, project string) (*Pro
 	return get[Project](ctx, u, projectPath(org, project), nil)
 }
 
-// RenameProject renames a project.
-func (u *ManagementUser) RenameProject(ctx context.Context, org, project, name string) (*Project, error) {
-	return send[Project](ctx, u, http.MethodPatch, projectPath(org, project), nameBody{name})
-}
-
 // DeleteProject deletes a project without databases.
 func (u *ManagementUser) DeleteProject(ctx context.Context, org, project string) error {
 	return u.call(ctx, http.MethodDelete, projectPath(org, project), nil, nil, nil)
-}
-
-// ProjectRegistration holds one immutable Management commit for a replica
-// region. Reuse it after an uncertain outcome; preparing again creates a new ID.
-type ProjectRegistration struct {
-	user *ManagementUser
-	body json.RawMessage
-}
-
-// Commit submits the captured registration. Retrying this handle sends the same
-// ULID and byte-identical body without repeating the existence checks.
-func (r *ProjectRegistration) Commit(ctx context.Context) error {
-	if r == nil || r.user == nil {
-		return errors.New("terrabase: project registration was not prepared")
-	}
-	if r.body == nil {
-		return nil
-	}
-	return r.user.call(ctx, http.MethodPost, managementPath("commits"), nil, r.body, nil)
-}
-
-// PrepareProjectRegistration captures the missing organization/project creation
-// operations under their IDs and names from another region (TS-643). It makes no
-// commit. Call Commit on the returned handle and reuse it for any retries.
-// Supplied IDs require the service credential with As on the admin listener.
-func (u *ManagementUser) PrepareProjectRegistration(ctx context.Context, org Organization, project Project) (*ProjectRegistration, error) {
-	type op struct {
-		Op           string `json:"op"`
-		Organization string `json:"organization,omitempty"`
-		ID           string `json:"id" ulid:"required"`
-		Name         string `json:"name"`
-	}
-	var ops []op
-	for _, check := range []struct {
-		get func() error
-		op  op
-	}{
-		{func() error { _, err := u.Organization(ctx, org.ID); return err }, op{Op: "create_organization", ID: org.ID, Name: org.Name}},
-		{func() error { _, err := u.Project(ctx, org.ID, project.ID); return err }, op{Op: "create_project", Organization: org.ID, ID: project.ID, Name: project.Name}},
-	} {
-		switch err := check.get(); {
-		case errors.Is(err, ErrNotFound):
-			ops = append(ops, check.op)
-		case err != nil:
-			return nil, err
-		}
-	}
-	registration := &ProjectRegistration{user: u}
-	if len(ops) == 0 {
-		return registration, nil
-	}
-	commit := struct {
-		ID  string `json:"id" ulid:"required"`
-		Ops []op   `json:"ops"`
-	}{NewID(), ops}
-	body, err := json.Marshal(commit)
-	if err != nil {
-		return nil, err
-	}
-	registration.body = body
-	return registration, nil
 }
 
 // CreateDatabase creates an empty database in a project, served from the
@@ -502,126 +328,4 @@ func (u *ManagementUser) DatabaseUsage(ctx context.Context, org, project, databa
 // consistent snapshot copy of the database databaseID.
 func (u *ManagementUser) BranchDatabase(ctx context.Context, org, project, databaseID, name string) (*ManagedDatabase, error) {
 	return send[ManagedDatabase](ctx, u, http.MethodPost, databasePath(project, databaseID, "branches"), nameBody{name})
-}
-
-// CreateProjectAPIKey issues a data API key of a project, a Config.Token for
-// New; a viewer cannot.
-func (u *ManagementUser) CreateProjectAPIKey(ctx context.Context, org, project string, req ProjectAPIKeyRequest) (*CreatedProjectAPIKey, error) {
-	return send[CreatedProjectAPIKey](ctx, u, http.MethodPost, projectPath(org, project, "api-keys"), req)
-}
-
-// ProjectAPIKeys lists a project's data API keys in creation order.
-func (u *ManagementUser) ProjectAPIKeys(ctx context.Context, org, project string, opts PageOptions) (*Page[ProjectAPIKey], error) {
-	return get[Page[ProjectAPIKey]](ctx, u, projectPath(org, project, "api-keys"), opts.query())
-}
-
-// RevokeProjectAPIKey revokes a project's data API key; it stops
-// authenticating immediately. A viewer cannot.
-func (u *ManagementUser) RevokeProjectAPIKey(ctx context.Context, org, project, key string) error {
-	return u.call(ctx, http.MethodDelete, projectPath(org, project, "api-keys", key), nil, nil, nil)
-}
-
-// Members lists an organization's members in user id order.
-func (u *ManagementUser) Members(ctx context.Context, org string, opts PageOptions) (*Page[Member], error) {
-	return get[Page[Member]](ctx, u, orgPath(org, "members"), opts.query())
-}
-
-// SetMemberRole changes a member's role; it needs admin, and owner when the
-// member is or becomes an owner.
-func (u *ManagementUser) SetMemberRole(ctx context.Context, org, user string, role Role) (*Member, error) {
-	return send[Member](ctx, u, http.MethodPut, orgPath(org, "members", user, "role"), map[string]Role{"role": role})
-}
-
-// AddMember adds user to an organization as a member, recording email in the
-// audit log; a member is returned unchanged. It needs the admin role and the
-// management service credential: As, on the admin listener only.
-func (u *ManagementUser) AddMember(ctx context.Context, org, user, email string) (*Member, error) {
-	return send[Member](ctx, u, http.MethodPut, orgPath(org, "members", user), map[string]string{"email": email})
-}
-
-// RemoveMember removes a member; it needs admin, and owner to remove an owner.
-func (u *ManagementUser) RemoveMember(ctx context.Context, org, user string) error {
-	return u.call(ctx, http.MethodDelete, orgPath(org, "members", user), nil, nil, nil)
-}
-
-// Leave removes the user from an organization. The last owner cannot leave.
-func (u *ManagementUser) Leave(ctx context.Context, org string) error {
-	return u.call(ctx, http.MethodPost, orgPath(org, "leave"), nil, nil, nil)
-}
-
-// CreateInvitation invites email with role (empty means member). TerraBase
-// sends no email: deliver the returned token yourself.
-func (u *ManagementUser) CreateInvitation(ctx context.Context, org, email string, role Role) (*CreatedInvitation, error) {
-	body := struct {
-		Email string `json:"email"`
-		Role  Role   `json:"role,omitempty"`
-	}{email, role}
-	return send[CreatedInvitation](ctx, u, http.MethodPost, orgPath(org, "invitations"), body)
-}
-
-// Invitations lists every invitation with its status, in creation order.
-func (u *ManagementUser) Invitations(ctx context.Context, org string, opts PageOptions) (*Page[Invitation], error) {
-	return get[Page[Invitation]](ctx, u, orgPath(org, "invitations"), opts.query())
-}
-
-// RevokeInvitation revokes an invitation; its token stops working.
-func (u *ManagementUser) RevokeInvitation(ctx context.Context, org, invitation string) error {
-	return u.call(ctx, http.MethodDelete, orgPath(org, "invitations", invitation), nil, nil, nil)
-}
-
-// AcceptInvitation makes the user a member through token. It needs a
-// WithToken user whose access token carries a verified email matching the
-// invitation's.
-func (u *ManagementUser) AcceptInvitation(ctx context.Context, token string) (*Member, error) {
-	return send[Member](ctx, u, http.MethodPost, managementPath("invitations", "accept"), map[string]string{"token": token})
-}
-
-// OwnershipTransfer reads the pending ownership transfer.
-func (u *ManagementUser) OwnershipTransfer(ctx context.Context, org string) (*OwnershipTransfer, error) {
-	return get[OwnershipTransfer](ctx, u, orgPath(org, "ownership-transfer"), nil)
-}
-
-// StartOwnershipTransfer offers ownership to a member who is not an owner,
-// replacing a pending offer; it needs the owner role.
-func (u *ManagementUser) StartOwnershipTransfer(ctx context.Context, org, toUser string) (*OwnershipTransfer, error) {
-	return send[OwnershipTransfer](ctx, u, http.MethodPost, orgPath(org, "ownership-transfer"), map[string]string{"userId": toUser})
-}
-
-// CancelOwnershipTransfer cancels the pending transfer; the owner or the
-// nominee may cancel.
-func (u *ManagementUser) CancelOwnershipTransfer(ctx context.Context, org string) error {
-	return u.call(ctx, http.MethodDelete, orgPath(org, "ownership-transfer"), nil, nil, nil)
-}
-
-// ConfirmOwnershipTransfer accepts the transfer as its nominee and returns the
-// nominee's membership, now owner.
-func (u *ManagementUser) ConfirmOwnershipTransfer(ctx context.Context, org string) (*Member, error) {
-	return send[Member](ctx, u, http.MethodPost, orgPath(org, "ownership-transfer", "confirm"), nil)
-}
-
-// AuditRetention returns how many days audit events are kept (1-90).
-func (u *ManagementUser) AuditRetention(ctx context.Context, org string) (int, error) {
-	r, err := get[auditRetention](ctx, u, orgPath(org, "audit-retention"), nil)
-	if err != nil {
-		return 0, err
-	}
-	return r.Days, nil
-}
-
-// SetAuditRetention sets how many days audit events are kept (1-90).
-func (u *ManagementUser) SetAuditRetention(ctx context.Context, org string, days int) (int, error) {
-	r, err := send[auditRetention](ctx, u, http.MethodPut, orgPath(org, "audit-retention"), auditRetention{days})
-	if err != nil {
-		return 0, err
-	}
-	return r.Days, nil
-}
-
-type auditRetention struct {
-	Days int `json:"days"`
-}
-
-// AuditEvents lists audit events, newest first, within the retention.
-func (u *ManagementUser) AuditEvents(ctx context.Context, org string, opts PageOptions) (*Page[AuditEvent], error) {
-	return get[Page[AuditEvent]](ctx, u, orgPath(org, "audit-events"), opts.query())
 }
