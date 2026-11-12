@@ -118,6 +118,7 @@ const authSections: [string, string][] = [
   ['sign-in', 'Sign-in methods'],
   ['social', 'Social sign-in'],
   ['configuration', 'Configuration'],
+  ['mfa-sessions', 'MFA and sessions'],
   ['clients', 'OAuth applications'],
   ['webhooks', 'Webhooks'],
   ['logs', 'Logs'],
@@ -347,6 +348,12 @@ export const dashboardStates: readonly PageState[] = [
       data: async (page, journey) => {
         if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
         else if (section === 'logs') await expect(page.getByText('No events in the last 30 days.', { exact: true })).toBeVisible();
+        else if (section === 'mfa-sessions') {
+          await expect(page.locator('input[name=require_mfa]')).not.toBeChecked();
+          await expect(page.locator('input[name=allow_totp]')).toBeChecked();
+          await expect(page.locator('input[name=allow_passkey]')).toBeChecked();
+          await expect(page.locator('#auth-inactivity')).toHaveValue('');
+        }
         else if (section === 'users') await expect(page.getByText('No users yet.', { exact: true })).toBeVisible();
         else if (section === 'danger') {
           await expect(page.getByText('No records.', { exact: true })).toHaveCount(3);

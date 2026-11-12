@@ -736,3 +736,5 @@ for { _, err := client.SetDatabasePlacement(ctx, project, database, tb.DatabaseP
 ## Project Authentication management
 
 Use `client.WithToken(secretKey)` for `ProjectUsers`, `DisableProjectUser` and `EnableProjectUser`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
+
+Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.

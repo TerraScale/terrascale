@@ -465,12 +465,22 @@ class ProjectSettingsConfiguration:
 
     redirect_urls: list[str]
     session_lifetime_seconds: int | None = None
+    require_mfa: bool = False
+    allow_totp: bool = True
+    allow_passkey: bool = True
+    inactivity_timeout_minutes: int | None = None
+    single_session: bool = False
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettingsConfiguration:
         return cls(redirect_urls=_strings(body, "redirect_urls", "project redirect urls"),
                    session_lifetime_seconds=_int_or_none(body, "session_lifetime_seconds",
-                                                          "project session lifetime"))
+                                                          "project session lifetime"),
+                   require_mfa=_bool(body, "require_mfa", "project MFA policy"),
+                   allow_totp=_bool(body, "allow_totp", "project TOTP policy"),
+                   allow_passkey=_bool(body, "allow_passkey", "project passkey policy"),
+                   inactivity_timeout_minutes=_int_or_none(body, "inactivity_timeout_minutes", "project idle timeout"),
+                   single_session=_bool(body, "single_session", "project single session policy"))
 
 
 @dataclass(frozen=True)
@@ -537,6 +547,10 @@ class ProjectSettingsUpdate:
             configuration: dict[str, Any] = {"redirect_urls": list(self.configuration.redirect_urls)}
             if self.configuration.session_lifetime_seconds is not None:
                 configuration["session_lifetime_seconds"] = self.configuration.session_lifetime_seconds
+            configuration.update(require_mfa=self.configuration.require_mfa, allow_totp=self.configuration.allow_totp,
+                                 allow_passkey=self.configuration.allow_passkey,
+                                 inactivity_timeout_minutes=self.configuration.inactivity_timeout_minutes,
+                                 single_session=self.configuration.single_session)
             body["configuration"] = configuration
         return body
 

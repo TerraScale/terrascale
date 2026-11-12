@@ -162,7 +162,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         }
 
         var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, form.Code ?? string.Empty, PasscodePurpose.SignIn, cancellationToken);
-        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
+        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user with { InboxProven = true }, next, cancellationToken) is { } step)
         {
             return step;
         }
@@ -453,7 +453,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
             user = created;
         }
 
-        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
+        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user with { InboxProven = true }, next, cancellationToken) is { } step)
         {
             return step;
         }
@@ -647,7 +647,7 @@ internal static class SignInFlow
     /// leaves no resend control to press. The wait, copy and structure are the same for every refused address, so
     /// nothing tells an address with an account from one without.
     /// </summary>
-    public static IResult BudgetExhausted(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null)
+    public static IResult BudgetExhausted(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null, string? challenge = null)
     {
         var seconds = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds));
         var copy = Copy(context);
@@ -660,6 +660,7 @@ internal static class SignInFlow
                 CodeBudgetExhausted = true,
                 WaitSeconds = seconds,
                 PendingToken = pendingToken,
+                Challenge = challenge,
             },
             StatusCodes.Status429TooManyRequests);
     }
@@ -742,15 +743,32 @@ internal static class SignInFlow
     /// </summary>
     public static async Task<IResult?> SecondFactorAsync(HttpContext context, TotpCredentials mfa, UserRecord user, string? next, CancellationToken cancellationToken)
     {
-        // The user is read after the factor, so an activation or sign-out everywhere meanwhile yields no challenge.
-        if (!(await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled
-            || await mfa.ChallengeAsync(user, cancellationToken) is not { } challenge)
+        var policy = Tenancy.IsProject(user.InstanceId)
+            ? (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(user.InstanceId, cancellationToken)).Configuration ?? ConfigurationBody.Default
+            : ConfigurationBody.Default;
+        var enrolled = await mfa.HasAllowedFactorAsync(user, cancellationToken);
+        if (!policy.RequireMfa && (!policy.AllowTotp || !(await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled))
+        {
+            return null;
+        }
+
+        if (!enrolled && !user.InboxProven)
+        {
+            return await VerifyEnrollmentInboxEndpoint.SendAsync(context, user, next, cancellationToken);
+        }
+
+        if (await mfa.ChallengeAsync(user, !enrolled, cancellationToken) is not { } challenge)
         {
             return null;
         }
 
         AuthMetrics.SignIn("hosted_mfa", "challenged");
-        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Mfa, user.InstanceId, user.Email, next) { Challenge = challenge });
+        return SignInPageModel.Render(context, new SignInPageModel(enrolled ? SignInStep.Mfa : SignInStep.MfaEnroll, user.InstanceId, user.Email, next)
+        {
+            Challenge = challenge,
+            AllowTotp = policy.AllowTotp,
+            AllowPasskey = policy.AllowPasskey,
+        });
     }
 
     /// <summary>A primary-only session for <paramref name="user"/>, or null when MFA or a newer epoch refuses one.</summary>
@@ -782,8 +800,10 @@ internal static class SignInFlow
             return sso;
         }
 
-        // The browser's previous session, if any, ends with this sign-in.
-        await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
+        if (!Tenancy.IsProject(tenant))
+        {
+            await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
+        }
         BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
         return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
     }

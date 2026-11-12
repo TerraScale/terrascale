@@ -19,6 +19,8 @@ public enum PasscodePurpose
     SignUp,
 
     StepUp,
+
+    EnrollmentInbox,
 }
 
 public sealed record IssuedPasscode(string Email, string Code, DateTimeOffset ExpiresAt, PasscodePurpose Purpose = PasscodePurpose.SignIn)
@@ -65,6 +67,25 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
                 && value.PendingTokenHash == Tokens.Sha256Hex(requestId), cancellationToken).ConfigureAwait(false);
         return consumed?.AuthenticatedUser ?? (consumed is { Binding: { } binding }
             ? user with { AuthenticationBindings = [.. user.AuthenticationBindings, .. consumed.IssuanceBindings, binding] } : null);
+    }
+
+    internal Task<IssuedPasscode?> RequestEnrollmentInboxAsync(UserRecord user, string challenge, CancellationToken cancellationToken) =>
+        this.IssueAsync(user.InstanceId, "enrollment-inbox:" + Tokens.Sha256Hex(challenge), user.Id, user.Email, user.AuthEpoch, user.AuthStamp,
+            PasscodePurpose.EnrollmentInbox, null, Tokens.Sha256Hex(challenge), cancellationToken);
+
+    internal async Task<UserRecord?> RedeemEnrollmentInboxAsync(UserRecord user, string challenge, string code, CancellationToken cancellationToken)
+    {
+        if (!WellFormed(code))
+        {
+            return null;
+        }
+
+        var hash = Tokens.Sha256Hex(challenge);
+        var consumed = await this.ConsumeAsync(user.InstanceId, "enrollment-inbox:" + hash, code.Trim(), PasscodePurpose.EnrollmentInbox,
+            value => value.UserId == user.Id && value.Email == user.Email && value.AuthEpoch == user.AuthEpoch
+                && value.AuthStamp == user.AuthStamp && value.PendingTokenHash == hash, cancellationToken).ConfigureAwait(false);
+        return consumed is { Binding: { } binding }
+            ? user with { InboxProven = true, AuthenticationBindings = [.. user.AuthenticationBindings, .. consumed.IssuanceBindings, binding] } : null;
     }
 
     public async Task<IssuedPasscode?> RequestAsync(string instanceId, string email, PasscodePurpose purpose, CancellationToken cancellationToken)
@@ -199,6 +220,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
     {
         return (await this.ReadAsync(instanceId, key, cancellationToken).ConfigureAwait(false))?.Value is { } passcode
             && (passcode.Purpose == StoredPurpose(PasscodePurpose.StepUp)) == (purpose == PasscodePurpose.StepUp)
+            && (purpose != PasscodePurpose.EnrollmentInbox || passcode.Purpose == StoredPurpose(purpose))
             && passcode.IssueId == issueId && !passcode.Consumed && passcode.FailedAttempts < MaxAttempts && passcode.ExpiresAt > clock.GetUtcNow();
     }
 
@@ -209,6 +231,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         PasscodePurpose.PasswordReset => "password-reset",
         PasscodePurpose.SignUp => "sign-up",
         PasscodePurpose.StepUp => "step-up",
+        PasscodePurpose.EnrollmentInbox => "enrollment-inbox",
         _ => null,
     };
 
@@ -222,8 +245,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         var now = clock.GetUtcNow();
         var rowData = await this.ReadAsync(instanceId, key, cancellationToken).ConfigureAwait(false);
         var previous = rowData?.Value;
-        // One isolated issuance per step-up attempt. Sign-in ancestry and its recovery rollover never enter this row.
-        if (purpose == PasscodePurpose.StepUp && previous is not null)
+        if (purpose is PasscodePurpose.StepUp or PasscodePurpose.EnrollmentInbox && previous is not null)
         {
             return null;
         }
@@ -301,7 +323,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             }
 
             UserRecord? authenticated = null;
-            if (matches && (purpose is PasscodePurpose.PasswordReset || (passcode.ResetsAuthentication && purpose is not (PasscodePurpose.SignUp or PasscodePurpose.StepUp))))
+            if (matches && (purpose is PasscodePurpose.PasswordReset || (passcode.ResetsAuthentication && purpose is not (PasscodePurpose.SignUp or PasscodePurpose.StepUp or PasscodePurpose.EnrollmentInbox))))
             {
                 if (await users.GetAsync(instanceId, passcode.UserId, cancellationToken).ConfigureAwait(false) is not { } current
                     || current.AuthEpoch != passcode.AuthEpoch || current.AuthStamp != passcode.AuthStamp)

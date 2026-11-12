@@ -198,7 +198,7 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
         }
 
         var now = clock.GetUtcNow();
-        var authenticatedAt = live?.Session.CreatedAt;
+        var authenticatedAt = live?.Session.VerifiedAt ?? live?.Session.CreatedAt;
         // A resumed request's marker replaces max_age: the sign-in it asked for is recent enough, even for max_age=0.
         var stale = authenticatedAt is { } created && (loginAfter is { } after
             ? created.ToUnixTimeMilliseconds() <= after
@@ -337,8 +337,16 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
             return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
         }
 
-        if (Tenancy.IsProject(tenant))
+        if (Tenancy.IsProject(tenant) && principal.GetClaim("ts_auth_session") is { } sessionId)
         {
+            if (await sessions.ResolveIdAsync(tenant, user.Id, sessionId, cancellationToken) is not { } live)
+            {
+                await ProjectSessionPolicy.RevokeAsync(tokens, principal, cancellationToken);
+                return OidcResults.Forbid(Errors.InvalidGrant, "The project session is no longer active.");
+            }
+
+            user = live.User;
+            authenticationTime = live.Session.VerifiedAt ?? authenticationTime;
             var lifetime = await sessions.GetLifetimeAsync(tenant, cancellationToken);
             if (authenticationTime > DateTimeOffset.MaxValue - lifetime || authenticationTime + lifetime <= clock.GetUtcNow())
             {
@@ -645,6 +653,7 @@ internal static class OidcResults
             .SetClaim(Claims.AuthenticationTime, authenticatedAt.ToUnixTimeSeconds())
             .SetClaim(OidcIssuer.EpochClaim, user.AuthEpoch)
             .SetClaim(OidcIssuer.StateClaim, user.AuthStamp)
+            .SetClaim("ts_auth_session", user.SessionId)
             .SetClaim(OidcIssuer.MfaClaim, user.MultiFactor ? user.MfaMethod ?? "totp" : null)
             .SetClaim(FixedRefreshTokens.Claim, refreshExpiresAt?.ToUnixTimeSeconds())
             .SetScopes(scopes)
@@ -663,7 +672,7 @@ internal static class OidcResults
             Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
-            OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
+            "ts_auth_session" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             _ => [],
         });
         var principal = new ClaimsPrincipal(identity);

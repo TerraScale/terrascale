@@ -41,6 +41,11 @@ import { requireId } from "./ids.js";
  * @typedef {{
  *   readonly redirect_urls: readonly string[];
  *   readonly session_lifetime_seconds?: number | undefined;
+ *   readonly require_mfa?: boolean | undefined;
+ *   readonly allow_totp?: boolean | undefined;
+ *   readonly allow_passkey?: boolean | undefined;
+ *   readonly inactivity_timeout_minutes?: number | null | undefined;
+ *   readonly single_session?: boolean | undefined;
  * }} TsAuthProjectConfiguration
  */
 
@@ -591,6 +596,25 @@ export class TsAuthProjectsClient {
       method: "DELETE",
       path: `v1/${requireId(projectId, "projectId")}/sessions/${requireId(sessionId, "sessionId")}`,
       routeName: "tsauth.projects.revoke_session",
+      projectAccessToken: managementCredential(signIn),
+    });
+  }
+
+  /**
+   * Sign a project user out everywhere (admin).
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  signOutUser(signIn, projectId, userId, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/sign-out`,
+      routeName: "tsauth.projects.sign_out_user",
       projectAccessToken: managementCredential(signIn),
     });
   }

@@ -8,6 +8,12 @@
       "title": "auth:read lists users; auth:write disables and re-enables a project user"
     },
     {
+      "id": "auth.project.sign_out_user",
+      "group": "a",
+      "title": "sign a project end user out everywhere",
+      "needs": "project end user; exercised by hosted/project-mfa.spec.ts and the auth-management journey with auth:write keys"
+    },
+    {
       "id": "sql.execute.positional",
       "group": "a",
       "title": "execute with positional arguments",

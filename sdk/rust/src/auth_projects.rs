@@ -76,6 +76,13 @@ pub struct ProjectConfiguration {
     /// Absolute session lifetime in seconds.
     #[serde(default = "default_session_lifetime_seconds")]
     pub session_lifetime_seconds: i64,
+    #[serde(default)]
+    pub require_mfa: bool,
+    pub allow_totp: bool,
+    pub allow_passkey: bool,
+    pub inactivity_timeout_minutes: Option<u32>,
+    #[serde(default)]
+    pub single_session: bool,
 }
 
 fn default_session_lifetime_seconds() -> i64 {
@@ -636,6 +643,25 @@ impl ProjectsClient {
                 "/{}/sessions/{}",
                 self.project(project_id)?,
                 path_id(session_id, "session_id")?
+            ),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn sign_out_user(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        user_id: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.sign_out_user",
+            Method::Post,
+            &format!(
+                "/{}/users/{}/sign-out",
+                self.project(project_id)?,
+                path_id(user_id, "user_id")?
             ),
             sign_in,
         )

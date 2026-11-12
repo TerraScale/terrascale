@@ -1,0 +1,21 @@
+{
+  "producer": "src/TerraScale.Authentication/Features/ProjectTenants/SignOutProjectUserEndpoint.cs",
+  "sign_out_user": {
+    "method": "POST",
+    "path": "/v1/{project}/users/{user}/sign-out",
+    "status": 204,
+    "request": null,
+    "response": null,
+    "authorization": "platform sign-in bearer with project admin, or project secret API key with auth:write",
+    "retry": "none"
+  },
+  "configuration": {
+    "redirect_urls": [],
+    "session_lifetime_seconds": 1209600,
+    "require_mfa": true,
+    "allow_totp": true,
+    "allow_passkey": false,
+    "inactivity_timeout_minutes": 15,
+    "single_session": true
+  }
+}

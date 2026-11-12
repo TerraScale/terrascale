@@ -21,7 +21,8 @@ public sealed record BrandingBody(string? Name, string? LogoUrl, string? ThemeCo
 public sealed record FooterLinkBody(string Label, string Url);
 
 /// <summary>Project policy in addition to each OAuth client's exact redirect registration.</summary>
-public sealed record ConfigurationBody(IReadOnlyList<string> RedirectUrls, int SessionLifetimeSeconds = 1209600)
+public sealed record ConfigurationBody(IReadOnlyList<string> RedirectUrls, int SessionLifetimeSeconds = 1209600,
+    bool RequireMfa = false, bool AllowTotp = true, bool AllowPasskey = true, int? InactivityTimeoutMinutes = null, bool SingleSession = false)
 {
     /// <summary>No additional redirect restriction and a fourteen-day absolute session.</summary>
     public static readonly ConfigurationBody Default = new([]);
@@ -178,6 +179,8 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
+[JsonSerializable(typeof(ProjectStepUpRequest))]
+[JsonSerializable(typeof(ProjectStepUpBody))]
 [JsonSerializable(typeof(SettingsBody))]
 [JsonSerializable(typeof(UpdateSettingsRequest))]
 [JsonSerializable(typeof(SetProviderRequest))]

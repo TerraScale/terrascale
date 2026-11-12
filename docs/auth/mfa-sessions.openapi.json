@@ -1,0 +1,345 @@
+{
+  "openapi": "3.2.0",
+  "info": {
+    "title": "Project step-up",
+    "version": "v1"
+  },
+  "servers": [
+    {
+      "url": "https://auth.terrascale.tech"
+    }
+  ],
+  "paths": {
+    "/v1/{project}/step-up": {
+      "post": {
+        "tags": [
+          "Project tenants"
+        ],
+        "summary": "Reverify a project end user",
+        "description": "Requires a live project sign-in access token for client_id. Reverify an allowed TOTP/recovery code or a user-verified passkey using challenge and passkey from hosted passkey sign-in options. Password alone is accepted only when MFA is not required; password may also accompany the second factor. Returns a five-minute ES256 JWT with typ step-up+jwt, project issuer, client audience, sub, sid, auth_time and RFC 8176 amr. Verify type, signature with the project's JWKS, issuer, audience and expiry. The next refresh reflects fresh auth_time without extending the absolute session. Subject to the hosted IP and account attempt budgets.",
+        "operationId": "project_step_up",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectStepUpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.",
+                "schema": {
+                  "maxLength": 26,
+                  "minLength": 26,
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectStepUpBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.",
+                "schema": {
+                  "maxLength": 26,
+                  "minLength": 26,
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.",
+                "schema": {
+                  "maxLength": 26,
+                  "minLength": 26,
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.",
+                "schema": {
+                  "maxLength": 26,
+                  "minLength": 26,
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.",
+                "schema": {
+                  "maxLength": 26,
+                  "minLength": 26,
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorBody": {
+        "required": [
+          "error"
+        ],
+        "type": "object",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        }
+      },
+      "ErrorDetail": {
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "PasskeyAssertionInnerRequest": {
+        "required": [
+          "clientDataJSON",
+          "authenticatorData",
+          "signature"
+        ],
+        "type": "object",
+        "properties": {
+          "clientDataJSON": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "authenticatorData": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "signature": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "userHandle": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "PasskeyAssertionRequest": {
+        "required": [
+          "id",
+          "rawId",
+          "type",
+          "response"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "rawId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "response": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PasskeyAssertionInnerRequest"
+              }
+            ]
+          }
+        }
+      },
+      "ProjectStepUpBody": {
+        "required": [
+          "proof",
+          "expires_at"
+        ],
+        "type": "object",
+        "properties": {
+          "proof": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProjectStepUpRequest": {
+        "required": [
+          "client_id"
+        ],
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "password": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "code": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "challenge": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "passkey": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PasskeyAssertionRequest"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "OAuthAccessBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      },
+      "accountDeletionReceipt": {
+        "type": "apiKey",
+        "name": "X-TerraScale-Deletion-Receipt",
+        "in": "header"
+      },
+      "apiKeyToken": {
+        "type": "http",
+        "description": "An access token the token endpoint issued for an API key (client credentials), carrying key_id and key_gen.",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      },
+      "clientBasic": {
+        "type": "http",
+        "scheme": "basic"
+      },
+      "mailAdmission": {
+        "type": "http",
+        "description": "Domain-separated ts-alerts admission credential; no dashboard or authentication authority.",
+        "scheme": "bearer"
+      },
+      "platformUser": {
+        "type": "http",
+        "description": "A sign-in access token of the terrascale tenant (typ at+jwt, aud including the issuer), with the user's current authentication epoch. Primary-only tokens for active MFA accounts are refused; unavailable or corrupt MFA state fails closed. Organization, project, API key and service tokens are refused.",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      },
+      "projectApiKey": {
+        "type": "http",
+        "description": "Whole project API key, with no database restriction and both sql:read and sql:write. Backend use only; never expose this key to a browser. Organization keys and JWTs are refused.",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

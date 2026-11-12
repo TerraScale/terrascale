@@ -92,3 +92,10 @@ func (u *User) RevokeProjectSession(ctx context.Context, project, session string
 	}
 	return u.projectDirectoryDo(ctx, project, http.MethodDelete, []string{"sessions", session}, nil, nil)
 }
+
+func (u *User) SignOutProjectUser(ctx context.Context, project, user string) error {
+	if err := entityid.Check(user); err != nil {
+		return err
+	}
+	return u.projectDirectoryDo(ctx, project, http.MethodPost, []string{"users", user, "sign-out"}, nil, nil)
+}

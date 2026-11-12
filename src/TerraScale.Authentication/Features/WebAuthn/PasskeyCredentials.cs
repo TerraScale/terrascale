@@ -6,8 +6,10 @@ using Fido2NetLib;
 using Fido2NetLib.Objects;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
@@ -15,7 +17,7 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.WebAuthn;
 
-public sealed class PasskeyCredentials(AuthData data, Credentials credentials, Users users, AttemptLimiter limiter, Fido2NetLib.Fido2 fido2, AuthOptions options, TimeProvider clock)
+public sealed class PasskeyCredentials(AuthData data, Credentials credentials, Users users, AttemptLimiter limiter, Fido2NetLib.Fido2 fido2, AuthOptions options, TimeProvider clock, IEmailSender email)
 {
     public const string CredentialKind = "passkey_credential";
     private const string ChallengeKind = "passkey-challenge";
@@ -98,7 +100,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         return [.. (await this.ReadAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false)).Select(entry => entry.Value)];
     }
 
-    public async Task<PasskeyCredentialEntry?> VerifyAsync(UserRecord caller, string? sealedChallenge, AuthenticatorAttestationRawResponse response, string? name, CancellationToken cancellationToken = default)
+    public async Task<PasskeyCredentialEntry?> VerifyAsync(UserRecord caller, string? sealedChallenge, AuthenticatorAttestationRawResponse response, string? name, ChallengedSignIn? signIn = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(response);
@@ -110,7 +112,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         if (this.OpenChallenge(caller.InstanceId, sealedChallenge) is not { } challenge
             || await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || user.AuthEpoch != challenge.AuthEpoch || user.AuthStamp != challenge.AuthStamp
-            || await credentials.RequireAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false) is not { } lineage)
+            || await credentials.RequireAsync(caller.InstanceId, [.. caller.AuthenticationBindings.Where(binding => binding != signIn?.Completion)], cancellationToken).ConfigureAwait(false) is not { } lineage)
         {
             return null;
         }
@@ -145,9 +147,24 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             InstanceId = user.InstanceId,
             UserId = user.Id,
         };
-        return await data.SaveAsync([.. lineage, Change.Assert(user), Change.Insert(entry), Credentials.Claim(user.InstanceId, completion)], cancellationToken).ConfigureAwait(false)
-            ? entry
-            : null;
+        List<Change> changes = [.. lineage, Change.Assert(user), Change.Insert(entry), Credentials.Claim(user.InstanceId, completion)];
+        if (signIn is not null)
+        {
+            if (signIn.ExpiresAt <= clock.GetUtcNow())
+            {
+                return null;
+            }
+
+            changes.Add(Credentials.Claim(user.InstanceId, signIn.Completion));
+        }
+
+        if (!await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        await FactorEnrollmentNotice.SendAsync(email, user, cancellationToken).ConfigureAwait(false);
+        return entry;
     }
 
     public async Task<(AssertionOptions Options, string Challenge)?> SignInOptionsAsync(string instanceId, string email, CancellationToken cancellationToken = default)
@@ -323,7 +340,7 @@ public sealed record PasskeyAttestationInnerRequest(
 
 public sealed record PasskeySignInRequest(string? Challenge, string? Email, string? Next = null, PasskeyAssertionRequest? Response = null);
 
-public sealed record PasskeyAssertionRequest(string? Id, string? RawId, string? Type, PasskeyAssertionInnerRequest? Response);
+public sealed record PasskeyAssertionRequest(string? Id, [property: JsonPropertyName("rawId")] string? RawId, string? Type, PasskeyAssertionInnerRequest? Response);
 
 public sealed record PasskeyAssertionInnerRequest(
     [property: JsonPropertyName("clientDataJSON")] string? ClientDataJson,

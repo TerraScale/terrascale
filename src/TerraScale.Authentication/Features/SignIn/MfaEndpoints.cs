@@ -52,7 +52,7 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         var ipWait = await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken);
         // Resolving the challenge only reads: a refused request keeps a valid continuation and spends no proof.
-        if (await mfa.ChallengedAsync(tenant, form.Challenge, cancellationToken) is not { } challenged)
+        if (await mfa.ChallengedAsync(tenant, form.Challenge, "verification", cancellationToken) is not { } challenged)
         {
             AuthMetrics.SignIn("hosted_mfa", ipWait is null ? "expired" : "rate_limited");
             return Expired(tenant, next);
@@ -89,7 +89,7 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         }
 
         // The challenge is spent; a session that loses to a newer sign-out or a competing completion starts over.
-        if (await SignInFlow.OpenSessionAsync(sessions, user with { MultiFactor = true }, cancellationToken) is not { } session)
+        if (await SignInFlow.OpenSessionAsync(sessions, user with { MultiFactor = true, MfaMethod = code.Length == 6 ? "totp" : "recovery" }, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_mfa", "expired");
             return Expired(tenant, next);

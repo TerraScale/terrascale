@@ -1,0 +1,22 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationPage>
+@using System.Globalization
+@{
+    var config = Model.Settings?.Configuration;
+    bool Checked(string name, bool saved) => Model.Draft is { } draft ? draft.ContainsKey(name) : saved;
+    var idle = Model.Draft is { } form ? form["inactivity_timeout_minutes"].ToString() : config?.InactivityTimeoutMinutes?.ToString(CultureInfo.InvariantCulture) ?? "";
+}
+<header class="ts-card-head"><h2 class="ts-card-title" id="auth-mfa-sessions-title">MFA and sessions</h2></header>
+<div class="ts-card-body">
+<form class="ts-form" method="post" action="/api/v1/auth-management/mfa-sessions">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<fieldset class="ts-form" disabled="@(!Model.Context.CanManageProject || Model.Settings is null)">
+@foreach (var (name, label, saved) in new[] { ("require_mfa", "Require MFA", config?.RequireMfa ?? false), ("allow_totp", "Allow authenticator apps", config?.AllowTotp ?? true), ("allow_passkey", "Allow passkeys", config?.AllowPasskey ?? true), ("single_session", "Single session per user", config?.SingleSession ?? false) })
+{
+<label class="ts-check"><input type="checkbox" name="@name" checked="@Checked(name, saved)" /><span>@label</span></label>
+}
+<p role="note">Turning off authenticator apps lets TOTP users sign in with only their password when MFA is not required.</p>
+<div class="ts-field"><label class="ts-label" for="auth-inactivity">Inactivity timeout (minutes)</label><input class="ts-input" id="auth-inactivity" name="inactivity_timeout_minutes" type="number" min="15" max="43200" step="1" placeholder="Off" value="@idle" /></div>
+<button class="ts-btn ts-btn-primary" type="submit">Save MFA and sessions</button>
+</fieldset>
+</form>
+</div>

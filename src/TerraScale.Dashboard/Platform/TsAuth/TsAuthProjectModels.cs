@@ -27,7 +27,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
     public sealed record TsAuthProjectConfiguration(
         [property: JsonPropertyName("redirect_urls")] IReadOnlyList<string> RedirectUrls,
-        [property: JsonPropertyName("session_lifetime_seconds")] int SessionLifetimeSeconds = 1209600);
+        [property: JsonPropertyName("session_lifetime_seconds")] int SessionLifetimeSeconds = 1209600,
+    [property: JsonPropertyName("require_mfa")] bool RequireMfa = false,
+    [property: JsonPropertyName("allow_totp")] bool AllowTotp = true,
+    [property: JsonPropertyName("allow_passkey")] bool AllowPasskey = true,
+    [property: JsonPropertyName("inactivity_timeout_minutes")] int? InactivityTimeoutMinutes = null,
+    [property: JsonPropertyName("single_session")] bool SingleSession = false);
 
     public sealed record TsAuthProjectCounts(
         [property: JsonPropertyName("users")] int Users,

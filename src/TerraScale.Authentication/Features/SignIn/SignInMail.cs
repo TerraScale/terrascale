@@ -359,6 +359,9 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         PasscodePurpose.StepUp => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } user
             ? await passcodes.RequestStepUpAsync(user, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
             : null,
+        PasscodePurpose.EnrollmentInbox => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } enrolling
+            ? await passcodes.RequestEnrollmentInboxAsync(enrolling, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
+            : null,
         { } purpose => await passcodes.RequestAsync(work.Tenant, work.Email, purpose, CancellationToken.None).ConfigureAwait(false),
         null => throw new InvalidOperationException("A queued outbox row names no code to issue."),
     };
@@ -556,6 +559,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             ArgumentNullException.ThrowIfNull(user);
             return this.Consume().WriteAsync("queued", new MailWork(user.InstanceId, user.Email) { Purpose = PasscodePurpose.StepUp, UserId = user.Id, RequestId = requestId }, locale, null);
         }
+
+        public Task EnqueueEnrollmentInboxAsync(UserRecord user, string challenge, string locale) =>
+            this.Consume().WriteAsync("queued", new MailWork(user.InstanceId, user.Email)
+            { Purpose = PasscodePurpose.EnrollmentInbox, UserId = user.Id, RequestId = challenge }, locale, null);
 
         /// <summary>Queues a committed <paramref name="kind"/> email using the slot reserved before its transaction.</summary>
         public Task EnqueueEmailAsync(AuthEmailKind kind, AuthEmailValues values, string locale = AuthEmails.English)

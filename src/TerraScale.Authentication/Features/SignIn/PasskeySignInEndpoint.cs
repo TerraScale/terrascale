@@ -103,7 +103,7 @@ public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials 
         throw Denied();
     }
 
-    private static AuthenticatorAssertionRawResponse? Map(PasskeyAssertionRequest? response)
+    internal static AuthenticatorAssertionRawResponse? Map(PasskeyAssertionRequest? response)
     {
         if (response?.Response is not { } inner
             || response.RawId is not { Length: > 0 }

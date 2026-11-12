@@ -7,6 +7,7 @@ const contextParameters = new Set(['organizationId', 'projectId']);
 const chartWindows = new Set(['range', 'reads', 'writes', 'storage', 'latency']);
 
 const journeyPages: readonly PagePattern[] = [
+  { path: /^\/auth\/mfa-sessions$/, query: { saved: /^1$/ } },
   { path: /^\/databases\/[0-9A-HJKMNP-TV-Z]{26}\/settings$/, query: { renamed: /^1$/ } },
   { path: /^\/organization$/, query: { newOrganization: /^(payment|project)$/, payment: /^(success|canceled)$/, draft_id: /^([0-9A-HJKMNP-TV-Z]{26})?$/ } },
   { path: /^\/onboarding$/ },
@@ -20,6 +21,7 @@ const journeyPages: readonly PagePattern[] = [
 ];
 
 const hostedPages: readonly RegExp[] = [
+  /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(sign-in|sign-up|security)$/,
   /^\/ui\/terrascale\/device$/,
   /^\/ui\/terrascale\/sign-up$/,
   /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(sign-up|sign-in|reset)$/,

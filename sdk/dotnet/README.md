@@ -419,3 +419,5 @@ for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, plac
 ## Project Authentication management
 
 Pass the project secret API key to `client.Projects.DisableUserAsync(secretKey, projectId, userId)` and the other management methods. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
+
+Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.

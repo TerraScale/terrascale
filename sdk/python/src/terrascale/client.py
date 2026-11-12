@@ -37,6 +37,7 @@ from .auth import (
     rotate_api_key_call,
     rotate_project_client_secret_call,
     set_provider_call,
+    sign_out_user_call,
     update_project_client_call,
     update_settings_call,
 )
@@ -434,6 +435,10 @@ class TerraScale:
         return self._send(list_sessions_call(self._issuer, project if project is not None else self.project, user_id,
                                              limit, after))
 
+    def sign_out_user(self, user_id: str, *, project: str | None = None) -> None:
+        """End all of a project user's sessions and refresh tokens (admin)."""
+        self._send(sign_out_user_call(self._issuer, project if project is not None else self.project, user_id))
+
     def revoke_session(self, session_id: str, *, project: str | None = None) -> None:
         """Revoke one session; the session is signed out at once."""
         self._send(revoke_session_call(self._issuer, project if project is not None else self.project, session_id))
@@ -450,6 +455,7 @@ def _error(response: httpx.Response, *, mutation: bool = False) -> APIError:
 
 
 class Database:
+
     def __init__(self, client: TerraScale, name: str):
         self._c = client
         self.name = name

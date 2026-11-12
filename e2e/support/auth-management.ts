@@ -174,6 +174,19 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
     expect(response.status()).toBe(403);
     expect((await response.json()).error).toMatchObject({ code: 'person_required' });
   }
+  for (const [key, status] of [[readKey, 403], [writeKey, 204]] as const) {
+    const signedOut = await page.request.post(`${root}/users/${user}/sign-out`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    expect(signedOut.status()).toBe(status);
+  }
+  const sessions = await page.request.get(root + '/sessions', { headers: { Authorization: `Bearer ${readKey}` } });
+  expect(sessions.status()).toBe(200);
+  expect((await sessions.json()).items.some((session: { user_id: string }) => session.user_id === user)).toBe(false);
+  const stepUp = await page.request.post(root + '/step-up', {
+    headers: { Authorization: `Bearer ${writeKey}` }, data: { client_id: current.projectId, password: current.password },
+  });
+  expect(stepUp.status()).toBe(401);
   const missing = await page.request.post(root + '/users/' + current.projectId + '/disable', {
     headers: { Authorization: 'Bearer ' + writeKey },
   });
@@ -188,7 +201,7 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
 export async function closeAuthManagement(page: Page, management: AuthManagement): Promise<void> {
   const current = journey();
   const root = `${auth}/v1/${current.projectId}`;
-  for (const action of ['disable_project_user.succeeded', 'enable_project_user.succeeded']) {
+  for (const action of ['disable_project_user.succeeded', 'enable_project_user.succeeded', 'sign_out_project_user.succeeded']) {
     const audit = await page.request.get('/api/v1/dashboard/audit-events', { params: { action, range: '7d' } });
     expect(audit.status()).toBe(200);
     const events = (await audit.json()).events as { actor: string; action: string; source: string }[];
@@ -202,6 +215,7 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
   const events = (await audit.json()).items as { actor: string; action: string; detail: string }[];
   for (const [action, key, status] of [
     ['disable_project_user.failed', management.readKey, 403],
+    ['sign_out_project_user.failed', management.readKey, 403],
     ['disable_project_user.failed', management.writeKey, 404],
     ['update_project_settings.failed', management.writeKey, 400],
     ['set_project_provider.failed', management.writeKey, 403],

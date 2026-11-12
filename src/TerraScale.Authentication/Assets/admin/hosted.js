@@ -75,7 +75,9 @@ function passkeyDecode(text) {
     if (!window.PublicKeyCredential) { fail(button, i18n.unsupported || ''); return; }
     var name = (form.querySelector('input[name="name"]') || { value: '' }).value;
     var sealed = null;
-    fetch(form.dataset.options, { method: 'POST', headers: { 'Accept': 'application/json' } })
+    var headers = { 'Accept': 'application/json' };
+    if (form.dataset.enrollment) headers['X-TerraScale-Mfa-Challenge'] = form.dataset.enrollment;
+    fetch(form.dataset.options, { method: 'POST', headers: headers })
       .then(json)
       .then(function (body) {
         sealed = body.challenge;
@@ -97,7 +99,7 @@ function passkeyDecode(text) {
         if (!assertion) throw new Error(i18n.notCreated || '');
         return fetch(form.dataset.verify, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
           body: JSON.stringify({
             challenge: sealed,
             name: name,
@@ -114,7 +116,7 @@ function passkeyDecode(text) {
           })
         }).then(json);
       })
-      .then(function () { window.location.reload(); })
+      .then(function () { if (form.dataset.complete) window.location.assign(form.dataset.complete); else window.location.reload(); })
       .catch(function (error) { fail(button, error.message || i18n.notAdded || ''); });
   });
 })();

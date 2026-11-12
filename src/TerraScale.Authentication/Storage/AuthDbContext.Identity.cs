@@ -49,6 +49,8 @@ public sealed partial class AuthDbContext
             user.Ignore(row => row.AuthenticationBindings);
             user.Ignore(row => row.StepUpBindings);
             user.Ignore(row => row.MultiFactor);
+            user.Ignore(row => row.SessionId);
+            user.Ignore(row => row.InboxProven);
             user.Ignore(row => row.MfaMethod);
         });
 
@@ -81,7 +83,7 @@ public sealed partial class AuthDbContext
             passcode.ToTable("passcodes", table =>
             {
                 table.HasCheckConstraint("ck_passcodes_failed_attempts", "failed_attempts >= 0");
-                table.HasCheckConstraint("ck_passcodes_purpose", "purpose IS NULL OR purpose IN ('password-reset', 'sign-up', 'step-up')");
+                table.HasCheckConstraint("ck_passcodes_purpose", "purpose IS NULL OR purpose IN ('password-reset', 'sign-up', 'step-up', 'enrollment-inbox')");
             });
             passcode.HasKey(row => new { row.InstanceId, row.Key });
             passcode.HasIndex(row => new { row.InstanceId, row.UserId });
