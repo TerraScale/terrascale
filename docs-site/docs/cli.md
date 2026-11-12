@@ -116,7 +116,7 @@ Pass `-lang <js|go|python|dotnet|rust>` to pick the snippet yourself, and
 `-yes` to create the database and key without the one confirmation. The key's
 secret is printed once and written to `.env` as `TERRASCALE_API_KEY`, next to
 `TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_NAME` and `TERRASCALE_REGION`,
-the database's home region; only the .NET snippet reads the region.
+one region of the database's set; only the .NET snippet reads the region.
 
 ## Sign in
 
@@ -213,17 +213,22 @@ TERRASCALE_API_KEY=... ts db url example
 ### Placement
 
 ```sh
-ts -all-regions db create example
-ts db placement example -replica-regions gru,iad
-ts db move-home example iad
+ts db create example -regions gru,fra
+ts db placement example -regions sjc,fra
 ts db regions example
 ```
 
-`db create` places the home region automatically; `-home-region <region>`,
-`-replica-regions <a,b>` or `-all-regions` request specific placement.
-`db placement` changes a database's replica regions later,
-`db move-home <db> <region>` moves the home to one of its replica regions, and
-`db regions <db>` prints the home region and each replica's pull progress.
+`db create` takes `-regions`, a comma-separated list of region ids, at least one.
+`-all-regions` places the database in every serving region, including regions added later.
+`db placement <name> -regions …` changes the set later with the same `-regions` list, or with `-all-regions`.
+Changing the set does not name which region orders writes: TerraBase picks that region and moves it when the set changes.
+When a requested region is not ready, the regions you added stay added and `ts db placement <name> -regions …` exits with a message asking you to run the same command again.
+`db regions <db>` prints each region's pull progress.
+`-json` output still carries the earlier fields while the server sends them. `ts db move-home` no longer exists.
+
+### Earlier fields
+
+`-home-region` and `-replica-regions` are earlier flags and still work. New commands use `-regions` and `-all-regions`.
 
 Database deletion asks you to type the database name in a terminal before it
 deletes data. For an unattended script, explicitly consent

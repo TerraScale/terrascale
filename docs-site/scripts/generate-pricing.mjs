@@ -7,6 +7,14 @@ const seconds = (value) => (value === null ? 'No limit' : `${value} s`);
 const gb = (value) => (value === null ? 'No limit' : `${value} GB`);
 const yearly = (plan) => (plan.priceAnnualUsd === null ? '—' : `$${plan.priceAnnualUsd}`);
 const rates = metering.overageRates;
+const storageHome = "in the database's home region";
+const storageReplica = "Replica storage is not billed separately";
+if (!metering.storage.definition.includes(storageHome) || !metering.storage.definition.includes(storageReplica)) {
+  throw new Error("pricing catalog storage definition no longer contains the sentences this page rewrites");
+}
+const storageDefinition = metering.storage.definition
+  .replace(storageHome, "in the region that orders the database's writes")
+  .replace(storageReplica, "Copies in the database's other regions are not billed separately");
 // Scan budgets are not in the catalog: TerraBase sets them per plan in
 // src/TerraBase/Features/Qos/QosPolicy.cs (ScanRows, ScanBytes).
 const scanRows = { free: '10,000', starter: '50,000', pro: '100,000', team: '100,000', enterprise: 'No limit' };
@@ -25,7 +33,7 @@ Starter, Pro and Team can be billed monthly or yearly; a year costs ten monthly 
 ## What is billed
 
 - **Writes.** ${metering.operationUnit.definition}
-- **Storage.** ${metering.storage.definition}
+- **Storage.** ${storageDefinition}
 - **Reads.** SQL reads are not billed; they count toward the plan's monthly fair use. Shape reads served from the edge are free and not counted.
 
 ${metering.allowances.definition}
@@ -38,13 +46,12 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 
 ## Regions per database
 
-| Plan | Home regions per database |
+| Plan | Metered regions per database |
 | --- | --- |
 ${plans.map((plan) => `| ${plan.name} | ${count(plan.entitlements.regionsPerDatabase)} |`).join('\n')}
 
-Each database has one home region and replicas in other serving regions; a replica region can accept a local SQL REST write, the home applies it, and the default TerraScale-Durability is local.
-The catalog's regionsPerDatabase counts home regions. Replica storage is not billed separately; writes and stored
-bytes are metered at home. See [regions](/concepts/regions) and [replication](/concepts/replication).
+A database lives in a set of regions, at least one, and every region of the set accepts reads and writes. One region of the set orders the writes; TerraBase picks it. The default TerraScale-Durability is local.
+The catalog's regionsPerDatabase counts the regions in which a database's writes and stored bytes are metered: one per database on every plan. Copies in the database's other regions are not billed separately. See [regions](/concepts/regions) and [replication](/concepts/replication).
 
 ## Spending caps
 

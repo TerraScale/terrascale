@@ -17,7 +17,7 @@ Run a complete SQL workflow against your TerraScale database in about ten minute
 read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY   # keeps the key out of history
 export TERRASCALE_PROJECT_ID=YOUR_PROJECT_ULID
 export TERRASCALE_DATABASE_NAME=main                       # your database's name
-export TERRASCALE_REGION=gru                               # your database's home region
+export TERRASCALE_REGION=gru                               # one region of your database's set
 ```
 
 ## Install the SDK

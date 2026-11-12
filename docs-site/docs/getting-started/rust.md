@@ -121,14 +121,14 @@ refused: code primary_key_violation statement 0 sqlstate 23505
 
 ## Read from another region
 
-REST reads can use a ready local replica. Pin a region with `region_pin` (it needs the static public endpoint), and set `TERRASCALE_REGION` to a replica region of your database:
+Reads are served in the region you call. Pin a region of the database's set with `region_pin` (it needs the static public endpoint), and set `TERRASCALE_REGION` to that region:
 
 ```rust
-let replica = Client::for_project_api_key(project, api_key)
+let client = Client::for_project_api_key(project, api_key)
     .endpoint("https://api.terrascale.tech")
     .region_pin(&std::env::var("TERRASCALE_REGION").expect("TERRASCALE_REGION"))
     .build()?;
-let rows = replica
+let rows = client
     .database(&database)
     .sql()
     .query("SELECT count(*) AS n FROM people", &[])
@@ -136,7 +136,7 @@ let rows = replica
 println!("people in region: {}", rows[0].get_i64("n")?);
 ```
 
-Replica reads are eventually consistent; see [regions](/concepts/regions).
+A read in that region can lag behind writes ordered in another region of the set; see [regions](/concepts/regions).
 
 ## How it works
 

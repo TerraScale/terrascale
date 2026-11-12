@@ -76,7 +76,7 @@ POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore
 {"name":"restored"}
 ```
 
-Restore never overwrites: it creates a new database in the same project holding the backup's data, with `branchedFrom` set to the backed-up database and the same primary, replica regions and `allRegions` choice. `name` follows the database name rules; without it the first free of `<source>-restore`, `<source>-restore-2`, … is used. The copy runs in the background: the answer is `202` with the restore operation, and `GET …/restores/{operation}` reports `running`, then `completed` with `database` naming the new database, or `failed`:
+Restore never overwrites: it creates a new database in the same project holding the backup's data, with `branchedFrom` set to the backed-up database and the same regions. Every-region placement stays on when the source used it. `name` follows the database name rules; without it the first free of `<source>-restore`, `<source>-restore-2`, … is used. The copy runs in the background: the answer is `202` with the restore operation, and `GET …/restores/{operation}` reports `running`, then `completed` with `database` naming the new database, or `failed`:
 
 ```json
 {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA7","operationId":"01ARZ3NDEKTSV4RRFFQ69G5FA7","status":"running","kind":"backup","database":"restored","errorCode":null,"errorMessage":null,"createdAt":"2026-10-07T12:00:00Z","finishedAt":null}
@@ -126,7 +126,7 @@ POST /v1/projects/{project}/databases/{database}/point-in-time/restore
 
 Restores every transaction committed before `pointInTime` (to the millisecond) and none whose commit was recorded at or after it, whole transactions only, into a new database in the same project; the source database itself is unchanged. `name` is optional as for backup restore; `ttlSeconds` is optional. The replay and copy run in the background: the answer is `202` with the restore operation, as backup restore does.
 
-A taken name answers `409 name_taken` and a full database allowance `409 database_limit`, before the backup is read. `400` only when `pointInTime` is after now or before the plan's retention window; the error names the earliest and latest available restore timestamps. A time inside that range but outside the proven restore window answers `409 backup_history_incomplete`, retryable once the backup holds it. When the backup cannot prove the history (`409 backup_history_incomplete` or `restore_point_unproven`) or an object fails its integrity check (`409 backup_unreadable`), nothing is created. Restores execute in the primary region; requests sent elsewhere answer `421`.
+A taken name answers `409 name_taken` and a full database allowance `409 database_limit`, before the backup is read. `400` only when `pointInTime` is after now or before the plan's retention window; the error names the earliest and latest available restore timestamps. A time inside that range but outside the proven restore window answers `409 backup_history_incomplete`, retryable once the backup holds it. When the backup cannot prove the history (`409 backup_history_incomplete` or `restore_point_unproven`) or an object fails its integrity check (`409 backup_unreadable`), nothing is created. Restores execute in one region of the database's set; requests sent elsewhere answer `421`.
 
 ## Check restore status
 
