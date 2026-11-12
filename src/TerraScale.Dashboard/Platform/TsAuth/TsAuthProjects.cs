@@ -177,8 +177,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
         private static string Provider(string value)
         {
-            return value is "google" or "github" or "apple" or "oidc"
-            ? value : throw new ArgumentException("Provider must be google, github, apple or oidc.", nameof(value));
+            return value is "google" or "github" or "apple" or "oidc" or "microsoft" or "gitlab" or "linkedin" or "slack" or "discord" or "facebook" or "x" or "oauth2"
+            ? value : throw new ArgumentException("Provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.", nameof(value));
         }
 
         private static string PageQuery(string filterName, string? filter, int? limit, string? after)

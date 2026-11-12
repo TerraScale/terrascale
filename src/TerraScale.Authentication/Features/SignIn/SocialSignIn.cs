@@ -21,7 +21,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// <param name="Issuer">The validated authority: Google aliases are canonicalized; other OIDC issuers stay exact.</param>
 /// <param name="Subject">The stable external subject.</param>
 /// <param name="ClientId">The client whose token was validated.</param>
-public sealed record SocialIdentity(string Email, string Issuer, string Subject, string ClientId);
+public sealed record SocialIdentity(string Email, string Issuer, string Subject, string ClientId, bool EmailVerified = true);
 
 /// <summary>A sign-in in flight, sealed into the browser's state cookie.</summary>
 /// <param name="Provider">The provider.</param>
@@ -41,7 +41,7 @@ public sealed record SocialLink(string UserId, string SessionHash, string? AuthS
 /// an OIDC <c>nonce</c>, all bound to the browser by an encrypted, short-lived cookie. Google, Apple and generic OIDC
 /// prove the address with a validated ID token; GitHub with its verified primary email.
 /// </summary>
-public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options, TimeProvider clock)
+public sealed partial class SocialSignIn(IHttpClientFactory clients, AuthOptions options, TimeProvider clock)
 {
     /// <summary>The outbound client; it connects only to public addresses (<c>PublicAddresses</c>).</summary>
     public const string HttpClientName = "social-sign-in";
@@ -75,7 +75,12 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
             ["state"] = state.State,
         };
         string endpoint;
-        if (provider.Provider == SocialProviders.GitHub)
+        if (OAuth(provider) is { } oauth)
+        {
+            endpoint = oauth.AuthorizeUrl;
+            query["scope"] = oauth.Scopes;
+        }
+        else if (provider.Provider == SocialProviders.GitHub)
         {
             endpoint = GitHubAuthorize;
             query["scope"] = "read:user user:email";
@@ -84,7 +89,7 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
         else
         {
             endpoint = (await this.ConfigurationAsync(provider, cancellationToken).ConfigureAwait(false)).AuthorizationEndpoint;
-            query["scope"] = "openid email";
+            query["scope"] = provider.Provider is SocialProviders.LinkedIn or SocialProviders.Slack ? "openid profile email" : "openid email";
             query["nonce"] = state.Nonce;
             if (provider.Provider == SocialProviders.Apple)
             {
@@ -93,7 +98,7 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
             }
         }
 
-        if (provider.Provider != SocialProviders.Apple)
+        if (provider.Provider is not (SocialProviders.Apple or SocialProviders.Facebook))
         {
             query["code_challenge"] = Base64UrlEncoder.Encode(SHA256.HashData(Encoding.ASCII.GetBytes(state.Verifier)));
             query["code_challenge_method"] = "S256";
@@ -143,7 +148,7 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
             ["client_id"] = provider.ClientId,
             ["client_secret"] = secret,
         };
-        if (provider.Provider != SocialProviders.Apple)
+        if (provider.Provider is not (SocialProviders.Apple or SocialProviders.Facebook))
         {
             form["code_verifier"] = state.Verifier;
         }
@@ -152,6 +157,11 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
         if (provider.Provider == SocialProviders.GitHub)
         {
             return await GitHubAsync(client, form, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (OAuth(provider) is { } oauth)
+        {
+            return await OAuthAsync(client, provider, oauth, form, cancellationToken).ConfigureAwait(false);
         }
 
         var configuration = await this.ConfigurationAsync(provider, cancellationToken).ConfigureAwait(false);
@@ -166,6 +176,7 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
         var validated = await this.tokens.ValidateTokenAsync(idToken.GetString(), new TokenValidationParameters
         {
             ValidIssuers = provider.Provider == SocialProviders.Google ? [GoogleIssuer, "accounts.google.com"] : [configuration.Issuer],
+            IssuerValidator = (issuer, token, _) => ValidIssuer(provider, configuration.Issuer, issuer, token),
             ValidAudience = provider.ClientId,
             IssuerSigningKeys = configuration.SigningKeys,
             ValidAlgorithms = [SecurityAlgorithms.RsaSha256, SecurityAlgorithms.EcdsaSha256],
@@ -176,13 +187,13 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
         if (!validated.IsValid || Claim("nonce") is not string nonce || !Tokens.FixedTimeEquals(nonce, state.Nonce)
             || Claim("iss") is not string issuer || Claim("sub") is not string subject
             || string.IsNullOrWhiteSpace(subject) || subject.Length > 256
-            || Claim("email") is not string email || Claim("email_verified") is not (true or "true"))
+            || Claim("email") is not string email)
         {
             return null;
         }
 
         // Both accepted Google spellings name one authority; map only after token validation.
-        return new(email, provider.Provider == SocialProviders.Google ? GoogleIssuer : issuer, subject, provider.ClientId);
+        return new(email, provider.Provider == SocialProviders.Google ? GoogleIssuer : issuer, subject, provider.ClientId, Claim("email_verified") is true or "true");
     }
 
     // GitHub: stable account ID and verified primary email from the same access token.
@@ -233,6 +244,10 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
         {
             SocialProviders.Google => GoogleIssuer,
             SocialProviders.Apple => AppleIssuer,
+            SocialProviders.Microsoft => $"https://login.microsoftonline.com/{provider.Tenant ?? "common"}/v2.0",
+            SocialProviders.GitLab => "https://gitlab.com",
+            SocialProviders.LinkedIn => "https://www.linkedin.com/oauth",
+            SocialProviders.Slack => "https://slack.com",
             _ => provider.Issuer ?? throw new InvalidOperationException("An oidc provider has an issuer."),
         };
         if (this.configurations.Count >= MaxIssuers)
@@ -244,7 +259,7 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
             key + "/.well-known/openid-configuration", new OpenIdConnectConfigurationRetriever(),
             new HttpDocumentRetriever(clients.CreateClient(HttpClientName)) { RequireHttps = true }));
         var configuration = await manager.GetConfigurationAsync(cancellationToken).ConfigureAwait(false);
-        return configuration.Issuer == issuer ? configuration : throw new InvalidOperationException("The provider's discovery document names another issuer.");
+        return configuration.Issuer == issuer || provider.Provider == SocialProviders.Microsoft && configuration.Issuer == "https://login.microsoftonline.com/{tenantid}/v2.0" ? configuration : throw new InvalidOperationException("The provider's discovery document names another issuer.");
     }
 
     // Apple's client secret: a short ES256 JWT signed with the project's .p8 key.

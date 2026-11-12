@@ -86,13 +86,17 @@ case SignInStep.Email:
 <form method="post" action="@Model.Link(Model.Theme.Passcode ? "sign-in" : "sign-in/password", form: true)">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
-<label for="sign-in-email">@Model.Copy.Email</label>
-<input id="sign-in-email" name="email" type="email" autocomplete="username" placeholder="@Model.Copy.EmailPlaceholder" required minlength="3" maxlength="254" autofocus value="@Model.Email">
+<label for="sign-in-email">@(Model.Theme.Username ? "Email or username" : Model.Copy.Email)</label>
+<input id="sign-in-email" name="email" type="@(Model.Theme.Username ? "text" : "email")" autocomplete="username" placeholder="@Model.Copy.EmailPlaceholder" required minlength="3" maxlength="254" autofocus value="@Model.Email">
 </div>
 <div class="actions">
 @if (Model.Theme.Passcode)
 {
 <button type="submit">@Model.Copy.EmailCodeButton<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></button>
+}
+@if (Model.Theme.MagicLink)
+{
+<button type="submit" class="secondary" formaction="@Model.Link("sign-in/magic", form: true)"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg>Email a sign-in link</button>
 }
 @if (Model.Theme.Password)
 {
@@ -106,7 +110,7 @@ case SignInStep.Email:
 <div class="actions">
 @foreach (var provider in Model.Theme.Providers)
 {
-<a class="btn secondary" href="@Model.Link("social/" + provider)">@string.Format(CultureInfo.InvariantCulture, Model.Copy.ContinueWith, TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(provider))</a>
+<a class="btn secondary" href="@Model.Link("social/" + provider)"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@string.Format(CultureInfo.InvariantCulture, Model.Copy.ContinueWith, TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(provider))</a>
 }
 </div>
 }
@@ -134,7 +138,7 @@ case SignInStep.Password:
 </form>
 @if (Model.Theme.Passcode)
 {
-<form method="post" action="@Model.Link("sign-in", form: true)">
+<form method="post" action="@Model.Link(Model.CodeRequest ?? (Model.Theme.Passcode ? "sign-in" : "sign-in/magic"), form: true)">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg>@Model.Copy.EmailCodeButton</button>
@@ -151,10 +155,10 @@ case SignInStep.Code:
 </div>
 <button type="submit">@Model.Copy.VerifySignIn</button>
 </form>
-<form method="post" action="@Model.Link("sign-in", form: true)">
+<form method="post" action="@Model.Link(Model.CodeRequest ?? (Model.Theme.Passcode ? "sign-in" : "sign-in/magic"), form: true)">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
-@if (Model.CodeBudgetExhausted)
+@if (Model.CodeBudgetExhausted || Model.Limited && Model.WaitSeconds > 0)
 {
 <button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-wait-format="@Model.Copy.CountdownIn" data-label="@Model.Copy.SendNewCode">@string.Format(CultureInfo.InvariantCulture, Model.Copy.SendNewCodeIn, Model.WaitSeconds)</button>
 }
@@ -219,6 +223,10 @@ case SignInStep.SignUp:
 <label for="sign-up-email">@Model.Copy.Email</label>
 <input id="sign-up-email" name="email" type="email" autocomplete="username" placeholder="@Model.Copy.EmailPlaceholder" required minlength="3" maxlength="254" autofocus value="@Model.Email">
 </div>
+@if (Model.Theme.Username)
+{
+<div class="field"><label for="sign-up-username">Username</label><input id="sign-up-username" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_.]{3,32}"></div>
+}
 <div class="field">
 <label for="sign-up-password">@Model.Copy.Password</label>
 <input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="1024" placeholder="@Model.Copy.NewPasswordPlaceholder" required aria-describedby="@Model.ErrorId">
@@ -230,7 +238,7 @@ case SignInStep.SignUp:
 <div class="actions">
 @foreach (var provider in Model.Theme.Providers)
 {
-<a class="btn secondary" href="@Model.Link("social/" + provider)">@string.Format(CultureInfo.InvariantCulture, Model.Copy.ContinueWith, TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(provider))</a>
+<a class="btn secondary" href="@Model.Link("social/" + provider)"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@string.Format(CultureInfo.InvariantCulture, Model.Copy.ContinueWith, TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(provider))</a>
 }
 </div>
 }

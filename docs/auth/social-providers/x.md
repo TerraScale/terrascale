@@ -1,0 +1,21 @@
+# X sign-in
+
+In **Authentication → Social**, configure X with the client ID and secret from X Developer Portal → App → User authentication settings.
+
+Register the exact callback URL displayed by the dashboard: `https://auth.terrascale.tech/ui/{project}/social/x/callback`. Requested scopes: `users.read users.email tweet.read`.
+
+Enable OAuth 2.0 Authorization Code and use a confidential web application. Email access requires the provider permission and account tier. PKCE and HTTP Basic client authentication are used. An unfamiliar identity requires email-code verification; when X supplies no email, sign in locally and connect X from Security.
+
+The equivalent request uses the operator's sign-in token and the admin project role:
+
+```http
+PUT /v1/{project}/providers/x
+Authorization: Bearer {sign_in_token}
+Content-Type: application/json
+
+{"client_id": "{provider_client_id}", "client_secret": "{provider_client_secret}"}
+```
+
+Secrets are encrypted at rest and never returned. Omit client_secret when updating to retain it. Deleting the provider removes its configuration.
+
+Only a previously connected provider subject selects an existing account. A new provider identity with an unused, provider-verified email can create an account when self sign-up is allowed. Matching email alone never links accounts. Without provider-verified email, an existing user must verify the emailed code or connect the provider from an authenticated Security page.

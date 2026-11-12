@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
@@ -86,9 +87,24 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
             return await this.CompleteLinkAsync(context, provider, identity, link, cancellationToken);
         }
 
-        var user = identity is null ? null : await users.FromProviderAsync(tenant,
-            new LinkedProvider(provider.Provider, identity.Issuer, identity.ClientId, identity.Subject),
-            identity.Email, HostedTheme.Of(context).SignUp, cancellationToken);
+        var external = identity is null ? null : new LinkedProvider(provider.Provider, identity.Issuer, identity.ClientId, identity.Subject);
+        var user = external is null ? null : await users.FindByProviderAsync(tenant, external, cancellationToken);
+        if (user is null && identity is { EmailVerified: true })
+        {
+            user = await users.FromProviderAsync(tenant, external!, identity.Email, HostedTheme.Of(context).SignUp, cancellationToken);
+        }
+
+        if (user is null && identity is { EmailVerified: false } && Users.NormalizeEmail(identity.Email) is { } email)
+        {
+            using var reservation = context.RequestServices.GetRequiredService<SignInMail>().Reserve();
+            if (await hosted.LimitMailAsync(email, SignInFlow.Ip(context), cancellationToken) is { } refusal)
+            {
+                return SignInFlow.Limited(context, SignInStep.Code, refusal.Wait, email, resumed.Next);
+            }
+
+            await reservation.EnqueueCodeAsync(tenant, email, PasscodePurpose.SignIn, AuthEmails.Locale(context.Request));
+            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, email, resumed.Next));
+        }
 
         // An active local factor gets the hosted second step; the provider's own amr/acr never count as one.
         if (user is not null && await SignInFlow.SecondFactorAsync(context, mfa, user, resumed.Next, cancellationToken) is { } factor)

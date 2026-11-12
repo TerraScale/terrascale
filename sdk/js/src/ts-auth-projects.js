@@ -13,6 +13,8 @@ import { requireId } from "./ids.js";
  *   readonly passcode: boolean;
  *   readonly password: boolean;
  *   readonly sign_up: boolean;
+ *   readonly magic_link?: boolean;
+ *   readonly username?: boolean;
  * }} TsAuthProjectMethods
  */
 
@@ -60,6 +62,8 @@ import { requireId } from "./ids.js";
  *   readonly team_id: string | null;
  *   readonly key_id: string | null;
  *   readonly callback_url: string;
+ *   readonly tenant?: string | null;
+ *   readonly oauth2?: TsAuthProjectOAuth2 | null;
  * }} TsAuthProjectProvider
  */
 
@@ -157,6 +161,8 @@ import { requireId } from "./ids.js";
  *   readonly issuer?: string | undefined;
  *   readonly team_id?: string | undefined;
  *   readonly key_id?: string | undefined;
+ *   readonly tenant?: string | undefined;
+ *   readonly oauth2?: TsAuthProjectOAuth2 | undefined;
  * }} TsAuthProjectProviderUpdate
  */
 
@@ -489,7 +495,7 @@ export class TsAuthProjectsClient {
    * stored one. The answered settings list every provider.
    * @param {string} signIn
    * @param {string} projectId
-   * @param {"google" | "github" | "apple" | "oidc"} provider
+   * @param {"google" | "github" | "apple" | "oidc" | "microsoft" | "gitlab" | "linkedin" | "slack" | "discord" | "facebook" | "x" | "oauth2"} provider
    * @param {TsAuthProjectProviderUpdate} request
    * @param {TsAuthProjectsRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthProjectSettings>>}
@@ -500,12 +506,20 @@ export class TsAuthProjectsClient {
       provider !== "google" &&
       provider !== "github" &&
       provider !== "apple" &&
-      provider !== "oidc"
+      provider !== "oidc" &&
+      provider !== "microsoft" &&
+      provider !== "gitlab" &&
+      provider !== "linkedin" &&
+      provider !== "slack" &&
+      provider !== "discord" &&
+      provider !== "facebook" &&
+      provider !== "x" &&
+      provider !== "oauth2"
     )
       throw new TypeError(
-        "provider must be google, github, apple or oidc.",
+        "provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.",
       );
-    members(request, ["client_id", "client_secret", "issuer", "team_id", "key_id"]);
+    members(request, ["client_id", "client_secret", "issuer", "team_id", "key_id", "tenant", "oauth2"]);
     if (typeof request.client_id !== "string" || request.client_id.length === 0)
       throw new TypeError("client_id must be a non-empty string.");
     return this.#http.request({
@@ -523,7 +537,7 @@ export class TsAuthProjectsClient {
    * carry the provider.
    * @param {string} signIn
    * @param {string} projectId
-   * @param {"google" | "github" | "apple" | "oidc"} provider
+   * @param {"google" | "github" | "apple" | "oidc" | "microsoft" | "gitlab" | "linkedin" | "slack" | "discord" | "facebook" | "x" | "oauth2"} provider
    * @param {TsAuthProjectsRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthProjectSettings>>}
    */
@@ -533,10 +547,18 @@ export class TsAuthProjectsClient {
       provider !== "google" &&
       provider !== "github" &&
       provider !== "apple" &&
-      provider !== "oidc"
+      provider !== "oidc" &&
+      provider !== "microsoft" &&
+      provider !== "gitlab" &&
+      provider !== "linkedin" &&
+      provider !== "slack" &&
+      provider !== "discord" &&
+      provider !== "facebook" &&
+      provider !== "x" &&
+      provider !== "oauth2"
     )
       throw new TypeError(
-        "provider must be google, github, apple or oidc.",
+        "provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.",
       );
     return this.#http.request({
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -738,3 +760,15 @@ export class TsAuthProjectsClient {
     });
   }
 }
+
+/**
+ * @typedef {{
+ *   readonly authorize_url: string;
+ *   readonly token_url: string;
+ *   readonly userinfo_url: string;
+ *   readonly scopes: string;
+ *   readonly id_claim?: string;
+ *   readonly email_claim?: string;
+ *   readonly email_verified_claim?: string;
+ * }} TsAuthProjectOAuth2
+ */

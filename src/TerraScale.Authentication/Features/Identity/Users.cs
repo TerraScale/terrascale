@@ -30,9 +30,9 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
     public async Task<UserRecord?> CreateAsync(string instanceId, string email, string? passwordHash, CancellationToken cancellationToken)
         => await this.CreateAccountAsync(instanceId, email, passwordHash, AuthIds.New(), cancellationToken).ConfigureAwait(false);
 
-    internal (UserRecord User, Change[] Changes) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, Change? lifecycleEvent = null)
+    internal (UserRecord User, Change[] Changes) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, Change? lifecycleEvent = null, string? username = null)
     {
-        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New() };
+        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New(), Username = username };
         return (user, lifecycleEvent is null ? [Change.Insert(user)] : [Change.Insert(user), lifecycleEvent]);
     }
 
@@ -53,6 +53,14 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         NormalizeEmail(email) is { } normalized
             ? await this.ReadAsync(db => db.Users.Where(user => user.InstanceId == instanceId && user.Email == normalized), cancellationToken).ConfigureAwait(false)
             : null;
+
+    public static string? NormalizeUsername(string? username) => username is { Length: >= 3 and <= 32 }
+        && username.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '.') ? username.ToLowerInvariant() : null;
+
+    public Task<UserRecord?> FindByUsernameAsync(string instanceId, string username, CancellationToken cancellationToken) =>
+        NormalizeUsername(username) is { } normalized
+            ? this.ReadAsync(db => db.Users.Where(user => user.InstanceId == instanceId && user.Username == normalized), cancellationToken)
+            : Task.FromResult<UserRecord?>(null);
 
     public Task<UserRecord?> GetAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
         TerraScaleIds.IsValid(userId)

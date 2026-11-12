@@ -22,7 +22,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// <param name="Password">The account password (password sign-in, sign-up and reset only).</param>
 /// <param name="PendingToken">The pending sign-up's token (sign-up verification only).</param>
 /// <param name="Challenge">The sealed second-factor challenge (second-factor step only).</param>
-public sealed record SignInForm(string? Email, string? Code, string? Next, string? Password = null, string? PendingToken = null, string? Challenge = null);
+public sealed record SignInForm(string? Email, string? Code, string? Next, string? Password = null, string? PendingToken = null, string? Challenge = null, string? Username = null);
 
 /// <summary><c>GET /ui/{slug}/sign-in</c>: asks for the email address to send a sign-in code to.</summary>
 public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
@@ -161,7 +161,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
             return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, next);
         }
 
-        var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, form.Code ?? string.Empty, PasscodePurpose.SignIn, cancellationToken);
+        var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, form.Code ?? string.Empty, PasscodePurpose.SignIn, cancellationToken: cancellationToken);
         if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
         {
             return step;
@@ -339,8 +339,15 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
             return sso;
         }
 
+        var username = HostedTheme.Of(this.HttpContext).Username ? Users.NormalizeUsername(form.Username) : null;
+        if (HostedTheme.Of(this.HttpContext).Username && username is null)
+        {
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
+                Error: "Use a username of 3 to 32 letters, digits, underscores or dots."), StatusCodes.Status400BadRequest);
+        }
+
         var (pending, refusal) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext),
-            AuthEmails.Locale(this.HttpContext.Request), cancellationToken);
+            AuthEmails.Locale(this.HttpContext.Request), username, cancellationToken);
         return refusal is { } limited
             ? limited.BudgetExhausted
                 ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.SignUpCode, limited.Wait, address, next)
@@ -445,7 +452,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
             return SignInFlow.Limited(this.HttpContext, SignInStep.SignUpCode, wait, address, next, form.PendingToken);
         }
 
-        var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, code, PasscodePurpose.SignIn, cancellationToken);
+        var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, code, PasscodePurpose.SignIn, cancellationToken: cancellationToken);
         if (user is null && form.PendingToken is { Length: > 0 } pending
             && await passcodes.RedeemSignUpAsync(SignInFlow.Tenant(this.HttpContext), address, code, pending, cancellationToken) is { } created)
         {
@@ -836,7 +843,7 @@ internal static class SignInFlow
         return page switch
         {
             "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method),
-            "sign-in/verify" => theme.Passcode,
+            "sign-in/verify" => theme.Passcode || theme.MagicLink || theme.Providers.Count > 0,
             "sign-in/password" or "reset" or "reset/complete" or "reset/resend" => theme.Password,
             "sign-up" or "sign-up/verify" or "sign-up/resend" => theme.SignUp,
             _ => true,
@@ -884,7 +891,7 @@ internal static class SignInFlow
         }
 
         var form = await context.Request.ReadFormAsync(cancellationToken);
-        return new SignInForm(form["email"], form["code"], form["next"], form["password"], form["pending_token"], form["challenge"]);
+        return new SignInForm(form["email"], form["code"], form["next"], form["password"], form["pending_token"], form["challenge"], form["username"]);
     }
 
     /// <summary>

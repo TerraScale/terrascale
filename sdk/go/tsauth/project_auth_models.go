@@ -24,17 +24,21 @@ type ProjectAuthSettings struct {
 
 // ProjectAuthMethods contains required response booleans, including false.
 type ProjectAuthMethods struct {
-	Passcode bool `json:"passcode"`
-	Password bool `json:"password"`
-	SignUp   bool `json:"sign_up"`
+	Passcode  bool `json:"passcode"`
+	Password  bool `json:"password"`
+	SignUp    bool `json:"sign_up"`
+	MagicLink bool `json:"magic_link"`
+	Username  bool `json:"username"`
 }
 
 // ProjectAuthMethodsPatch leaves nil methods unchanged; false applies a change.
-// The server requires at least one of passcode and password to remain available.
+// The server requires at least one of passcode, password and magic_link to remain available.
 type ProjectAuthMethodsPatch struct {
-	Passcode *bool `json:"passcode,omitempty"`
-	Password *bool `json:"password,omitempty"`
-	SignUp   *bool `json:"sign_up,omitempty"`
+	Passcode  *bool `json:"passcode,omitempty"`
+	Password  *bool `json:"password,omitempty"`
+	SignUp    *bool `json:"sign_up,omitempty"`
+	MagicLink *bool `json:"magic_link,omitempty"`
+	Username  *bool `json:"username,omitempty"`
 }
 
 // ProjectAuthBranding replaces hosted-page and email branding when sent. Nil
@@ -75,13 +79,15 @@ type ProjectAuthCounts struct {
 // ProjectAuthProvider contains public provider metadata and the callback to
 // register with that provider. ClientID is a vendor ID, not a TerraScale ULID.
 type ProjectAuthProvider struct {
-	Provider    string  `json:"provider"`
-	Configured  bool    `json:"configured"`
-	ClientID    *string `json:"client_id"`
-	Issuer      *string `json:"issuer"`
-	TeamID      *string `json:"team_id"`
-	KeyID       *string `json:"key_id"`
-	CallbackURL string  `json:"callback_url"`
+	Provider    string         `json:"provider"`
+	Configured  bool           `json:"configured"`
+	ClientID    *string        `json:"client_id"`
+	Issuer      *string        `json:"issuer"`
+	TeamID      *string        `json:"team_id"`
+	KeyID       *string        `json:"key_id"`
+	CallbackURL string         `json:"callback_url"`
+	Tenant      *string        `json:"tenant"`
+	OAuth2      *ProjectOAuth2 `json:"oauth2"`
 }
 
 // ProjectAuthSettingsPatch leaves nil sections unchanged. Sent branding and
@@ -134,4 +140,15 @@ func (s *ProjectAuthSettings) UnmarshalJSON(data []byte) error {
 	}
 	*s = ProjectAuthSettings(next)
 	return nil
+}
+
+// ProjectOAuth2 configures endpoints, scopes and dot-separated userinfo claim paths.
+type ProjectOAuth2 struct {
+	AuthorizeURL       string `json:"authorize_url"`
+	TokenURL           string `json:"token_url"`
+	UserinfoURL        string `json:"userinfo_url"`
+	Scopes             string `json:"scopes"`
+	IDClaim            string `json:"id_claim"`
+	EmailClaim         string `json:"email_claim"`
+	EmailVerifiedClaim string `json:"email_verified_claim"`
 }

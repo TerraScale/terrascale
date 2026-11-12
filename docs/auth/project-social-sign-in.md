@@ -1,7 +1,7 @@
 # Project social sign-in
 
-A project's end users can sign in to the project's hosted pages with Google, GitHub, Apple or any OpenID Connect
-provider. The customer brings its own OAuth client for each provider; ts-auth stores the client per project and never
+A project's end users can sign in to the project's hosted pages with Google, GitHub, Apple, Microsoft, GitLab, LinkedIn, Slack, Discord, Facebook, X,
+OpenID Connect or custom OAuth2. See the [provider guides](social-providers/README.md). The customer brings its own OAuth client for each provider; ts-auth stores the client per project and never
 shares one across projects. Builds on [project tenant management](project-tenant-management.md).
 
 ## Configuration API
@@ -10,7 +10,7 @@ Every call takes the caller's terrascale sign-in token, like the other `/v1/{pro
 
 | Call | Role | Effect |
 |---|---|---|
-| `GET /v1/{project}/settings` | viewer | `providers` lists google, github, apple and oidc, in that order, each with `configured`, its public fields and the `callback_url` to register at the provider. |
+| `GET /v1/{project}/settings` | viewer | `providers` lists all twelve supported providers, each with `configured`, its public fields and the `callback_url` to register at the provider. |
 | `PUT /v1/{project}/providers/{provider}` | admin | Configures or changes the provider; answers the settings. |
 | `DELETE /v1/{project}/providers/{provider}` | admin | Removes the provider and its secret; answers the settings. |
 
@@ -18,12 +18,15 @@ Every call takes the caller's terrascale sign-in token, like the other `/v1/{pro
 
 | Provider | Fields |
 |---|---|
-| `google`, `github` | `client_id`, `client_secret` |
+| `google`, `github`, `gitlab`, `linkedin`, `slack`, `discord`, `facebook`, `x` | `client_id`, `client_secret` |
 | `apple` | `client_id` (the Services ID), `client_secret` (the `.p8` private key, an EC P-256 PEM), `team_id`, `key_id` |
 | `oidc` | `issuer` (https, no query or fragment), `client_id`, `client_secret` |
 
 `client_secret` is required the first time; omitted, the stored secret is kept. An unknown provider is 404 and an
 invalid field 400 `invalid_request`.
+
+`microsoft` also accepts `tenant`: `common`, `organizations` or `consumers`.
+`oauth2` also requires the endpoint, scope and claim-mapping object documented in the [custom OAuth2 guide](social-providers/oauth2.md).
 
 ## Secrets
 
@@ -37,16 +40,17 @@ name the user, project and provider only.
 A project's sign-in and sign-up pages show "Continue with …" for each configured provider.
 
 1. `GET /ui/{project}/social/{provider}?next=…` redirects to the provider with `state`, an OIDC `nonce` and PKCE S256
-   (not Apple, which does not support it). The sign-in is sealed into the `tsauth_social_{project}` cookie
+   (not Apple or Facebook). The sign-in is sealed into the `tsauth_social_{project}` cookie
    (`SecretBox`, 10 minutes, `Path=/ui/{project}/social`, `Secure`, `HttpOnly`, `SameSite=None` because Apple posts
    the callback cross-site).
 2. The provider returns to `/ui/{project}/social/{provider}/callback` (GET; Apple POSTs with `form_post`). The cookie
    must open, be unexpired and carry the returned `state`; it is deleted either way. ts-auth redeems the code with the
    project's secret:
-   - Google, Apple and OIDC: the ID token is validated against the issuer's discovery metadata and JWKS (issuer,
-     audience = client id, RS256/ES256 signature, expiry, nonce) and must carry `email_verified`. The discovery
+   - Google, Apple, Microsoft, GitLab, LinkedIn, Slack and OIDC: the ID token is validated against the issuer's discovery metadata and JWKS (issuer,
+     audience = client id, RS256/ES256 signature, expiry, nonce) and records `email_verified`. The discovery
      record must name the expected issuer.
    - GitHub: the account's primary email must be verified (`GET /user/emails`, scope `user:email`).
+   - Discord, Facebook, X and custom OAuth2: redeem the token and request the provider profile. Only a boolean verification claim proves the email; Facebook and X require local email verification.
    - Apple: the client secret is a 5-minute ES256 JWT signed with the project's key (`iss` team id, `sub` client id,
      `kid` key id).
 3. Sign-in matches a previously linked provider identity (provider, issuer, client ID and subject); accounts are never linked by
@@ -54,7 +58,8 @@ A project's sign-in and sign-up pages show "Continue with …" for each configur
    creates an account when the project allows sign-up. A new identity whose email already belongs to an email/password account is
    refused with 401 and no session; the page tells the user to sign in with their password, then connect the provider from the
    security page.
-   A user with MFA continues to the hosted second-factor step. A disabled user, an unverified email or any provider failure answers
+   An unknown identity with an unverified address receives an email-code form. Only an existing account receives a code; verification signs in locally without binding the external identity. New users can create a local account through sign-up before connecting the provider.
+   A user with MFA continues to the hosted second-factor step. A disabled user or any provider failure answers
    401 with no session. Success sets the project's session cookie and continues to `next` like the other hosted methods.
 
 A signed-in user connects a provider on the hosted security page (`/ui/{project}/security`): the connect is a
@@ -66,5 +71,3 @@ releases its identities and revokes every prior session and token.
 
 Both pages share the hosted per-IP budget. The outbound client times out after 10 seconds and connects only to
 public unicast addresses, so a configured OIDC issuer cannot reach loopback, private, link-local or mesh addresses.
-
-## Tests

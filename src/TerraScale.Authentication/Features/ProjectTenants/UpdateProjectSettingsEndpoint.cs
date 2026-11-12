@@ -11,7 +11,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
     public override void Configure()
     {
         Put(Root + "/settings");
-        this.Describe("update_project_settings", "Change a project tenant's settings", "Omitted methods are unchanged and a sent branding replaces the branding (null clears a value). At least one of passcode and password stays on; logo_url and footer links are https, colours #rrggbb, name 1 to 64 characters, title_size 20 to 40, default_theme light/dark/system and email_message at most 500 plain-text characters (only newline controls). Name, logo and accent also brand verification, sign-in and reset emails; sender stays TerraScale. Configuration replaces the project redirect allowlist (at most 100 exact URLs; empty adds no restriction) and session lifetime (300 to 2592000 seconds). Needs the admin project role.", "Project tenants", typeof(UpdateSettingsRequest), StatusCodes.Status200OK, typeof(SettingsBody));
+        this.Describe("update_project_settings", "Change a project tenant's settings", "Omitted methods are unchanged and a sent branding replaces the branding (null clears a value). At least one of passcode, password and magic_link stays on; magic_link emails a browser-bound ten-minute link, username requires a 3–32 character case-insensitive username at sign-up and accepts it with a password; logo_url and footer links are https, colours #rrggbb, name 1 to 64 characters, title_size 20 to 40, default_theme light/dark/system and email_message at most 500 plain-text characters (only newline controls). Name, logo and accent also brand verification, sign-in and reset emails; sender stays TerraScale. Configuration replaces the project redirect allowlist (at most 100 exact URLs; empty adds no restriction) and session lifetime (300 to 2592000 seconds). Needs the admin project role.", "Project tenants", typeof(UpdateSettingsRequest), StatusCodes.Status200OK, typeof(SettingsBody));
     }
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
@@ -43,7 +43,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
         var methods = request.Methods;
         var updated = await settings.UpdateAsync(projectId, current =>
         {
-            var next = current with { Passcode = methods?.Passcode ?? current.Passcode, Password = methods?.Password ?? current.Password, SignUp = methods?.SignUp ?? current.SignUp };
+            var next = current with { Passcode = methods?.Passcode ?? current.Passcode, Password = methods?.Password ?? current.Password, SignUp = methods?.SignUp ?? current.SignUp, MagicLink = methods?.MagicLink ?? current.MagicLink, Username = methods?.Username ?? current.Username };
             next = request.Branding is { } sent ? next with
             {
                 Name = sent.Name,
@@ -57,7 +57,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
                 EmailMessage = sent.EmailMessage,
             } : next;
             next = request.Configuration is { } policy ? next with { Configuration = policy } : next;
-            return next.Passcode || next.Password ? next : throw Invalid("At least one of passcode and password must stay on.");
+            return next.Passcode || next.Password || next.MagicLink ? next : throw Invalid("At least one of passcode, password and magic_link must stay on.");
         }, cancellationToken);
         return Results.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);
     }

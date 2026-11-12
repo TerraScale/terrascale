@@ -16,6 +16,8 @@ namespace TerraScale.Authentication.Contracts;
 /// </param>
 public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null, string? PlatformRole = null)
 {
+    public string? Username { get; init; }
+
     /// <summary>Identity of the last authentication-state change; equal numeric epochs can race across regions.</summary>
     public string? AuthStamp { get; init; }
 
@@ -106,6 +108,8 @@ public sealed record PasscodeRecord(
     string? PasswordHash = null,
     string? PendingTokenHash = null)
 {
+    public string? Username { get; init; }
+
     /// <summary>The authentication-state identity at issue.</summary>
     public string? AuthStamp { get; init; }
 

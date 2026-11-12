@@ -19,14 +19,14 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
         SendAsync(HttpMethod.Get, accessToken, projectId, "/settings", Json.TerraScaleAuthProjectSettings, HttpStatusCode.OK, cancellationToken);
 
     /// <summary>PUT /v1/{project}/settings (admin). Omitted parts stay unchanged; 400 <c>invalid_request</c> when
-    /// both passcode and password would be off or branding is invalid.</summary>
+    /// passcode, password and magic_link would all be off or branding is invalid.</summary>
     public Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(
         string accessToken, string projectId, TerraScaleAuthProjectSettingsUpdate request, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, "/settings"),
             request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectSettingsUpdate,
             Json.TerraScaleAuthProjectSettings, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken);
 
-    /// <summary>PUT /v1/{project}/providers/{provider} (admin). Provider is google, github, apple or oidc; 400
+    /// <summary>PUT /v1/{project}/providers/{provider} (admin). Provider is google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2; 400
     /// <c>invalid_request</c> when a value is invalid or the first configuration has no secret.</summary>
     public Task<TerraScaleAuthProjectSettings> SetProviderAsync(
         string accessToken, string projectId, string provider, TerraScaleAuthProjectProviderUpdate request, CancellationToken cancellationToken = default) =>
@@ -148,8 +148,8 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
 
     private static string Id(string value) => TerraScaleIds.Validate(value);
 
-    private static string Provider(string value) => value is "google" or "github" or "apple" or "oidc"
-        ? value : throw new ArgumentException("Provider must be google, github, apple or oidc.", nameof(value));
+    private static string Provider(string value) => value is "google" or "github" or "apple" or "oidc" or "microsoft" or "gitlab" or "linkedin" or "slack" or "discord" or "facebook" or "x" or "oauth2"
+        ? value : throw new ArgumentException("Provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.", nameof(value));
 
     private static string PageQuery(string filterName, string? filter, int? limit, string? after)
     {

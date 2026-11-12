@@ -405,7 +405,7 @@ class AsyncTerraScale:
 
     async def set_provider(self, provider: str, update: models.ProjectProviderUpdate, *,
                            project: str | None = None) -> models.ProjectSettings:
-        """Configure a federated sign-in provider (google, github, apple or oidc); an omitted secret is kept."""
+        """Configure a supported federated sign-in provider; an omitted secret is kept."""
         return await self._send(set_provider_call(self._issuer, project if project is not None else self.project,
                                                   provider, update))
 

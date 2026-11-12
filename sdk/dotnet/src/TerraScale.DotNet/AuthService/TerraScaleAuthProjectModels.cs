@@ -2,11 +2,13 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
 
-/// <summary>A project tenant's sign-in methods. At least one of Passcode and Password stays on; SignUp false hides self sign-up.</summary>
+/// <summary>A project tenant's sign-in methods. At least one of Passcode, Password and MagicLink stays on; SignUp false hides self sign-up.</summary>
 public sealed record TerraScaleAuthProjectMethods(
     [property: JsonPropertyName("passcode")] bool Passcode,
     [property: JsonPropertyName("password")] bool Password,
-    [property: JsonPropertyName("sign_up")] bool SignUp);
+    [property: JsonPropertyName("sign_up")] bool SignUp,
+    [property: JsonPropertyName("magic_link")] bool MagicLink = false,
+    [property: JsonPropertyName("username")] bool Username = false);
 
 /// <summary>A project tenant's hosted-page branding. Null clears a value: LogoUrl is an https URL, ThemeColor is
 /// <c>#rrggbb</c> and Name is 1 to 64 characters. Name, LogoUrl, ThemeColor and EmailMessage also brand verification,
@@ -57,7 +59,7 @@ public sealed record TerraScaleAuthProjectSettings(
     [property: JsonPropertyName("providers")] IReadOnlyList<TerraScaleAuthProjectProvider> Providers,
     [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectConfiguration? Configuration = null);
 
-/// <summary>A social sign-in provider of a project tenant: <c>google</c>, <c>github</c>, <c>apple</c> or <c>oidc</c>.
+/// <summary>A social sign-in provider of a project tenant.
 /// Unconfigured providers have null ClientId, Issuer, TeamId and KeyId. CallbackUrl is the redirect URL to register at
 /// the provider. The client secret is never returned.</summary>
 public sealed record TerraScaleAuthProjectProvider(
@@ -67,7 +69,9 @@ public sealed record TerraScaleAuthProjectProvider(
     [property: JsonPropertyName("issuer")] string? Issuer,
     [property: JsonPropertyName("team_id")] string? TeamId,
     [property: JsonPropertyName("key_id")] string? KeyId,
-    [property: JsonPropertyName("callback_url")] string CallbackUrl);
+    [property: JsonPropertyName("callback_url")] string CallbackUrl,
+    [property: JsonPropertyName("tenant")] string? Tenant = null,
+    [property: JsonPropertyName("oauth2")] TerraScaleAuthProjectOAuth2? OAuth2 = null);
 
 /// <summary>PUT /providers/{provider} body. ClientSecret is required the first time; null keeps the stored secret.
 /// Apple takes TeamId, KeyId and the .p8 private key as ClientSecret; oidc takes an https Issuer.</summary>
@@ -76,7 +80,9 @@ public sealed record TerraScaleAuthProjectProviderUpdate(
     [property: JsonPropertyName("client_secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null,
     [property: JsonPropertyName("issuer"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Issuer = null,
     [property: JsonPropertyName("team_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TeamId = null,
-    [property: JsonPropertyName("key_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? KeyId = null)
+    [property: JsonPropertyName("key_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? KeyId = null,
+    [property: JsonPropertyName("tenant"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Tenant = null,
+    [property: JsonPropertyName("oauth2"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectOAuth2? OAuth2 = null)
 {
     /// <inheritdoc />
     public override string ToString() => "TerraScaleAuthProjectProviderUpdate { sensitive fields redacted }";
@@ -171,3 +177,13 @@ public sealed record TerraScaleAuthProjectClientSecret(
     /// <inheritdoc />
     public override string ToString() => "TerraScaleAuthProjectClientSecret { sensitive fields redacted }";
 }
+
+/// <summary>Custom OAuth2 endpoints, scopes and dot-separated userinfo claim paths.</summary>
+public sealed record TerraScaleAuthProjectOAuth2(
+    [property: JsonPropertyName("authorize_url")] string AuthorizeUrl,
+    [property: JsonPropertyName("token_url")] string TokenUrl,
+    [property: JsonPropertyName("userinfo_url")] string UserinfoUrl,
+    [property: JsonPropertyName("scopes")] string Scopes,
+    [property: JsonPropertyName("id_claim")] string IdClaim = "id",
+    [property: JsonPropertyName("email_claim")] string EmailClaim = "email",
+    [property: JsonPropertyName("email_verified_claim")] string EmailVerifiedClaim = "email_verified");

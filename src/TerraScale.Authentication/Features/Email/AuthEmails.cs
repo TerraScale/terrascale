@@ -577,14 +577,14 @@ public sealed partial class AuthEmails(AuthOptions options)
             "Sign in to {{ app_name }}",
             "Your sign-in link expires in {{ expires_in }}.",
             "Sign in to {{ app_name }}",
-            "Sign in as {{ user.email }}.",
+            "Sign in as {{ user.email }}. If you opened the link in another browser, enter the code below.",
             "Sign in",
             "Didn't try to sign in? Ignore this email. Never forward this link."),
         [(AuthEmailKind.MagicLink, Portuguese)] = new(
             "Seu link de acesso para {{ app_name }}",
             "Seu link de acesso expira em {{ expires_in }}.",
             "Entre em {{ app_name }}",
-            "Entre como {{ user.email }}.",
+            "Entre como {{ user.email }}. Se abriu o link em outro navegador, digite o código abaixo.",
             "Entrar",
             "Não tentou entrar? Ignore este e-mail. Nunca encaminhe este link."),
         [(AuthEmailKind.VerifyEmail, English)] = new(

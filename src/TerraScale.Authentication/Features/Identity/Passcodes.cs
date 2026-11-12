@@ -51,7 +51,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
 
     internal Task<IssuedPasscode?> RequestStepUpAsync(UserRecord user, string requestId, CancellationToken cancellationToken) =>
         this.IssueAsync(user.InstanceId, requestId, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.StepUp,
-            null, Tokens.Sha256Hex(requestId), cancellationToken);
+            null, Tokens.Sha256Hex(requestId), cancellationToken: cancellationToken);
 
     internal async Task<UserRecord?> RedeemStepUpAsync(UserRecord user, string requestId, string code, CancellationToken cancellationToken)
     {
@@ -62,7 +62,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
 
         var consumed = await this.ConsumeAsync(user.InstanceId, requestId, code.Trim(), PasscodePurpose.StepUp,
             value => value.UserId == user.Id && value.AuthEpoch == user.AuthEpoch && value.AuthStamp == user.AuthStamp
-                && value.PendingTokenHash == Tokens.Sha256Hex(requestId), cancellationToken).ConfigureAwait(false);
+                && value.PendingTokenHash == Tokens.Sha256Hex(requestId), cancellationToken: cancellationToken).ConfigureAwait(false);
         return consumed?.AuthenticatedUser ?? (consumed is { Binding: { } binding }
             ? user with { AuthenticationBindings = [.. user.AuthenticationBindings, .. consumed.IssuanceBindings, binding] } : null);
     }
@@ -75,11 +75,11 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         }
 
         return await users.FindByEmailAsync(instanceId, email, cancellationToken).ConfigureAwait(false) is { } user
-            ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, purpose, null, null, cancellationToken).ConfigureAwait(false)
+            ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, purpose, null, null, cancellationToken: cancellationToken).ConfigureAwait(false)
             : null;
     }
 
-    public async Task<IssuedPasscode?> RequestSignUpAsync(string instanceId, string email, string passwordHash, string pendingToken, CancellationToken cancellationToken = default)
+    public async Task<IssuedPasscode?> RequestSignUpAsync(string instanceId, string email, string passwordHash, string pendingToken, string? username = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(passwordHash);
         ArgumentException.ThrowIfNullOrEmpty(pendingToken);
@@ -89,9 +89,9 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         }
 
         return await users.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is { } user
-            ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.SignIn, null, null, cancellationToken).ConfigureAwait(false)
+            ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.SignIn, null, null, cancellationToken: cancellationToken).ConfigureAwait(false)
             : await this.IssueAsync(instanceId, SignUpKey + normalized, AuthIds.New(), normalized, 0, null, PasscodePurpose.SignUp, passwordHash,
-                Tokens.Sha256Hex(pendingToken), cancellationToken).ConfigureAwait(false);
+                Tokens.Sha256Hex(pendingToken), cancellationToken: cancellationToken, username: username).ConfigureAwait(false);
     }
 
     public async Task<IssuedPasscode?> ResendSignUpAsync(string instanceId, string email, CancellationToken cancellationToken = default)
@@ -103,19 +103,19 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
 
         if (await users.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is { } user)
         {
-            return await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.SignIn, null, null, cancellationToken).ConfigureAwait(false);
+            return await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.SignIn, null, null, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         var previous = (await this.ReadAsync(instanceId, SignUpKey + normalized, cancellationToken).ConfigureAwait(false))?.Value;
         return previous is { Consumed: false, Pruned: false, PasswordHash: { } hash, PendingTokenHash: { } tokenHash }
             && previous.Purpose == StoredPurpose(PasscodePurpose.SignUp)
-            ? await this.IssueAsync(instanceId, SignUpKey + normalized, previous.UserId, normalized, 0, null, PasscodePurpose.SignUp, hash, tokenHash, cancellationToken).ConfigureAwait(false)
+            ? await this.IssueAsync(instanceId, SignUpKey + normalized, previous.UserId, normalized, 0, null, PasscodePurpose.SignUp, hash, tokenHash, cancellationToken: cancellationToken, username: previous.Username).ConfigureAwait(false)
             : null;
     }
 
     public async Task<IssuedSession?> VerifyAsync(string instanceId, string email, string code, CancellationToken cancellationToken = default)
     {
-        if (await this.RedeemAsync(instanceId, email, code, PasscodePurpose.SignIn, cancellationToken).ConfigureAwait(false) is not { } user)
+        if (await this.RedeemAsync(instanceId, email, code, PasscodePurpose.SignIn, cancellationToken: cancellationToken).ConfigureAwait(false) is not { } user)
         {
             return null;
         }
@@ -130,7 +130,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         }
     }
 
-    public async Task<UserRecord?> RedeemAsync(string instanceId, string email, string code, PasscodePurpose purpose, CancellationToken cancellationToken = default)
+    public async Task<UserRecord?> RedeemAsync(string instanceId, string email, string code, PasscodePurpose purpose, string? issueId = null, CancellationToken cancellationToken = default)
     {
         if (purpose is not PasscodePurpose.SignIn || !WellFormed(code)
             || await users.FindByEmailAsync(instanceId, email, cancellationToken).ConfigureAwait(false) is not { } user)
@@ -139,7 +139,8 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         }
 
         var consumed = await this.ConsumeAsync(instanceId, user.Id, code.Trim(), purpose,
-            passcode => passcode.UserId == user.Id && passcode.Email == user.Email && passcode.AuthEpoch == user.AuthEpoch && passcode.AuthStamp == user.AuthStamp,
+            passcode => passcode.UserId == user.Id && passcode.Email == user.Email && passcode.AuthEpoch == user.AuthEpoch && passcode.AuthStamp == user.AuthStamp
+                && (issueId is null || passcode.IssueId == issueId),
             cancellationToken).ConfigureAwait(false);
         return consumed?.AuthenticatedUser ?? (consumed is { Binding: { } binding }
             ? user with { AuthenticationBindings = [.. user.AuthenticationBindings, .. consumed.IssuanceBindings, binding] } : null);
@@ -168,7 +169,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
                 // The issuance fixes the account id: replaying one sign-up in two regions cannot create two different owners.
                 // The account is created in the redemption's own transaction (one remote-durable write, not two).
                 createAccount: async passcode => users.NewAccount(instanceId, normalized, passcode.PasswordHash, passcode.UserId,
-                    await outbox.CreateAsync(instanceId, "user.signed_up", passcode.UserId, normalized, null, cancellationToken).ConfigureAwait(false))).ConfigureAwait(false) is not { } consumed)
+                    await outbox.CreateAsync(instanceId, "user.signed_up", passcode.UserId, normalized, null, cancellationToken).ConfigureAwait(false), passcode.Username)).ConfigureAwait(false) is not { } consumed)
         {
             return null;
         }
@@ -216,8 +217,13 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
     private static DateTimeOffset IssueWindowStart(DateTimeOffset timestamp) =>
         new(timestamp.UtcTicks / IssueWindow.Ticks * IssueWindow.Ticks, TimeSpan.Zero);
 
+    public async Task<IssuedPasscode?> RequestMagicLinkAsync(string instanceId, string email, CancellationToken cancellationToken) =>
+        await users.FindByEmailAsync(instanceId, email, cancellationToken).ConfigureAwait(false) is { Disabled: false } user
+            ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.SignIn, null, null, lifetime: TimeSpan.FromMinutes(10), cancellationToken: cancellationToken).ConfigureAwait(false)
+            : null;
+
     private async Task<IssuedPasscode?> IssueAsync(string instanceId, string key, string userId, string email, long authEpoch, string? authStamp, PasscodePurpose purpose,
-        string? passwordHash, string? pendingTokenHash, CancellationToken cancellationToken)
+        string? passwordHash, string? pendingTokenHash, TimeSpan? lifetime = null, string? username = null, CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
         var rowData = await this.ReadAsync(instanceId, key, cancellationToken).ConfigureAwait(false);
@@ -252,7 +258,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
                 sameState ? previous!.IssueId.Length > 0 ? previous.IssueId : previous.CodeHash : "initial")));
         // The record holds one code: a resend replaces it, so a superseded code never redeems (QA round 4, auth:5).
         var code = Tokens.RandomDigits(6)!;
-        var passcode = new PasscodeRecord(instanceId, userId, email, this.Digest(instanceId, userId, code), authEpoch, now + Lifetime,
+        var passcode = new PasscodeRecord(instanceId, userId, email, this.Digest(instanceId, userId, code), authEpoch, now + (lifetime ?? Lifetime),
             FailedAttempts: 0, Consumed: false, window is null ? windowStart : previousWindowStart, (window?.IssuedInWindow ?? 0) + 1, StoredPurpose(purpose), passwordHash, pendingTokenHash)
         {
             IssueId = issuance?.OwnerId ?? AuthIds.New(),
@@ -261,6 +267,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             IssuanceBindings = issuance is null ? [] : [.. ancestors, issuance],
             ResetsAuthentication = recovery,
             StepUpRequestId = purpose == PasscodePurpose.StepUp ? key : null,
+            Username = username,
         };
         List<Change> changes = [rowData is null ? Change.Insert(passcode) : Change.Update(rowData, passcode)];
         if (issuance is not null)

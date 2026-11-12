@@ -94,7 +94,7 @@ effective project role (`platform-contract.md` section 3) on every request:
 ```text
 Settings = {
   project_id, issuer, discovery_url, sign_in_url,
-  methods: { passcode: bool, password: bool, sign_up: bool },
+  methods: { passcode: bool, password: bool, sign_up: bool, magic_link: bool, username: bool },
   branding: { name: string|null, logo_url: string|null, theme_color: string|null },
   counts: { users: int, clients: int }
 }
@@ -110,9 +110,10 @@ POST /webhook-endpoints body = { url, event_types }
 
 Webhook endpoints are described in [webhooks.md](webhooks.md).
 
-- `methods`: at least one of `passcode` and `password` stays on (`400
-  invalid_request` otherwise). `sign_up: false` hides self sign-up. A new project
-  has every method on.
+- `methods`: at least one of `passcode`, `password` and `magic_link` stays on (`400
+  invalid_request` otherwise). `sign_up: false` hides self sign-up. New projects
+  have passcode, password and sign-up on, with magic links and usernames off.
+  See [magic links and usernames](project-sign-in-methods.md).
 - `branding.logo_url` is an `https` URL; `theme_color` is `#rrggbb`; `name` is 1
   to 64 characters. `null` clears a value; the hosted pages then show the
   project's name and the default theme.

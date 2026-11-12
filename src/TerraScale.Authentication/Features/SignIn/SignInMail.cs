@@ -280,14 +280,20 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
             work = new MailWork(issued.Tenant, issued.Email)
             {
-                Kind = issued.Purpose switch
+                Kind = work.MagicBrowserHash is not null ? AuthEmailKind.MagicLink : issued.Purpose switch
                 {
                     PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,
                     PasscodePurpose.SignUp => AuthEmailKind.VerifyEmail,
                     PasscodePurpose.StepUp => AuthEmailKind.StepUpCode,
                     _ => AuthEmailKind.SignInCode,
                 },
-                Values = new AuthEmailValues(issued.Email) { Code = issued.Code, ExpiresIn = Passcodes.Lifetime, Tenant = issued.Tenant },
+                Values = new AuthEmailValues(issued.Email)
+                {
+                    Code = issued.Code,
+                    ExpiresIn = work.MagicBrowserHash is null ? Passcodes.Lifetime : MagicLinks.Lifetime,
+                    Tenant = issued.Tenant,
+                    Link = work.MagicBrowserHash is { } browserHash ? MagicLinks.Create(options, issued, browserHash, work.MagicNext) : null,
+                },
             };
             if (await this.SaveAsync(row with
             {
@@ -352,16 +358,18 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             }, sending.Version).ConfigureAwait(false);
     }
 
-    private async Task<IssuedPasscode?> IssueAsync(MailWork work) => work.Purpose switch
-    {
-        PasscodePurpose.SignUp when work.Resend => await passcodes.ResendSignUpAsync(work.Tenant, work.Email, CancellationToken.None).ConfigureAwait(false),
-        PasscodePurpose.SignUp => await passcodes.RequestSignUpAsync(work.Tenant, work.Email, work.PasswordHash!, work.PendingToken!, CancellationToken.None).ConfigureAwait(false),
-        PasscodePurpose.StepUp => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } user
-            ? await passcodes.RequestStepUpAsync(user, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
-            : null,
-        { } purpose => await passcodes.RequestAsync(work.Tenant, work.Email, purpose, CancellationToken.None).ConfigureAwait(false),
-        null => throw new InvalidOperationException("A queued outbox row names no code to issue."),
-    };
+    private async Task<IssuedPasscode?> IssueAsync(MailWork work) => work.MagicBrowserHash is not null
+        ? await passcodes.RequestMagicLinkAsync(work.Tenant, work.Email, CancellationToken.None).ConfigureAwait(false)
+        : work.Purpose switch
+        {
+            PasscodePurpose.SignUp when work.Resend => await passcodes.ResendSignUpAsync(work.Tenant, work.Email, CancellationToken.None).ConfigureAwait(false),
+            PasscodePurpose.SignUp => await passcodes.RequestSignUpAsync(work.Tenant, work.Email, work.PasswordHash!, work.PendingToken!, work.Username, CancellationToken.None).ConfigureAwait(false),
+            PasscodePurpose.StepUp => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } user
+                ? await passcodes.RequestStepUpAsync(user, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
+                : null,
+            { } purpose => await passcodes.RequestAsync(work.Tenant, work.Email, purpose, CancellationToken.None).ConfigureAwait(false),
+            null => throw new InvalidOperationException("A queued outbox row names no code to issue."),
+        };
 
     private async Task PruneAsync()
     {
@@ -421,7 +429,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     private async Task<EmailConfig?> ConfigAsync(string tenant, AuthEmailKind kind)
     {
         // Never inherit platform copy or a customer-controlled sender identity into project authentication mail.
-        var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.Lockout
+        var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.Lockout
             ? EmailConfig.Defaults(tenant) with
             {
                 Branding = new EmailBranding { SenderName = "TerraScale", FooterText = "Sent by TerraScale Authentication." },
@@ -539,12 +547,15 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         internal Reservation(SignInMail owner) => this.owner = owner;
 
         /// <summary>Queues a sign-in or password-reset code; the worker issues it only if the address has an account.</summary>
+        public Task EnqueueMagicLinkAsync(string tenant, string email, string browserHash, string? next, string locale) =>
+            this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignIn, MagicBrowserHash = browserHash, MagicNext = next }, locale, MagicLinks.Lifetime);
+
         public Task EnqueueCodeAsync(string tenant, string email, PasscodePurpose purpose, string locale = AuthEmails.English) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = purpose }, locale, null);
 
         /// <summary>Queues a sign-up code, or a sign-in code when the address already has an account.</summary>
-        public Task EnqueueSignUpAsync(string tenant, string email, string passwordHash, string pendingToken, string locale = AuthEmails.English) =>
-            this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, PasswordHash = passwordHash, PendingToken = pendingToken }, locale, null);
+        public Task EnqueueSignUpAsync(string tenant, string email, string passwordHash, string pendingToken, string locale = AuthEmails.English, string? username = null) =>
+            this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, PasswordHash = passwordHash, PendingToken = pendingToken, Username = username }, locale, null);
 
         /// <summary>Queues a resend of the pending sign-up's code, or a sign-in code when the address got an account.</summary>
         public Task EnqueueSignUpResendAsync(string tenant, string email, string locale = AuthEmails.English) =>
@@ -597,6 +608,12 @@ public sealed record MailRow(string Id, string State, string Locale, DateTimeOff
 /// <summary>A code to issue (<see cref="Purpose"/>) or an email to send (<see cref="Kind"/>).</summary>
 internal sealed record MailWork(string Tenant, string Email)
 {
+    public string? MagicBrowserHash { get; init; }
+
+    public string? MagicNext { get; init; }
+
+    public string? Username { get; init; }
+
     public PasscodePurpose? Purpose { get; init; }
 
     public string? PasswordHash { get; init; }
