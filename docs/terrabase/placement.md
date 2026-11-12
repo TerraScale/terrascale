@@ -19,7 +19,7 @@ On create, the first region in the caller's array is the initial writer. On upda
 
 Repeat the same request after a requested region has replicated this database at least once. TerraBase reads the engine's per-region pull observations and selects the first requested region, in region-id order, that has replicated this database at least once; the move brings it up to date and refuses with 503 replica_not_ready when it can't. It tries at most that one candidate through the existing move. With no ready candidate it returns `503 replica_not_ready` immediately. A repeat of the same region set during its pending move also returns `503 replica_not_ready`; a different request's move retains `409 move_in_progress`. If a race removes the candidate before the move begins, the response is retryable `503 replica_not_ready`, and the repeat recomputes from the current placement. After promotion, the same request is forwarded to the new writer, which removes every unselected region. Moving from `{"regions":["gru"]}` to `{"regions":["sjc"]}` therefore requires at least two calls: add, then move and remove. Each call is idempotent: placement versions change only when membership, the writer or all-regions mode changes. A rename is sent separately from placement. Explicit `regions` turns off all-regions placement.
 
-The requested placement and any intermediate superset must pass the existing limit of eight replicas other than the writer (nine total members). A superset that exceeds it returns `400 invalid_request` before any membership is written; remove other non-writers first to make room. A retryable refusal leaves the current valid placement in place, including additions. An unresolved move returns its existing refusal and is settled by the existing move mechanism before the caller continues.
+The requested placement and any intermediate superset must pass the existing limit of eight replicas other than the writer (nine total members). A set or superset that exceeds it returns `400 invalid_request` with `regions can place a database in at most 9 regions, including the writer and any intermediate placement` before any membership is written; remove other non-writers first to make room. A retryable refusal leaves the current valid placement in place, including additions. An unresolved move returns its existing refusal and is settled by the existing move mechanism before the caller continues.
 
 Transitional: the old fields and the move-home endpoint are removed by category C23 of batch db4a5ba7 once every consumer sends `regions`.
 
@@ -60,6 +60,8 @@ Region A is the home and region B the target. A coordinates; B's replica becomes
 
 The epoch of a database is its placement version: B is home at version `v + 1` only after A stopped writing at `v`, and a
 region accepts a placement only when it is newer than the one it holds.
+
+A request through a region that is no longer a member answers `421 wrong_region`, naming the current home in `X-TerraBase-Database-Home`. Its former replica can serve reads until the local catalog observes the removal.
 
 ### Fencing
 
