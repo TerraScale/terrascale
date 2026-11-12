@@ -69,7 +69,7 @@ After a failed statement inside a transaction, every `execute` answers `transact
 | Frame over 1 MiB, or an auth frame over 16 KiB | close 1009 |
 | Organization memory budget exhausted while reading a frame | close 1011 |
 | No auth frame within 5 seconds of a headerless upgrade | close 1008 |
-| Server restarting | close 1001 |
+| Server restarting | close 1001 without waiting for the frame in flight, which may have run; its answer is not sent |
 | The region's writer starts handing off to another node | close 1012 after the answer to the frame in flight; frames that arrive later do not run. Reconnect. A client still receiving that answer when the old writer stops sees 1006 instead, and the frame's outcome is unknown |
 | An upgrade while that handoff holds the region's ingress, or to the node the writer moved from until that node stops | 503 with `Retry-After: 1` |
 
