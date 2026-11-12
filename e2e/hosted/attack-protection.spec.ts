@@ -46,7 +46,7 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
     await expect(page.locator('#sign-in-error')).toContainText('found in a data breach');
     await expect(page.locator('#sign-up-email')).toHaveValue(email);
     await audit.check('breached password refused on project hosted sign-up');
-    const rangeCalls = await (await page.request.get('http://127.0.0.1:8029/calls')).json();
+    const rangeCalls = await (await page.request.get('http://127.0.0.1:8030/calls')).json();
     const prefix = createHash('sha1').update(breached).digest('hex').slice(0, 5).toUpperCase();
     expect(rangeCalls).toContainEqual({ prefix, padded: true });
     expect(rangeCalls.every((call: { prefix: string }) => /^[A-F0-9]{5}$/.test(call.prefix))).toBe(true);
@@ -172,7 +172,7 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
 });
 
 async function expectStoredSubjectKeyed(tenant: string, email: string): Promise<void> {
-  const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[3];
+  const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect('http://127.0.0.1:8081');
   const stream = session.request({
     ':method': 'POST',
