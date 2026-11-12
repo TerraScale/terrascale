@@ -2,7 +2,7 @@ export const en = {
   meta: {
     title: 'TerraScale Public Alpha | Regional SQL Database',
     description:
-      'TerraScale Public Alpha: SQL databases in three regions, São Paulo, the San Francisco Bay Area and Frankfurt. A replica region can take a local SQL write, and the home is the durable apply point.',
+      'TerraScale Public Alpha: SQL databases in three regions, São Paulo, the San Francisco Bay Area and Frankfurt. Every region you choose accepts reads and writes.',
   },
 
   chrome: {
@@ -78,18 +78,18 @@ export const en = {
 
   homeStats: {
     regions: 'Serving regions',
-    writeRegion: 'Home region',
+    writeRegion: 'Regions you choose',
     statements: 'Statements per transaction',
   },
 
 
   features: {
     titleLead: 'SQL databases',
-    titleAccent: 'with local SQL writes.',
+    titleAccent: 'in the regions you choose.',
     items: [
       { headline: 'SQL tables, indexes and foreign keys' },
       { headline: 'psql, HTTP and WebSocket connections' },
-      { headline: 'A replica region can take a local SQL write' },
+      { headline: 'Every region you choose accepts reads and writes' },
       { headline: 'Filtered live shapes with table read grants' },
       { headline: 'Agent databases with TTL, forks and scoped keys' },
       { headline: 'Database deletion destroys backup keys' },
@@ -102,7 +102,7 @@ export const en = {
     steps: [
       {
         title: 'Create a database',
-        text: 'Register without a card, create a project, and add a database in its home region: São Paulo, the San Francisco Bay Area, or Frankfurt.',
+        text: 'Register without a card, create a project, and add a database in the regions you choose: São Paulo, the San Francisco Bay Area, or Frankfurt.',
       },
       {
         title: 'Create an API key',
@@ -126,11 +126,11 @@ export const en = {
       },
       {
         q: 'Which regions serve today?',
-        a: 'São Paulo (gru), the San Francisco Bay Area (sjc), and Frankfurt (fra). Three regions. A replica region can take a local SQL write, and the home is the durable apply point.',
+        a: 'São Paulo (gru), the San Francisco Bay Area (sjc), and Frankfurt (fra). A database lives in the regions you choose, and every one of them accepts reads and writes.',
       },
       {
-        q: 'Is my database copied to other regions?',
-        a: 'Yes. A replica region can take a local SQL write. REST, psql and WebSocket can use a ready local replica. The home is the durable apply point.',
+        q: 'Does every region I choose accept writes?',
+        a: 'Yes. Every region of the set accepts reads and writes. Reads are served in the region you call. A write sent to another region is forwarded, or committed locally and confirmed.',
       },
       {
         q: 'Can I use my Postgres tools?',
@@ -146,7 +146,7 @@ export const en = {
       },
       {
         q: 'How is my data protected?',
-        a: 'Customer traffic uses TLS and database files, replicas and backups are encrypted at rest. Database deletion destroys its backup data keys so retained encrypted backups cannot be restored. Physical cleanup is a separate step.',
+        a: 'Customer traffic uses TLS. Database files in every region of the set, and backups, are encrypted at rest. Database deletion destroys its backup data keys so retained encrypted backups cannot be restored. Physical cleanup is a separate step.',
       },
       {
         q: 'What does it cost to start?',
@@ -171,7 +171,7 @@ export const en = {
       title: 'Or ask your favorite AI agent to do it for you',
       text: 'We support CLI and MCP. Connect Claude Code, Cursor, or any MCP client to the TerraScale MCP server with a personal access token. The agent acts with your roles, and every call is checked again. Agents can also call the HTTP API from a shell.',
       prompts: [
-        'List my databases and their home regions.',
+        'List my databases and their regions.',
         'Find customers with 10 or more seats in the app database.',
         'How much of this month’s operation-unit allowance have we used?',
       ],
@@ -233,7 +233,7 @@ export const en = {
       title: 'Storage, operations, and client egress.',
     },
     triad: [
-      { title: 'Storage in the home region' },
+      { title: 'Storage metered once per database' },
       { title: 'Writes counted in 4 KiB units' },
       { title: 'Plan write caps' },
     ],
@@ -255,7 +255,7 @@ export const en = {
       storageLimit: 'Storage limit',
       pitr: 'Point-in-time recovery',
       backupRetention: 'Backup retention',
-      regionsPerDatabase: 'Home regions per database',
+      regionsPerDatabase: 'Regions per database',
       support: 'Support response target',
       noCeiling: 'No plan ceiling',
       seconds: '{n} s',
@@ -319,7 +319,7 @@ export const en = {
           q: 'What does Enterprise include?',
           a: 'Enterprise has a ${enterprisePriceUsd} monthly support base plus usage. Contact sales for terms; Enterprise is not sold through checkout.',
         },
-        { q: 'How are replicas billed?', a: 'The catalog lists one home region per database on every plan. Writes and stored bytes are counted in the home region; replica storage has no separate charge. Plan write caps and SQL read fair use apply.' },
+        { q: 'How are extra regions billed?', a: 'The catalog lists how many regions a database may include on each plan. Stored bytes are counted once for the database; copies in the other regions of the set have no separate charge. Plan write caps and SQL read fair use apply.' },
       ],
       contactSales: 'Contact Sales',
     },
@@ -388,7 +388,7 @@ export const en = {
       'TerraScale builds TerraBase, a SQL database service. The dashboard brings together databases, access management and usage.',
     databaseTitle: 'TerraBase',
     databaseText:
-      'The service has three regions. A database has one home region and replica regions. A replica region can take a local SQL write, and the home is the durable apply point.',
+      'The service has three regions. A database lives in the regions you choose, and every one of them accepts reads and writes.',
     integrationText:
       'Use the SQLite SQL dialect through PostgreSQL-compatible clients, the HTTP API or the SDKs. Manage databases and API keys in the dashboard.',
     alphaTitle: 'Public Alpha',

@@ -29,9 +29,13 @@ curl -sS --fail-with-body -X PATCH --header @/dev/fd/3 \
   3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
 ```
 
-The answer is the database record: `id`, `projectId`, `name`, `createdAt`, `homeRegion`, `replicaRegions` and the region that answered. `name` cannot be combined with placement fields (`homeRegion`, `replicaRegions`, `allRegions`) in the same request.
+The answer is the database record: `id`, `projectId`, `name`, `createdAt`, `regions` and the region that answered. `regions` is sorted by region id. `name` cannot be combined with a placement field in the same request.
 
-A name starts with a lowercase letter and continues with up to 62 lowercase letters, digits, `_` or `-`. The request must reach the database's home region; a request sent to another region answers `421` with the home to use.
+A name starts with a lowercase letter and continues with up to 62 lowercase letters, digits, `_` or `-`. The request must reach a region of the database's set; a request sent elsewhere answers `421` and names a region of the set.
+
+### Earlier fields
+
+Responses may still include `homeRegion`, `replicaRegions` and `allRegions`. They still work. New calls read `regions`.
 
 ## CLI and SDKs
 

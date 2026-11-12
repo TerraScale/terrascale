@@ -11,7 +11,7 @@
 
   const stats = [
     { value: String(REGIONS.length), label: $dict.homeStats.regions },
-    { value: '1', label: $dict.homeStats.writeRegion },
+    { value: 'any', label: $dict.homeStats.writeRegion },
     { value: `$${freePrice}`, label: $dict.pricing.cadence.free },
     { value: String(statementsPerTransaction), label: $dict.homeStats.statements },
   ]

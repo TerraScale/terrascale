@@ -116,7 +116,7 @@ Pass `-lang <js|go|python|dotnet|rust>` to pick the snippet yourself, and
 `-yes` to create the database and key without the one confirmation. The key's
 secret is printed once and written to `.env` as `TERRASCALE_API_KEY`, next to
 `TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_NAME` and `TERRASCALE_REGION`,
-the database's home region; only the .NET snippet reads the region.
+one region of the database's set; only the .NET snippet reads the region.
 
 ## Sign in
 
@@ -213,17 +213,22 @@ TERRASCALE_API_KEY=... ts db url example
 ### Placement
 
 ```sh
-ts -all-regions db create example
-ts db placement example -replica-regions gru,iad
-ts db move-home example iad
+ts db create example -regions gru,fra
+ts db placement example -regions sjc,fra
 ts db regions example
 ```
 
-`db create` places the home region automatically; `-home-region <region>`,
-`-replica-regions <a,b>` or `-all-regions` request specific placement.
-`db placement` changes a database's replica regions later,
-`db move-home <db> <region>` moves the home to one of its replica regions, and
-`db regions <db>` prints the home region and each replica's pull progress.
+`db create` takes `-regions`, a comma-separated list of region ids, at least one.
+`-all-regions` places the database in every serving region, including regions added later.
+`db placement` changes the set later with the same `-regions` list, or with `-all-regions`.
+Changing the set does not name which region orders writes: TerraBase picks that region and moves it when the set changes.
+If the new set drops the region that currently orders writes, added regions stay added and the call answers `503` `replica_not_ready` until one of the requested regions has replicated the database. Repeat the same request.
+`db regions <db>` prints the regions of the set.
+These flags ship with the regions CLI (PR 1948). Until that release, the installed `ts` binary still takes the earlier flags below.
+
+### Earlier fields
+
+The installed CLI still takes `-home-region`, `-replica-regions` and `db move-home`. They still work. The regions CLI replaces them with `-regions` and `-all-regions`.
 
 Database deletion asks you to type the database name in a terminal before it
 deletes data. For an unattended script, explicitly consent

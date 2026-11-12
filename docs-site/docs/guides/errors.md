@@ -211,15 +211,15 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 ### `move_aborted`
 
-409 — the database's home move this operation depended on was abandoned. Re-check the database's placement. Retry: yes.
+409 — a change of the region that orders this database's writes, which this operation depended on, was abandoned. Re-check the database's placement. Retry: yes.
 
 ### `move_in_progress`
 
-409 — another move of this database's home is running. Wait for it to finish. Retry: yes.
+409 — another change of the region that orders this database's writes is running. Wait for it to finish. Retry: yes.
 
 ### `move_unresolved`
 
-503 — the database's home region is moving and its placement is not yet known. Retry after `Retry-After`. Retry: yes.
+503 — the region that orders this database's writes is changing and its placement is not yet known. Retry after `Retry-After`. Retry: yes.
 
 ### `must_refetch`
 
@@ -343,7 +343,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `replica_not_ready`
 
-503 — the target region's replica could not catch up; nothing changed. Retry the operation. Retry: yes.
+503 — a requested region has not replicated the database yet. Regions you added stay added. Repeat the request. Retry: yes.
 
 ### `request_timeout`
 
@@ -487,7 +487,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ## Wrong region
 
-A `421` with code `wrong_region` means the called region does not serve this database, the response names the home, and the caller sends the request to a region that serves it. The response names the home in the `X-TerraBase-Database-Home` header, its `Location` header carries the same request URL in the home region, and the message reads `the database is served in <region>: send it to https://<host>`. Recover by sending the request to a region that serves the database, which may be the home or a replica — `ts db info <name>` prints a database's metadata, including its home region. The SDKs do not retry a `421` automatically: the .NET SDK raises `TerraBaseWrongRegionException` and the Go SDK returns an `*tb.APIError`, both carrying `HomeRegion` (and the regions that serve the database), so your code can resend there.
+A `421` with code `wrong_region` means the called region does not serve this database. The response names a region of the set in the `X-TerraBase-Database-Home` header, its `Location` header carries the same request URL in that region, and the message reads `the database is served in <region>: send it to https://<host>`. Send the request to a region of the database's set. `ts db info <name>` prints a database's metadata, including its regions. The SDKs do not retry a `421` automatically: the .NET SDK raises `TerraBaseWrongRegionException` and the Go SDK returns an `*tb.APIError`, both carrying the regions that serve the database, so your code can resend there.
 
 ## Retry behavior
 

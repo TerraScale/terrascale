@@ -4,9 +4,9 @@ title: Multi-region writes and conflicts
 
 # Multi-region writes and conflicts
 
-When writes from different regions reach the same row and column, the database's home compares their hybrid logical clock (HLC) stamps. The greater stamp wins for that column: first milliseconds, then the logical counter, then the node ID in ordinal order. Writes to different columns can both survive. Arrival order does not decide the winner.
+When writes from different regions reach the same row and column, the region that orders the database's writes compares their hybrid logical clock (HLC) stamps. The greater stamp wins for that column: first milliseconds, then the logical counter, then the node ID in ordinal order. Writes to different columns can both survive. Arrival order does not decide the winner.
 
-This is the home-apply rule. Regional write acceptance and delivery depend on the connection and deployed data plane; see [replication](/concepts/replication) for the current connection behavior. A conflict record does not make a provisional write confirmed.
+Every region of the database's set accepts reads and writes. A write sent to a region other than the one that orders writes is forwarded, or committed locally and confirmed. See [replication](/concepts/replication). A conflict record does not make a provisional write confirmed.
 
 ## Inspect a conflict
 
@@ -18,13 +18,13 @@ The conflict log records decisions at apply time. Reading the application's row 
 
 | Transaction state | Meaning |
 | --- | --- |
-| `provisional` | Committed in its origin region; the home has not applied it yet. |
-| `confirmed` | Applied at the home. Individual columns can still lose to greater HLC stamps. |
-| `reverted` | Rejected at the home. None of the transaction's changes applied. |
+| `provisional` | Committed in the region you called; the ordering region has not applied it yet. |
+| `confirmed` | Applied at the ordering region. Individual columns can still lose to greater HLC stamps. |
+| `reverted` | Rejected at the ordering region. None of the transaction's changes applied. |
 
-A conflict's `loser_state` is `superseded` or `reverted`. `superseded` records losing columns in a **confirmed** transaction. A provisional transaction has no conflict record until the home makes its decision. An empty conflict list does not prove that a transaction was confirmed.
+A conflict's `loser_state` is `superseded` or `reverted`. `superseded` records losing columns in a **confirmed** transaction. A provisional transaction has no conflict record until the ordering region makes its decision. An empty conflict list does not prove that a transaction was confirmed.
 
-A delete leaves a stamped tombstone, so an older write cannot resurrect the row. Inserts with an existing primary key and updates to a missing row revert the transaction. Unique, foreign-key and other constraint failures also revert the whole transaction. A stamp more than 50 milliseconds ahead of the peer clocks the home already holds is rejected as `clock`.
+A delete leaves a stamped tombstone, so an older write cannot resurrect the row. Inserts with an existing primary key and updates to a missing row revert the transaction. Unique, foreign-key and other constraint failures also revert the whole transaction. A stamp more than 50 milliseconds ahead of the peer clocks the ordering region already holds is rejected as `clock`.
 
 ## Read conflicts with SQL or an SDK
 
@@ -58,13 +58,13 @@ Bind the table name and timestamps as query parameters in application code. For 
 | `winner_state` | `confirmed`, or null when no winning write was recorded. |
 | `loser_state` | `superseded` or `reverted`; `superseded` means the transaction is confirmed. |
 | `message` | Reason for the decision. |
-| `created_at` | UTC time when the home recorded the conflict, distinct from either write's HLC. |
+| `created_at` | UTC time when the ordering region recorded the conflict, distinct from either write's HLC. |
 
 For example, `019a50c1e2f3.00000001:gru-1` beats `019a50c1e2f3.00000000:sjc-1` because its logical counter is greater. The node ID only breaks a tie when both the milliseconds and logical counter match.
 
 SQL NULL means no value was recorded (for example, a deleted or unknown row); the text `null` is a recorded JSON null value. Values larger than 4 KiB of JSON are represented by `{"sha256":"…","bytes":12345}`. The console shows those hashes and sizes without fetching the current application row.
 
-The home retains at most the newest 10,000 conflict records and trims records older than 30 days when it records a conflict. Replicas may show the log after replication catches up. The dashboard reads at the home. Reads use the database's normal read permission; writes to the conflict table are refused.
+The ordering region retains at most the newest 10,000 conflict records and trims records older than 30 days when it records a conflict. Other regions of the set may show the log after they catch up. The dashboard reads at the ordering region. Reads use the database's normal read permission; writes to the conflict table are refused.
 
 ## Read conflicts with MCP
 

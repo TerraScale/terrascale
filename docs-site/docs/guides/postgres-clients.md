@@ -58,7 +58,7 @@ Dollar-quoted strings (`$$…$$`) and `E'…'` escape strings are refused with `
 
 ## Write routing
 
-`SET terrascale.write` chooses where subsequent statements commit: `home` (the database's home region, for read-your-writes), `local` (the closest region, when it accepts local writes) or `auto` (the default). `SHOW terrascale.write_route` reports the route the last write took. See [multi-region writes and conflicts](/guides/multi-region-writes-and-conflicts).
+`SET terrascale.write` chooses where subsequent statements commit: `home` (the region that orders the database's writes, for read-your-writes), `local` (the region you call, when it accepts a local write) or `auto` (the default). `SHOW terrascale.write_route` reports the route the last write took. See [multi-region writes and conflicts](/guides/multi-region-writes-and-conflicts).
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 

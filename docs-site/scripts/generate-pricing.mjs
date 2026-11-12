@@ -25,7 +25,7 @@ Starter, Pro and Team can be billed monthly or yearly; a year costs ten monthly 
 ## What is billed
 
 - **Writes.** ${metering.operationUnit.definition}
-- **Storage.** ${metering.storage.definition}
+- **Storage.** ${metering.storage.definition.replace("in the database's home region", "in the region that orders the database's writes").replace("Replica storage is not billed separately", "Copies in the other regions of the set are not billed separately")}
 - **Reads.** SQL reads are not billed; they count toward the plan's monthly fair use. Shape reads served from the edge are free and not counted.
 
 ${metering.allowances.definition}
@@ -38,13 +38,13 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 
 ## Regions per database
 
-| Plan | Home regions per database |
+| Plan | Regions per database |
 | --- | --- |
 ${plans.map((plan) => `| ${plan.name} | ${count(plan.entitlements.regionsPerDatabase)} |`).join('\n')}
 
-Each database has one home region and replicas in other serving regions; a replica region can accept a local SQL REST write, the home applies it, and the default TerraScale-Durability is local.
-The catalog's regionsPerDatabase counts home regions. Replica storage is not billed separately; writes and stored
-bytes are metered at home. See [regions](/concepts/regions) and [replication](/concepts/replication).
+A database lives in a set of regions, at least one, and every region of the set accepts reads and writes. One region of the set orders the writes; TerraBase picks it. The default TerraScale-Durability is local.
+The catalog's regionsPerDatabase is how many regions that set may include. Copies in the other regions of the set are not billed separately; stored
+bytes are metered in the region that orders writes. See [regions](/concepts/regions) and [replication](/concepts/replication).
 
 ## Spending caps
 

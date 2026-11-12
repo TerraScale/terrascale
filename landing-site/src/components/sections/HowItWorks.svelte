@@ -6,7 +6,6 @@
   import { reveal } from '@/lib/reveal'
 
   const stepIcons: AppIconName[] = ['database', 'globe', 'zap']
-  // Step one picks the home region from the serving regions.
   const stepRegions = [['gru', 'sjc', 'fra']] as const
 
   $: steps = $dict.howItWorks.steps.map((step, i) => ({

@@ -53,7 +53,7 @@ One request is one transaction. `BEGIN`, `COMMIT` and `ROLLBACK` are refused; `S
 
 ## Read and write routing
 
-Read-only requests run on a ready replica in the serving region; everything else is forwarded whole to the database's home in one hop. The answer carries `TerraScale-Write-Route` (`route=local|home; reason=…; commit=home|local`) and `Server-Timing`. Send `TerraScale-Write: home` to force the home route. `TerraScale-Write: local` is accepted and ignored. `auto` is the default. Send `TerraScale-Durability: home` to answer only after the home applied the write. Set the body field `durability` to `all` to answer only after every replica region holds the commit (a 10-second wait answers `503 unavailable`). The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has. See [multi-region writes and conflicts](/guides/multi-region-writes-and-conflicts).
+Reads are served in the region you call. A write sent to another region is forwarded, or committed locally and confirmed. The answer carries `TerraScale-Write-Route` (`route=local|home; reason=…; commit=home|local`) and `Server-Timing`. Send `TerraScale-Write: home` to send the request to the region that orders writes. `TerraScale-Write: local` is accepted and ignored. `auto` is the default. Send `TerraScale-Durability: home` to answer only after that region applied the write. Set the body field `durability` to `all` to answer only after every region of the set holds the commit (a 10-second wait answers `503 unavailable`). The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the ordering region applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has. See [multi-region writes and conflicts](/guides/multi-region-writes-and-conflicts).
 
 ## Export a database
 
@@ -64,7 +64,7 @@ Authorization: Bearer <access token>
 
 The response is one SQL script (`application/sql`, `attachment`) holding the whole database: every table's schema and rows, then its indexes, views and triggers, wrapped in one transaction. The dump comes from a single read snapshot, so it is consistent — no half-applied writes appear in it. The same statements run back into a fresh database through `sql/execute` or the SDKs.
 
-Exports need the `sql:read` scope and are served by the database's home region. If an export fails partway, the connection is closed instead of returning a partial file, so retry the whole request.
+Exports need the `sql:read` scope and are served by the region that orders the database's writes. If an export fails partway, the connection is closed instead of returning a partial file, so retry the whole request.
 
 ## Limits
 

@@ -48,7 +48,7 @@ For example, after the user approves, the MCP `tools/call` parameters are:
 }
 ```
 
-Replace the IDs and example time with the reviewed values. Window and plan use current-user project tokens with `databases:read`; restore uses `databases:write`, followed by `databases:read` for identity readback. MCP sign-in credentials and project API tokens have separate authentication contracts; do not substitute one for the other. The dashboard routes these operations to the source's home region.
+Replace the IDs and example time with the reviewed values. Window and plan use current-user project tokens with `databases:read`; restore uses `databases:write`, followed by `databases:read` for identity readback. MCP sign-in credentials and project API tokens have separate authentication contracts; do not substitute one for the other. The dashboard routes these operations to one region of the source database's set.
 
 ## Refusals, unknown outcomes and cleanup
 
