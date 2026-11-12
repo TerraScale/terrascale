@@ -5,6 +5,11 @@ ns=$state/namespace
 rm -rf "$ns"
 mkdir -p "$ns/empty"
 ip link set lo up
+if [ "${E2E_REGIONS:-1}" = 2 ]; then
+  ip address add 127.0.0.2/32 dev lo
+  ip route replace local 127.0.0.1/32 dev lo src 127.0.0.2 table local
+  ip route replace local 127.0.0.2/32 dev lo src 127.0.0.1 table local
+fi
 { printf '127.0.0.1 localhost\n::1 localhost\n'; sed 's/^/127.0.0.1 /' "$here/hostnames"; } > "$ns/hosts"
 printf 'passwd: files\ngroup: files\nshadow: files\nhosts: files\n' > "$ns/nsswitch.conf"
 cat "${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}" "$state/pki/ca.pem" > "$ns/ca-certificates.crt"

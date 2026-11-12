@@ -2,6 +2,9 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 
+const twoRegions = process.env.E2E_REGIONS === '2';
+const platformBuckets = new Set(['journey-backups', 'ts-terrabase-shapes-prod']);
+const platformObject = /^\/(journey-backups|ts-terrabase-shapes-prod)\/((?:v1|catalog-anchor)\/[^?]+)$/;
 const origin = 'https://dash.terrascale.tech';
 const bucket = /^\/(terrascale-[a-z]+-files)\/(app-files\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26})$/;
 const listing = /^\/(terrascale-[a-z]+-files)\/?$/;
@@ -75,12 +78,13 @@ function unexpected(request, response, status, code, detail) {
 function list(request, response, name, query) {
   const prefix = query.get('prefix') ?? '';
   const limit = Number(query.get('max-keys') ?? 1000);
+  const platform = twoRegions && platformBuckets.has(name);
   const encoded = query.has('encoding-type');
-  if (query.get('list-type') !== '2' || !projectPrefix.test(prefix) || [...query.keys()].some((key) => !listQuery.has(key))
+  if (query.get('list-type') !== '2' || !(platform ? prefix.startsWith('v1/') : projectPrefix.test(prefix)) || [...query.keys()].some((key) => !listQuery.has(key) && !(platform && key === 'start-after'))
     || !Number.isInteger(limit) || limit < 1 || limit > 1000 || (encoded && query.get('encoding-type') !== 'url'))
     return unexpected(request, response, 400, 'InvalidArgument', 'a listing that is not ListObjectsV2 of one project prefix');
   const text = (value) => (encoded ? value.split('/').map(encode).join('/') : value);
-  const keys = [...objects.keys()].filter((key) => key.startsWith(`${name}/${prefix}`)).sort();
+  const keys = [...objects.keys()].filter((key) => key.startsWith(`${name}/${prefix}`) && (!query.has('start-after') || key.slice(name.length + 1) > query.get('start-after'))).sort();
   const contents = keys.slice(0, limit).map((key) => {
     const stored = objects.get(key);
     return `<Contents><Key>${text(key.slice(name.length + 1))}</Key><LastModified>${new Date(stored.modified).toISOString()}</LastModified>`
@@ -106,7 +110,8 @@ createServer((request, response) => {
     const at = pair.indexOf('=');
     query.append(decode(at < 0 ? pair : pair.slice(0, at)), at < 0 ? '' : decode(pair.slice(at + 1)));
   }
-  const target = bucket.exec(rawPath);
+  const platform = twoRegions && platformObject.exec(rawPath);
+  const target = bucket.exec(rawPath) ?? platform;
   const listed = request.method === 'GET' ? listing.exec(rawPath) : null;
   log.calls.push(`${request.method} ${target ? '/' + target[1] + '/<key>' : listed ? '/' + listed[1] + '?prefix=<project>' : rawPath}`);
   if (request.method === 'OPTIONS') {
@@ -116,7 +121,8 @@ createServer((request, response) => {
     response.writeHead(204, { 'access-control-allow-methods': 'PUT', 'access-control-allow-headers': 'content-type, x-amz-checksum-sha256', 'access-control-max-age': '600' });
     return response.end();
   }
-  if (!target && !listed) return unexpected(request, response, 404, 'NoSuchBucket', 'path outside the files bucket');
+  const platformBucket = twoRegions && /^\/(journey-backups|ts-terrabase-shapes-prod)\/?$/.exec(rawPath);
+  if (!target && !listed && !platformBucket) return unexpected(request, response, 404, 'NoSuchBucket', 'path outside the files bucket');
   const key = target ? `${target[1]}/${target[2]}` : null;
   const chunks = [];
   request.on('data', (chunk) => chunks.push(chunk));
@@ -125,12 +131,34 @@ createServer((request, response) => {
     if (request.headers.origin === origin) cors(response);
     const denied = signed(request, rawPath, query);
     if (denied) return unexpected(request, response, 403, 'SignatureDoesNotMatch', denied);
+    if (platform && query.has('uploadId')) return unexpected(request, response, 400, 'InvalidRequest', 'multipart uploads are not implemented');
+    if (platform && /^[0-9a-f]{64}$/.test(request.headers['x-amz-content-sha256'] ?? '')
+      && request.headers['x-amz-content-sha256'] !== sha256(body, 'hex'))
+      return unexpected(request, response, 400, 'BadDigest', 'payload differs from its signed hash');
+    if (platformBucket && request.method === 'HEAD') {
+      response.writeHead(200, { 'content-length': 0 });
+      return response.end();
+    }
+    if (platformBucket && (query.has('uploads') || query.has('versions'))) {
+      const name = platformBucket[1];
+      const prefix = query.get('prefix') ?? '';
+      const versions = query.has('versions');
+      const root = versions ? 'ListVersionsResult' : 'ListMultipartUploadsResult';
+      const entries = versions ? [...objects.keys()].filter((key) => key.startsWith(`${name}/${prefix}`)).map((key) => {
+        const stored = objects.get(key);
+        return `<Version><Key>${key.slice(name.length + 1)}</Key><VersionId>null</VersionId><IsLatest>true</IsLatest><LastModified>${new Date(stored.modified).toISOString()}</LastModified><ETag>${stored.etag.replaceAll('"', '&quot;')}</ETag><Size>${stored.body.length}</Size><StorageClass>STANDARD</StorageClass></Version>`;
+      }).join('') : '';
+      const text = `<?xml version="1.0" encoding="UTF-8"?><${root} xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>${name}</Name><Bucket>${name}</Bucket><Prefix>${prefix}</Prefix><IsTruncated>false</IsTruncated>${entries}</${root}>`;
+      response.writeHead(200, { 'content-type': 'application/xml', 'content-length': Buffer.byteLength(text) });
+      return response.end(text);
+    }
+    if (platformBucket && query.has('list-type')) return list(request, response, platformBucket[1], query);
     if (listed) return list(request, response, listed[1], query);
     if (request.method === 'PUT') {
       if (Number(request.headers['content-length']) !== body.length) return unexpected(request, response, 400, 'IncompleteBody', 'content-length differs from the body');
-      if (request.headers['x-amz-checksum-sha256'] !== sha256(body, 'base64')) return fail(response, 400, 'BadDigest', 'The SHA256 you specified did not match the calculated checksum.');
+      if ((!platform || request.headers['x-amz-checksum-sha256']) && request.headers['x-amz-checksum-sha256'] !== sha256(body, 'base64')) return fail(response, 400, 'BadDigest', 'The SHA256 you specified did not match the calculated checksum.');
       objects.set(key, { body, type: request.headers['content-type'] ?? 'application/octet-stream', etag: `"${createHash('md5').update(body).digest('hex')}"`, modified: new Date().toUTCString() });
-      response.writeHead(200, { etag: objects.get(key).etag, 'x-amz-checksum-sha256': request.headers['x-amz-checksum-sha256'], 'content-length': 0 });
+      response.writeHead(200, { etag: objects.get(key).etag, ...(request.headers['x-amz-checksum-sha256'] ? { 'x-amz-checksum-sha256': request.headers['x-amz-checksum-sha256'] } : {}), 'content-length': 0 });
       return response.end();
     }
     if (request.method === 'DELETE') {
