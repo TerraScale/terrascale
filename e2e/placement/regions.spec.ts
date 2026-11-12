@@ -331,3 +331,136 @@ test('R8 a TTL branch keeps its identity through catalog sync, a move and a rena
     await context.close();
   }
 });
+
+const multiple = test.extend<{ owner: { cells: Cells; projectId: string } }>({
+  owner: async ({ browser, playwright, request }, use, info) => {
+    const context = await auditedContext(browser, {});
+    try {
+      const page = await context.newPage();
+      const audit = new Audit(page, info);
+      const email = await newAddress(name('catalog'));
+      const password = randomBytes(24).toString('base64url');
+      saveSecret('catalog-password', password);
+      await signUp(page, audit, email, password, 'catalog owner');
+      await verify(page, email);
+      await onboard(page, audit, 'Catalog owner', name('catalog-project'), 'catalog owner');
+      const projectId = new URL(page.url()).searchParams.get('projectId') ?? '';
+      expect(projectId).not.toBe('');
+      await page.goto(`${dash}/organization?tab=billing`);
+      await page.locator('article.ts-plan', { has: page.locator('#plan-pro') }).getByRole('button', { name: 'Upgrade to Pro', exact: true }).click();
+      await page.waitForURL(url => url.origin === 'https://checkout.stripe.com' && url.pathname.startsWith('/c/pay/cs_test_'));
+      await page.getByRole('button', { name: 'Subscribe', exact: true }).click();
+      await page.waitForURL(url => url.origin === dash && url.pathname === '/organization' && url.searchParams.get('payment') === 'success');
+      await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
+      await audit.check('catalog owner upgraded');
+      const key = await createApiKey(page, audit, name('catalog-key'), 'catalog owner');
+      const cells = await authenticatedCells(playwright.request, request, key, projectId);
+      try {
+        await use({ cells, projectId });
+      } finally {
+        await cells.dispose();
+      }
+      await page.goto(`${dash}/profile?tab=danger`);
+      await page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
+      const dialog = page.locator('#delete-account');
+      await dialog.locator('#delete-account-email').fill(email);
+      await dialog.getByRole('button', { name: 'Delete account', exact: true }).click();
+      await confirmWithPassword(page, audit, password, 'catalog owner deletion');
+      await page.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
+      await audit.check('catalog owner deleted');
+      await audit.finish();
+    } finally {
+      await saveCookies(context);
+      await context.close();
+    }
+  },
+});
+
+async function named(cells: Cells, region: string, label: string, regions: string[], projectId: string): Promise<Database> {
+  return json<Database>(await cells.post(`${region}${project(projectId)}/databases`, { data: { name: label, regions } }), 201);
+}
+
+async function rename(cells: Cells, region: string, id: string, label: string, projectId: string): Promise<void> {
+  await answer(await cells.patch(`${region}${database(id, projectId)}`, { data: { name: label } }), 200, '200 database renamed');
+}
+
+async function recordedName(cells: Cells, id: string, projectId: string): Promise<string> {
+  return (await json<{ name: string }>(await cells.get(`${replica}${database(id, projectId)}`))).name;
+}
+
+multiple('R9 a taken follower name does not stop later catalog entries or pulls', async ({ owner: { cells, projectId } }) => {
+  const original = name('original');
+  const occupied = name('occupied');
+  const x = await named(cells, home, original, ['gru', 'fra'], projectId);
+  const y = await named(cells, replica, occupied, ['fra'], projectId);
+  let later: Database | undefined;
+  try {
+    await seed(cells, x.id, projectId);
+    await observed(cells, x.id, projectId);
+    await rename(cells, home, x.id, occupied, projectId);
+    later = await create(cells, ['gru'], projectId);
+    await seed(cells, later.id, projectId);
+    await answer(await patch(cells, later.id, ['gru', 'fra'], projectId), 200, '200 later database starts following');
+    await observed(cells, later.id, projectId);
+    await replicated(cells, replica, later.id, 3, projectId);
+    expect(await recordedName(cells, x.id, projectId)).toBe(original);
+    expect(await recordedName(cells, y.id, projectId)).toBe(occupied);
+    console.log('R9 fra kept the conflicting name and completed a pull for a later gru database');
+  } finally {
+    if (later) await removeDatabase(cells, later.id, projectId);
+    await removeDatabase(cells, x.id, projectId);
+    await removeDatabase(cells, y.id, projectId);
+  }
+});
+
+multiple('R10 a home name swap converges on the follower within two sweeps', async ({ owner: { cells, projectId } }) => {
+  const a = name('swap-a');
+  const b = name('swap-b');
+  const x = await named(cells, home, a, ['gru', 'fra'], projectId);
+  const y = await named(cells, home, b, ['gru', 'fra'], projectId);
+  try {
+    await seed(cells, x.id, projectId);
+    await seed(cells, y.id, projectId);
+    await observed(cells, x.id, projectId);
+    await observed(cells, y.id, projectId);
+    expect(await recordedName(cells, x.id, projectId)).toBe(a);
+    expect(await recordedName(cells, y.id, projectId)).toBe(b);
+    await rename(cells, home, x.id, name('swap-tmp'), projectId);
+    await rename(cells, home, y.id, a, projectId);
+    await rename(cells, home, x.id, b, projectId);
+    await expect.poll(async () => [await recordedName(cells, x.id, projectId), await recordedName(cells, y.id, projectId)],
+      { message: 'fra applies both swapped names within two 30-second sweeps', timeout: 65_000, intervals: [250, 500, 1000] })
+      .toEqual([b, a]);
+    console.log('R10 fra converged to both swapped names within two catalog sweeps');
+  } finally {
+    await removeDatabase(cells, x.id, projectId);
+    await removeDatabase(cells, y.id, projectId);
+  }
+});
+
+multiple('R11 a conflicting promotion is refused before takeover and succeeds after a rename', async ({ owner: { cells, projectId } }) => {
+  const occupied = name('move-name');
+  const original = name('move-original');
+  const x = await named(cells, home, original, ['gru', 'fra'], projectId);
+  const y = await named(cells, replica, occupied, ['fra'], projectId);
+  try {
+    await seed(cells, x.id, projectId);
+    await observed(cells, x.id, projectId);
+    await rename(cells, home, x.id, occupied, projectId);
+    const before = await json<Record<string, unknown>>(await cells.get(`${home}${database(x.id, projectId)}`));
+    await answer(await patch(cells, x.id, ['fra'], projectId), 503, 'replica_not_ready');
+    const after = await json<Record<string, unknown>>(await cells.get(`${home}${database(x.id, projectId)}`));
+    expect(after).toEqual(before);
+    expect(await recordedName(cells, x.id, projectId)).toBe(original);
+    expect((await progress(cells, x.id, home, projectId)).regions.filter(row => row.role === 'writer').map(row => row.region)).toEqual(['gru']);
+    await sql(cells, home, x.id, 'INSERT INTO placement_rows VALUES (4)', projectId);
+    await rename(cells, replica, y.id, name('move-freed'), projectId);
+    await move(cells, x.id, 'R11', 60_000, [], projectId);
+    expect((await sql(cells, replica, x.id, 'SELECT value FROM placement_rows ORDER BY value', projectId)).results[0].rows).toEqual([[1], [2], [3], [4]]);
+    expect(await recordedName(cells, x.id, projectId)).toBe(occupied);
+    console.log('R11 replica_not_ready left gru writing; renaming the conflicting database allowed the move');
+  } finally {
+    await removeDatabase(cells, x.id, projectId);
+    await removeDatabase(cells, y.id, projectId);
+  }
+});

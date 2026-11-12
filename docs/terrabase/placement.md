@@ -61,7 +61,9 @@ An identity with a missing or default creation time is treated as absent.
 Names are unique within each region's project catalog. Different databases in one project can have the same name
 in disjoint regions. A follower keeps its stored name when the incoming name belongs to another database, applies
 the remaining facts and placement, and tries the name again on the next sweep. A two-database name swap converges
-in at most two successful sweeps after the home finishes the swap. A promotion checks for a taken name before
+in at most two successful sweeps if the follower already observed the temporary name. If it missed that name,
+both final names conflict with the other stored row and keeping the stored names cannot resolve the cycle.
+A promotion checks for a taken name before
 detaching, importing or taking the lease and refuses with the existing peer `409 move_aborted`; placement callers
 receive `503 replica_not_ready`. Rename one of the databases and repeat the move. The regions API does not expose
 the name-conflict reason. Catalog sync also runs from handoff paths; a follower can show the old name for up to
