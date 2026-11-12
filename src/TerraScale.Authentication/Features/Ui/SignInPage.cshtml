@@ -479,7 +479,9 @@ break;
     {
         if (name == "head" && Model.Refresh is { } refresh)
         {
-<meta http-equiv="refresh" content="0;url=@refresh">
+            WriteLiteral("<meta http-equiv=\"refresh\" content=\"0;url=");
+            Write(refresh);
+            WriteLiteral("\">");
         }
 
         return Task.CompletedTask;

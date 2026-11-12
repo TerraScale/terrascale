@@ -208,10 +208,10 @@ function passkeyDecode(text) {
         });
       })
       .then(function (response) {
+        if (response.redirected) { window.location.replace(response.url); return; }
         if (!response.ok) throw new Error(i18n.signInFailed || '');
-        return response.text();
+        return response.text().then(follow);
       })
-      .then(follow)
       .catch(function (error) {
         if (error && error.name === 'NotAllowedError') { reset(); return; }
         fail(i18n.signInFailedTitle || '', i18n.signInAgain || '');

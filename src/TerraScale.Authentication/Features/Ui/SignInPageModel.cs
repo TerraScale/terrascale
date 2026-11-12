@@ -231,7 +231,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         return $"/ui/{this.Slug}/{path}" + (query.Count == 0 ? string.Empty : "?" + string.Join("&", query));
     }
 
-    internal static string? NavigationTarget(Uri? origin, string? url)
+    internal static string? NavigationTarget(string? url)
     {
         if (string.IsNullOrEmpty(url))
         {
@@ -250,12 +250,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
             return null;
         }
 
-        if (parsed.IsAbsoluteUri)
-        {
-            return parsed.AbsoluteUri;
-        }
-
-        return origin is not null && Uri.TryCreate(origin, target, out var combined) ? combined.PathAndQuery : target;
+        return parsed.IsAbsoluteUri ? parsed.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped) : target;
     }
 
     private static string? ContinueTo(SignInPageModel model) => model.Step switch
@@ -276,7 +271,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
         var uiLocales = context.Request.Query["ui_locales"].ToString();
         var located = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = uiLocales.Length == 0 ? null : uiLocales };
-        var rendered = located with { Refresh = NavigationTarget(located.PublicOrigin, ContinueTo(located)) };
+        var rendered = located with { Refresh = NavigationTarget(ContinueTo(located)) };
         var page = SignInPage.Create(rendered);
         page.StatusCode = statusCode;
         return page;
