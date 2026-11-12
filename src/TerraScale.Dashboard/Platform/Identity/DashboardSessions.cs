@@ -199,7 +199,11 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
             var now = time.GetUtcNow();
             if ((record.SessionExpiresAt ?? record.ExpiresAt) <= now)
             {
-                await ExpireAsync(row, record, cancellationToken);
+                if (row.Kind == SessionRow.Credential)
+                {
+                    await RemoveAsync(row, "expired", cancellationToken);
+                }
+
                 return null;
             }
 
@@ -348,14 +352,15 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
         }
     }
 
-    public async Task ExpireBrowserSessionsAsync(CancellationToken cancellationToken)
+    public async Task ExpireBrowserSessionsAsync(int batchSize, CancellationToken cancellationToken)
     {
         var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
         var now = time.GetUtcNow().UtcDateTime;
         List<SessionRow> expired;
         await using (var db = await storage.CreateDbContextAsync(cancellationToken))
         {
-            expired = await db.Sessions.AsNoTracking().Where(row => row.Kind == SessionRow.Browser && row.ExpiresAt <= now).ToListAsync(cancellationToken);
+            expired = await db.Sessions.AsNoTracking().Where(row => row.Kind == SessionRow.Browser && row.ExpiresAt <= now).OrderBy(row => row.Id).Take(batchSize)
+                .ToListAsync(cancellationToken);
         }
 
         foreach (var row in expired)
@@ -368,27 +373,38 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
                 continue;
             }
 
-            await ExpireAsync(row, record, cancellationToken);
+            try { await auth.RevokeAsync(record, cancellationToken); }
+            catch (Exception error) when (error is HttpRequestException or TimeoutException)
+            {
+                logger.RevokingAnExpiredSessionFailed(error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TsAuthException)?.ErrorCode ?? "none");
+                if (ConcernsTheClient(error))
+                {
+                    throw;
+                }
+
+                continue;
+            }
+
+            await RemoveAsync(row, "expired", cancellationToken);
         }
     }
 
-    private async Task ExpireAsync(SessionRow row, SessionRecord record, CancellationToken cancellationToken)
+    private static bool ConcernsTheClient(Exception error) => error switch
     {
-        if (row.Kind == SessionRow.Browser)
-        {
-            await auth.RevokeAsync(record, cancellationToken);
-        }
-
-        await RemoveAsync(row, "expired", cancellationToken);
-    }
+        TsAuthException { ErrorCode: "invalid_client" } => true,
+        TsAuthException { StatusCode: HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests or HttpStatusCode.BadGateway or HttpStatusCode.GatewayTimeout } => true,
+        TsAuthException => false,
+        _ => true,
+    };
 
     public async Task EndAsync(HttpContext context)
     {
         if (BrowserToken(context) is { } token)
         {
             var hash = Key(token);
+            var now = time.GetUtcNow().UtcDateTime;
             await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
-            await db.Sessions.Where(row => row.TokenHash == hash).ExecuteDeleteAsync(context.RequestAborted);
+            await db.Sessions.Where(row => row.TokenHash == hash && row.ExpiresAt > now).ExecuteDeleteAsync(context.RequestAborted);
         }
         Clear(context);
     }

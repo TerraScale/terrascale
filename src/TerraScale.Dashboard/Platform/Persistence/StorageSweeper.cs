@@ -8,6 +8,8 @@ public sealed class StorageSweeper(IDbContextFactory<DashboardDbContext> storage
 {
     public static readonly TimeSpan Interval = TimeSpan.FromMinutes(10);
 
+    private const int BatchSize = 500;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
@@ -24,7 +26,7 @@ public sealed class StorageSweeper(IDbContextFactory<DashboardDbContext> storage
                     await db.Sessions.Where(session => session.Kind == SessionRow.Credential && session.ExpiresAt <= now).ExecuteDeleteAsync(stoppingToken);
                     await db.McpCodes.Where(code => code.ExpiresAt <= now).ExecuteDeleteAsync(stoppingToken);
                     await McpRegistrations.ReclaimUnfinishedAsync(db, now, stoppingToken);
-                    await sessions.ExpireBrowserSessionsAsync(stoppingToken);
+                    await sessions.ExpireBrowserSessionsAsync(BatchSize, stoppingToken);
                 }
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
