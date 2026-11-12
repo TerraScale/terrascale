@@ -122,7 +122,8 @@ namespace TerraScale.Dashboard.Features.Profile
 
         private static string Cause(params object?[] parts)
         {
-            return string.Join(' ', parts.Where(part => part is int or string { Length: > 0 }));
+            var cause = string.Join(' ', parts.Where(part => part is int or string { Length: > 0 }));
+            return cause.Length > 0 ? cause : "-";
         }
 
         private async Task SettleAsync(DeletionCleanupJournal.Entry entry, DateTime started, CancellationToken cancellationToken)
