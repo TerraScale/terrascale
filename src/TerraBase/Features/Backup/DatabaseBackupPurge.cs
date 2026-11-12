@@ -8,6 +8,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -32,7 +33,7 @@ public interface IBackupKeyShredding
 
 internal sealed class DatabaseBackupPurge(
     SystemCatalog catalog, S3ObjectStore platform, DataKeys platformKeys, BackupTargets targets, TimeProvider time,
-    IMeterFactory meters, ILogger<DatabaseBackupPurge> logger, KeyCustody custody, IServiceProvider services) : BackgroundService, IBackupKeyShredding
+    IMeterFactory meters, ILogger<DatabaseBackupPurge> logger, KeyCustody custody, IServiceProvider services, RegionalOwners owners) : BackgroundService, IBackupKeyShredding
 {
     private readonly CancellationTokenSource _stopping = new();
     internal const string ProgressKind = "backup_purge_progress";
@@ -62,6 +63,11 @@ internal sealed class DatabaseBackupPurge(
 
     internal async Task RunOnceAsync(CancellationToken token)
     {
+        if (!owners.Writer)
+        {
+            return;
+        }
+
         await _pass.WaitAsync(token).ConfigureAwait(false);
         try
         {
