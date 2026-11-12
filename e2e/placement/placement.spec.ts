@@ -3,6 +3,10 @@ import { expect } from '@playwright/test';
 import { stored } from '../support/files';
 import { saveSecret } from '../support/state';
 import { test, home, replica, project, database, name, status, json, sql, replicated, type Database, type Progress } from './support';
+import { production } from '../support/stack';
+
+test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
+test.describe.configure({ mode: 'default', timeout: 180_000 });
 
 type Signed = { id: string; url: string; headers: Record<string, string> };
 

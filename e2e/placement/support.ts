@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { test as base, expect, type APIRequestContext, type APIResponse } from '@playwright/test';
-import { auth, production } from '../support/stack';
+import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 
 export const home = 'https://gru.api.terrascale.tech';
@@ -53,8 +53,6 @@ export const test = base.extend<{ cells: Cells }>({
   },
 });
 
-test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
-test.describe.configure({ mode: 'default', timeout: 180_000 });
 
 export type Database = { id: string; homeRegion: string; replicaRegions: string[] };
 export type Progress = { homeRegion: string; replicas: { region: string; revision: string | null; lastPulledAt: string | null; lagMs: number | null }[] };

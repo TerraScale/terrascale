@@ -1,6 +1,10 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse } from '@playwright/test';
 import { test, home, replica, project, database, name, json, sql, replicated, type Cells } from './support';
+import { production } from '../support/stack';
+
+test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
+test.describe.configure({ mode: 'default', timeout: 180_000 });
 
 type Database = { id: string; regions: string[] };
 type Observation = { region: string; role: string | null; revision: string | null; lastPulledAt: string | null; lagMs: number | null };
