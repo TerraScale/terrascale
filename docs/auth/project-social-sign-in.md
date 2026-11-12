@@ -6,7 +6,7 @@ shares one across projects. Builds on [project tenant management](project-tenant
 
 ## Configuration API
 
-Every call takes the caller's terrascale sign-in token, like the other `/v1/{project}/…` calls.
+Calls accept a terrascale sign-in token with the role below, or a project API key with `auth:read` for reads and `auth:write` for changes and admin-minimum operations. Provider PUT requires a signed-in person with the admin project role and refuses project API keys.
 
 | Call | Role | Effect |
 |---|---|---|
@@ -73,3 +73,10 @@ Both pages share the hosted per-IP budget. The outbound client times out after 1
 public unicast addresses, so a configured OIDC issuer cannot reach loopback, private, link-local or mesh addresses.
 
 An unverified provider email requires a single-use code bound to a sealed ten-minute pending link containing the provider configuration and subject. The same response and queued mail flow serves new and existing addresses. Code verification atomically consumes the pending challenge and creates the account when self sign-up is allowed or connects the existing account. Reusing the provider subject then signs in directly. The provider configuration must still match, and the hosted mail, email-code and sign-up IP budgets apply. Microsoft email trust requires xms_edov=true; email_verified alone is insufficient.
+
+
+Pending social links remain available when email passcode sign-in is disabled, but both code requests and redemption require the pending identity's normalized email in the same browser. A pending cookie never enables ordinary passcode sign-in for another address. The link has its own stored purpose and cannot redeem a normal sign-in code.
+
+The `social_link_code` email template and hosted code page name the provider being connected, with English and Brazilian Portuguese copy. The template exposes `provider`, `code` and `expires_in`, alongside the usual project brand variables. Pending cookies are chunked and capped at 16,384 characters; an oversized identity returns a clear error without queueing email.
+
+Social account creation emits C42's `user.signed_up` lifecycle event. Linking emits `user.provider_linked` and `user.updated` in the same atomic write as the provider link.

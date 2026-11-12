@@ -277,6 +277,21 @@ test('unverified social email creates and links an account only after the code, 
       expect(mail.text).toContain("If you didn't try to sign in with Custom OAuth2, ignore this email.");
       const code = /^\s*(\d{6})\s*$/m.exec(mail.text)?.[1] ?? '';
       expect(code).toMatch(/^\d{6}$/);
+      const wrongEmail = await customer.request.post(base + '/sign-in/verify', {
+        headers: { Origin: auth }, form: { email: otherEmail, code },
+      });
+      expect(wrongEmail.status()).toBe(403);
+      const anotherBrowser = await auditedContext(browser, { viewport: desktop });
+      try {
+        const missingPending = await anotherBrowser.request.post(base + '/sign-in/verify', {
+          headers: { Origin: auth }, form: { email, code },
+        });
+        expect(missingPending.status()).toBe(404);
+        expect((await anotherBrowser.cookies()).some(cookie => cookie.name === 'tsauth_session_' + projectId)).toBe(false);
+      } finally {
+        await saveCookies(anotherBrowser);
+        await anotherBrowser.close();
+      }
       const wrongCode = await customer.request.post(base + '/sign-in/verify', {
         headers: { Origin: auth }, form: { email, code: code === '000000' ? '000001' : '000000' },
       });
