@@ -98,7 +98,16 @@ seconds before it expires) through a 12-hour browser session, so a session in
 continuous use lives its full life. A longer dashboard session needs a larger
 limit.
 
+These numbers couple the two services: `Credentials.MaxLineage` is computed
+from the dashboard's 12-hour browser session (`DashboardSessions.StartAsync`)
+and its 30-second renewal lead (`DashboardSessions.RenewBeforeExpiry`), so a
+change to either needs the limit recomputed. A platform admin's forced
+refreshes are outside that budget: every admin page renews the access token at
+once (`DashboardSessions.ReadForPrivilegeAsync`), so an admin who opens admin
+pages often can reach the limit before the 12 hours end and signs in again.
+
 The limit keeps the cost of one grant bounded: checking an ancestry reads one
 row per binding, every token entry stores its ancestry, and a step-up
-confirmation asserts each binding of the caller's ancestry in a single
-TerraBase request, which runs at most 256 statements.
+confirmation asserts each binding of the caller's ancestry: at most 226 rows,
+which TerraBase receives in batches of at most 256 statements inside one
+transaction (each asserted row is an update and its guard).
