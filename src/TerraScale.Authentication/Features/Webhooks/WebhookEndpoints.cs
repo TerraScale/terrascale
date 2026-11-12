@@ -67,10 +67,10 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
 
     public async Task<IReadOnlyList<WebhookEndpointBody>> ListAsync(string projectId, CancellationToken cancellationToken) =>
         await data.ReadAsync((db, token) => (from endpoint in db.WebhookEndpoints
-            join state in db.WebhookEndpointStates on endpoint.Id equals state.EndpointId
-            where endpoint.ProjectId == projectId && endpoint.InstanceId == projectId
-            orderby endpoint.CreatedAt, endpoint.Id
-            select new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, null, null, state.DisabledAt))
+                                             join state in db.WebhookEndpointStates on endpoint.Id equals state.EndpointId
+                                             where endpoint.ProjectId == projectId && endpoint.InstanceId == projectId
+                                             orderby endpoint.CreatedAt, endpoint.Id
+                                             select new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, null, null, state.DisabledAt))
             .ToListAsync(token), cancellationToken).ConfigureAwait(false);
 
     public async Task<bool> DeleteAsync(string projectId, string id, CancellationToken cancellationToken)
