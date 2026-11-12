@@ -52,8 +52,11 @@ five-minute access token every few minutes. When the dashboard redeems that
 grant's authorization code it sends `ts_refresh_expires_at`: the Unix time it
 also stores as the token's expiry. ts-auth honours it only on the
 `authorization_code` grant of the confidential `ts-dashboard` client, after the
-client authenticated, and only within (now, now + 365 days]. Any other value
-from that client answers `invalid_request` and leaves the code unredeemed;
+client authenticated, and only within (now, now + 365 days + 5 minutes]: the
+5 minutes absorb a dashboard clock that runs ahead of ts-auth's, while the
+dashboard itself never offers more than 365 days by its own clock. Any other
+value from that client answers `invalid_request` and leaves the code unredeemed
+(the dashboard then shows "This token could not be created with that expiry");
 other clients, other grants and refresh requests ignore the parameter. The
 grant's refresh token expires at that instant.
 

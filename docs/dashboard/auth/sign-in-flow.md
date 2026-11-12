@@ -35,6 +35,7 @@ step, check this lifetime too.
 | Callback | Answer |
 | --- | --- |
 | Matching, unexpired flow | Code exchange, dashboard session, `303` to `returnTo` |
+| Matching flow of a personal access token or MCP sign-in whose expiry ts-auth refuses (`invalid_request`) | `422` "This token could not be created with that expiry. Choose a shorter expiry." with Try again to `returnTo`; no token is created |
 | Any failure below, while the browser already has a dashboard session | `303` to the flow's `returnTo`, or `/` when it is unknown. This covers a reload, the back button and a second click on ts-auth's Continue link |
 | Flow expired | `400` "This sign-in took longer than an hour to finish." with Try again to `/login?returnTo=…` |
 | No flow for this state in this browser, or already used | `400` "This sign-in was already used, or was started in another browser." with Try again to `/login` |
@@ -45,6 +46,6 @@ without asking for another code.
 
 Every failure page shows a reference. The dashboard logs it as
 `TsAuthSignInFailed` with its cause (`FlowExpired`, `FlowUnknown`,
-`AuthorizationDenied`, `SignInRejectedException`, `RateLimited` or the
-dependency's exception type), so support can tell a reference's cause from the
-logs.
+`AuthorizationDenied`, `SignInRejectedException`, `AccountAccessException`,
+`RateLimited` or the dependency's exception type), so support can tell a
+reference's cause from the logs.

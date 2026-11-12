@@ -12,7 +12,11 @@ A token works until the expiry chosen when it was created:
   seconds: the creation time plus the chosen days (90 for an MCP sign-in). That
   one instant is the token's `expires_at`, its credential's expiry and the
   `ts_refresh_expires_at` the dashboard sends when it redeems the grant's
-  authorization code.
+  authorization code. ts-auth accepts it up to 5 minutes past its own now plus
+  365 days, so a dashboard clock a little ahead of ts-auth's still creates a
+  1-year token. When ts-auth refuses it, the callback answers `422` "This token
+  could not be created with that expiry. Choose a shorter expiry." and no token
+  is created.
 - ts-auth expires that grant's refresh token at the same instant and never
   rotates it
   ([refresh replay](../../auth/regional/refresh-replay.md#grants-that-do-not-rotate)),

@@ -42,6 +42,8 @@ namespace TerraScale.Dashboard.Features.Auth
                     credentials.AuthClientId, credentials.AuthClientSecret, code, flow.RedirectUri, flow.Verifier, credentialExpiresAt, cancellationToken);
             }
             catch (TsAuthException error) when (error.ErrorCode == "invalid_grant") { throw new SignInRejectedException(); }
+            catch (TsAuthException error) when (error.ErrorCode == "invalid_request" && credentialExpiresAt is not null)
+            { throw new AccountAccessException("This token could not be created with that expiry. Choose a shorter expiry.", 422); }
             return await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken);
         }
 

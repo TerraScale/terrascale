@@ -12,9 +12,11 @@ internal static class FixedRefreshTokens
 
     internal const string Claim = "ts_auth_refresh_expires_at";
 
-    internal const string InvalidNotice = "ts_refresh_expires_at must be a Unix time in seconds after now and at most 365 days ahead.";
+    internal const string InvalidNotice = "ts_refresh_expires_at must be a Unix time in seconds after now and at most 365 days and 5 minutes ahead.";
 
     private static readonly TimeSpan MaxLifetime = TimeSpan.FromDays(365);
+
+    private static readonly TimeSpan ClockAllowance = TimeSpan.FromMinutes(5);
 
     internal static bool TryRead(OpenIddictRequest request, string tenant, DateTimeOffset now, out DateTimeOffset? expiresAt)
     {
@@ -26,7 +28,7 @@ internal static class FixedRefreshTokens
         }
 
         if (!long.TryParse((string?)requested, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
-            || seconds <= now.ToUnixTimeSeconds() || seconds > (now + MaxLifetime).ToUnixTimeSeconds())
+            || seconds <= now.ToUnixTimeSeconds() || seconds > (now + MaxLifetime + ClockAllowance).ToUnixTimeSeconds())
         {
             return false;
         }

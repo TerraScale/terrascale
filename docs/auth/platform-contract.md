@@ -498,7 +498,7 @@ without a signed-in user.
 
 A `ts-dashboard` authorization code redeemed with `ts_refresh_expires_at` (a
 personal access token or an MCP sign-in) gets a refresh token that expires at
-that time, at most 365 days ahead, and never rotates; every other grant's
+that time, at most 365 days and 5 minutes ahead, and never rotates; every other grant's
 refresh token rotates on each use. See
 [refresh replay](regional/refresh-replay.md#grants-that-do-not-rotate).
 
