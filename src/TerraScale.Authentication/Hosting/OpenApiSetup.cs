@@ -38,6 +38,7 @@ public static class SecuritySchemes
     /// <summary>A whole project API key, restricted to server-to-server end-user token minting.</summary>
     public const string ProjectApiKey = "projectApiKey";
     public const string ApiKeyToken = "apiKeyToken";
+    public const string ProjectManagement = "projectManagement";
 
     /// <summary>Status-only account deletion capability, independent of sign-in credentials.</summary>
     public const string AccountDeletionReceipt = "accountDeletionReceipt";
@@ -90,6 +91,20 @@ public static partial class OpenApiSetup
                     {
                         operation.Security.Add(new OpenApiSecurityRequirement());
                     }
+                }
+
+                if (context.Description.RelativePath?.StartsWith("v1/{project}/", StringComparison.Ordinal) == true)
+                {
+                    var personOnly = operation.OperationId is "create_project_client" or "update_project_client"
+                        or "rotate_project_client_secret" or "create_webhook_endpoint" or "rotate_webhook_secret";
+                    if (!personOnly)
+                    {
+                        operation.Security = [Requirement(SecuritySchemes.ProjectManagement, context.Document)];
+                    }
+
+                    operation.Description += personOnly
+                        ? " Person-only step-up operation; project API keys answer 403 person_required."
+                        : $" Also accepts an unrestricted project secret API key with {(context.Description.HttpMethod == "GET" ? "auth:read" : "auth:write")}.";
                 }
 
                 if (operation.OperationId is "delete_account" or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client")
@@ -288,6 +303,12 @@ public static partial class OpenApiSetup
             Type = SecuritySchemeType.Http,
             Scheme = "bearer",
             Description = "Whole project API key, with no database restriction and both sql:read and sql:write. Backend use only; never expose this key to a browser. Organization keys and JWTs are refused.",
+        },
+        [SecuritySchemes.ProjectManagement] = () => new()
+        {
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            Description = "A terrascale sign-in access token with the required project role, or an unrestricted secret API key belonging to this project. GET requires auth:read; changes require auth:write. Keys are checked against storage on every request, including revocation and expiry. Both key and project IP allowlists apply.",
         },
         [SecuritySchemes.ApiKeyToken] = () => new()
         {

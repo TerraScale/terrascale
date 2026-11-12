@@ -324,6 +324,8 @@ export const dashboardStates: readonly PageState[] = [
     heading: inDialog('create-key', 'New API key'),
     data: async (page) => {
       await expect(page.locator('#create-key input[name="scopes"][value="sql:write"]')).toBeChecked();
+      await expect(page.getByRole('checkbox', { name: 'Authentication read', exact: true })).toBeVisible();
+      await expect(page.getByRole('checkbox', { name: 'Authentication write', exact: true })).toBeVisible();
     },
   },
   {

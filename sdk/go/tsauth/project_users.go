@@ -85,8 +85,8 @@ type ProjectUserListOptions struct {
 	After string
 }
 
-// ProjectUsers lists end users using a terrascale sign-in token and viewer role.
-// An invisible project answers 404. No project key or end-user token is accepted.
+// ProjectUsers lists end users with a viewer sign-in token or a project secret
+// API key carrying auth:read. An invisible project answers 404.
 func (u *User) ProjectUsers(ctx context.Context, project string, options ProjectUserListOptions) (*ProjectUserPage, error) {
 	query, err := projectDirectoryQuery(options.Limit, options.After)
 	if err != nil {
@@ -205,7 +205,7 @@ func (u *User) projectDirectoryDo(ctx context.Context, project, method string, p
 		safe := *api
 		safe.Message = "project directory request refused"
 		switch safe.Code {
-		case ErrInvalidRequest, ErrUnauthorized, ErrForbiddenRole, ErrNotFound, ErrTemporarilyUnavailable, "mfa_required", "internal_error":
+		case ErrInvalidRequest, ErrUnauthorized, ErrForbiddenRole, ErrNotFound, ErrTemporarilyUnavailable, "mfa_required", "internal_error", "insufficient_scope", "person_required", "ip_not_allowed":
 		default:
 			safe.Code = ErrorCode("http_" + strconv.Itoa(safe.Status))
 		}

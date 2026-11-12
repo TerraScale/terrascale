@@ -274,6 +274,46 @@ impl Runner {
         let fill = |key: &str| self.fill(&text(op, key));
         let e = |error: Error| error.to_string();
         match id.as_str() {
+            "auth.manage_user" => {
+                let config = ClientConfig::builder()
+                    .auth_base_url("https://auth.terrascale.tech")
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                let transport =
+                    terrascale::transport::ReqwestTransport::with_root_certificates(&self.ca)
+                        .map_err(|error| error.to_string())?;
+                let auth = terrascale::TerraScaleClient::with_transport(
+                    config,
+                    std::sync::Arc::new(transport),
+                )
+                .projects()
+                .map_err(|error| error.to_string())?;
+                let read = std::env::var("E2E_AUTH_READ_KEY").map_err(|error| error.to_string())?;
+                let write =
+                    std::env::var("E2E_AUTH_WRITE_KEY").map_err(|error| error.to_string())?;
+                let user = std::env::var("E2E_AUTH_USER").map_err(|error| error.to_string())?;
+                let listed = auth
+                    .list_users(&read, &self.project, None, None, None)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if !listed.items.iter().any(|item| item.id == user) {
+                    return Err("read key did not list user".into());
+                }
+                match auth.disable_user(&read, &self.project, &user).await {
+                    Err(error) if error.status == Some(403) => (),
+                    _ => return Err("read key was not refused".into()),
+                }
+                let disabled = auth
+                    .disable_user(&write, &self.project, &user)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(json!(disabled.disabled), &json!(true), "write key disables")?;
+                let enabled = auth
+                    .enable_user(&write, &self.project, &user)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(json!(enabled.disabled), &json!(false), "write key enables")
+            }
             "sql.execute.positional" => {
                 let sql = self.db().sql();
                 sql.execute(&fill("setup"), &[]).await.map_err(e)?;

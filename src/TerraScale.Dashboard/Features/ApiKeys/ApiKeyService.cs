@@ -140,9 +140,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
             var database = databaseId.Length > 0 ? DatabaseService.Database(context, databaseId) : null;
             var permissions = scopes.Distinct(StringComparer.Ordinal).ToArray();
-            if (permissions.Length == 0 || permissions.Any(scope => scope is not ("sql:read" or "sql:write" or "databases:read" or "databases:write")))
+            if (permissions.Length == 0 || permissions.Any(scope => scope is not ("sql:read" or "sql:write" or "databases:read" or "databases:write" or "auth:read" or "auth:write")))
             {
-                throw new AccountAccessException("Choose one or more of sql:read, sql:write, databases:read, databases:write.", 422);
+                throw new AccountAccessException("Choose one or more of sql:read, sql:write, databases:read, databases:write, auth:read, auth:write.", 422);
             }
 
             if (!ExpiryChoices.Contains(expiresInDays))
@@ -294,7 +294,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(key, result.Key);
         }
 
-        public const string ScopeDescription = "Choose a non-empty subset of sql:read, sql:write, databases:read, databases:write. SQL scopes authorize SQL queries and changes over HTTP and the Postgres wire protocol. Database scopes authorize database management, whole-database backups and restores, usage, and metrics. Read scopes grant reads; write scopes grant changes. No aliases, wildcards, or unknown scopes are accepted.";
+        public const string ScopeDescription = "Choose a non-empty subset of sql:read, sql:write, databases:read, databases:write, auth:read, auth:write. SQL scopes authorize SQL queries and changes over HTTP and the Postgres wire protocol. Database scopes authorize database management, whole-database backups and restores, usage, and metrics. Authentication scopes authorize project end-user, session and tenant management; step-up operations require a person. Authentication scopes authorize project end-user, session and tenant management; step-up operations require a person. Read scopes grant reads; write scopes grant changes. No aliases, wildcards, or unknown scopes are accepted.";
 
         public const int MaxPreviousSecretTtl = 86400;
         public const int MaxAllowedCidrs = 32;

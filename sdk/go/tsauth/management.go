@@ -51,8 +51,9 @@ func New(cfg Config) (*Client, error) {
 	return &Client{base: u.String(), hc: noRedirects(cfg.HTTPClient)}, nil
 }
 
-// WithToken returns the API as the user of a sign-in access token of the
-// tenant. Organization, project, API key and service tokens are refused.
+// WithToken uses a sign-in access token, or a project secret API key for
+// project tenant management. Keys need auth:read for reads and auth:write
+// for changes; operations requiring step-up remain person-only.
 func (c *Client) WithToken(accessToken string) *User {
 	return &User{c: c, token: accessToken}
 }

@@ -347,7 +347,7 @@ in addition to `TB_V1_URL` and `TB_V1_PROJECT`; data-only keys are insufficient.
 Entity pages reject null and primitive records.
 
 `tsAuth.projects` administers one project's hosted sign-in tenant over `/v1/{project}`
-with the caller's TerraScale account sign-in token: `getSettings`, `updateSettings`,
+with the caller's TerraScale sign-in token or project secret key: `getSettings`, `updateSettings`,
 `listUsers`, `getUser`, `disableUser`, `enableUser`, `deleteUser`, `exportUsers`,
 `setProvider`, `deleteProvider` (providers are listed in the settings),
 `listSessions`, `revokeSession`, `listClients`, `createClient`, `updateClient`,
@@ -467,3 +467,7 @@ const signal = AbortSignal.timeout(90_000);
 for (;;) { try { await client.setDatabasePlacement(project, database, { regions: ["fra"] }, { signal }); break; }
   catch (e) { if (e.code !== "replica_not_ready") throw e; await new Promise(resolve => setTimeout(resolve, 1000)); } }
 ```
+
+## Project Authentication management
+
+Pass the project secret API key as the first credential argument to `client.projects.disableUser(secretKey, projectId, userId)`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.

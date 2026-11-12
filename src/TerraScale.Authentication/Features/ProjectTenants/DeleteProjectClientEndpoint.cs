@@ -13,8 +13,7 @@ public sealed class DeleteProjectClientEndpoint(TenantDirectory tenants, Platfor
         this.Describe("delete_project_client", "Delete an OAuth client", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }
 
-    /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return await this.Tenants.DeleteClientAsync(projectId, this.RouteId("client_id"), cancellationToken) ? Results.NoContent() : throw PlatformDirectory.NotFound();

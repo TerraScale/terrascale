@@ -235,3 +235,7 @@ let change = DatabasePlacement { regions: Some(vec!["fra".into()]), ..Default::d
 tokio::time::timeout(Duration::from_secs(90), async { loop { match client.set_database_placement(database, &change).await {
     Ok(db) => break Ok(db), Err(e) if e.code() == Some("replica_not_ready") => tokio::time::sleep(Duration::from_secs(1)).await, Err(e) => break Err(e) } } }).await??;
 ```
+
+## Project Authentication management
+
+Pass the project secret API key as the credential to `client.projects()?.disable_user(secret_key, project_id, user_id).await`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.

@@ -91,6 +91,8 @@ internal static class TerraScaleAuthErrors
         "closure_conflict",
         "deletion_refused",
         "forbidden_role",
+        "person_required",
+        "ip_not_allowed",
         "invalid_target",
         "last_owner",
         "name_taken",

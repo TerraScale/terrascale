@@ -30,6 +30,30 @@ A project tenant serves, while its project exists:
 
 Base: `https://auth.terrascale.tech/v1/{project}`. JSON bodies use snake_case.
 
+Customer backends can send `Authorization: Bearer <project secret API key>`.
+The key must belong to this project and have no database restriction. GET
+requires `auth:read`; changes require `auth:write` (write does not imply read).
+Both the key and project IP allowlists apply. Organization keys and exchanged
+API-key JWTs are refused. A revoked or expired secret key answers 401 on the
+next request: management does not cache keys. Every authorized mutation first commits an
+organization audit event named `<operation_id>.requested`, with the key ULID
+as actor and the route as detail. Audit failure prevents the mutation; failed
+mutation attempts can also have an audit event. Step-up operations answer 403 `person_required` to keys.
+Only project admins can issue keys with `auth:write`; members can issue
+`auth:read` keys.
+
+The five SDKs use their existing credential pattern:
+
+| SDK | Project management credential |
+| --- | --- |
+| JavaScript | `createTsAuthClient({apiBaseUrl, instanceSlug: "terrascale"}).projects.disableUser(secretKey, projectId, userId)` |
+| Go | `client.WithToken(secretKey).DisableProjectUser(ctx, projectId, userId)` |
+| Rust | `client.projects()?.disable_user(secret_key, project_id, user_id).await` |
+| Python | `TerraScale(api_key=secret_key, project=project_id).disable_user(user_id)` (also `AsyncTerraScale`) |
+| .NET | `client.Projects.DisableUserAsync(secretKey, projectId, userId)` |
+
+Keep secret keys in the backend. Person credentials remain required for step-up.
+
 **Authentication.** `Authorization: Bearer <the caller's own terrascale
 sign-in access token>`, as for `/v1/terrascale`. ts-auth reads the caller's
 effective project role (`platform-contract.md` section 3) on every request:
@@ -39,24 +63,29 @@ effective project role (`platform-contract.md` section 3) on every request:
 - an unknown project, or one the caller cannot see, answers `404`; a role too
   low answers `403 forbidden`.
 
-| Method and path | Role | Response |
-| --- | --- | --- |
-| `GET /settings` | viewer | `Settings` |
-| `PUT /settings` | admin | `Settings`; body `{methods?, branding?}`, omitted parts unchanged |
-| `GET /users?q=&limit=&after=` | viewer | `{items: [User], next}`; `q` matches an email substring, `limit` 1 to 100 (default 50) |
-| `GET /users/{user}` | viewer | `User` |
-| `POST /users/{user}/disable` | admin | `User`; ends every session and token of the user |
-| `POST /users/{user}/enable` | admin | `User` |
-| `DELETE /users/{user}` | admin | `204` |
-| `GET /sessions?user=&limit=&after=` | viewer | `{items: [Session], next}`; live sessions only |
-| `DELETE /sessions/{session}` | admin | `204` |
-| `GET /clients` | viewer | `{items: [Client], next: null}` |
-| `POST /clients` | admin | `201 Client` with `client_secret` once for a confidential client |
-| `DELETE /clients/{client_id}` | admin | `204` |
-| `GET /webhook-endpoints` | admin | `{items: [WebhookEndpoint], next: null}` without secrets |
-| `POST /webhook-endpoints` | admin | `201 WebhookEndpoint` with `secret` once; needs a `create_webhook_endpoint` step-up proof |
-| `DELETE /webhook-endpoints/{id}` | admin | `204` |
-| `POST /webhook-endpoints/{id}/rotate-secret` | admin | `WebhookSecret` with `secret` once; needs a `rotate_webhook_secret` step-up proof |
+| Method and path | Role | Key scope | Response |
+| --- | --- | --- | --- |
+| `GET /settings` | viewer | `auth:read` | `Settings` |
+| `PUT /settings` | admin | `auth:write` | `Settings`; body `{methods?, branding?}`, omitted parts unchanged |
+| `GET /users?q=&limit=&after=` | viewer | `auth:read` | `{items: [User], next}`; `q` matches an email substring, `limit` 1 to 100 (default 50) |
+| `GET /users/{user}` | viewer | `auth:read` | `User` |
+| `POST /users/{user}/disable` | admin | `auth:write` | `User`; ends every session and token of the user |
+| `POST /users/{user}/enable` | admin | `auth:write` | `User` |
+| `DELETE /users/{user}` | admin | `auth:write` | `204` |
+| `GET /sessions?user=&limit=&after=` | viewer | `auth:read` | `{items: [Session], next}`; live sessions only |
+| `DELETE /sessions/{session}` | admin | `auth:write` | `204` |
+| `GET /clients` | viewer | `auth:read` | `{items: [Client], next: null}` |
+| `POST /clients` | admin | Person only (step-up) | `201 Client` with `client_secret` once for a confidential client |
+| `DELETE /clients/{client_id}` | admin | `auth:write` | `204` |
+| `GET /users/export?format=&limit=&after=` | admin | `auth:read` | Audited directory page (JSON or CSV) |
+| `PUT /providers/{provider}` | admin | `auth:write` | `Settings` |
+| `DELETE /providers/{provider}` | admin | `auth:write` | `Settings` |
+| `PUT /clients/{client_id}` | admin | Person only (step-up) | `Client` |
+| `POST /clients/{client_id}/secret/rotate` | admin | Person only (step-up) | `ClientSecret` |
+| `GET /webhook-endpoints` | admin | `auth:read` | `{items: [WebhookEndpoint], next: null}` without secrets |
+| `POST /webhook-endpoints` | admin | Person only (step-up) | `201 WebhookEndpoint` with `secret` once; needs a `create_webhook_endpoint` step-up proof |
+| `DELETE /webhook-endpoints/{id}` | admin | `auth:write` | `204` |
+| `POST /webhook-endpoints/{id}/rotate-secret` | admin | Person only (step-up) | `WebhookSecret` with `secret` once; needs a `rotate_webhook_secret` step-up proof |
 
 ```text
 Settings = {
@@ -85,4 +114,4 @@ Webhook endpoints are described in [webhooks.md](webhooks.md).
   project's name and the default theme.
 - Redirect URIs are absolute `https` URLs, or `http` on `localhost` and loopback
   addresses, without fragments; 1 to 10 per client.
-- Errors use the platform API's error body `{error, error_description}`.
+- Errors use the platform API's error body `{error: {code, message}}`.

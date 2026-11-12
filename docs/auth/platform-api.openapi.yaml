@@ -1037,7 +1037,7 @@ paths:
       operationId: create_project_api_key
       tags: [API keys]
       summary: Create a project API key
-      description: Needs the project's member role; scopes must be within the caller's. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.
+      description: Needs the project's member role; scopes must be within the caller's. auth:write additionally requires project admin. auth:read and auth:write authorize project Authentication management reads and changes respectively; step-up operations remain person-only. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.
       requestBody:
         required: true
         content:
@@ -1650,7 +1650,7 @@ components:
       enum: [viewer, member, admin]
     Scope:
       type: string
-      enum: ['databases:read', 'databases:write', 'sql:read', 'sql:write', 'usage:read', 'billing:read', 'billing:write']
+      enum: ['databases:read', 'databases:write', 'sql:read', 'sql:write', 'auth:read', 'auth:write', 'usage:read', 'billing:read', 'billing:write']
     ApiKeyId:
       type: string
       pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'

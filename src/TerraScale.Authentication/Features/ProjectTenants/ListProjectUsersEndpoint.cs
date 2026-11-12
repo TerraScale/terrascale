@@ -13,8 +13,7 @@ public sealed class ListProjectUsersEndpoint(TenantDirectory tenants, PlatformAu
         this.Describe("list_project_users", "List end users", "q matches an email substring; limit is 1 to 100 (default 50) and after the previous page's next. Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectUserPageBody), paged: true);
     }
 
-    /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var (limit, after) = this.Paging(50);

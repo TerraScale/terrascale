@@ -4,10 +4,9 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace TerraScale.DotNet;
 
-/// <summary>Project tenant management under <c>/v1/{project}</c> with the caller's own terrascale sign-in token.
-/// Trusted-backend end-user token issuance instead uses an explicit project API key.
-/// For tenant management, ts-auth checks the caller's role: viewer reads, admin changes; an unknown or invisible
-/// project answers 404 and a role too low answers 403 <c>forbidden</c>. Every request is sent once.</summary>
+/// <summary>Project tenant management under <c>/v1/{project}</c>. Credential arguments accept a terrascale
+/// sign-in token or a project secret API key with auth:read for reads and auth:write for changes.
+/// Step-up operations require a person's sign-in token. Every request is sent once.</summary>
 public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient client)
 {
     private const int MaxRequestBytes = 16 * 1024;

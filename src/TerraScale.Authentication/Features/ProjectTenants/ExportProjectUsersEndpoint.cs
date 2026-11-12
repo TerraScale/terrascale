@@ -47,8 +47,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         this.Describe("export_project_users", "Export an end-user directory page", "Needs admin on every page. limit 1..100 (default 100); after is the previous next; format json (default) or csv. X-Export-Next carries the continuation for either format; absent means complete. X-Export-Created-Before is the fixed creation cutoff. Immutable storage-id order, not ULID order. Later creations are excluded; deletions disappear and profile fields are read per page, not a transaction snapshot. Retry the same cursor to resume; retain each page once. Replication lag and creator clock skew can omit accounts; retries may reflect changed fields, so deduplicate by id. Email possession was proven at account creation; only email, linked provider/client/subject and public profile fields are exported; no credentials or sessions are portable. Every returned page is audited.", "Project tenants", null, StatusCodes.Status200OK, typeof(DirectoryPageBody), paged: true);
     }
 
-    /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var (limit, after) = this.Paging(100);

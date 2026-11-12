@@ -415,3 +415,7 @@ using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
 for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, placement: TerraBaseDatabasePlacement.In("fra"), cancellationToken: deadline.Token); break; }
     catch (TerraBaseException e) when (e.ErrorCode == "replica_not_ready") { await Task.Delay(1000, deadline.Token); } }
 ```
+
+## Project Authentication management
+
+Pass the project secret API key to `client.Projects.DisableUserAsync(secretKey, projectId, userId)` and the other management methods. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.

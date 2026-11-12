@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"terrascale.tech/sdk/tsauth"
 	v1 "terrascale.tech/sdk/v1"
 )
 
@@ -172,6 +173,42 @@ func (r *runner) do(op operation) error {
 	}
 	ctx := r.ctx
 	switch op.ID {
+	case "auth.manage_user":
+		auth, err := tsauth.New(tsauth.Config{})
+		if err != nil {
+			return err
+		}
+		user := os.Getenv("E2E_AUTH_USER")
+		read := auth.WithToken(os.Getenv("E2E_AUTH_READ_KEY"))
+		listed, err := read.ProjectUsers(r.ctx, r.project, tsauth.ProjectUserListOptions{})
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, item := range listed.Items {
+			found = found || item.ID == user
+		}
+		if !found {
+			return errors.New("read key did not list the user")
+		}
+		_, err = read.DisableProjectUser(r.ctx, r.project, user)
+		var refusal *tsauth.APIError
+		if !errors.As(err, &refusal) || refusal.Status != 403 {
+			return errors.New("read key was not refused")
+		}
+		write := auth.WithToken(os.Getenv("E2E_AUTH_WRITE_KEY"))
+		disabled, err := write.DisableProjectUser(r.ctx, r.project, user)
+		if err != nil {
+			return err
+		}
+		if !disabled.Disabled {
+			return errors.New("write key did not disable")
+		}
+		enabled, err := write.EnableProjectUser(r.ctx, r.project, user)
+		if err != nil {
+			return err
+		}
+		return same(enabled.Disabled, false, "write key enables")
 	case "sql.execute.positional":
 		if _, err := r.db.Execute(ctx, r.fill(op.Setup)); err != nil {
 			return err

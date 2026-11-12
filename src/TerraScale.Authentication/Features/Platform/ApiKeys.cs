@@ -23,12 +23,17 @@ public static class TerraBaseScopes
 
     public const string SqlWrite = "sql:write";
 
-    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite];
+    public const string AuthRead = "auth:read";
+
+    public const string AuthWrite = "auth:write";
+
+    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite, AuthRead, AuthWrite];
 
     public static IReadOnlyList<string> For(string? projectRole) => projectRole switch
     {
-        Roles.Viewer => [DatabasesRead, SqlRead],
-        Roles.Member or Roles.Admin => All,
+        Roles.Viewer => [DatabasesRead, SqlRead, AuthRead],
+        Roles.Member => [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite, AuthRead],
+        Roles.Admin => All,
         _ => [],
     };
 }

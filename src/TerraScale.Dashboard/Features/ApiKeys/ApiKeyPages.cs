@@ -93,8 +93,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
     public static class ApiKeyFormat
     {
-        public static readonly IReadOnlyList<string> FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
-        public static readonly IReadOnlyList<string> ReadOnlyScopes = ["sql:read", "databases:read"];
+        public static readonly IReadOnlyList<string> FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write", "auth:read", "auth:write"];
+        public static readonly IReadOnlyList<string> ReadOnlyScopes = ["sql:read", "databases:read", "auth:read"];
 
         public static bool FullAccess(IReadOnlyCollection<string> scopes)
         {

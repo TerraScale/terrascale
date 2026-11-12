@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Net.Http.Headers;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -72,24 +74,62 @@ public sealed record RotateClientRequest(int? GraceSeconds);
 
 public sealed record ClientSecretBody(string ClientId, string ClientSecret, DateTimeOffset? PreviousSecretExpiresAt);
 
-/// <summary>
-/// A project tenant management endpoint (<c>/v1/{project}/…</c>): the caller's terrascale sign-in token, then its
-/// effective project role on every request.
-/// </summary>
 public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
-    /// <summary>The tenant's management root.</summary>
     protected const string Root = "/v1/{project}";
 
-    /// <summary>The tenant operations.</summary>
     protected TenantDirectory Tenants { get; } = tenants;
 
-    /// <summary>The project id, once the caller holds at least <paramref name="minimum"/> on it.</summary>
-    protected async Task<string> AccessAsync(UserRecord caller, string minimum, CancellationToken cancellationToken)
+    protected sealed override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
+        this.HandleAsync(new ProjectCaller.SignedIn(caller), cancellationToken);
+
+    protected abstract Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken);
+
+    protected override async Task<IResult> AuthenticateAndHandleAsync(CancellationToken cancellationToken)
+    {
+        var request = this.HttpContext.Request;
+        if (!AuthenticationHeaderValue.TryParse(request.Headers.Authorization, out var header)
+            || !string.Equals(header.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase)
+            || header.Parameter is not { Length: 79 } secret || secret[26] != '_')
+        {
+            return await base.AuthenticateAndHandleAsync(cancellationToken);
+        }
+
+        var keys = this.HttpContext.RequestServices.GetRequiredService<ApiKeys>();
+        if (await keys.AuthenticateAsync(secret, cancellationToken) is not { } key)
+        {
+            this.HttpContext.Response.Headers.WWWAuthenticate = "Bearer realm=\"ts-auth\"";
+            return Results.Json(new ErrorBody(new ErrorDetail("unauthorized", "Present a live project secret API key or a terrascale sign-in access token.")),
+                PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        await keys.RecordUseAsync(key, cancellationToken);
+        return await this.HandleAsync(new ProjectCaller.SecretKey(key), cancellationToken);
+    }
+
+    protected async Task<string> AccessAsync(ProjectCaller caller, string minimum, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         var projectId = this.RouteId("project");
-        await this.Tenants.CheckAccessAsync(caller.Id, projectId, minimum, cancellationToken);
+        switch (caller)
+        {
+            case ProjectCaller.SignedIn(var person):
+                await this.Tenants.CheckAccessAsync(person.Id, projectId, minimum, cancellationToken);
+                break;
+            case ProjectCaller.SecretKey(var key):
+                await this.Tenants.CheckKeyAccessAsync(key, projectId, HttpMethods.IsGet(this.HttpContext.Request.Method)
+                    ? TerraBaseScopes.AuthRead : TerraBaseScopes.AuthWrite, this.HttpContext.Connection.RemoteIpAddress, cancellationToken);
+                if (!HttpMethods.IsGet(this.HttpContext.Request.Method))
+                {
+                    var operation = this.Definition.Name ?? throw new InvalidOperationException("A management operation must have a name.");
+                    await this.Tenants.AuditKeyWriteAsync(key, operation + ".requested", this.HttpContext.Request.Path, cancellationToken);
+                }
+
+                break;
+            default:
+                throw new UnreachableException();
+        }
+
         return projectId;
     }
 

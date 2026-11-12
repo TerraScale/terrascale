@@ -41,7 +41,7 @@ from .auth import (
     update_settings_call,
 )
 from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
-from .ids import validate_id
+from .ids import is_valid_id, validate_id
 from .session import SqlSession
 from .sql import Args, Row, Statement, StatementResult
 
@@ -142,7 +142,13 @@ class TerraScale:
         conflicts = 0
         while True:
             direct = "Authorization" in call.headers
-            token = "" if direct or call.anonymous else self._bearer()
+            project_key = (
+                self._api_key
+                if call.base_url is not None and len(call.path) > 1 and call.path[0] == "v1"
+                and is_valid_id(call.path[1])
+                else None
+            )
+            token = "" if direct or call.anonymous else project_key or self._bearer()
             headers = dict(call.headers) if direct else {**self._headers, **call.headers}
             if not direct and not call.anonymous:
                 headers["Authorization"] = f"Bearer {token}"
@@ -174,7 +180,7 @@ class TerraScale:
                 if self._source is not None:
                     self._source.reject(err)
                 raise err
-            if response.status_code == 401 and self._source is not None and not refreshed and not direct:
+            if response.status_code == 401 and self._source is not None and not refreshed and not direct and project_key is None:
                 # Refresh an ordinary token refusal once, never a permanent key refusal.
                 self._source.invalidate(token)
                 refreshed = True
