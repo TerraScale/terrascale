@@ -154,9 +154,15 @@ function passkeyDecode(text) {
   function follow(html) {
     var page = document.createElement('template');
     page.innerHTML = html;
-    var link = page.content.querySelector('a.delayed-continue');
-    if (link) window.location.replace(link.href);
-    else window.location.reload();
+    var link = page.content.querySelector('a.delayed-continue') || page.content.querySelector('a[data-continue]');
+    if (link) {
+      var target = new URL(link.getAttribute('href'), window.location.href);
+      if (target.origin === window.location.origin || target.protocol === 'https:') window.location.replace(target.href);
+      else window.location.reload();
+    } else if (button.dataset.signIn) {
+      var signIn = new URL(button.dataset.signIn, window.location.href);
+      window.location.replace(signIn.origin === window.location.origin ? signIn.href : window.location.href);
+    } else window.location.reload();
   }
   button.addEventListener('click', function () {
     var address = email ? email.value.trim() : '';

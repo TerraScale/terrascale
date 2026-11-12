@@ -1,7 +1,10 @@
 using System.Text;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.SignIn;
 
 namespace TerraScale.Authentication.Features.Ui;
 
@@ -149,8 +152,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The same-origin page that starts the single sign-on (<see cref="SignInStep.Sso"/>).</summary>
     public string? SsoUrl { get; init; }
 
-    public string? AccountUrl => this.Next is { } next && (next == Configuration.AuthOptions.DashboardOrigin + "/profile"
-        || next == Configuration.AuthOptions.DashboardOrigin + "/profile?tab=security")
+    public string? AccountUrl => this.Next is { } next && (next == AuthOptions.DashboardOrigin + "/profile"
+        || next == AuthOptions.DashboardOrigin + "/profile?tab=security")
         ? next
         : null;
 
@@ -216,10 +219,14 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The brand name the page shows.</summary>
     public string Brand => this.Theme.Name ?? HostedLayoutModel.DefaultName;
 
-    public string Link(string path)
+    public string DefaultDestination => Tenancy.IsProject(this.Slug)
+        ? SignInFlow.SecurityPath(this.Slug)
+        : AuthOptions.DashboardOrigin;
+
+    public string Link(string path, bool form = false)
     {
         List<string> query = [];
-        if (this.Next is { } next)
+        if (!form && this.Next is { } next)
         {
             query.Add("next=" + Uri.EscapeDataString(next));
         }
@@ -260,7 +267,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.Continue => model.Next,
         SignInStep.Sso => model.SsoUrl,
         SignInStep.SignedOut => model.ReturnTo,
-        SignInStep.ResetDone => model.Link("sign-in"),
+        SignInStep.ResetDone => NavigationTarget(model.Link("sign-in")) ?? model.Link("sign-in", form: true),
         _ => null,
     };
 
@@ -271,8 +278,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         ArgumentNullException.ThrowIfNull(model);
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        var uiLocales = context.Request.Query["ui_locales"].ToString();
-        var located = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = uiLocales.Length == 0 ? null : uiLocales };
+        var located = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = AuthEmails.UiLocales(context.Request) };
         var rendered = located with { Refresh = NavigationTarget(ContinueTo(located)) };
         var page = SignInPage.Create(rendered);
         page.StatusCode = statusCode;

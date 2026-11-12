@@ -32,29 +32,47 @@ test('a second user enrolls a passkey and signs back in to the dashboard and a r
     await expect(page.locator('input[name=name][value="Journey passkey"]')).toBeVisible();
     await audit.check('passkey enrolled through account security');
 
-    for (const path of ['/', '/databases', null]) {
+    const dialogs: string[] = [];
+    page.on('dialog', async (dialog) => { dialogs.push(dialog.type()); await dialog.dismiss(); });
+    for (const path of ['/', '/databases', null, 'post']) {
       await page.goto(`${dash}/profile`);
       await page.locator('.ts-account-trigger').click();
       await page.getByRole('button', { name: 'Sign out', exact: true }).click();
       await page.waitForURL(onHosted('sign-in'));
-      await page.goto(path === null ? `${auth}/ui/terrascale/sign-in` : `${dash}${path}`);
+      await page.goto(path === null || path === 'post' ? `${auth}/ui/terrascale/sign-in` : `${dash}${path}`);
       await page.waitForURL(onHosted('sign-in'));
       await hostedReady(page);
-      await page.locator('#sign-in-email').fill(email);
-      if (path === null) {
+      if (path === 'post') {
+        audit.expectStatus(/\/ui\/terrascale\/sign-in\/mfa$/, 401);
         await Promise.all([
-          page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame()),
-          page.locator('#passkey-sign-in').click(),
+          page.waitForURL(onHosted('sign-in/mfa')),
+          page.evaluate(() => {
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.action = '/ui/terrascale/sign-in/mfa';
+            document.body.append(form);
+            form.submit();
+          }),
         ]);
-        await expect(page.locator('#passkey-sign-in')).toBeEnabled();
-        await page.goto(dash);
-      } else {
-        await page.locator('#passkey-sign-in').click();
+        await hostedReady(page);
+        await expect(page.locator('#sign-in-error')).toContainText('Sign-in expired');
+        await audit.check('expired MFA POST still offers passkey sign-in');
       }
-      await expect(page, `passkey sign-in continues to ${path ?? 'the dashboard after reload'}`).toHaveURL((url) => url.origin === dash && url.pathname === (path ?? '/'));
+      await page.locator('#sign-in-email').fill(email);
+      const [navigation] = await Promise.all([
+        page.waitForRequest((request) => request.isNavigationRequest() && request.frame() === page.mainFrame()),
+        page.locator('#passkey-sign-in').click(),
+      ]);
+      expect(navigation.method()).toBe('GET');
+      await expect(page, `passkey sign-in continues to ${path === null || path === 'post' ? 'the default dashboard' : path}`).toHaveURL((url) => url.origin === dash && url.pathname === (path === null || path === 'post' ? '/' : path));
+      expect(dialogs).toEqual([]);
       await expect(page.locator('.ts-account-trigger')).toContainText('Passkey user');
       await audit.check(`passkey sign-in reaches ${path}`);
     }
+    await page.goto(`${auth}/ui/terrascale/sign-in`);
+    await hostedReady(page);
+    await expect(page.locator('#sign-in-email')).toBeVisible();
+    await audit.check('a signed-in user can open the sign-in form directly');
     await audit.finish();
   } finally {
     await saveCookies(context);

@@ -331,33 +331,39 @@ public sealed partial class AuthEmails(AuthOptions options)
     /// <summary>The default copy of <paramref name="kind"/> in <paramref name="locale"/>.</summary>
     public static EmailTemplateFields Defaults(AuthEmailKind kind, string locale) => Copies[(kind, locale)];
 
-    public static string Locale(HttpRequest request)
+    public static string? UiLocales(HttpRequest request)
     {
-        foreach (var requested in request.Query["ui_locales"])
+        var requested = request.Query["ui_locales"].ToString();
+        if (requested.Length is 0 or > 256)
         {
-            if (requested is null)
+            return null;
+        }
+
+        List<string> tags = [];
+        var length = 0;
+        foreach (var tag in requested.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var locale = Locales.FirstOrDefault(locale => locale.Equals(tag, StringComparison.OrdinalIgnoreCase));
+            if (locale is null)
             {
                 continue;
             }
 
-            foreach (var candidate in requested.Split(' '))
+            length += locale.Length + (tags.Count > 0 ? 1 : 0);
+            if (length > 64)
             {
-                var trimmed = candidate.Trim();
-                if (trimmed.Length == 0)
-                {
-                    continue;
-                }
-
-                var supported = Locales.FirstOrDefault(locale => locale.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
-                if (supported is not null)
-                {
-                    return supported;
-                }
+                break;
             }
+
+            tags.Add(locale);
         }
 
-        return Locale(request.Headers.AcceptLanguage);
+        return tags.Count > 0 ? string.Join(' ', tags) : null;
     }
+
+    public static string Locale(HttpRequest request) => UiLocales(request) is { } locales
+        ? locales.Split(' ')[0]
+        : Locale(request.Headers.AcceptLanguage);
 
     /// <summary>
     /// The locale for a request's <c>Accept-Language</c>: <see cref="Portuguese"/> when Portuguese is preferred over
