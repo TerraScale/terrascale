@@ -93,3 +93,19 @@ export async function replicated(cells: Cells, region: string, id: string, value
   }, { message: `the row is served by ${region}`, timeout: 45_000, intervals: [250, 500, 1000] }).toContainEqual([value]);
 }
 
+
+export async function removeDatabase(cells: Cells, id: string): Promise<void> {
+  await expect.poll(async () => {
+    let response = await cells.delete(`${home}${database(id)}`);
+    if (response.status() === 421) {
+      expect((await response.json()).error.code).toBe('wrong_region');
+      response = await cells.delete(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id)}`);
+    }
+    if (response.status() === 409) {
+      expect((await response.json()).error.code).toBe('move_in_progress');
+      return false;
+    }
+    await status(response, 204);
+    return true;
+  }, { message: 'delete the database after any pending move settles', timeout: 60_000, intervals: [250, 500, 1000] }).toBe(true);
+}

@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { expect } from '@playwright/test';
 import { stored } from '../support/files';
 import { saveSecret } from '../support/state';
-import { test, home, replica, project, database, name, status, json, sql, replicated, type Database, type Progress } from './support';
+import { test, home, replica, project, database, name, status, json, sql, replicated, removeDatabase, type Database, type Progress } from './support';
 import { production } from '../support/stack';
 
 test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
@@ -21,7 +21,6 @@ test('create with a replica, observe its pull, move home and remove the old home
   const created = await json<Database>(await cells.post(`${home}${project()}/databases`, {
     data: { name: name('placed'), homeRegion: 'gru', replicaRegions: ['fra'] },
   }), 201);
-  let servingHome = home;
   try {
     expect(created.homeRegion).toBe('gru');
     expect(created.replicaRegions).toEqual(['fra']);
@@ -36,7 +35,6 @@ test('create with a replica, observe its pull, move home and remove the old home
       .toMatchObject({ region: 'fra', revision: expect.any(String), lastPulledAt: expect.any(String), lagMs: expect.any(Number) });
 
     const moved = await json<Database>(await cells.post(`${home}${database(created.id)}/move-home`, { data: { homeRegion: 'fra' } }));
-    servingHome = replica;
     expect(moved.homeRegion).toBe('fra');
     expect(moved.replicaRegions).toEqual(['gru']);
     await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (2)');
@@ -58,7 +56,7 @@ test('create with a replica, observe its pull, move home and remove the old home
     }, { message: 'the removed region redirects reads to the sole serving region', timeout: 45_000, intervals: [250, 500, 1000] })
       .toEqual({ status: 421, home: 'fra' });
   } finally {
-    await status(await cells.delete(`${servingHome}${database(created.id)}`), 204);
+    await removeDatabase(cells, created.id);
   }
 });
 
@@ -74,7 +72,7 @@ test('add a replica to a database created in one region', async ({ cells }) => {
     expect(updated.replicaRegions).toEqual(['fra']);
     await replicated(cells, replica, created.id, 4);
   } finally {
-    await status(await cells.delete(`${home}${database(created.id)}`), 204);
+    await removeDatabase(cells, created.id);
   }
 });
 

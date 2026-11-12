@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse } from '@playwright/test';
-import { test, home, replica, project, database, name, json, sql, replicated, type Cells } from './support';
+import { test, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
 import { production } from '../support/stack';
 
 test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
@@ -70,15 +70,6 @@ async function move(cells: Cells, id: string, label: string, timeout: number, st
   expect((await progress(cells, id, replica)).regions.map(row => row.region)).toEqual(['fra']);
 }
 
-async function remove(cells: Cells, id: string): Promise<void> {
-  let response = await cells.delete(`${home}${database(id)}`);
-  if (response.status() === 421) {
-    await answer(response, 421, 'wrong_region');
-    response = await cells.delete(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id)}`);
-  }
-  await answer(response, 204, '204 database deleted');
-}
-
 test('R1 create two regions, read across listeners and observe a pull', async ({ cells }) => {
   const created = await create(cells, ['gru', 'fra']);
   try {
@@ -87,7 +78,7 @@ test('R1 create two regions, read across listeners and observe a pull', async ({
     await replicated(cells, replica, created.id, 3);
     await observed(cells, created.id);
   } finally {
-    await remove(cells, created.id);
+    await removeDatabase(cells, created.id);
   }
 });
 
@@ -101,7 +92,7 @@ test('R2 add a region and read a row committed before the addition', async ({ ce
     await observed(cells, created.id);
     await replicated(cells, replica, created.id, 3);
   } finally {
-    await remove(cells, created.id);
+    await removeDatabase(cells, created.id);
   }
 });
 
@@ -119,7 +110,7 @@ test('R3 replace the writer when both regions are members', async ({ cells }) =>
       return response.status();
     }, { message: '421 wrong_region from a non-member listener', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
   } finally {
-    await remove(cells, created.id);
+    await removeDatabase(cells, created.id);
   }
 });
 
@@ -135,7 +126,7 @@ test('R4 replace the only region, retain additions after the first refusal', asy
     await move(cells, created.id, 'R4', 90_000, statuses);
     expect((await sql(cells, replica, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3]]);
   } finally {
-    await remove(cells, created.id);
+    await removeDatabase(cells, created.id);
   }
 });
 
@@ -144,59 +135,62 @@ test('R5 replace the writer under twenty acknowledged commits per second', async
   const created = await create(cells, ['gru', 'fra']);
   const acknowledged: number[] = [];
   const lags: number[] = [];
-  let firstRefusal: number | undefined;
+  const statuses: number[] = [];
+  const backgroundErrors: unknown[] = [];
   let stop = false;
   let writer: Promise<void> | undefined;
+  let sampling: Promise<void> | undefined;
   try {
     await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
     await observed(cells, created.id);
     const deadline = Date.now() + 120_000;
     writer = (async () => {
-      for (let id = 1; !stop && Date.now() < deadline; id++) {
+      for (let id = 1; !stop && Date.now() < deadline;) {
         const next = Date.now() + 50;
         const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: `INSERT INTO placement_rows VALUES (${id})` }] } });
-        if (response.status() !== 200) {
-          firstRefusal = response.status();
-          console.log(`R5 first writer refusal: ${firstRefusal}`);
+        if (statuses.length > 0 || response.status() !== 200) statuses.push(response.status());
+        if (response.status() === 200) {
+          acknowledged.push(id++);
+        } else if (response.status() === 409) {
+          await answer(response, 409, 'serialization_conflict');
+        } else {
           await answer(response, 421, 'wrong_region');
           return;
         }
-        acknowledged.push(id);
         await delay(Math.max(0, next - Date.now()));
       }
-    })();
+    })().catch(error => { backgroundErrors.push(error); });
     await expect.poll(() => acknowledged.length, { message: 'writer commits before the move', timeout: 10_000, intervals: [50] }).toBeGreaterThanOrEqual(20);
     const sample = async () => {
       const row = (await progress(cells, created.id)).regions.find(row => row.region === 'fra');
       if (row?.lagMs !== null && row?.lagMs !== undefined) lags.push(row.lagMs);
     };
     await sample();
-    const sampling = (async () => {
+    sampling = (async () => {
       while (!stop && Date.now() < deadline) {
         await sample();
         await delay(1000);
       }
-    })();
-    try {
-      await move(cells, created.id, 'R5', Math.max(1, deadline - Date.now()));
-      await writer;
-      expect(firstRefusal, '421 wrong_region terminates writes through the former writer').toBe(421);
-    } finally {
-      stop = true;
-      await Promise.all([writer, sampling]);
-    }
+    })().catch(error => { backgroundErrors.push(error); });
+    await move(cells, created.id, 'R5', Math.max(1, deadline - Date.now()));
+    await writer;
+    stop = true;
+    await sampling;
     const result = await sql(cells, replica, created.id, 'SELECT value FROM placement_rows ORDER BY value');
     const found = result.results[0].rows.map(row => row[0]);
-    console.log(`R5 acknowledged: ${acknowledged.length}; found: ${found.length}`);
+    console.log(`R5 writer statuses: ${JSON.stringify(statuses)}; acknowledged: ${acknowledged.length}; found: ${found.length}`);
+    if (JSON.stringify(found) !== JSON.stringify(acknowledged)) console.log(`R5 database: ${created.id}; acknowledged ids: ${JSON.stringify(acknowledged)}; found ids: ${JSON.stringify(found)}`);
     expect(found).toEqual(acknowledged);
     expect(new Set(found).size).toBe(found.length);
     expect(lags.length, 'fra lag samples').toBeGreaterThan(0);
+    if (backgroundErrors.length > 0) throw new AggregateError(backgroundErrors, 'R5 writer or lag sampling failed');
+    expect(statuses.at(-1), '421 wrong_region terminates writes through the former writer').toBe(421);
   } finally {
     stop = true;
-    if (writer) await writer;
+    await Promise.all([writer, sampling]);
     lags.sort((a, b) => a - b);
     console.log(`R5 lagMs min/median/max: ${lags[0]}/${lags[Math.floor(lags.length / 2)]}/${lags.at(-1)}; samples: ${lags.length}`);
-    await remove(cells, created.id);
+    await removeDatabase(cells, created.id);
   }
 });
 
@@ -223,7 +217,7 @@ test('R6 repeat and conflicting placements during a move', async ({ cells }) => 
       console.log(`R6 attempt ${attempt}: ${[initial, ...concurrent].map(response => response.status()).join(',')}`);
       await move(cells, created.id, 'R6 cleanup move', 60_000);
     } finally {
-      await remove(cells, created.id);
+      await removeDatabase(cells, created.id);
     }
   }
   console.log(`R6: ${caught ? 'PASS' : 'not observed after 20 attempts'}`);
@@ -244,6 +238,6 @@ test('R7 unchanged placement and the documented nine-member maximum', async ({ c
     await answer(over, 400, 'invalid_request');
     expect((await over.json()).error.message).toBe('regions can place a database in at most 9 regions, including the writer and any intermediate placement');
   } finally {
-    await remove(cells, created.id);
+    await removeDatabase(cells, created.id);
   }
 });

@@ -69,6 +69,7 @@ A node keeps a fence per database it no longer homes, checked after a write tran
 
 - **Paused:** during the move, write transactions wait; a write that passed the fence just before the pause and takes
   the writer during it fails with `serialization_conflict` (retry).
+  The HTTP `409` refusal occurs before the transaction begins and applies no writes; retrying the same row ids is safe while waiting for `421 wrong_region` from the former writer.
 - **Moved:** waiting writes, and later writes on sessions opened before the move (WebSocket, Postgres), fail with
   `421 wrong_region` (SQL code `wrong_region`, SQLSTATE `08004`) naming the new home. They were never committed.
 - **Unresolved:** after a restart with a move marker, or when A could not learn the promote outcome, writes fail with

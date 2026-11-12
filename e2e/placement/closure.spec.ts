@@ -132,7 +132,6 @@ const inspect = (cell: string, projectId: string, closure: Closure) =>
 async function createDatabase(cell: APIRequestContext, region: string, projectId: string): Promise<Database> {
   const homeRegion = new URL(region).hostname.split('.')[0];
   const created = await json<Database>(await cell.post(`${region}${api(projectId)}/databases`, { data: { name: named('closing'), homeRegion, replicaRegions: [] } }), 201);
-  expect(created.homeRegion).toBe(homeRegion);
   return created;
 }
 
@@ -172,27 +171,33 @@ test('a version 2 closure sent to gru erases the bucket, the file and the databa
   await json(await cell.post(`${path}/files/${signed.id}/complete`));
   expect(await stored(object), 'the file is in the object store of fra').toBe(true);
   const database = await createDatabase(cell, second, current.projectId);
-  expect((await json<{ items: Bucket[] }>(await cell.get(buckets))).items.map((item) => item.id)).toEqual([bucket.id]);
+  try {
+    expect(database.homeRegion).toBe('fra');
+    expect((await json<{ items: Bucket[] }>(await cell.get(buckets))).items.map((item) => item.id)).toEqual([bucket.id]);
 
-  const closure = { version: 2, closureId: ulid(), authorityOrganizationId: current.organizationId };
-  const answers: Answer[] = [];
-  await expect.poll(async () => {
-    answers.push(await close(firstInternal, current.projectId, closure));
-    return answers.at(-1)?.status;
-  }, { message: 'gru accepts the closure once fra has confirmed it', timeout: 60_000, intervals: [500] }).toBe(200);
-  expect(answers.slice(0, -1).map((answer) => answer.status).filter((answered) => answered !== 202), 'gru answers 202 pending until then').toEqual([]);
-  expect(answers.at(-1)?.body).toMatchObject({ status: 'accepted', closureId: closure.closureId, pendingHolders: 0, notEmptyRegions: [] });
-  info.annotations.push({ type: 'closure answers of gru', description: answers.map((answer) => answer.status).join(' ') });
-  console.log(`closure answers of gru: ${answers.map((answer) => `${answer.status} ${JSON.stringify(answer.body)}`).join(' | ')}`);
-  expect(await inspect(secondInternal, current.projectId, closure), 'fra holds the fence of the same closure and has confirmed it').toMatchObject({ status: 200, body: { status: 'accepted', closureId: closure.closureId } });
+    const closure = { version: 2, closureId: ulid(), authorityOrganizationId: current.organizationId };
+    const answers: Answer[] = [];
+    await expect.poll(async () => {
+      answers.push(await close(firstInternal, current.projectId, closure));
+      return answers.at(-1)?.status;
+    }, { message: 'gru accepts the closure once fra has confirmed it', timeout: 60_000, intervals: [500] }).toBe(200);
+    expect(answers.slice(0, -1).map((answer) => answer.status).filter((answered) => answered !== 202), 'gru answers 202 pending until then').toEqual([]);
+    expect(answers.at(-1)?.body).toMatchObject({ status: 'accepted', closureId: closure.closureId, pendingHolders: 0, notEmptyRegions: [] });
+    info.annotations.push({ type: 'closure answers of gru', description: answers.map((answer) => answer.status).join(' ') });
+    console.log(`closure answers of gru: ${answers.map((answer) => `${answer.status} ${JSON.stringify(answer.body)}`).join(' | ')}`);
+    expect(await inspect(secondInternal, current.projectId, closure), 'fra holds the fence of the same closure and has confirmed it').toMatchObject({ status: 200, body: { status: 'accepted', closureId: closure.closureId } });
 
-  await status(await createBucket(cell, second, current.projectId), 404);
-  await status(await reserve(cell, path, bytes), 404);
-  expect((await json<{ items: Bucket[] }>(await cell.get(buckets))).items, 'fra lists no bucket of the project').toEqual([]);
-  await status(await cell.get(`${path}/files`), 404);
-  expect(await stored(object), 'the file left the object store of fra').toBe(false);
-  await status(await cell.get(`${second}${api(current.projectId)}/databases/${database.id}`), 404);
-  await status(await cell.post(`${second}${api(current.projectId)}/databases`, { data: { name: named('closed'), homeRegion: 'fra', replicaRegions: [] } }), 404);
+    await status(await createBucket(cell, second, current.projectId), 404);
+    await status(await reserve(cell, path, bytes), 404);
+    expect((await json<{ items: Bucket[] }>(await cell.get(buckets))).items, 'fra lists no bucket of the project').toEqual([]);
+    await status(await cell.get(`${path}/files`), 404);
+    expect(await stored(object), 'the file left the object store of fra').toBe(false);
+    await status(await cell.get(`${second}${api(current.projectId)}/databases/${database.id}`), 404);
+    await status(await cell.post(`${second}${api(current.projectId)}/databases`, { data: { name: named('closed'), homeRegion: 'fra', replicaRegions: [] } }), 404);
+  } finally {
+    const removed = await cell.delete(`${second}${api(current.projectId)}/databases/${database.id}`);
+    expect([204, 404], 'delete the database unless closure already erased it').toContain(removed.status());
+  }
 });
 
 test('a project deletion through gru is refused while fra holds a database of the project, fences nothing, and completes once fra is empty', async ({ page, audit, cells }) => {
@@ -222,23 +227,34 @@ test('a project deletion through gru is refused while fra holds a database of th
     form: { _csrf: await csrfToken(page), projectId: current.projectId, returnUrl: '/organization?tab=projects' }, maxRedirects: 0,
   }), 303);
   const held = await createDatabase(cell, second, projectId);
-  const probe = { version: 1, closureId: ulid(), authorityOrganizationId: current.organizationId };
-  expect(await inspect(firstInternal, projectId, probe), 'gru itself holds nothing of the project').toMatchObject({ status: 200, body: { status: 'empty' } });
-  expect(await inspect(secondInternal, projectId, probe), 'fra holds a database of the project').toMatchObject({ status: 409, body: { error: { code: 'not_empty' } } });
+  let heldRemoved = false;
+  try {
+    expect(held.homeRegion).toBe('fra');
+    const probe = { version: 1, closureId: ulid(), authorityOrganizationId: current.organizationId };
+    expect(await inspect(firstInternal, projectId, probe), 'gru itself holds nothing of the project').toMatchObject({ status: 200, body: { status: 'empty' } });
+    expect(await inspect(secondInternal, projectId, probe), 'fra holds a database of the project').toMatchObject({ status: 409, body: { error: { code: 'not_empty' } } });
 
-  const refused = await deleteProject(page, projectId, projectName);
-  await status(refused, 409);
-  expect(await inspect(firstInternal, projectId, probe), 'the refused deletion wrote no fence in gru').toMatchObject({ status: 200, body: { status: 'empty' } });
-  expect(await inspect(secondInternal, projectId, probe), 'the refused deletion wrote no fence in fra').toMatchObject({ status: 409, body: { error: { code: 'not_empty' } } });
-  const kept = await createDatabase(cell, first, projectId);
-  await status(await cell.delete(`${first}${api(projectId)}/databases/${kept.id}`), 204);
+    const refused = await deleteProject(page, projectId, projectName);
+    await status(refused, 409);
+    expect(await inspect(firstInternal, projectId, probe), 'the refused deletion wrote no fence in gru').toMatchObject({ status: 200, body: { status: 'empty' } });
+    expect(await inspect(secondInternal, projectId, probe), 'the refused deletion wrote no fence in fra').toMatchObject({ status: 409, body: { error: { code: 'not_empty' } } });
+    const kept = await createDatabase(cell, first, projectId);
+    try {
+      expect(kept.homeRegion).toBe('gru');
+    } finally {
+      await status(await cell.delete(`${first}${api(projectId)}/databases/${kept.id}`), 204);
+    }
 
-  await status(await cell.delete(`${second}${api(projectId)}/databases/${held.id}`), 204);
-  await expect.poll(async () => (await deleteProject(page, projectId, projectName)).status(), { message: 'the same call completes once fra is empty', timeout: 60_000 }).toBe(303);
-  await page.goto('/organization?tab=projects');
-  await expect(page.locator(`#delete-project-${projectId}`)).toHaveCount(0);
-  for (const cellInternal of [firstInternal, secondInternal]) {
-    expect(await inspect(cellInternal, projectId, probe), `${cellInternal} holds the fence of the completed deletion`).toMatchObject({ status: 409, body: { error: { code: 'closure_conflict' } } });
+    await status(await cell.delete(`${second}${api(projectId)}/databases/${held.id}`), 204);
+    heldRemoved = true;
+    await expect.poll(async () => (await deleteProject(page, projectId, projectName)).status(), { message: 'the same call completes once fra is empty', timeout: 60_000 }).toBe(303);
+    await page.goto('/organization?tab=projects');
+    await expect(page.locator(`#delete-project-${projectId}`)).toHaveCount(0);
+    for (const cellInternal of [firstInternal, secondInternal]) {
+      expect(await inspect(cellInternal, projectId, probe), `${cellInternal} holds the fence of the completed deletion`).toMatchObject({ status: 409, body: { error: { code: 'closure_conflict' } } });
+    }
+  } finally {
+    if (!heldRemoved) await status(await cell.delete(`${second}${api(projectId)}/databases/${held.id}`), 204);
   }
 
   await deleteAccount(page, audit, current, 'closure-check');
