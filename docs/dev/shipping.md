@@ -24,9 +24,10 @@ about 30 minutes.
 The journey in `e2e/` is the only test; a behaviour that matters becomes a
 journey step ([`e2e/AGENTS.md`](../../e2e/AGENTS.md)).
 
-A `CI time regression: <workflow> (<event>)` issue (label `ci-time`) means a
-slowdown repeated on the previous successful first-attempt `CI`, `Sites` or
-`Images (GHCR)` run with the same jobs (`CI time`, `.github/workflows/ci-time.yml`).
+A `CI time regression: <workflow> (<event>)` issue (label `ci-time`) means the
+same signal (the same job or the run as a whole) was slower on this run and on
+the previous successful first-attempt `CI`, `Sites` or `Images (GHCR)` run with
+the same jobs (`CI time`, `.github/workflows/ci-time.yml`).
 The check compares working time, not time waiting for a runner: a run is slow
 when that time is more than 30 s over the median of its latest five earlier runs
 with the same jobs, or one of its jobs is more than 30 s over the slowest of its
