@@ -114,7 +114,7 @@ public sealed partial class TerraBaseSqlClient
         var options = new TerraBaseSqlClientOptions { ApiKey = apiKey };
         var baseUrl = Environment.GetEnvironmentVariable("TERRASCALE_BASE_URL");
         if (!string.IsNullOrWhiteSpace(baseUrl))
-            options = options with { BaseAddress = new Uri(baseUrl, UriKind.Absolute) };
+            options = options with { BaseAddress = TerraScaleOrigin.Address(baseUrl, "TERRASCALE_BASE_URL", TerraScaleService.Api) };
         var region = Environment.GetEnvironmentVariable("TERRASCALE_REGION");
         if (!string.IsNullOrWhiteSpace(region))
             options = options with { Region = region };

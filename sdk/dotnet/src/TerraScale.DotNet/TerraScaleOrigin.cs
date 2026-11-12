@@ -38,8 +38,7 @@ internal static class TerraScaleOrigin
 
     internal static Uri Parse(Uri? address, string label, string parameter, TerraScaleService service)
     {
-        var (scheme, host, port) = Strict(address?.OriginalString)
-            ?? throw new ArgumentException($"{label} must be exactly scheme://host[:port], such as https://{service.Host}.", parameter);
+        var (scheme, host, port) = Strict(address?.OriginalString) ?? throw Malformed(label, parameter, service);
         if (scheme == Uri.UriSchemeHttp && !Loopback(host))
         {
             throw new ArgumentException($"{label} must use https; plain http is allowed only for localhost, 127.0.0.0/8 and [::1].", parameter);
@@ -58,6 +57,9 @@ internal static class TerraScaleOrigin
         return origin;
     }
 
+    internal static Uri Address(string raw, string label, TerraScaleService service) =>
+        Uri.TryCreate(raw, UriKind.Absolute, out var address) ? address : throw Malformed(label, null, service);
+
     internal static HttpResponseMessage Sent(HttpResponseMessage response, Uri origin)
     {
         if (response.RequestMessage?.RequestUri is not { } sent
@@ -71,9 +73,12 @@ internal static class TerraScaleOrigin
             $"The HttpClient followed a redirect away from {origin.GetLeftPart(UriPartial.Authority)}: disable automatic redirects on its handler, as TerraBaseHttp.CreateHandler() does.");
     }
 
+    private static ArgumentException Malformed(string label, string? parameter, TerraScaleService service) =>
+        new($"{label} must be exactly scheme://host[:port], such as https://{service.Host}.", parameter);
+
     private static (string Scheme, string Host, string Port)? Strict(string? raw)
     {
-        if (raw is null || raw.AsSpan().ContainsAnyExcept(OriginCharacters))
+        if (raw is null || raw.Length > 2048 || raw.AsSpan().ContainsAnyExcept(OriginCharacters))
         {
             return null;
         }
@@ -97,7 +102,7 @@ internal static class TerraScaleOrigin
         if (rest.StartsWith('['))
         {
             var end = rest.IndexOf(']', StringComparison.Ordinal);
-            if (end < 0 || Ipv6(rest[1..end]) is null)
+            if (end < 0 || Ipv6(rest[1..end]) is not { } groups || groups.All(group => group == 0))
             {
                 return null;
             }
@@ -160,8 +165,14 @@ internal static class TerraScaleOrigin
 
     private static bool Name(string host)
     {
+        if (host.Length > 253 || host is "loopback" or "0.0.0.0")
+        {
+            return false;
+        }
+
         var labels = host.Split('.');
-        if (!labels.All(label => label.Length > 0 && !label.AsSpan().ContainsAnyExcept(LabelCharacters)))
+        if (!labels.All(label => label.Length is >= 1 and <= 63 && label[0] != '-' && label[^1] != '-' && !label.StartsWith("xn--", StringComparison.Ordinal)
+            && !label.AsSpan().ContainsAnyExcept(LabelCharacters)))
         {
             return false;
         }

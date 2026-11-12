@@ -38,7 +38,13 @@
   whitespace, `%`, `\`, a non-ASCII character, a trailing dot, an IPv4 address
   in any form but four decimal octets, port `0` and a port with a leading zero
   are refused, and httpx, which sends the request, must read the same host and
-  port. The client raises `ValueError` when it is built. Earlier versions kept
+  port. So are a string of more than 2,048 characters, a name of more than 253
+  characters or with a label of more than 63, a label that begins or ends with
+  a hyphen or begins with `xn--` (internationalised names), the name `loopback`
+  and the unspecified addresses `0.0.0.0` and `[::]`; earlier versions accepted
+  an `xn--` host or a 64-character label and then raised a raw `idna` error or
+  `UnicodeEncodeError` on every call. The client raises `ValueError` when it is
+  built. Earlier versions kept
   a `base_url` path prefix, query or user info, and the platform calls
   (`create_api_key`, `list_api_keys`, `revoke_api_key`, the project client,
   settings and user calls) sent an issuer's user info as HTTP Basic in place of

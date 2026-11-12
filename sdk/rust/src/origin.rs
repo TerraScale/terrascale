@@ -74,9 +74,15 @@ fn bracketed(host: &str) -> Option<[u16; 8]> {
 }
 
 fn name(host: &str) -> bool {
+    if host.len() > 253 || host == "loopback" || host == "0.0.0.0" {
+        return false;
+    }
     let labels: Vec<&str> = host.split('.').collect();
     if !labels.iter().all(|label| {
-        !label.is_empty()
+        (1..=63).contains(&label.len())
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && !label.starts_with("xn--")
             && label
                 .bytes()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
@@ -98,9 +104,10 @@ fn loopback(host: &str) -> bool {
 }
 
 fn strict(raw: &str) -> Option<(String, String, Option<u16>)> {
-    if !raw
-        .bytes()
-        .all(|c| c.is_ascii_alphanumeric() || b"-.:[]/".contains(&c))
+    if raw.len() > 2048
+        || !raw
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-.:[]/".contains(&c))
     {
         return None;
     }
@@ -112,7 +119,9 @@ fn strict(raw: &str) -> Option<(String, String, Option<u16>)> {
     }
     let (host, after) = if rest.starts_with('[') {
         let end = rest.find(']')?;
-        ipv6(&rest[1..end])?;
+        if ipv6(&rest[1..end])? == [0; 8] {
+            return None;
+        }
         rest.split_at(end + 1)
     } else {
         rest.split_at(rest.find(':').unwrap_or(rest.len()))

@@ -50,6 +50,9 @@ func Loopback(host string) bool {
 }
 
 func strict(raw string) (string, string, string, bool) {
+	if len(raw) > 2048 {
+		return "", "", "", false
+	}
 	for _, c := range []byte(raw) {
 		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("-.:[]/", c) >= 0) {
 			return "", "", "", false
@@ -67,7 +70,7 @@ func strict(raw string) (string, string, string, bool) {
 			return "", "", "", false
 		}
 		host, after = rest[:end+1], rest[end+1:]
-		if _, ok := ipv6(host[1:end]); !ok {
+		if groups, ok := ipv6(host[1:end]); !ok || groups == [8]uint16{} {
 			return "", "", "", false
 		}
 	} else if colon := strings.IndexByte(rest, ':'); colon >= 0 {
@@ -90,9 +93,13 @@ func strict(raw string) (string, string, string, bool) {
 }
 
 func name(host string) bool {
+	if len(host) > 253 || host == "loopback" || host == "0.0.0.0" {
+		return false
+	}
 	labels := strings.Split(host, ".")
 	for _, label := range labels {
-		if label == "" || strings.Trim(label, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' || strings.HasPrefix(label, "xn--") ||
+			strings.Trim(label, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
 			return false
 		}
 	}

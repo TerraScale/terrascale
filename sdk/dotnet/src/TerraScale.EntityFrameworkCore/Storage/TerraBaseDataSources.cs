@@ -51,16 +51,21 @@ internal sealed class TerraBaseDataSources : IDisposable
 
         var options = new TerraBaseSqlClientOptions
         {
-            BaseAddress = Address(settings, "Endpoint"),
+            BaseAddress = Address(settings, "Endpoint", "https://api.terrascale.tech"),
             Region = Value(settings, "Region"),
             ApiKey = Value(settings, "ApiKey") ?? throw Missing("ApiKey"),
-            AuthAddress = Address(settings, "AuthEndpoint"),
+            AuthAddress = Address(settings, "AuthEndpoint", "https://auth.terrascale.tech"),
         };
         return new TerraBaseSqlClient(new HttpClient(handler, disposeHandler: false), options)
             .Database(Value(settings, "Project") ?? throw Missing("Project"), Value(settings, "Database") ?? throw Missing("Database"));
     }
 
-    private static Uri? Address(DbConnectionStringBuilder settings, string key) => Value(settings, key) is { } text ? new Uri(text, UriKind.Absolute) : null;
+    private static Uri? Address(DbConnectionStringBuilder settings, string key, string example) => Value(settings, key) switch
+    {
+        null => null,
+        var text when Uri.TryCreate(text, UriKind.Absolute, out var address) => address,
+        _ => throw new ArgumentException($"The TerraBase connection string's {key} must be exactly scheme://host[:port], such as {example}.", "connectionString"),
+    };
 
     private static string? Value(DbConnectionStringBuilder settings, string key) =>
         settings.TryGetValue(key, out var value) && Convert.ToString(value, CultureInfo.InvariantCulture) is { Length: > 0 } text ? text : null;

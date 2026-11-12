@@ -24,8 +24,10 @@ function ipv6(text) {
 
 /** @param {string} host */
 function name(host) {
+  if (host.length > 253 || host === "loopback" || host === "0.0.0.0") return false;
   const labels = host.split(".");
-  if (!labels.every((label) => /^[a-z0-9-]+$/u.test(label))) return false;
+  if (!labels.every((label) => /^[a-z0-9-]{1,63}$/u.test(label) && !label.startsWith("-") && !label.endsWith("-") && !label.startsWith("xn--")))
+    return false;
   const last = labels[labels.length - 1] ?? "";
   return digits(last) || /^0x[0-9a-f]*$/u.test(last) ? ipv4(host) : true;
 }
@@ -40,7 +42,7 @@ export function isLoopbackHost(host = "") {
 
 /** @param {unknown} raw @returns {{ scheme: string, host: string, port: string } | null} */
 function strictOrigin(raw) {
-  if (typeof raw !== "string" || !/^[0-9A-Za-z.:[\]/-]*$/u.test(raw)) return null;
+  if (typeof raw !== "string" || raw.length > 2048 || !/^[0-9A-Za-z.:[\]/-]*$/u.test(raw)) return null;
   const lower = raw.toLowerCase();
   const split = lower.indexOf("://");
   if (split < 0) return null;
@@ -51,7 +53,8 @@ function strictOrigin(raw) {
   let after = "";
   if (rest.startsWith("[")) {
     const end = rest.indexOf("]");
-    if (end < 0 || ipv6(rest.slice(1, end)) === null) return null;
+    const groups = end < 0 ? null : ipv6(rest.slice(1, end));
+    if (groups === null || groups.every((group) => group === 0)) return null;
     host = rest.slice(0, end + 1);
     after = rest.slice(end + 1);
   } else if (rest.includes(":")) {

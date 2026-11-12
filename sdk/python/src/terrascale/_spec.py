@@ -55,8 +55,11 @@ def _ipv6(text: str) -> list[int] | None:
 
 
 def _name(host: str) -> bool:
+    if len(host) > 253 or host in ("loopback", "0.0.0.0"):
+        return False
     labels = host.split(".")
-    if not all(label and all(c in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in label) for label in labels):
+    if not all(0 < len(label) <= 63 and label[0] != "-" and label[-1] != "-" and not label.startswith("xn--")
+               and all(c in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in label) for label in labels):
         return False
     last = labels[-1]
     numeric = _digits(last) or last.startswith("0x") and all(c in "0123456789abcdef" for c in last[2:])
@@ -70,7 +73,7 @@ def _loopback(host: str) -> bool:
 
 
 def _strict(raw: object) -> tuple[str, str, str] | None:
-    if not isinstance(raw, str) or not all(c in _ORIGIN_CHARACTERS for c in raw):
+    if not isinstance(raw, str) or len(raw) > 2048 or not all(c in _ORIGIN_CHARACTERS for c in raw):
         return None
     scheme, split, rest = raw.lower().partition("://")
     rest = rest.removesuffix("/")
@@ -79,7 +82,8 @@ def _strict(raw: object) -> tuple[str, str, str] | None:
     host, after = rest, ""
     if rest.startswith("["):
         end = rest.find("]")
-        if end < 0 or _ipv6(rest[1:end]) is None:
+        groups = _ipv6(rest[1:end]) if end >= 0 else None
+        if groups is None or not any(groups):
             return None
         host, after = rest[:end + 1], rest[end + 1:]
     elif ":" in rest:
@@ -102,12 +106,12 @@ def _serves(service: tuple[str, str], host: str) -> bool:
     return host == own or label != host and label != "" and "." not in label
 
 
-def _sent_as(origin: str) -> tuple[bytes, int | None] | None:
+def _sent_as(origin: str) -> tuple[str, int | None] | None:
     try:
         parsed = httpx.URL(origin)
-    except httpx.InvalidURL:
+        return parsed.host, parsed.port
+    except (httpx.InvalidURL, UnicodeError):
         return None
-    return parsed.raw_host, parsed.port
 
 
 def service_origin(raw: str, what: str, service: tuple[str, str]) -> str:
@@ -120,7 +124,7 @@ def service_origin(raw: str, what: str, service: tuple[str, str]) -> str:
     if not _serves(service, host):
         raise ValueError(f"{what} names a TerraScale host that does not serve {service[1]}")
     origin = f"{scheme}://{host}" + (f":{port}" if port else "")
-    if _sent_as(origin) != (host.strip("[]").encode(), int(port) if port else None):
+    if _sent_as(origin) != (host.strip("[]"), int(port) if port else None):
         raise ValueError(f"{what} is read as another host or port by the HTTP client")
     return origin
 
