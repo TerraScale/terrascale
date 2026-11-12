@@ -208,7 +208,40 @@ func (r *runner) do(op operation) error {
 		if err != nil {
 			return err
 		}
-		return same(enabled.Disabled, false, "write key enables")
+
+		if enabled.Disabled {
+			return errors.New("write key did not enable")
+		}
+		key, err := write.CreateUserAPIKey(ctx, r.project, user, tsauth.CreateUserAPIKey{Name: "journey", Scopes: []string{"invoices:read"}})
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(os.Getenv("E2E_SECRETS"), "user-api-key-go"), []byte(key.Key), 0o600); err != nil {
+			return err
+		}
+		keys, err := read.ListUserAPIKeys(ctx, r.project, user)
+		if err != nil {
+			return err
+		}
+		if len(keys.Items) != 1 || keys.Items[0].ID != key.ID {
+			return errors.New("user key not listed")
+		}
+		verified, err := read.VerifyUserAPIKey(ctx, r.project, key.Key)
+		if err != nil {
+			return err
+		}
+		if !verified.Valid || verified.UserID == nil || *verified.UserID != user || len(verified.Scopes) != 1 || verified.Scopes[0] != "invoices:read" {
+			return errors.New("user key did not verify")
+		}
+		if err := write.RevokeUserAPIKey(ctx, r.project, user, key.ID); err != nil {
+			return err
+		}
+		invalid, err := read.VerifyUserAPIKey(ctx, r.project, key.Key)
+		if err != nil {
+			return err
+		}
+		return same(invalid.Valid, false, "revoked key invalid immediately")
+
 	case "sql.execute.positional":
 		if _, err := r.db.Execute(ctx, r.fill(op.Setup)); err != nil {
 			return err

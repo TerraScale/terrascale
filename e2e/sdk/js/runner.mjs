@@ -78,6 +78,20 @@ const operations = {
     check(disabled.ok && disabled.value.disabled, 'write key disables');
     const enabled = await auth.enableUser(write, project, user);
     check(enabled.ok && !enabled.value.disabled, 'write key enables');
+    const created = await auth.createUserApiKey(write, project, user, { name: 'journey', scopes: ['invoices:read'] });
+    check(created.ok && created.value.key, 'create user key');
+    const key = created.value;
+    writeFileSync(join(process.env.E2E_SECRETS, 'user-api-key-js'), key.key, { mode: 0o600 });
+    const keys = await auth.listUserApiKeys(read, project, user);
+    check(keys.ok && keys.value.items.some(item => item.id === key.id), 'list user key');
+    const verified = await auth.verifyUserApiKey(read, project, { key: key.key });
+    check(verified.ok && verified.value.valid && verified.value.user_id === user, 'verify user key');
+    same(verified.value.scopes, ['invoices:read'], 'user key scopes');
+    const revoked = await auth.revokeUserApiKey(write, project, user, key.id);
+    check(revoked.ok, 'revoke user key');
+    const invalid = await auth.verifyUserApiKey(read, project, { key: key.key });
+    check(invalid.ok && !invalid.value.valid, 'revoked key invalid immediately');
+
   },
   async 'placement.create'() {
     const created = await client.createDatabase(project, `e2e-js-${run}-placed`, { regions: ['gru', 'fra'] });

@@ -4,7 +4,7 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     // A project's own end-user tenant at ts-auth: settings, users, sessions and OAuth clients.
     // Every call carries the signed-in user's own token; ts-auth checks the project role each time.
-    public interface ITsAuthProjects
+    public partial interface ITsAuthProjects
     {
         Task<TsAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
         Task<TsAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TsAuthProjectSettingsUpdate update, CancellationToken cancellationToken);

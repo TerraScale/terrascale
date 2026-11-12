@@ -19,6 +19,7 @@ from .auth import (
     _scoped_key_call,
     create_api_key_call,
     create_project_client_call,
+    create_user_api_key_call,
     delete_project_client_call,
     delete_provider_call,
     delete_user_call,
@@ -30,14 +31,18 @@ from .auth import (
     list_api_keys_call,
     list_project_clients_call,
     list_sessions_call,
+    list_user_api_keys_call,
     list_users_call,
     revoke_api_key_call,
     revoke_session_call,
+    revoke_user_api_key_call,
     rotate_api_key_call,
     rotate_project_client_secret_call,
     set_provider_call,
+    set_user_api_key_policy_call,
     update_project_client_call,
     update_settings_call,
+    verify_user_api_key_call,
 )
 from .client import _error, _settings
 from .errors import CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes
@@ -328,14 +333,35 @@ class AsyncTerraScale:
         return await self._send(rotate_api_key_call(
             self._issuer, organization, project, key, grace_seconds, step_up_proof))
 
+
+    async def set_user_api_key_policy(self, scopes: Sequence[str], *, project: str | None = None) -> models.UserApiKeyPolicy:
+        return await self._send(set_user_api_key_policy_call(
+            self._issuer, project if project is not None else self.project, scopes))
+
+    async def create_user_api_key(self, user: str, name: str, scopes: Sequence[str], *,
+                              expires_at: str | None = None, project: str | None = None) -> models.UserApiKey:
+        return await self._send(create_user_api_key_call(self._issuer, project if project is not None else self.project,
+                                                   user, name, scopes, expires_at))
+
+    async def list_user_api_keys(self, user: str, *, project: str | None = None) -> models.UserApiKeyPage:
+        return await self._send(list_user_api_keys_call(self._issuer, project if project is not None else self.project, user))
+
+    async def revoke_user_api_key(self, user: str, key: str, *, project: str | None = None) -> None:
+        return await self._send(revoke_user_api_key_call(
+            self._issuer, project if project is not None else self.project, user, key))
+
+    async def verify_user_api_key(self, key: str, *, project: str | None = None) -> models.UserApiKeyVerification:
+        return await self._send(verify_user_api_key_call(self._issuer, project if project is not None else self.project, key))
+
     async def create_project_client(
         self, name: str, client_type: str, redirect_uris: Sequence[str], *, step_up_proof: str,
-        project: str | None = None,
+        project: str | None = None, allowed_scopes: Sequence[str] | None = None,
+        allowed_audiences: Sequence[str] | None = None, token_lifetime_minutes: int | None = None,
     ) -> models.ProjectClient:
         """Register a public or confidential OAuth client; a confidential secret is answered once."""
         return await self._send(create_project_client_call(
             self._issuer, project if project is not None else self.project, name, client_type, redirect_uris,
-            step_up_proof))
+            step_up_proof, allowed_scopes, allowed_audiences, token_lifetime_minutes))
 
     async def list_project_clients(self, *, project: str | None = None) -> models.ProjectClientPage:
         """List every registered client of the project in one page, without secrets."""
@@ -343,12 +369,13 @@ class AsyncTerraScale:
 
     async def update_project_client(
         self, client_id: str, name: str, redirect_uris: Sequence[str], *, step_up_proof: str,
-        project: str | None = None,
+        project: str | None = None, allowed_scopes: Sequence[str] | None = None,
+        allowed_audiences: Sequence[str] | None = None, token_lifetime_minutes: int | None = None,
     ) -> models.ProjectClient:
         """Rename a client and replace its redirect URIs; the id, type and secret stay unchanged."""
         return await self._send(update_project_client_call(
             self._issuer, project if project is not None else self.project, client_id, name, redirect_uris,
-            step_up_proof))
+            step_up_proof, allowed_scopes, allowed_audiences, token_lifetime_minutes))
 
     async def rotate_project_client_secret(
         self, client_id: str, *, step_up_proof: str, grace_seconds: int | None = None, project: str | None = None,

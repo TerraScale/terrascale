@@ -34,7 +34,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
 
     public static readonly FrozenSet<string> LifecycleEvents = new[]
     {
-        "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled",
+        "apiKey.created", "apiKey.revoked", "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled",
     }.ToFrozenSet(StringComparer.Ordinal);
 
     public async Task<(WebhookEndpointRecord Endpoint, string Secret)> CreateAsync(string projectId, string url, IReadOnlyList<string> eventTypes, CancellationToken cancellationToken)

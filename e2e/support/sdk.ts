@@ -144,7 +144,7 @@ export async function runOperations(sdk: Sdk, group: Group, management?: { user:
     process.stdout.write(`${summary}\n`);
     test.info().annotations.push({ type: 'lane', description: summary });
   }
-  for (const file of readdirSync(secretsDir).filter((name) => name.startsWith(`scoped-key-${sdk}`))) mask(readFileSync(join(secretsDir, file), 'utf8'));
+  for (const file of readdirSync(secretsDir).filter((name) => name.startsWith(`scoped-key-${sdk}`) || name === `user-api-key-${sdk}`)) mask(readFileSync(join(secretsDir, file), 'utf8'));
   if (production) process.stdout.write(`${sdk} group ${group} runner output:\n${result.stdout}\n${result.stderr}\n`);
   else await test.info().attach(`${sdk} group ${group}`, { body: `${result.stdout}\n${result.stderr}`, contentType: 'text/plain' });
   if (twoRegions) process.stdout.write(result.stdout.split('\n').filter(line => line.includes('placement:')).join('\n') + '\n');

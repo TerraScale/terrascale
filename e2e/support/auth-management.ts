@@ -1,3 +1,4 @@
+import { createPublicKey, verify as verifySignature } from 'node:crypto';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { expect, request } from '@playwright/test';
 import { newAddress, nextMail } from './inbox';
@@ -182,6 +183,72 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
     headers: { Authorization: 'Bearer ' + writeKey }, data: { methods: { passcode: false, password: false } },
   });
   expect(invalid.status()).toBe(400);
+  const policy = await page.request.put(root + '/user-api-key-policy', {
+    headers: { Authorization: 'Bearer ' + writeKey }, data: { allowed_scopes: ['invoices:read'] },
+  });
+  expect(policy.status()).toBe(200);
+  const outsideKeyVerify = await page.request.post(auth + '/v1/' + user + '/api-keys/verify', {
+    headers: { Authorization: 'Bearer ' + readKey }, data: { key: 'tsk_invalid' },
+  });
+  expect(outsideKeyVerify.status()).toBe(404);
+  const forbiddenScopes = await page.request.post(root + '/users/' + user + '/api-keys', {
+    headers: { Authorization: 'Bearer ' + writeKey }, data: { name: 'forbidden', scopes: ['invoices:write'] },
+  });
+  expect(forbiddenScopes.status()).toBe(400);
+  const own = await page.request.post(root + '/me/api-keys', {
+    headers: { Origin: auth }, data: { name: 'self-service', scopes: ['invoices:read'] },
+  });
+  expect(own.status()).toBe(201);
+  const ownKey = await own.json();
+  saveSecret('self-user-key-' + sdk, ownKey.key);
+  const ownList = await page.request.get(root + '/me/api-keys');
+  expect((await ownList.json()).items.some((item: { id: string }) => item.id === ownKey.id)).toBe(true);
+  const csrfRefused = await page.request.delete(root + '/me/api-keys/' + ownKey.id, { headers: { Origin: dash } });
+  expect(csrfRefused.status()).toBe(403);
+  if (sdk === 'dotnet') {
+    const keysPage = '/auth/users?user=' + user;
+    await page.goto(keysPage);
+    const row = page.locator('#auth-user-api-keys tbody tr').filter({ hasText: ownKey.prefix });
+    await expect(row).toContainText('self-service');
+    await expect(row).toContainText('invoices:read');
+    const uiCreated = await page.request.post(root + '/users/' + user + '/api-keys', {
+      headers: { Authorization: 'Bearer ' + writeKey }, data: { name: 'dashboard revoke', scopes: ['invoices:read'] },
+    });
+    expect(uiCreated.status()).toBe(201);
+    const uiKey = await uiCreated.json();
+    saveSecret('dashboard-user-key', uiKey.key);
+    await page.goto(keysPage);
+    await page.locator('#auth-user-api-keys tbody tr').filter({ hasText: uiKey.prefix }).getByRole('button', { name: 'Revoke', exact: true }).click();
+    await expect(page.locator('#auth-user-api-keys')).not.toContainText(uiKey.prefix);
+    const uiVerify = await page.request.post(root + '/api-keys/verify', {
+      headers: { Authorization: 'Bearer ' + readKey }, data: { key: uiKey.key },
+    });
+    expect((await uiVerify.json()).valid).toBe(false);
+    const otherProject = await page.request.post(auth + '/v1/terrascale/organizations/' + current.organizationId + '/projects', {
+      headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: 'Key isolation ' + current.runId },
+    });
+    expect(otherProject.status()).toBe(201);
+    const otherId = (await otherProject.json()).id as string;
+    const otherKeys = auth + '/v1/terrascale/organizations/' + current.organizationId + '/projects/' + otherId + '/api-keys';
+    const otherCreated = await page.request.post(otherKeys, {
+      headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: 'isolation verifier', scopes: ['auth:read'] },
+    });
+    expect(otherCreated.status()).toBe(201);
+    const otherKey = (await otherCreated.json()).key as string;
+    saveSecret('isolation-project-key', otherKey);
+    const crossVerify = await page.request.post(auth + '/v1/' + otherId + '/api-keys/verify', {
+      headers: { Authorization: 'Bearer ' + otherKey }, data: { key: ownKey.key },
+    });
+    expect(crossVerify.status()).toBe(200);
+    expect((await crossVerify.json()).valid).toBe(false);
+    const otherRevoked = await page.request.delete(otherKeys + '/' + otherKey.slice(0, 26), {
+      headers: { Authorization: 'Bearer ' + ownerToken },
+    });
+    expect(otherRevoked.status()).toBe(204);
+  }
+  const ownRevoke = await page.request.delete(root + '/me/api-keys/' + ownKey.id, { headers: { Origin: auth } });
+  expect(ownRevoke.status()).toBe(204);
+  if (sdk === 'dotnet') await checkMachineClient(page, ownerToken, current.projectId);
   return { user, readKey, writeKey, csrf, ownerToken };
 }
 
@@ -200,6 +267,15 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
   });
   expect(audit.status()).toBe(200);
   const events = (await audit.json()).items as { actor: string; action: string; detail: string }[];
+  for (const action of ['apiKey.created', 'apiKey.revoked']) {
+    expect(events.some(event => event.action === action)).toBe(true);
+  }
+  const keyEvents = await page.request.get(root + '/events', { headers: { Authorization: 'Bearer ' + management.ownerToken } });
+  expect(keyEvents.status()).toBe(200);
+  const outboxEvents = (await keyEvents.json()).items as { type: string }[];
+  expect(outboxEvents.some(event => event.type === 'apiKey.created')).toBe(true);
+  expect(outboxEvents.some(event => event.type === 'apiKey.revoked')).toBe(true);
+
   for (const [action, key, status] of [
     ['disable_project_user.failed', management.readKey, 403],
     ['disable_project_user.failed', management.writeKey, 404],
@@ -222,4 +298,68 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
     const users = await page.request.get(root + '/users', { headers: { Authorization: `Bearer ${key}` } });
     expect(users.status()).toBe(401);
   }
+}
+
+
+async function checkMachineClient(page: Page, ownerToken: string, project: string): Promise<void> {
+  const context = page.request;
+  const proof = await stepUp(context, ownerToken, 'create_oauth_client');
+  const clients = auth + '/v1/' + project + '/clients';
+  const created = await context.post(clients, {
+    headers: { Authorization: 'Bearer ' + ownerToken, 'X-TerraScale-Step-Up-Proof': proof },
+    data: { name: 'journey machine', type: 'machine', redirect_uris: [], allowed_scopes: ['invoices:read'],
+      allowed_audiences: ['https://invoices.example'], token_lifetime_minutes: 15 },
+  });
+  expect(created.status()).toBe(201);
+  const client = await created.json();
+  saveSecret('machine-client-secret', client.client_secret);
+  expect(client.type).toBe('machine');
+  await page.goto('/auth/clients');
+  const clientRow = page.getByRole('row').filter({ hasText: client.client_id });
+  await expect(clientRow).toContainText('machine');
+  await expect(clientRow).toContainText('invoices:read');
+  await clientRow.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.locator('dialog[open] [name="allowed_scopes"]')).toHaveValue('invoices:read');
+  await page.locator('dialog[open]').getByRole('button', { name: 'Close', exact: true }).click();
+  const form = { grant_type: 'client_credentials', client_id: client.client_id, client_secret: client.client_secret,
+    scope: 'invoices:read', resource: 'https://invoices.example' };
+  const endpoint = auth + '/' + project + '/oauth/token';
+  const granted = await context.post(endpoint, { form });
+  const grantBody = await granted.json();
+  expect(granted.status(), 'machine grant: ' + (grantBody.error ?? 'ok') + ' ' + (grantBody.error_description ?? '')).toBe(200);
+  const token = grantBody.access_token as string;
+  saveSecret('machine-access-token', token);
+  const [header, payload, signature] = token.split('.');
+  const decodedHeader = JSON.parse(Buffer.from(header, 'base64url').toString());
+  const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString());
+  expect(decodedHeader.alg).toBe('ES256');
+  expect(decoded).toMatchObject({ iss: auth + '/' + project, sub: client.client_id, scope: 'invoices:read', aud: 'https://invoices.example' });
+  expect(decoded.exp - decoded.iat).toBe(900);
+  const jwks = await context.get(auth + '/' + project + '/.well-known/jwks.json');
+  expect(jwks.status()).toBe(200);
+  const key = (await jwks.json()).keys.find((item: { kid: string }) => item.kid === decodedHeader.kid);
+  expect(verifySignature('sha256', Buffer.from(header + '.' + payload),
+    { key: createPublicKey({ key, format: 'jwk' }), dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url'))).toBe(true);
+  const expanded = await context.post(endpoint, { form: { ...form, scope: 'invoices:write' } });
+  expect(expanded.status()).toBe(400);
+  const wrongAudience = await context.post(endpoint, { form: { ...form, resource: 'https://other.example' } });
+  expect(wrongAudience.status()).toBe(400);
+  const crossProject = await context.post(auth + '/00000000000000000000000001/oauth/token', { form });
+  expect(crossProject.status()).not.toBe(200);
+  const interactiveProof = await stepUp(context, ownerToken, 'create_oauth_client');
+  const interactive = await context.post(clients, {
+    headers: { Authorization: 'Bearer ' + ownerToken, 'X-TerraScale-Step-Up-Proof': interactiveProof },
+    data: { name: 'journey interactive', type: 'confidential', redirect_uris: ['https://app.example/callback'] },
+  });
+  expect(interactive.status()).toBe(201);
+  const userClient = await interactive.json();
+  saveSecret('interactive-client-secret', userClient.client_secret);
+  const refusedUserClient = await context.post(endpoint, { form: { grant_type: 'client_credentials',
+    client_id: userClient.client_id, client_secret: userClient.client_secret, scope: 'invoices:read' } });
+  expect(refusedUserClient.status()).toBe(400);
+  const removedUserClient = await context.delete(clients + '/' + userClient.client_id,
+    { headers: { Authorization: 'Bearer ' + ownerToken } });
+  expect(removedUserClient.status()).toBe(204);
+  const deleted = await context.delete(clients + '/' + client.client_id, { headers: { Authorization: 'Bearer ' + ownerToken } });
+  expect(deleted.status()).toBe(204);
 }

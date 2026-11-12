@@ -312,7 +312,51 @@ impl Runner {
                     .enable_user(&write, &self.project, &user)
                     .await
                     .map_err(|error| error.to_string())?;
-                same(json!(enabled.disabled), &json!(false), "write key enables")
+                same(json!(enabled.disabled), &json!(false), "write key enables")?;
+                let key = auth
+                    .create_user_api_key(
+                        &write,
+                        &self.project,
+                        &user,
+                        &terrascale::auth_projects::CreateUserApiKey {
+                            name: "journey".into(),
+                            scopes: vec!["invoices:read".into()],
+                            expires_at: None,
+                        },
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let secret = key.key.as_deref().ok_or("missing user key secret")?;
+                register_secret("user-api-key-rust", secret)?;
+                let keys = auth
+                    .list_user_api_keys(&read, &self.project, &user)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if !keys.items.iter().any(|item| item.id == key.id) {
+                    return Err("user key not listed".into());
+                }
+                let verified = auth
+                    .verify_user_api_key(&read, &self.project, secret)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if !verified.valid
+                    || verified.user_id.as_deref() != Some(user.as_str())
+                    || verified.scopes != Some(vec!["invoices:read".into()])
+                {
+                    return Err("user key did not verify".into());
+                }
+                auth.revoke_user_api_key(&write, &self.project, &user, &key.id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let invalid = auth
+                    .verify_user_api_key(&read, &self.project, secret)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(
+                    json!(invalid.valid),
+                    &json!(false),
+                    "revoked user key invalid immediately",
+                )
             }
             "sql.execute.positional" => {
                 let sql = self.db().sql();

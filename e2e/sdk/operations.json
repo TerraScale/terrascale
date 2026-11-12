@@ -5,7 +5,7 @@
     {
       "id": "auth.manage_user",
       "group": "a",
-      "title": "auth:read lists users; auth:write disables and re-enables a project user"
+      "title": "auth:read lists users and verifies user API keys; auth:write manages users and creates/revokes their keys"
     },
     {
       "id": "sql.execute.positional",

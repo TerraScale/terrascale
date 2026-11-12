@@ -736,3 +736,5 @@ for { _, err := client.SetDatabasePlacement(ctx, project, database, tb.DatabaseP
 ## Project Authentication management
 
 Use `client.WithToken(secretKey)` for `ProjectUsers`, `DisableProjectUser` and `EnableProjectUser`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
+
+User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).

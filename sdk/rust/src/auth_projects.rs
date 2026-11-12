@@ -277,6 +277,12 @@ pub struct ProjectClient {
     /// Client secret, answered exactly once for confidential clients.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_audiences: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_lifetime_minutes: Option<i32>,
 }
 
 /// One cursor page of the project's OAuth clients.
@@ -298,6 +304,12 @@ pub struct CreateProjectClient {
     pub r#type: String,
     /// Exact redirect URIs.
     pub redirect_uris: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_audiences: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_lifetime_minutes: Option<i32>,
 }
 
 /// Request body for OAuth client updates.
@@ -307,6 +319,12 @@ pub struct UpdateProjectClient {
     pub name: String,
     /// Exact redirect URIs.
     pub redirect_uris: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_audiences: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_lifetime_minutes: Option<i32>,
 }
 
 /// A rotated client secret, answered exactly once; the previous secret keeps
@@ -347,7 +365,7 @@ fn provider_name(provider: &str) -> Result<String> {
 }
 
 fn client_type(value: &str) -> Result<()> {
-    if matches!(value, "public" | "confidential") {
+    if matches!(value, "public" | "confidential" | "machine") {
         Ok(())
     } else {
         Err(Error::new(
@@ -895,5 +913,145 @@ impl ProjectsClient {
             return Err(error);
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Deserialize)]
+pub struct UserApiKey {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub prefix: String,
+    pub scopes: Vec<String>,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub key: Option<String>,
+}
+
+impl std::fmt::Debug for UserApiKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("UserApiKey{secret:[REDACTED]}")
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserApiKeyPage {
+    pub items: Vec<UserApiKey>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateUserApiKey {
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserApiKeyPolicy {
+    pub allowed_scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserApiKeyVerification {
+    pub valid: bool,
+    pub user_id: Option<String>,
+    pub scopes: Option<Vec<String>>,
+    pub key_id: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+impl ProjectsClient {
+    pub async fn create_user_api_key(
+        &self,
+        credential: &str,
+        project: &str,
+        user: &str,
+        request: &CreateUserApiKey,
+    ) -> Result<UserApiKey> {
+        self.send_typed(
+            "auth_projects.create_user_api_key",
+            Method::Post,
+            &format!(
+                "/{}/users/{}/api-keys",
+                self.project(project)?,
+                path_id(user, "user")?
+            ),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            credential,
+        )
+        .await
+    }
+
+    pub async fn list_user_api_keys(
+        &self,
+        credential: &str,
+        project: &str,
+        user: &str,
+    ) -> Result<UserApiKeyPage> {
+        self.send_typed(
+            "auth_projects.list_user_api_keys",
+            Method::Get,
+            &format!(
+                "/{}/users/{}/api-keys",
+                self.project(project)?,
+                path_id(user, "user")?
+            ),
+            None,
+            credential,
+        )
+        .await
+    }
+
+    pub async fn revoke_user_api_key(
+        &self,
+        credential: &str,
+        project: &str,
+        user: &str,
+        key: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.revoke_user_api_key",
+            Method::Delete,
+            &format!(
+                "/{}/users/{}/api-keys/{}",
+                self.project(project)?,
+                path_id(user, "user")?,
+                path_id(key, "key")?
+            ),
+            credential,
+        )
+        .await
+    }
+
+    pub async fn verify_user_api_key(
+        &self,
+        credential: &str,
+        project: &str,
+        key: &str,
+    ) -> Result<UserApiKeyVerification> {
+        self.send_typed(
+            "auth_projects.verify_user_api_key",
+            Method::Post,
+            &format!("/{}/api-keys/verify", self.project(project)?),
+            Some(&serde_json::json!({"key": key})),
+            credential,
+        )
+        .await
+    }
+
+    pub async fn set_user_api_key_policy(
+        &self,
+        credential: &str,
+        project: &str,
+        request: &UserApiKeyPolicy,
+    ) -> Result<UserApiKeyPolicy> {
+        self.send_typed(
+            "auth_projects.set_user_api_key_policy",
+            Method::Put,
+            &format!("/{}/user-api-key-policy", self.project(project)?),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            credential,
+        )
+        .await
     }
 }

@@ -2207,6 +2207,96 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.UserApiKeys.UserApiKeyPolicyRecord", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("AllowedScopes")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("allowed_scopes");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId");
+
+                    b.ToTable("user_api_key_policies", (string)null);
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.UserApiKeys.UserApiKeyRecord", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Prefix")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("prefix");
+
+                    b.Property<string>("Scopes")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("scopes");
+
+                    b.Property<string>("SecretHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("secret_hash");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ProjectId", "Prefix")
+                        .IsUnique();
+
+                    b.HasIndex("ProjectId", "UserId");
+
+                    b.ToTable("user_api_keys", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_user_api_keys_expiry", "expires_at IS NULL OR expires_at > created_at");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookAttemptRecord", b =>
                 {
                     b.Property<string>("Id")
@@ -2679,6 +2769,30 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.OrganizationRecord", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.UserApiKeys.UserApiKeyPolicyRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.UserApiKeys.UserApiKeyRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

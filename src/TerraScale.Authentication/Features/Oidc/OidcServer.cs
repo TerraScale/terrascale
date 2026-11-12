@@ -171,6 +171,10 @@ public static class OidcIssuer
                         server.PromptValues.Remove(PromptValues.Consent);
                         server.PromptValues.Remove(PromptValues.SelectAccount);
                     })
+                    .RemoveEventHandler(OpenIddictServerHandlers.Exchange.ValidateResources.Descriptor)
+                    .AddEventHandler<ValidateTokenRequestContext>(handler => handler.UseScopedHandler<MachineTokenResources>()
+                        .SetOrder(OpenIddictServerHandlers.Exchange.ValidateResources.Descriptor.Order)
+                        .SetType(OpenIddictServerHandlerType.Custom))
                     .RemoveEventHandler(OpenIddictServerHandlers.RedeemTokenEntry.Descriptor)
                     .RemoveEventHandler(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor)
                     .RemoveEventHandler(OpenIddictServerHandlers.Discovery.AttachSigningKeys.Descriptor)

@@ -14,8 +14,7 @@ public sealed class ProjectDiscoveryMetadata : IOpenIddictServerHandler<HandleCo
         ArgumentNullException.ThrowIfNull(context);
         if (context.Transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) is { } tenant && Tenancy.IsProject(tenant))
         {
-            // Server options also enable platform-only grants; project client permissions do not.
-            context.GrantTypes.IntersectWith([GrantTypes.AuthorizationCode, GrantTypes.RefreshToken]);
+            context.GrantTypes.IntersectWith([GrantTypes.AuthorizationCode, GrantTypes.RefreshToken, GrantTypes.ClientCredentials]);
             context.Scopes.IntersectWith([Scopes.OpenId, Scopes.Email, Scopes.Profile, Scopes.OfflineAccess]);
             context.DeviceAuthorizationEndpoint = null;
             context.MtlsDeviceAuthorizationEndpointAlias = null;

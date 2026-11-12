@@ -107,8 +107,12 @@ def _clients_path(project: str, *extra: str) -> list[str]:
 
 
 def create_project_client_call(issuer: str | None, project: str, name: str, client_type: str,
-                               redirect_uris: Sequence[str], step_up_proof: str) -> _spec.Call:
-    body = {"name": name, "type": client_type, "redirect_uris": list(redirect_uris)}
+                               redirect_uris: Sequence[str], step_up_proof: str, allowed_scopes: Sequence[str] | None = None,
+                               allowed_audiences: Sequence[str] | None = None,
+                               token_lifetime_minutes: int | None = None) -> _spec.Call:
+    body: dict[str, Any] = {"name": name, "type": client_type, "redirect_uris": list(redirect_uris)}
+    body.update({"allowed_scopes": allowed_scopes, "allowed_audiences": allowed_audiences,
+                 "token_lifetime_minutes": token_lifetime_minutes})
     return _spec.Call("POST", _clients_path(project),
                       lambda r: models.ProjectClient.from_json(r.json()),
                       headers={PROOF_HEADER: step_up_proof}, body=body, success=(201,), base_url=_origin(issuer))
@@ -121,8 +125,12 @@ def list_project_clients_call(issuer: str | None, project: str) -> _spec.Call:
 
 
 def update_project_client_call(issuer: str | None, project: str, client_id: str, name: str,
-                               redirect_uris: Sequence[str], step_up_proof: str) -> _spec.Call:
-    body = {"name": name, "redirect_uris": list(redirect_uris)}
+                               redirect_uris: Sequence[str], step_up_proof: str, allowed_scopes: Sequence[str] | None = None,
+                               allowed_audiences: Sequence[str] | None = None,
+                               token_lifetime_minutes: int | None = None) -> _spec.Call:
+    body: dict[str, Any] = {"name": name, "redirect_uris": list(redirect_uris)}
+    body.update({"allowed_scopes": allowed_scopes, "allowed_audiences": allowed_audiences,
+                 "token_lifetime_minutes": token_lifetime_minutes})
     return _spec.Call("PUT", _clients_path(project, validate_id(client_id, "client id")),
                       lambda r: models.ProjectClient.from_json(r.json()),
                       headers={PROOF_HEADER: step_up_proof}, body=body, base_url=_origin(issuer))
@@ -531,3 +539,31 @@ class AsyncAPIKeyTokenSource:
 
     def invalidate(self, token: str) -> None:
         self._x.invalidate(token)
+
+def create_user_api_key_call(issuer: str | None, project: str, user: str, name: str,
+                            scopes: Sequence[str], expires_at: str | None) -> _spec.Call:
+    return _spec.Call("POST", ["v1", validate_id(project, "project"), "users", validate_id(user, "user"), "api-keys"],
+                      lambda r: models.UserApiKey.from_json(r.json()), success=(201,),
+                      body={"name": name, "scopes": list(scopes), "expires_at": expires_at}, base_url=_origin(issuer))
+
+
+def list_user_api_keys_call(issuer: str | None, project: str, user: str) -> _spec.Call:
+    return _spec.Call("GET", ["v1", validate_id(project, "project"), "users", validate_id(user, "user"), "api-keys"],
+                      lambda r: models.UserApiKeyPage.from_json(r.json()), base_url=_origin(issuer))
+
+
+def revoke_user_api_key_call(issuer: str | None, project: str, user: str, key: str) -> _spec.Call:
+    return _spec.Call("DELETE", ["v1", validate_id(project, "project"), "users", validate_id(user, "user"),
+                                "api-keys", validate_id(key, "key")],
+                      _spec._none, success=(204,), base_url=_origin(issuer))
+
+
+def verify_user_api_key_call(issuer: str | None, project: str, key: str) -> _spec.Call:
+    return _spec.Call("POST", ["v1", validate_id(project, "project"), "api-keys", "verify"],
+                      lambda r: models.UserApiKeyVerification.from_json(r.json()),
+                      body={"key": key}, base_url=_origin(issuer))
+
+def set_user_api_key_policy_call(issuer: str | None, project: str, scopes: Sequence[str]) -> _spec.Call:
+    return _spec.Call("PUT", ["v1", validate_id(project, "project"), "user-api-key-policy"],
+                      lambda r: models.UserApiKeyPolicy.from_json(r.json()),
+                      body={"allowed_scopes": list(scopes)}, base_url=_origin(issuer))
