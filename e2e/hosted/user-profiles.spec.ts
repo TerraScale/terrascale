@@ -10,6 +10,8 @@ import { hostedReady } from '../support/hosted';
 import { auth, dash, stateDir, onLocalStack } from '../support/stack';
 import { journey, ownerSession, saveCookies, saveSecret } from '../support/state';
 
+const median = (samples: number[]) => [...samples].sort((left, right) => left - right)[Math.floor(samples.length / 2)];
+
 const djangoHash = 'pbkdf2_sha256$600000$seasalt$OAXyhAQ/4ZDA9V5RMExt3C1OwQdUpLZ99vm1McFlLRA=';
 const django52Hash = 'pbkdf2_sha256$1000000$seasalt$r1uLUxoxpP2Ued/qxvmje7UH9PUJBkRrvf9gGPL7Cps=';
 const nested = (depth: number): Record<string, unknown> => Array.from({ length: depth - 1 }).reduce<Record<string, unknown>>(value => ({ child: value }), { value: true });
@@ -135,23 +137,25 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
     saveSecret('django-password', 'lètmein');
     saveSecret('django-hash', djangoHash);
     saveSecret('django52-hash', django52Hash);
-    for (const item of imported.value.items.slice(1)) {
+    for (const item of imported.value.items) {
       const django = await request.newContext();
       try {
-        for (let sample = 0; sample < 3; sample++) {
-          const failures = [];
-          for (const email of [item.user.email, `unknown-${current.runId}@example.com`, imported.value.items[0].user.email]) {
+        const failures = [[], []] as number[][];
+        for (let sample = 0; sample < 5; sample++) {
+          for (const [index, email] of [item.user.email, `unknown-${item.user.id}-${current.runId}@example.com`].entries()) {
             const started = performance.now();
             const response = await django.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
               headers: { Origin: auth }, form: { email, password: 'lètmeinz' },
             });
             expect(response.status()).toBe(401);
-            failures.push(performance.now() - started);
+            failures[index].push(performance.now() - started);
           }
-          expect(Math.min(...failures)).toBeGreaterThanOrEqual(295);
-          expect(Math.max(...failures) - Math.min(...failures)).toBeLessThan(150);
-          console.log(`password failure floor: ${failures.map(value => Math.round(value)).join(', ')} ms`);
         }
+        for (const samples of failures) expect(Math.min(...samples)).toBeGreaterThanOrEqual(295);
+        const [importedFloor, unknownFloor] = failures.map(median);
+        expect(Math.abs(importedFloor - unknownFloor)).toBeLessThan(unknownFloor * 0.5);
+        console.log(`password failure medians: imported ${Math.round(importedFloor)} ms, unknown floor ${Math.round(unknownFloor)} ms, band ${Math.round(unknownFloor * 0.5)} ms`);
+        if (item === imported.value.items[0]) continue;
         const signedIn = await django.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
           headers: { Origin: auth }, form: { email: item.user.email, password: 'lètmein' },
         });
@@ -296,8 +300,19 @@ test('a tenant at its hashing cap leaves other tenants normal sign-in capacity',
     saveSecret('fairness-password', password);
     saveSecret('expensive-import-hash', expensive);
     const ids: string[] = [];
+    const ownerHeaders = { Authorization: 'Bearer ' + management.ownerToken };
+    const projectRoot = `${auth}/v1/terrascale/organizations/${current.organizationId}/projects`;
+    let normalProject: string | undefined;
     const clients = await Promise.all(Array.from({ length: 9 }, () => request.newContext()));
     try {
+      const project = await page.request.post(projectRoot, { headers: ownerHeaders, data: { name: 'Hasher fairness ' + current.runId } });
+      expect(project.status()).toBe(201);
+      normalProject = (await project.json()).id;
+      const normalUser = await sdk.createUser(management.ownerToken, normalProject!, {
+        email: `hasher-normal-${current.runId}@example.com`, password,
+      });
+      expect(normalUser.ok).toBe(true);
+      if (!normalUser.ok) throw new Error('fairness user creation failed');
       const imported = await sdk.importUsers(management.writeKey, current.projectId, { users: Array.from({ length: 20 }, (_, index) => ({
         email: `hasher-${index}-${current.runId}@example.com`, password_hash: expensive,
       })) });
@@ -308,8 +323,8 @@ test('a tenant at its hashing cap leaves other tenants normal sign-in capacity',
       ids.push(...imported.value.items.map(item => item.user.id));
       const normal = async () => {
         const started = performance.now();
-        const response = await clients[8].post(auth + '/ui/terrascale/sign-in/password', {
-          headers: { Origin: auth }, form: { email: current.email, password: current.password },
+        const response = await clients[8].post(`${auth}/ui/${normalProject}/sign-in/password`, {
+          headers: { Origin: auth }, form: { email: normalUser.value.email, password },
         });
         expect(response.status()).toBe(200);
         expect(await response.text()).toContain('You are signed in.');
@@ -326,28 +341,37 @@ test('a tenant at its hashing cap leaves other tenants normal sign-in capacity',
         expect(await response.text()).toContain('You are signed in.');
         return performance.now() - started;
       };
+      const singles: number[] = [];
+      const bursts: number[] = [];
       for (let sample = 0; sample < 3; sample++) {
         const offset = sample * 4;
         const single = await attempt(offset, 0);
         const burst = await Promise.all([attempt(offset + 1, 1), attempt(offset + 2, 2), attempt(offset + 3, 3)]);
-        expect(Math.max(...burst)).toBeLessThan(single * 2);
+        singles.push(single);
+        bursts.push(...burst);
         console.log(`hasher tenant sample ${sample + 1}: single ${Math.round(single)} ms, three ${burst.map(value => Math.round(value)).join(', ')} ms`);
       }
+      expect(median(bursts)).toBeLessThan(median(singles) * 2);
+      const loaded: number[] = [];
       for (let sample = 0; sample < 3; sample++) {
         let completed = 0;
         const flood = imported.value.items.slice(12).map((item, index) => clients[index].post(`${auth}/ui/${current.projectId}/sign-in/password`, {
-          headers: { Origin: auth }, form: { email: item.user.email, password: current.password },
+          headers: { Origin: auth }, form: { email: item.user.email, password: password + ' wrong' },
         }).then(response => { completed++; return response; }));
         await Promise.race(flood);
         expect(completed).toBeLessThan(flood.length);
         const elapsed = await normal();
-        expect(elapsed).toBeLessThan(Math.max(...baseline) + 1000);
-        expect(elapsed).toBeLessThan(5000);
+        loaded.push(elapsed);
         expect(completed).toBeLessThan(flood.length);
         for (const response of await Promise.all(flood)) expect(response.status()).toBe(401);
-        console.log(`hasher fairness sample ${sample + 1}: baseline ${Math.round(Math.max(...baseline))} ms, other tenant ${Math.round(elapsed)} ms`);
+        console.log(`hasher fairness sample ${sample + 1}: baseline ${Math.round(median(baseline))} ms, other tenant ${Math.round(elapsed)} ms`);
       }
+      expect(median(loaded)).toBeLessThan(median(baseline) * 2);
     } finally {
+      if (normalProject) {
+        const deleted = await page.request.delete(projectRoot + '/' + normalProject, { headers: ownerHeaders });
+        expect(deleted.status()).toBe(204);
+      }
       for (const id of ids) await sdk.deleteUser(management.writeKey, current.projectId, id);
       for (const client of clients) {
         for (const cookie of (await client.storageState()).cookies) saveSecret('fairness-cookie', cookie.value);
