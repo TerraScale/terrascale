@@ -165,10 +165,12 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
         request.Content = new StringContent(body, Encoding.UTF8, new MediaTypeHeaderValue("application/json"));
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
+        int? responseCode = null;
         try
         {
             using var client = clients.CreateClient(WebhookHttp.HttpClientName);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            responseCode = (int)response.StatusCode;
             await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
             var bytes = new byte[1024];
             var count = await stream.ReadAtLeastAsync(bytes, bytes.Length, throwOnEndOfStream: false, deadline.Token).ConfigureAwait(false);
@@ -182,15 +184,15 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
         }
         catch (HttpRequestException)
         {
-            return new(false, null, null);
+            return new(false, responseCode, null);
         }
         catch (IOException)
         {
-            return new(false, null, null);
+            return new(false, responseCode, null);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new(false, null, null);
+            return new(false, responseCode, null);
         }
     }
 

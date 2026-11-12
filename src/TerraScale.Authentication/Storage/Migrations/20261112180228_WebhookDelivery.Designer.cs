@@ -11,7 +11,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Storage.Migrations
 {
     [DbContext(typeof(AuthDbContext))]
-    [Migration("20261112174422_WebhookDelivery")]
+    [Migration("20261112180228_WebhookDelivery")]
     partial class WebhookDelivery
     {
         /// <inheritdoc />
@@ -1095,6 +1095,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasIndex("UserId");
 
                     b.HasIndex("InstanceId", "Id");
+
+                    b.HasIndex(new[] { "ExpiresAt" }, "IX_sessions_revoked_expires_at")
+                        .HasFilter("revoked");
 
                     b.ToTable("sessions", null, t =>
                         {

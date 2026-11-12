@@ -6,7 +6,7 @@ import { enterSecret } from '../support/secret';
 import { auth, dash, desktop, onLocalStack } from '../support/stack';
 import { journey, saveCookies, saveSecret } from '../support/state';
 
-type Delivery = { id: string; valid: boolean; code: number; event: { id: string; type: string; data: { email: string } } };
+type Delivery = { receivedAt: number; id: string; valid: boolean; code: number; event: { id: string; type: string; data: { email: string } } };
 const receiver = 'http://127.0.0.1:8029';
 
 async function received(after: number): Promise<Delivery[]> {
@@ -46,7 +46,7 @@ test('auth webhooks verify signup signatures, retry failures and replay the orig
       const userContext = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
       const userPage = await userContext.newPage();
       try {
-        const userEmail = await newAddress(`webhook-user-${owner.runId}`);
+        const userEmail = await newAddress(`webhook-user-${randomBytes(4).toString('hex')}`);
         await userPage.goto(`${auth}/ui/${projectId}/sign-up`);
         await hostedReady(userPage);
         await userPage.locator('#sign-up-email').fill(userEmail);
@@ -62,6 +62,7 @@ test('auth webhooks verify signup signatures, retry failures and replay the orig
         expect(first[0]).toMatchObject({ valid: true, code: 500, event: { type: 'user.signed_up', data: { email: userEmail } } });
         const retried = await received(1);
         expect(retried[1]).toMatchObject({ id: first[0].id, valid: true, code: 200 });
+        expect(retried[1].receivedAt - first[0].receivedAt).toBeGreaterThanOrEqual(2500);
         await expect.poll(async () => {
           await page.goto(`${dash}/auth/webhooks`);
           return page.locator('[data-webhook-delivery]').first().innerText();
@@ -90,7 +91,7 @@ test('auth webhooks verify signup signatures, retry failures and replay the orig
           await page.locator('#auth-webhook-url').fill(url);
           await page.locator('input[name=event_types][value="user.signed_up"]').check();
           await page.locator('#auth-create-webhook button[type=submit]').click();
-      await confirmWithPassword(page, audit, password, 'guarded webhook registration');
+          await confirmWithPassword(page, audit, password, 'guarded webhook registration');
           const signingSecret = page.locator('#auth-webhook-created-secret');
           await expect(signingSecret).toBeVisible();
           saveSecret('guarded-webhook-secret', await signingSecret.innerText());
@@ -104,7 +105,6 @@ test('auth webhooks verify signup signatures, retry failures and replay the orig
         }
         const allReceived = await (await fetch(`${receiver}/deliveries`)).json();
         expect(allReceived).toHaveLength(4);
-
       } finally {
         await saveCookies(userContext);
         await userContext.close();

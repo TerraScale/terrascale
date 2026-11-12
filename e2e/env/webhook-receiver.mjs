@@ -49,7 +49,7 @@ createServer(async (request, response) => {
       return value.length === expected.length && timingSafeEqual(value, expected);
     });
     const code = valid ? failures-- > 0 ? 500 : 200 : 401;
-    deliveries.push({ id, valid, code, event: JSON.parse(body) });
+    deliveries.push({ id, valid, code, receivedAt: performance.now(), event: JSON.parse(body) });
     respond(response, code, { received: valid, body: 'x'.repeat(2048) });
     for (const notify of waiters) notify();
   } else respond(response, 404, {});
