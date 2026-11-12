@@ -21,7 +21,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
             throw Invalid(PasswordPolicy.Message(problem));
         }
 
-        var hash = request.Password is { } value ? await passwords.HashAsync(value, cancellationToken).ConfigureAwait(false) : null;
+        var hash = request.Password is { } value ? await passwords.HashAsync(project, value, cancellationToken).ConfigureAwait(false) : null;
         return await this.InsertAsync(project, email, hash, false, request.FirstName, request.LastName, request.ImageUrl, request.ExternalId,
             request.PublicMetadata, request.PrivateMetadata, request.UnsafeMetadata, cancellationToken).ConfigureAwait(false);
     }
@@ -32,7 +32,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
         var email = Users.NormalizeEmail(request.Email) ?? throw Invalid("email is invalid.");
         if (request.PasswordHash is { } hash && !ImportedPasswords.Valid(hash))
         {
-            throw Invalid("password_hash must be bounded bcrypt, argon2id PHC or pbkdf2_sha256$iterations$base64-salt$base64-hash.");
+            throw Invalid($"password_hash must be canonical bcrypt (cost 04–12), argon2id PHC (memory × passes at most {2L * Passwords.MemoryKib * Passwords.Passes} KiB), or Django pbkdf2_sha256$iterations$salt$base64-hash (10000–600000 iterations).");
         }
 
         return this.InsertAsync(project, email, request.PasswordHash, request.EmailVerified, request.FirstName, request.LastName, request.ImageUrl,
@@ -65,6 +65,11 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
             PrivateMetadata = Metadata(current.PrivateMetadata, patch.PrivateMetadata),
             UnsafeMetadata = Metadata(current.UnsafeMetadata, patch.UnsafeMetadata),
         };
+        if (updated == current)
+        {
+            return current;
+        }
+
         List<Change> changes = [Change.Update(updated), Change.Insert(outbox.NewEvent(current.InstanceId, "user.updated", current.Id, updated.Email))];
         if (authorization is not null)
         {
@@ -79,14 +84,17 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
         return updated;
     }
 
-    public async Task<UserRecord> UpgradePasswordAsync(UserRecord current, string password, CancellationToken cancellationToken)
+    public async Task<UserRecord?> UpgradePasswordAsync(UserRecord current, string password, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(current);
-        var hash = await passwords.HashAsync(password, cancellationToken).ConfigureAwait(false);
+        var hash = await passwords.HashAsync(current.InstanceId, password, cancellationToken).ConfigureAwait(false);
         var updated = current with { PasswordHash = hash };
         if (!await data.SaveAsync(Change.Update(updated), cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(409, "user_conflict", "User changed during sign-in; sign in again.");
+            var latest = await users.GetAsync(current.InstanceId, current.Id, cancellationToken).ConfigureAwait(false);
+            return latest is { Disabled: false } && latest.AuthStamp == current.AuthStamp && latest.AuthEpoch == current.AuthEpoch
+                && await passwords.VerifyAsync(current.InstanceId, password, latest.PasswordHash, cancellationToken).ConfigureAwait(false)
+                ? latest : null;
         }
 
         return updated;
@@ -124,25 +132,41 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
     };
 
     private static string? Text(string? value, int maximum) =>
-        value is null || value.Length <= maximum && !value.Any(char.IsControl) ? value : throw Invalid($"Profile field exceeds {maximum} characters or contains control characters.");
+        value is null || value.Length <= maximum && !value.Any(character => char.IsControl(character) || character is >= '\u202a' and <= '\u202e' or >= '\u2066' and <= '\u2069') ? value : throw Invalid($"Profile field exceeds {maximum} characters or contains control or bidirectional formatting characters.");
 
     private static string? Image(string? value) => value is null || Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && uri.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(uri.UserInfo) ? value : throw Invalid("image_url must be an absolute https URL.");
 
     private static string Metadata(string current, JsonElement patch)
     {
-        if (patch.ValueKind == JsonValueKind.Undefined)
+        var target = JsonNode.Parse(current)!.AsObject();
+        var merged = current;
+        if (patch.ValueKind != JsonValueKind.Undefined)
         {
-            return current;
+            if (patch.ValueKind != JsonValueKind.Object || Encoding.UTF8.GetByteCount(patch.GetRawText()) > 8192)
+            {
+                throw Invalid("Metadata must be a JSON object of at most 8192 UTF-8 bytes.");
+            }
+
+            var result = Merge(target.DeepClone().AsObject(), patch);
+            merged = JsonNode.DeepEquals(target, result) ? current : result.ToJsonString();
         }
 
-        if (patch.ValueKind != JsonValueKind.Object || Encoding.UTF8.GetByteCount(patch.GetRawText()) > 8192)
+        if (Encoding.UTF8.GetByteCount(merged) > 8192)
         {
-            throw Invalid("Metadata must be a JSON object of at most 8192 UTF-8 bytes.");
+            throw Invalid("Merged metadata exceeds 8192 UTF-8 bytes.");
         }
 
-        var merged = Merge(JsonNode.Parse(current)!.AsObject(), patch).ToJsonString();
-        return Encoding.UTF8.GetByteCount(merged) <= 8192 ? merged : throw Invalid("Merged metadata exceeds 8192 UTF-8 bytes.");
+        try
+        {
+            using var document = JsonDocument.Parse(merged, new JsonDocumentOptions { MaxDepth = 10 });
+        }
+        catch (JsonException)
+        {
+            throw Invalid("Merged metadata exceeds the maximum depth of 10.");
+        }
+
+        return merged;
     }
 
     private static JsonObject Merge(JsonObject target, JsonElement patch)

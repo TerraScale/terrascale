@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using BCryptNet = BCrypt.Net.BCrypt;
 
@@ -21,15 +22,14 @@ public static partial class ImportedPasswords
 
         if (Pbkdf2().Match(hash) is { Success: true } pbkdf2)
         {
-            return Number(pbkdf2, "i", 10_000, 1_000_000, out _)
-                && Base64(pbkdf2.Groups["s"].Value, 16, 64, padded: true)
+            return Number(pbkdf2, "i", 10_000, 600_000, out _)
                 && Base64(pbkdf2.Groups["h"].Value, 32, 32, padded: true);
         }
 
         return Argon().Match(hash) is { Success: true } argon
             && Number(argon, "m", 8, 65_536, out var memory)
             && Number(argon, "t", 1, 10, out var passes)
-            && Number(argon, "p", 1, 8, out var lanes) && memory >= 8 * lanes && (long)memory * passes <= 196_608
+            && Number(argon, "p", 1, 8, out var lanes) && memory >= 8 * lanes && (long)memory * passes <= 2L * Passwords.MemoryKib * Passwords.Passes
             && Base64(argon.Groups["s"].Value, 16, 16, padded: false)
             && Base64(argon.Groups["h"].Value, 32, 32, padded: false);
     }
@@ -51,8 +51,8 @@ public static partial class ImportedPasswords
 
         if (Pbkdf2().Match(hash) is { Success: true } match)
         {
-            _ = Number(match, "i", 10_000, 1_000_000, out var iterations);
-            var salt = Convert.FromBase64String(match.Groups["s"].Value);
+            _ = Number(match, "i", 10_000, 600_000, out var iterations);
+            var salt = Encoding.UTF8.GetBytes(match.Groups["s"].Value);
             var expected = Convert.FromBase64String(match.Groups["h"].Value);
             var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, 32);
             try
@@ -80,10 +80,10 @@ public static partial class ImportedPasswords
             && (padded ? Convert.ToBase64String(decoded[..length]) : Convert.ToBase64String(decoded[..length]).TrimEnd('=')) == value;
     }
 
-    [GeneratedRegex(@"\A\$2[aby]\$(0[4-9]|1[0-4])\$[./A-Za-z0-9]{21}[.Oeu][./A-Za-z0-9]{30}[.CGKOSWaeimquy26]\z")]
+    [GeneratedRegex(@"\A\$2[aby]\$(0[4-9]|1[0-2])\$[./A-Za-z0-9]{21}[.Oeu][./A-Za-z0-9]{30}[.CGKOSWaeimquy26]\z")]
     private static partial Regex Bcrypt();
 
-    [GeneratedRegex(@"\Apbkdf2_sha256\$(?<i>[1-9][0-9]{4,6})\$(?<s>[A-Za-z0-9+/=]{24,88})\$(?<h>[A-Za-z0-9+/]{43}=)\z")]
+    [GeneratedRegex(@"\Apbkdf2_sha256\$(?<i>[1-9][0-9]{4,6})\$(?<s>[^$\r\n]{1,128})\$(?<h>[A-Za-z0-9+/]{43}=)\z")]
     private static partial Regex Pbkdf2();
 
     [GeneratedRegex(@"\A\$argon2id\$v=19\$m=(?<m>[1-9][0-9]{0,4}),t=(?<t>[1-9][0-9]?),p=(?<p>[1-8])\$(?<s>[A-Za-z0-9+/]{22})\$(?<h>[A-Za-z0-9+/]{43})\z")]

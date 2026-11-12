@@ -12,7 +12,7 @@ public sealed class UpdateProjectUserEndpoint(TenantDirectory tenants, PlatformA
     public override void Configure()
     {
         Patch(Root + "/users/{user}");
-        this.Describe("update_project_user", "Update an end user", "Requires auth:write or the admin project role. Omitted fields are unchanged. Metadata uses JSON merge patch; each merged object is at most 8192 UTF-8 bytes.",
+        this.Describe("update_project_user", "Update an end user", "Requires auth:write or the admin project role. Omitted fields are unchanged. Metadata uses JSON merge patch; each merged object is at most 8192 UTF-8 bytes and depth 10. Unchanged patches emit no event.",
             "Project tenants", typeof(UserProfilePatch), StatusCodes.Status200OK, typeof(ProjectUserBody), conflict: true);
     }
 

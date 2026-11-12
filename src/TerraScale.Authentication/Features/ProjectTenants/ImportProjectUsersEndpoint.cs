@@ -13,7 +13,7 @@ public sealed class ImportProjectUsersEndpoint(TenantDirectory tenants, Platform
     public override void Configure()
     {
         Post(Root + "/users/import");
-        this.Describe("import_project_users", "Import end users", "Requires auth:write or the admin project role. Up to 500 rows; invalid rows return indexed errors without rejecting valid rows. Ten calls per project per minute. No email is sent. Accepts bcrypt, argon2id PHC and pbkdf2_sha256$iterations$base64-salt$base64-hash.",
+        this.Describe("import_project_users", "Import end users", "Requires auth:write or the admin project role. Up to 500 rows; invalid rows return indexed errors without rejecting valid rows. Ten calls per project per minute. No email is sent. Accepts bcrypt, argon2id PHC and Django pbkdf2_sha256$iterations$salt$base64-hash.",
             "Project tenants", typeof(ImportProjectUsersRequest), StatusCodes.Status200OK, typeof(ImportProjectUsersBody));
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }

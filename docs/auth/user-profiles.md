@@ -8,24 +8,30 @@ An API-created user may have a password or no password; creation never sends ema
 
 Profiles include `first_name`, `last_name` (255 characters each), `image_url`
 (an absolute HTTPS URL, at most 2048 characters), and `external_id` (255 characters,
-unique within the project). Set a scalar to null to clear it; omit it to retain it.
+unique within the project). Control characters and bidi overrides/isolates
+(U+202A–U+202E, U+2066–U+2069) are refused. Set a scalar to null to clear it; omit it to retain it.
 
-Each metadata value is a JSON object limited to 8192 UTF-8 bytes. Updates use
+Each metadata value is a JSON object limited to 8192 UTF-8 bytes and a maximum
+container depth of 10, counting the root object and nested objects and arrays. Updates use
 JSON merge patch (RFC 7396): objects merge recursively, null removes a member,
 and arrays and scalar members replace existing values. Both the submitted patch
-and the resulting object must fit the limit.
+and the resulting object must fit the size limit; the merged object must fit the depth limit on every write.
 
 - `public_metadata` is returned to the user through userinfo and the ID token
   with the `profile` scope, alongside `given_name`, `family_name` and `picture`.
 - `private_metadata` is returned only by backend management APIs. It is never
-  copied to a token, userinfo, or the self-service response.
+  copied to a token, userinfo, webhook, export, or the self-service response.
+  Backend-visible means that GET callers with the viewer role or auth:read can read it;
+  it is not restricted to project administrators.
 - `unsafe_metadata` can also be changed by its user. Treat it as untrusted input,
   never as an authorization policy.
 
 The hosted security page shows the user's name and avatar. A signed-in user
 can `PATCH /v1/{project}/me/profile` with their live project session cookie and
 an exact same-origin `Origin` header. Only first_name, last_name and unsafe_metadata
-are accepted; attempts to write other fields are refused.
+are accepted; attempts to write other fields are refused. Requests are limited to
+20 per user and 60 per IP per project per minute across replicas, with 429 and
+Retry-After on exhaustion. Unchanged patches write no user record and emit no event.
 
 The dashboard's Authentication → Users section links each user to a detail page.
 Administrators edit profile fields and metadata there; other project members
@@ -43,18 +49,33 @@ A lost response can leave committed rows; reconcile using email before resubmitt
 Rows accept email, all profile and metadata fields, email_verified (default false),
 and an optional password_hash. Hashes are never returned. Accepted encodings:
 
-- bcrypt: canonical `$2a$`, `$2b$` or `$2y$`, cost 04–14, standard 60 characters.
+- bcrypt: canonical `$2a$`, `$2b$` or `$2y$`, cost 04–12, standard 60 characters.
 - Argon2id PHC: version 19, 16-byte salt and 32-byte tag, canonical unpadded Base64;
   memory 8–65536 KiB, passes 1–10, lanes 1–8, memory at least eight times lanes,
-  memory × passes at most 196608 KiB.
-- PBKDF2-SHA256: `pbkdf2_sha256$iterations$base64-salt$base64-hash`, 10000–1000000
-  iterations, a 16–64-byte salt, and a 32-byte derived key. Base64 includes padding.
+  memory × passes at most 77824 KiB (twice the current 19456 KiB × 2 policy).
+- Django PBKDF2-SHA256: `pbkdf2_sha256$iterations$salt$base64-hash`, 10000–600000
+  iterations, a 1–128-character plain-text salt encoded as UTF-8 (not Base64-decoded),
+  and a 32-byte derived key encoded as padded Base64. The journey uses Django 4.2
+  [known-answer vector](https://github.com/django/django/blob/stable/4.2.x/tests/auth_tests/test_hashers.py)
+  for `lètmein` and salt `seasalt`, following the
+  [documented password format](https://docs.djangoproject.com/en/4.2/topics/auth/passwords/).
 
 After successful password verification, bcrypt, PBKDF2 and Argon2id hashes with
 older parameters are replaced by a fresh hash using the current Argon2id policy.
-A concurrent account change refuses that sign-in rather than overwriting new state.
+A concurrent upgrade re-reads the account and verifies its current hash, continuing
+sign-in only if its authentication stamp and epoch still match and it is enabled.
+It never overwrites the winning hash or other concurrent state.
+
+Each tenant can hold one of the four replica-local hashing slots; its queue waits
+before taking a global slot. Queues are FIFO, bounded to 500 per tenant, and the
+combined admission deadline is five seconds. Unknown users use the current Argon2id
+dummy hash. Imported-user timing can differ until the first successful sign-in
+rehashes it. This keeps unknown-account work bounded independently of an imported
+hash mix; a tenant-wide typical cost would change as imports and rehashes arrive.
 email_verified preserves the import's supplied value; password possession alone
-does not prove mailbox ownership.
+does not prove mailbox ownership. Social sign-in matches an existing account by email
+only when the provider asserts email_verified. Administrators must not mark imported
+unverified addresses as verified.
 
 API creation/import emits user.created; profile changes emit user.updated in the
 same persistence batch as the user mutation. Use the webhook event ID to deduplicate.

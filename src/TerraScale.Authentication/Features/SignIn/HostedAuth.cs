@@ -85,7 +85,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
         }
 
         // Hashed whether or not the address has an account, so both take the same time.
-        var hash = await passwords.HashAsync(password, cancellationToken);
+        var hash = await passwords.HashAsync(this.Tenant, password, cancellationToken);
         var pending = Tokens.RandomToken(43);
         var tenant = this.Tenant;
         cancellationToken.ThrowIfCancellationRequested();
@@ -128,7 +128,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
         }
 
         // Hashed before the code is consumed, so a busy replica never burns the user's code.
-        var hash = await passwords.HashAsync(password, cancellationToken);
+        var hash = await passwords.HashAsync(this.Tenant, password, cancellationToken);
         if (await passcodes.ResetPasswordAsync(this.Tenant, email, code, hash, cancellationToken) is not { } user)
         {
             logger.ZLogInformation($"Audit: hosted {method:@Method} refused");
@@ -184,7 +184,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
         }
 
         var user = await users.FindByEmailAsync(this.Tenant, email, cancellationToken);
-        if (!await passwords.VerifyAsync(password, user?.PasswordHash, cancellationToken) || user is null)
+        if (!await passwords.VerifyAsync(this.Tenant, password, user?.PasswordHash, cancellationToken) || user is null)
         {
             return null;
         }
