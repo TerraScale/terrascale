@@ -1,4 +1,3 @@
-using Grpc.AspNetCore.Server;
 using TerraBase.Configuration;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
