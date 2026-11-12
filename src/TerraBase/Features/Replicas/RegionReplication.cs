@@ -30,6 +30,7 @@ internal sealed partial class RegionReplication(
 
     private const int MaxConcurrentPulls = 8;
     private const int MaxRefreshes = 64;
+    private static readonly TimeSpan PlacementTimeout = TimeSpan.FromSeconds(5);
     private static readonly Unavailable PlacementUnanswered = new("the region did not answer for the database's placement");
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan RoundGap = TimeSpan.FromSeconds(5);
