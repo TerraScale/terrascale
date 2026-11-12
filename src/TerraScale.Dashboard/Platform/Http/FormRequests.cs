@@ -11,7 +11,22 @@ namespace TerraScale.Dashboard.Platform.Http
                 throw new AccountAccessException(UnsupportedDetail, StatusCodes.Status415UnsupportedMediaType);
             }
 
-            return await http.Request.ReadFormAsync(cancellationToken);
+            try
+            {
+                return await http.Request.ReadFormAsync(cancellationToken);
+            }
+            catch (BadHttpRequestException error) when (error.StatusCode == StatusCodes.Status400BadRequest)
+            {
+                throw new AccountAccessException("The form body is malformed.", StatusCodes.Status400BadRequest);
+            }
+            catch (IOException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new AccountAccessException("The form body is malformed.", StatusCodes.Status400BadRequest);
+            }
+            catch (InvalidDataException)
+            {
+                throw new AccountAccessException("The form body is malformed.", StatusCodes.Status400BadRequest);
+            }
         }
     }
 }

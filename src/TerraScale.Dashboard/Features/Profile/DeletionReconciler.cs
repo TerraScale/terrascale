@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Stripe;
@@ -102,10 +103,12 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 var code = cause switch
                 {
-                    StripeException { StripeError: { } stripe } => string.Join(' ', stripe.Type, stripe.Code).Trim(),
-                    TerraBaseStorageException { ErrorCode: { } storage } => storage,
-                    TerraBaseException rpc => rpc.ErrorCode,
-                    AccountAccessException access => string.Join(' ', access.StatusCode, access.Code).Trim(),
+                    StripeException stripe => Cause(stripe.StripeError?.Type, stripe.StripeError?.Code, (int?)stripe.HttpStatusCode),
+                    TerraBaseStorageException storage => Cause((int?)storage.StatusCode, storage.ErrorCode),
+                    TerraBaseException rpc => Cause(rpc.Status, rpc.ErrorCode),
+                    TsAuthException auth => Cause((int?)auth.StatusCode, auth.ErrorCode),
+                    AccountAccessException access => Cause(access.StatusCode, access.Code),
+                    HttpRequestException request => Cause((int?)request.StatusCode),
                     _ => null,
                 };
                 if (code is not null)
@@ -115,6 +118,12 @@ namespace TerraScale.Dashboard.Features.Profile
             }
 
             return (error.GetType().Name, "-");
+        }
+
+        private static string Cause(params object?[] parts)
+        {
+            var cause = string.Join(' ', parts.Where(part => part is int or string { Length: > 0 }));
+            return cause.Length > 0 ? cause : "-";
         }
 
         private async Task SettleAsync(DeletionCleanupJournal.Entry entry, DateTime started, CancellationToken cancellationToken)
@@ -278,7 +287,8 @@ namespace TerraScale.Dashboard.Features.Profile
 
         private void Retry(Exception error)
         {
-            logger.DashboardDeletionCleanupIsUnavailableRetrying(error.GetType().Name);
+            var (type, code) = Failure(error);
+            logger.DashboardDeletionCleanupIsUnavailableRetrying(type + " " + code);
         }
     }
 }
