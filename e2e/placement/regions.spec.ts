@@ -70,7 +70,6 @@ async function move(cells: Cells, id: string, label: string, timeout: number, st
   expect((await progress(cells, id, replica)).regions.map(row => row.region)).toEqual(['fra']);
 }
 
-
 test('R1 create two regions, read across listeners and observe a pull', async ({ cells }) => {
   const created = await create(cells, ['gru', 'fra']);
   try {
@@ -137,45 +136,46 @@ test('R5 replace the writer under twenty acknowledged commits per second', async
   const acknowledged: number[] = [];
   const lags: number[] = [];
   const statuses: number[] = [];
-  let writerError: unknown;
+  const backgroundErrors: unknown[] = [];
   let stop = false;
   let writer: Promise<void> | undefined;
+  let sampling: Promise<void> | undefined;
   try {
     await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
     await observed(cells, created.id);
     const deadline = Date.now() + 120_000;
     writer = (async () => {
-      for (let id = 1; !stop && Date.now() < deadline; id++) {
+      for (let id = 1; !stop && Date.now() < deadline;) {
         const next = Date.now() + 50;
         const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: `INSERT INTO placement_rows VALUES (${id})` }] } });
-        if (response.status() !== 200) {
-          statuses.push(response.status());
+        if (statuses.length > 0 || response.status() !== 200) statuses.push(response.status());
+        if (response.status() === 200) {
+          acknowledged.push(id++);
+        } else if (response.status() === 409) {
+          await answer(response, 409, 'serialization_conflict');
+        } else {
           await answer(response, 421, 'wrong_region');
           return;
         }
-        acknowledged.push(id);
         await delay(Math.max(0, next - Date.now()));
       }
-    })().catch(error => { writerError = error; });
+    })().catch(error => { backgroundErrors.push(error); });
     await expect.poll(() => acknowledged.length, { message: 'writer commits before the move', timeout: 10_000, intervals: [50] }).toBeGreaterThanOrEqual(20);
     const sample = async () => {
       const row = (await progress(cells, created.id)).regions.find(row => row.region === 'fra');
       if (row?.lagMs !== null && row?.lagMs !== undefined) lags.push(row.lagMs);
     };
     await sample();
-    const sampling = (async () => {
+    sampling = (async () => {
       while (!stop && Date.now() < deadline) {
         await sample();
         await delay(1000);
       }
-    })();
-    try {
-      await move(cells, created.id, 'R5', Math.max(1, deadline - Date.now()));
-      await writer;
-    } finally {
-      stop = true;
-      await Promise.all([writer, sampling]);
-    }
+    })().catch(error => { backgroundErrors.push(error); });
+    await move(cells, created.id, 'R5', Math.max(1, deadline - Date.now()));
+    await writer;
+    stop = true;
+    await sampling;
     const result = await sql(cells, replica, created.id, 'SELECT value FROM placement_rows ORDER BY value');
     const found = result.results[0].rows.map(row => row[0]);
     console.log(`R5 writer statuses: ${JSON.stringify(statuses)}; acknowledged: ${acknowledged.length}; found: ${found.length}`);
@@ -183,11 +183,11 @@ test('R5 replace the writer under twenty acknowledged commits per second', async
     expect(found).toEqual(acknowledged);
     expect(new Set(found).size).toBe(found.length);
     expect(lags.length, 'fra lag samples').toBeGreaterThan(0);
-    if (writerError) throw writerError;
-    expect(statuses[0], '421 wrong_region is the first refusal from the former writer').toBe(421);
+    if (backgroundErrors.length > 0) throw new AggregateError(backgroundErrors, 'R5 writer or lag sampling failed');
+    expect(statuses.at(-1), '421 wrong_region terminates writes through the former writer').toBe(421);
   } finally {
     stop = true;
-    if (writer) await writer;
+    await Promise.all([writer, sampling]);
     lags.sort((a, b) => a - b);
     console.log(`R5 lagMs min/median/max: ${lags[0]}/${lags[Math.floor(lags.length / 2)]}/${lags.at(-1)}; samples: ${lags.length}`);
     await removeDatabase(cells, created.id);

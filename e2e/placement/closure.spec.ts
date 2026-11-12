@@ -132,7 +132,6 @@ const inspect = (cell: string, projectId: string, closure: Closure) =>
 async function createDatabase(cell: APIRequestContext, region: string, projectId: string): Promise<Database> {
   const homeRegion = new URL(region).hostname.split('.')[0];
   const created = await json<Database>(await cell.post(`${region}${api(projectId)}/databases`, { data: { name: named('closing'), homeRegion, replicaRegions: [] } }), 201);
-  expect(created.homeRegion).toBe(homeRegion);
   return created;
 }
 
@@ -173,6 +172,7 @@ test('a version 2 closure sent to gru erases the bucket, the file and the databa
   expect(await stored(object), 'the file is in the object store of fra').toBe(true);
   const database = await createDatabase(cell, second, current.projectId);
   try {
+    expect(database.homeRegion).toBe('fra');
     expect((await json<{ items: Bucket[] }>(await cell.get(buckets))).items.map((item) => item.id)).toEqual([bucket.id]);
 
     const closure = { version: 2, closureId: ulid(), authorityOrganizationId: current.organizationId };
@@ -228,6 +228,7 @@ test('a project deletion through gru is refused while fra holds a database of th
   }), 303);
   const held = await createDatabase(cell, second, projectId);
   try {
+    expect(held.homeRegion).toBe('fra');
     const probe = { version: 1, closureId: ulid(), authorityOrganizationId: current.organizationId };
     expect(await inspect(firstInternal, projectId, probe), 'gru itself holds nothing of the project').toMatchObject({ status: 200, body: { status: 'empty' } });
     expect(await inspect(secondInternal, projectId, probe), 'fra holds a database of the project').toMatchObject({ status: 409, body: { error: { code: 'not_empty' } } });
