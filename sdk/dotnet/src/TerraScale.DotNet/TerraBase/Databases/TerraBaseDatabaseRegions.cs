@@ -2,15 +2,14 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>Placement and home-observed replica pulls of one database, sampled at <paramref name="ObservedAt"/>.</summary>
+/// <summary>Selected regions and writer-observed pull progress of one database.</summary>
 /// <param name="DatabaseId">Database ULID, distinct from its route name.</param>
-/// <param name="HomeRegion">Region that commits this database's writes.</param>
-/// <param name="ObservedAt">UTC sample time of the home-observed pull statuses.</param>
-/// <param name="Replicas">Replica progress as observed by the home region; excludes the home itself.</param>
-public sealed record TerraBaseDatabaseRegions(string DatabaseId, string HomeRegion, DateTimeOffset ObservedAt,
-    IReadOnlyList<TerraBaseReplicaStatus> Replicas) : IJsonOnDeserialized
+/// <param name="ObservedAt">UTC sample time.</param>
+/// <param name="Regions">Every selected region in region-id order; order carries no meaning.</param>
+public sealed record TerraBaseDatabaseRegions(string DatabaseId, DateTimeOffset ObservedAt,
+    IReadOnlyList<TerraBaseReplicaStatus> Regions) : IJsonOnDeserialized
 {
-    void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Replicas);
+    void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Regions);
 }
 
 /// <summary>Pull progress of one region; unknown observations are null.</summary>

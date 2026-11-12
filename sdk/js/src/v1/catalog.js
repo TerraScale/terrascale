@@ -1,7 +1,7 @@
 import { requireId } from "../ids.js";
 import { array, boolean, malformed, object, string } from "./decode.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
-import { stringifyExactJson } from "./json.js";
+import { ExactDecimal, stringifyExactJson } from "./json.js";
 /**
  * @import { JsonValue } from "./json.js"
  * @import { V1Transport } from "./transport.js"
@@ -19,6 +19,7 @@ import { stringifyExactJson } from "./json.js";
  * @property {string} createdAt ISO date-time returned by the producer.
  * @property {string} region The region that answered.
  * @property {readonly string[]} regions Every region that holds the database, sorted by region id. The order has no meaning.
+ * @property {number | bigint} placementVersion Placement epoch; unchanged by an identical region set.
  * @property {boolean} allRegions Whether every serving region holds the database.
  * @property {string | null | undefined} [expiresAt] RFC 3339 expiry, or null without a TTL.
  */
@@ -56,7 +57,7 @@ export function requirePlacement(placement) {
   if (placement.allRegions !== undefined && typeof placement.allRegions !== "boolean")
     throw new TypeError("allRegions must be a boolean.");
   if (placement.regions === undefined) return placement.allRegions === undefined ? {} : { allRegions: placement.allRegions };
-  if (!Array.isArray(placement.regions) || placement.regions.length === 0) throw new TypeError("regions must be an array of at least one region.");
+  if (!Array.isArray(placement.regions) || (placement.regions.length < 1 || placement.regions.length > 9)) throw new TypeError("regions must be an array of one to nine regions.");
   const regions = placement.regions.map(region);
   if (new Set(regions).size !== regions.length) throw new TypeError("regions must not contain duplicates.");
   return { regions };
@@ -69,6 +70,9 @@ export function decodeManagedDatabase(value) {
   if (!/^\d{4}-\d{2}-\d{2}T/u.test(createdAt) || !Number.isFinite(Date.parse(createdAt))) malformed("database createdAt");
   if (raw.expiresAt !== undefined && raw.expiresAt !== null &&
       (typeof raw.expiresAt !== "string" || !Number.isFinite(Date.parse(raw.expiresAt)))) malformed("database expiresAt");
+  const version = raw.placementVersion;
+  const placementVersion = typeof version === "number" && Number.isSafeInteger(version) ? version
+    : version instanceof ExactDecimal ? version.toBigInt() : malformed("database placementVersion");
   return Object.freeze({
     ...(raw.expiresAt === undefined ? {} : { expiresAt: raw.expiresAt }),
     id: requireId(raw.id, "Database ID"), projectId: requireId(raw.projectId, "Project ID"),
@@ -76,6 +80,7 @@ export function decodeManagedDatabase(value) {
     branchedFrom: raw.branchedFrom === null ? null : requireId(raw.branchedFrom, "Source database ID"),
     createdAt, region: region(raw.region),
     regions: Object.freeze((raw.regions === undefined ? [] : array(raw.regions, "database regions").map(region)).toSorted()),
+    placementVersion,
     allRegions: raw.allRegions === undefined ? false : boolean(raw.allRegions, "database allRegions"),
     ...(raw.previousName === undefined ? {} : { previousName: raw.previousName === null ? null : requireName("database", raw.previousName) }),
     ...(raw.conflictOf === undefined ? {} : { conflictOf: raw.conflictOf === null ? null : requireId(raw.conflictOf, "Conflict database ID") }),
@@ -134,7 +139,7 @@ export class V1Databases {
 
   /**
    * Rename by immutable ULID or current name with databases:write. See docs/database-rename.md.
-   * Returns the database metadata committed by its home region.
+   * Returns the committed database metadata.
    * ID, data, keys and region stay unchanged. Invalid names return 400 (or a
    * local TypeError); known same-region duplicates return 409. After convergence,
    * the old name has no alias and may be claimed by another database. Update

@@ -130,11 +130,10 @@ type ManagedDatabase struct {
 	CreatedAt    time.Time  `json:"createdAt"`
 	ExpiresAt    *time.Time `json:"expiresAt"`
 	// Region identifies the answering node; it is absent from restore results.
-	Region     string   `json:"region"`
-	Regions    []string `json:"regions"`
-	AllRegions bool     `json:"allRegions"`
-	// PlacementVersion is included in catalog restore results.
-	PlacementVersion int64 `json:"placementVersion"`
+	Region           string   `json:"region"`
+	Regions          []string `json:"regions"`
+	AllRegions       bool     `json:"allRegions"`
+	PlacementVersion int64    `json:"placementVersion"`
 }
 
 // DatabaseUsage is a database's storage and its metered reads and writes.

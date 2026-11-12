@@ -206,7 +206,7 @@ HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See 
 `TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public HTTPS client listener.
 `TerraBaseSqlClient` runs SQL; see [SQL](#sql). `TerraBaseDatabaseClient` addresses projects and databases:
 `Project(projectId)` creates, lists, reads, renames and deletes databases and reads usage, analytics, saved queries and
-backup destinations; `Database(projectId, name)` reads usage and analytics, home-region and replica progress (`GetRegionsAsync`), branches (including `BranchIfIdAsync`/`DeleteIfIdAsync` guarded by the immutable database ID), backs up and restores, and
+backup destinations; `Database(projectId, name)` reads usage and analytics, selected regions and pull progress (`GetRegionsAsync`), branches (including `BranchIfIdAsync`/`DeleteIfIdAsync` guarded by the immutable database ID), backs up and restores, and
 deploys and invokes functions. `TerraBaseManagementClient` covers the Management API: organizations, the current
 organization, plans, projects (including close and erase), history erasure, members, invitations, ownership transfer,
 audit retention and audit events. Databases and branches are not management operations; they live on
@@ -238,8 +238,7 @@ preserve read-your-writes; use the writer for REST reads that must see a previou
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
 serving region; otherwise set an explicit region list.
 
-The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
-storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ```csharp
@@ -382,3 +381,25 @@ not establish server admission or plan enforcement; retain scope, role, region a
 Built-in project API-key tokens renew in the background from 60 seconds before expiry
 (or at half-life for short tokens). Concurrent callers share one exchange and continue
 using a valid token; only missing, actually expired, or refused tokens require a wait.
+
+## Region-set placement
+
+Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
+and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
+with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
+Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
+`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+
+Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
+A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
+The SDK exposes `TerraBaseUnavailableException.ErrorCode == "replica_not_ready"` and `TerraBaseConflictException.ErrorCode == "move_in_progress"`. Neither code is automatically retried;
+general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
+The caller bounds this repeat loop to 90 seconds and propagates other errors:
+
+```csharp
+using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, regions: ["fra"], cancellationToken: deadline.Token); break; }
+    catch (TerraBaseException e) when (e.ErrorCode == "replica_not_ready") { await Task.Delay(1000, deadline.Token); } }
+```

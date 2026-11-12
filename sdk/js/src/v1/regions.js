@@ -1,16 +1,16 @@
 import { requireId } from "../ids.js";
 import { requireDatabaseSelector } from "./ids.js";
 import { region } from "./catalog.js";
-import { list, numeric, optional, record, text } from "./management-decode.js";
+import { list, nullable, numeric, optional, record, text } from "./management-decode.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
 
-const replicaStatus = record({ region: region, role: optional(text), lagMs: optional(numeric), lastPulledAt: optional(text),
-  lastVerified: optional(text), revision: optional(text) });
-const databaseRegions = record({ databaseId: requireId, homeRegion: region, observedAt: text, replicas: list(replicaStatus) });
+const replicaStatus = record({ region: region, role: optional(nullable(text)), lagMs: optional(nullable(numeric)), lastPulledAt: optional(nullable(text)),
+  lastVerified: optional(nullable(text)), revision: optional(nullable(text)) });
+const databaseRegions = record({ databaseId: requireId, observedAt: text, regions: list(replicaStatus) });
 /** @typedef {ReturnType<typeof databaseRegions>} V1DatabaseRegions */
 
-/** Reads a database's home region and the home-observed replica pull progress. */
+/** Reads every selected region and writer-observed pull progress. */
 export class V1DatabaseRegionsClient {
   /** @type {V1Transport} */
   #transport;

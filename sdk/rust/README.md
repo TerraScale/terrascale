@@ -110,8 +110,7 @@ preserve read-your-writes; use the writer for REST reads that must see a previou
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
 serving region; otherwise set an explicit region list.
 
-The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
-storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ### Placement
@@ -201,3 +200,25 @@ uses the existing replay-safe backoff and `Retry-After` policy without discardin
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
+
+## Region-set placement
+
+Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
+and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
+with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
+Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
+`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+
+Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
+A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
+The SDK exposes `Error::code()` returning `Some("replica_not_ready")` or `Some("move_in_progress")`, preserved by `Error::Response` around `Error::Api`. Neither code is automatically retried;
+general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
+The caller bounds this repeat loop to 90 seconds and propagates other errors:
+
+```rust
+let change = DatabasePlacement { regions: Some(vec!["fra".into()]), ..Default::default() };
+tokio::time::timeout(Duration::from_secs(90), async { loop { match client.set_database_placement(database, &change).await {
+    Ok(db) => break Ok(db), Err(e) if e.code() == Some("replica_not_ready") => tokio::time::sleep(Duration::from_secs(1)).await, Err(e) => break Err(e) } } }).await??;
+```

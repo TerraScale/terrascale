@@ -63,7 +63,6 @@ impl Database {
     }
 }
 
-/// Database metadata from the project management API. A database lives in one region.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectDatabaseInfo {
@@ -91,4 +90,5 @@ pub struct ProjectDatabaseInfo {
     pub regions: Vec<String>,
     #[serde(default)]
     pub all_regions: bool,
+    pub placement_version: i64,
 }

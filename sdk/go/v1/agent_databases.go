@@ -57,6 +57,9 @@ func (c *Client) CreateDatabase(ctx context.Context, project, name string, opts 
 	if opts.Regions != nil && opts.AllRegions {
 		return nil, errors.New("terrabase: set Regions or AllRegions, not both")
 	}
+	if err := checkPlacementRegions(opts.Regions); err != nil {
+		return nil, err
+	}
 	req, err := projectRequest(http.MethodPost, project, nil, "databases")
 	if err != nil {
 		return nil, err

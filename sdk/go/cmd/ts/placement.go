@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -45,6 +46,9 @@ func placementOptions(name string, regionsSet bool, regions string, all, allSet 
 		seen[r] = true
 		p.Regions = append(p.Regions, r)
 	}
+	if len(p.Regions) > 9 {
+		return p, fmt.Errorf("-regions accepts at most nine region ids: %w", errUsage)
+	}
 	return p, nil
 }
 
@@ -58,8 +62,57 @@ func createPlaced(ctx context.Context, tb *v1.Client, project, name string, p v1
 
 func setPlacement(ctx context.Context, tb *v1.Client, project, database string, p v1.DatabasePlacement, out io.Writer) error {
 	result, err := tb.SetDatabasePlacement(ctx, project, database, p)
+	if errors.Is(err, v1.ErrReplicaNotReady) {
+		return fmt.Errorf("requested regions remain selected; no requested region is ready to order writes yet. Run the same db placement command again after replication (about 30 seconds for a new region): %w", err)
+	}
+	if errors.Is(err, v1.ErrMoveInProgress) {
+		return fmt.Errorf("a different placement change is moving this database; wait for it to finish before changing the requested regions: %w", err)
+	}
 	if err != nil {
 		return err
 	}
 	return emitJSON(out, result)
+}
+
+func placementWriter(ctx context.Context, tb *v1.Client, project, database string) (string, error) {
+	status, err := tb.Database(project, database).Regions(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, region := range status.Regions {
+		if region.Role == "writer" {
+			return region.Region, nil
+		}
+	}
+	return "", errors.New("database regions did not identify the region ordering writes")
+}
+
+func createEarlierPlaced(ctx context.Context, tb *v1.Client, project, name, writer string, replicas []string, all bool, out io.Writer) error {
+	var selected []string
+	if writer != "" {
+		selected = append([]string{writer}, replicas...)
+	}
+	created, err := tb.CreateDatabase(ctx, project, name, v1.CreateDatabaseOptions{Regions: selected})
+	if err != nil {
+		return err
+	}
+	if writer == "" && len(replicas) != 0 {
+		writer, err = placementWriter(ctx, tb, project, created.ID)
+		if err != nil {
+			return err
+		}
+		return setPlacement(ctx, tb, project, created.ID, v1.DatabasePlacement{Regions: append([]string{writer}, replicas...)}, out)
+	}
+	if all {
+		return setPlacement(ctx, tb, project, created.ID, v1.DatabasePlacement{AllRegions: true}, out)
+	}
+	return emitJSON(out, created)
+}
+
+func setEarlierPlacement(ctx context.Context, tb *v1.Client, project, database string, replicas []string, out io.Writer) error {
+	writer, err := placementWriter(ctx, tb, project, database)
+	if err != nil {
+		return err
+	}
+	return setPlacement(ctx, tb, project, database, v1.DatabasePlacement{Regions: append([]string{writer}, replicas...)}, out)
 }

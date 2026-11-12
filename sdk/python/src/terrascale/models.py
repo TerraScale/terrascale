@@ -64,13 +64,13 @@ class ReplicaStatus:
 class DatabaseRegions:
     database_id: str
     observed_at: str
-    replicas: list[ReplicaStatus] = field(default_factory=list)
+    regions: list[ReplicaStatus] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> DatabaseRegions:
         if any(not isinstance(body[k], str) or not body[k] for k in ("observedAt",)):
             raise ValueError("invalid database regions")
-        replicas = body.get("replicas", [])
+        replicas = body["regions"]
         if not isinstance(replicas, list):
             raise ValueError("invalid database regions replicas")
         statuses = []
@@ -102,7 +102,7 @@ class DatabaseRegions:
                     revision=revision,
                 )
             )
-        return cls(database_id=validate_id(body["databaseId"]), observed_at=body["observedAt"], replicas=statuses)
+        return cls(database_id=validate_id(body["databaseId"]), observed_at=body["observedAt"], regions=statuses)
 
 
 @dataclass(frozen=True)
@@ -119,6 +119,7 @@ class Database:
     expires_at: str | None = None
     regions: list[str] = field(default_factory=list)
     all_regions: bool = False
+    placement_version: int = 0
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Database:
@@ -133,6 +134,9 @@ class Database:
             raise ValueError("invalid database regions")
         if not isinstance(body.get("allRegions", False), bool):
             raise ValueError("invalid database allRegions")
+        version = body["placementVersion"]
+        if not isinstance(version, int) or isinstance(version, bool):
+            raise ValueError("invalid database placementVersion")
         return cls(
             id=validate_id(body["id"]),
             project_id=validate_id(body["projectId"]),
@@ -145,6 +149,7 @@ class Database:
             expires_at=body.get("expiresAt"),
             regions=list(regions),
             all_regions=body.get("allRegions", False),
+            placement_version=version,
             raw=body,
         )
 

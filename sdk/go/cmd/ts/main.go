@@ -296,6 +296,8 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
 	scope := fs.String("scope", "", "keys create: read or read-write")
+	homeRegion := fs.String("home-region", "", "db create: earlier placement flag; use -regions")
+	replicaRegions := fs.String("replica-regions", "", "db create, db placement: earlier placement flag; use -regions")
 	regions := fs.String("regions", "", "db create, db placement: comma-separated regions that hold the database")
 	allRegions := fs.Bool("all-regions", false, "db create, db placement: every serving region")
 	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
@@ -354,7 +356,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return err
 		}
 	}
-	var yesSet, scopeSet, keyOptionsSet, regionsSet, allRegionsSet, expectedIDSet, langSet bool
+	var yesSet, scopeSet, keyOptionsSet, regionsSet, allRegionsSet, homeSet, replicasSet, expectedIDSet, langSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "expected-id":
@@ -363,6 +365,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			langSet = true
 		case "expires", "allow-cidr":
 			keyOptionsSet = true
+		case "home-region":
+			homeSet = true
+		case "replica-regions":
+			replicasSet = true
 		case "regions":
 			regionsSet = true
 		case "all-regions":
@@ -385,7 +391,23 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if name == "db branch" && operands[0] == operands[1] {
 		return fmt.Errorf("branch source and target names must differ: %w", errUsage)
 	}
-	placement, err := placementOptions(name, regionsSet, *regions, allRegionsSet && *allRegions, allRegionsSet)
+	if homeSet && (name != "db create" || !validRegion(*homeRegion)) || replicasSet && name != "db create" && name != "db placement" || regionsSet && (homeSet || replicasSet) || replicasSet && allRegionsSet {
+		return fmt.Errorf("earlier placement flags require db create or db placement, separately from -regions and -all-regions: %w", errUsage)
+	}
+	var earlier []string
+	if replicasSet && *replicaRegions != "" {
+		earlier = strings.Split(*replicaRegions, ",")
+		for i, region := range earlier {
+			if !validRegion(region) || slices.Contains(earlier[:i], region) || region == *homeRegion {
+				return fmt.Errorf("-replica-regions needs distinct region ids other than -home-region: %w", errUsage)
+			}
+		}
+	}
+	placementName := name
+	if replicasSet {
+		placementName = "db create"
+	}
+	placement, err := placementOptions(placementName, regionsSet, *regions, allRegionsSet && *allRegions, allRegionsSet)
 	if err != nil {
 		return err
 	}
@@ -489,6 +511,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			}, out)
 		}
 		switch {
+		case name == "db create" && (homeSet || replicasSet):
+			return createEarlierPlaced(ctx, s.tb, s.project, operands[0], *homeRegion, earlier, placement.AllRegions, out)
+		case name == "db placement" && replicasSet:
+			return setEarlierPlacement(ctx, s.tb, s.project, operands[0], earlier, out)
 		case name == "db create" && (regionsSet || allRegionsSet):
 			return createPlaced(ctx, s.tb, s.project, operands[0], placement, out)
 		case name == "db placement":
@@ -1078,7 +1104,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "REGION\tROLE\tLAG MS\tLAST PULL\tLAST VERIFIED\tREVISION")
-		for _, rep := range r.Replicas {
+		for _, rep := range r.Regions {
 			lag, pull, verified, revision, role := "-", "-", "-", "-", rep.Role
 			if rep.LagMs != nil {
 				lag = fmt.Sprintf("%.0f", *rep.LagMs)

@@ -148,6 +148,11 @@ public sealed class TerraBaseSqlDatabase
         this.path = path;
     }
 
+    /// <summary>Reads selected regions and writer-observed pull progress; a pull is not an application acknowledgement.</summary>
+    public async Task<TerraBaseDatabaseRegions> GetRegionsAsync(CancellationToken cancellationToken = default) =>
+        (await connection.SendAsync(HttpMethod.Get, path + "/regions", null,
+            TerraBaseJsonContext.Wire.TerraBaseDatabaseRegions, null, cancellationToken).ConfigureAwait(false)).Value;
+
     /// <summary>Runs one statement with positional arguments.</summary>
     public Task<TerraBaseSqlStatementResult> ExecuteAsync(string sql, IReadOnlyList<TerraBaseSqlValue>? args = null, CancellationToken cancellationToken = default) =>
         ExecuteAsync(new TerraBaseSqlStatement(sql, args), cancellationToken);

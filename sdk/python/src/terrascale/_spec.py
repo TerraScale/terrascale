@@ -182,8 +182,8 @@ def placement(regions: Sequence[str] | None, all_regions: bool | None) -> dict[s
             raise ValueError("all_regions must be a bool")
         return {"allRegions": all_regions}
     if regions is not None:
-        if isinstance(regions, str) or len(regions) == 0:
-            raise ValueError("regions must be a sequence of at least one region id")
+        if isinstance(regions, str) or not 1 <= len(regions) <= 9:
+            raise ValueError("regions must be a sequence of one to nine region ids")
         checked = [region(r) for r in regions]
         if len(set(checked)) != len(checked):
             raise ValueError("regions must not contain duplicates")

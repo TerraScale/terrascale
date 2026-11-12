@@ -75,9 +75,9 @@ impl fmt::Debug for ScopedKey {
 }
 
 fn check_regions(regions: &[String]) -> Result<()> {
-    if regions.is_empty() {
+    if regions.is_empty() || regions.len() > 9 {
         return Err(Error::InvalidInput(
-            "regions must name at least one region".into(),
+            "regions must name one to nine regions".into(),
         ));
     }
     let mut seen = std::collections::BTreeSet::new();

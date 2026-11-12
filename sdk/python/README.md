@@ -227,8 +227,7 @@ preserve read-your-writes; use the writer for REST reads that must see a previou
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
 serving region; otherwise set an explicit region list.
 
-The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
-storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ## Errors
@@ -289,3 +288,28 @@ backoff and `Retry-After` policy without discarding the cached token.
 Built-in project API-key tokens renew in the background from 60 seconds before expiry
 (or at half-life for short tokens). Concurrent callers share one exchange and continue
 using a valid token; only missing, actually expired, or refused tokens require a wait.
+
+## Region-set placement
+
+Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
+and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
+with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
+Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
+`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+
+Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
+A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
+The SDK exposes `ServiceUnavailableError.code == "replica_not_ready"` and `ConflictError.code == "move_in_progress"`. Neither code is automatically retried;
+general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
+The caller bounds this repeat loop to 90 seconds and propagates other errors:
+
+```python
+deadline = time.monotonic() + 90
+while True:
+    try: client.set_database_placement(database, regions=["fra"]); break
+    except ServiceUnavailableError as e:
+        if e.code != "replica_not_ready" or time.monotonic() >= deadline: raise
+        time.sleep(1)
+```

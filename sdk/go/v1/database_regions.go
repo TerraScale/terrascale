@@ -8,9 +8,8 @@ import (
 
 type DatabaseRegions struct {
 	DatabaseID string          `json:"databaseId" ulid:"required"`
-	HomeRegion string          `json:"homeRegion"`
 	ObservedAt time.Time       `json:"observedAt"`
-	Replicas   []ReplicaStatus `json:"replicas"`
+	Regions    []ReplicaStatus `json:"regions"`
 }
 
 type ReplicaStatus struct {

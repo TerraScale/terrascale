@@ -109,7 +109,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "regions", "lang":
+			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "regions", "home-region", "replica-regions", "lang":
 				if !equal {
 					i++
 				}
@@ -228,10 +228,13 @@ func helpOptions(name string) map[string]string {
 	case name == "backup destination":
 		options["-yes"] = "required for set (credential JSON only on stdin); delete otherwise types the project ID"
 	case name == "db create":
-		options["-regions <a,b>"] = "regions that hold the database; at least one"
+		options["-home-region <region>"] = "earlier placement flag; use -regions"
+		options["-regions <a,b>"] = "one to nine distinct regions that hold the database"
+		options["-replica-regions <a,b>"] = "earlier placement flag; use -regions"
 		options["-all-regions"] = "every serving region"
 	case name == "db placement":
-		options["-regions <a,b>"] = "regions that hold the database; at least one"
+		options["-regions <a,b>"] = "one to nine distinct regions that hold the database"
+		options["-replica-regions <a,b>"] = "earlier placement flag; use -regions"
 		options["-all-regions"] = "every serving region, including new ones"
 	case name == "keys rotate":
 		options["<grace>"] = "required whole-second duration from 0s to 24h; previous secret remains valid for this grace; new secret appears once on stdout"

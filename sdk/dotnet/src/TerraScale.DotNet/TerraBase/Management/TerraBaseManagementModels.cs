@@ -111,6 +111,9 @@ public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, strin
     /// <summary>Every region that holds the database, sorted by region id. The order has no meaning.</summary>
     public IReadOnlyList<string> Regions { get; init; } = [];
 
+    /// <summary>Placement epoch; changes when membership or the writer changes, unchanged for an identical region set.</summary>
+    public long PlacementVersion { get; init; }
+
     /// <summary>Whether every serving region, including regions that join later, holds the database.</summary>
     public bool AllRegions { get; init; }
 

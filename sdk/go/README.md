@@ -159,8 +159,7 @@ preserve read-your-writes; use the writer for REST reads that must see a previou
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
 serving region; otherwise set an explicit region list.
 
-The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
-storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ### File buckets
@@ -718,3 +717,25 @@ It supports ordinary tables, indexes, views, triggers and column additions/remov
 constraint, table option and column order changes require explicit `ts migrate` migrations; no inferred table rebuilds.
 Engine extensions unsupported by the offline validator are refused before live writes.
 See the [agent databases guide](https://docs.terrascale.tech/guides/agent-databases#manage-schema-as-code).
+
+## Region-set placement
+
+Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
+and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
+with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
+Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
+`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+
+Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
+A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
+The SDK exposes `*tb.APIError.Code` with `tb.ErrReplicaNotReady` and `tb.ErrMoveInProgress` (also `errors.Is`). Neither code is automatically retried;
+general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
+The caller bounds this repeat loop to 90 seconds and propagates other errors:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second); defer cancel()
+for { _, err := client.SetDatabasePlacement(ctx, project, database, tb.DatabasePlacement{Regions: []string{"fra"}}); if err == nil { break }; if !errors.Is(err, tb.ErrReplicaNotReady) { return err }
+    select { case <-ctx.Done(): return ctx.Err(); case <-time.After(time.Second): } }
+```

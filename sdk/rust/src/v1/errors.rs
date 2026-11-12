@@ -46,7 +46,6 @@ pub enum Error {
     /// `404 not_found`.
     #[error("terrabase: 404 not_found")]
     NotFound,
-    /// `421 home_region_required`: the write reached a non-home region.
     #[error("terrabase: 421 home_region_required")]
     HomeRegionRequired,
     /// `503 commit_uncertain`: read state to reconcile the unknown outcome.

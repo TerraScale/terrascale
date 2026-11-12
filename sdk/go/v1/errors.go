@@ -54,7 +54,9 @@ const (
 	// ErrWrongRegion is a 421: the database is not placed in the called
 	// region. APIError.HomeRegion and Regions name where it is. The client
 	// never retries it elsewhere: it sends the request to a region in Regions.
-	ErrWrongRegion ErrorCode = "wrong_region"
+	ErrWrongRegion     ErrorCode = "wrong_region"
+	ErrReplicaNotReady ErrorCode = "replica_not_ready"
+	ErrMoveInProgress  ErrorCode = "move_in_progress"
 )
 
 // Codes synthesized for Management responses whose body is a plain JSON

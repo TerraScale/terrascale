@@ -109,7 +109,7 @@ public sealed partial class TerraBaseSqlClient
         if (regions is not null && allRegions is not null) throw new ArgumentException("Pass regions or allRegions, not both.", nameof(regions));
         if (regions is not null)
         {
-            if (regions.Count == 0) throw new ArgumentException("Pass at least one region.", nameof(regions));
+            if (regions.Count is < 1 or > 9) throw new ArgumentException("Pass between one and nine regions.", nameof(regions));
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var region in regions)
             {
