@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
@@ -230,4 +231,21 @@ public sealed record TerraScaleAuthUserInfo(
     [property: JsonPropertyName("sub")] string Subject,
     [property: JsonPropertyName("email")] string? Email,
     [property: JsonPropertyName("email_verified")] bool? EmailVerified,
-    [property: JsonPropertyName("name")] string? Name);
+    [property: JsonPropertyName("name")] string? Name)
+{
+    /// <summary>Given name with the profile scope.</summary>
+    [JsonPropertyName("given_name")]
+    public string? GivenName { get; init; }
+
+    /// <summary>Family name with the profile scope.</summary>
+    [JsonPropertyName("family_name")]
+    public string? FamilyName { get; init; }
+
+    /// <summary>HTTPS avatar with the profile scope.</summary>
+    [JsonPropertyName("picture")]
+    public string? Picture { get; init; }
+
+    /// <summary>Public metadata with the profile scope.</summary>
+    [JsonPropertyName("public_metadata")]
+    public JsonElement? PublicMetadata { get; init; }
+}

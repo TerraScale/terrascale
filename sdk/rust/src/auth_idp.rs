@@ -327,6 +327,18 @@ impl<'a> OidcClientAuthentication<'a> {
 /// OpenID Connect userinfo claims.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OidcUserInfo {
+    /// Given name with the profile scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub given_name: Option<String>,
+    /// Family name with the profile scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family_name: Option<String>,
+    /// HTTPS avatar with the profile scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
+    /// Public metadata with the profile scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_metadata: Option<serde_json::Map<String, serde_json::Value>>,
     /// Subject.
     pub sub: String,
     /// Email, when granted.
