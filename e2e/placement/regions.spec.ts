@@ -389,14 +389,14 @@ async function recordedName(cells: Cells, id: string, projectId: string): Promis
 }
 
 async function convergedNames(cells: Cells, ids: string[], real: string[], expected: string[], projectId: string): Promise<void> {
-  let samples = 0;
+  const seen: string[] = [];
   await expect.poll(async () => {
     const names = await Promise.all(ids.map(id => recordedName(cells, id, projectId)));
-    for (const value of names) expect(real, 'management GET never exposes a placeholder').toContain(value);
-    samples++;
+    seen.push(...names);
     return names;
   }, { message: 'fra applies the chain within two 30-second sweeps', timeout: 65_000, intervals: [200] }).toEqual(expected);
-  console.log('management GET every 200 ms: ' + samples + ' samples per database, only real names');
+  for (const value of seen) expect(real, 'every management GET throughout convergence returned a real name').toContain(value);
+  console.log('management GET every 200 ms: ' + seen.length / ids.length + ' samples per database, only real names');
 }
 
 multiple('R9 a taken follower name does not stop later catalog entries or pulls', async ({ owner: { cells, projectId } }) => {
