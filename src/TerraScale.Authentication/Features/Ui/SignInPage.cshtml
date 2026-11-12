@@ -83,11 +83,11 @@ break;
 @switch (Model.Step)
 {
 case SignInStep.Email:
-<form method="post" action="/ui/@Model.Slug/sign-in@(Model.Theme.Passcode ? "" : "/password")">
+<form method="post" action="@Model.Link(Model.Theme.Passcode ? "sign-in" : "sign-in/password")">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="sign-in-email">@Model.Copy.Email</label>
-<input id="sign-in-email" name="email" type="email" autocomplete="username" placeholder="@Model.Copy.EmailPlaceholder" required autofocus value="@Model.Email">
+<input id="sign-in-email" name="email" type="email" autocomplete="username" placeholder="@Model.Copy.EmailPlaceholder" required minlength="3" maxlength="254" autofocus value="@Model.Email">
 </div>
 <div class="actions">
 @if (Model.Theme.Passcode)
@@ -96,9 +96,9 @@ case SignInStep.Email:
 }
 @if (Model.Theme.Password)
 {
-<button type="submit" class="@(Model.Theme.Passcode ? "secondary" : "")" formaction="/ui/@Model.Slug/sign-in/password"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@(Model.Theme.Passcode ? Model.Copy.UsePassword : Model.Copy.ContinuePassword)</button>
+<button type="submit" class="@(Model.Theme.Passcode ? "secondary" : "")" formaction="@Model.Link("sign-in/password")"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@(Model.Theme.Passcode ? Model.Copy.UsePassword : Model.Copy.ContinuePassword)</button>
 }
-<button type="button" id="passkey-sign-in" class="secondary" hidden data-i18n="@Model.Copy.PasskeyI18n" data-options="/ui/@Model.Slug/sign-in/passkey/options" data-verify="/ui/@Model.Slug/sign-in/passkey"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-lock-keyhole"></use></svg>@Model.Copy.Passkey</button>
+<button type="button" id="passkey-sign-in" class="secondary" hidden data-i18n="@Model.Copy.PasskeyI18n" data-options="/ui/@Model.Slug/sign-in/passkey/options" data-verify="@Model.Link("sign-in/passkey")"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-lock-keyhole"></use></svg>@Model.Copy.Passkey</button>
 </div>
 </form>
 @if (Model.Slug != TerraScale.Authentication.Features.Oidc.OidcIssuer.InstanceId && Model.Theme.Providers.Count > 0)
@@ -122,19 +122,19 @@ case SignInStep.Email:
 </div>
 break;
 case SignInStep.Password:
-<form method="post" action="/ui/@Model.Slug/sign-in/password">
+<form method="post" action="@Model.Link("sign-in/password")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">@Model.Copy.Change</a></div>
 <div class="field">
 <div class="row"><label for="sign-in-password">@Model.Copy.Password</label><a href="@Model.Link("reset")">@Model.Copy.ForgotPassword</a></div>
-<input id="sign-in-password" name="password" type="password" autocomplete="current-password" required autofocus>
+<input id="sign-in-password" name="password" type="password" autocomplete="current-password" required minlength="1" maxlength="1024" autofocus>
 </div>
 <button type="submit">@Model.Copy.SignIn</button>
 </form>
 @if (Model.Theme.Passcode)
 {
-<form method="post" action="/ui/@Model.Slug/sign-in">
+<form method="post" action="@Model.Link("sign-in")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg>@Model.Copy.EmailCodeButton</button>
@@ -142,16 +142,16 @@ case SignInStep.Password:
 }
 break;
 case SignInStep.Code:
-<form method="post" action="/ui/@Model.Slug/sign-in/verify">
+<form method="post" action="@Model.Link("sign-in/verify")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <div class="field">
 <label for="sign-in-code">@Model.Copy.SignInCode</label>
-<input id="sign-in-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+<input id="sign-in-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
 </div>
 <button type="submit">@Model.Copy.VerifySignIn</button>
 </form>
-<form method="post" action="/ui/@Model.Slug/sign-in">
+<form method="post" action="@Model.Link("sign-in")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 @if (Model.CodeBudgetExhausted)
@@ -166,20 +166,28 @@ else
 <div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.DifferentEmail</a><a href="@Model.Link("sign-up")">@Model.Copy.CreateAccount</a></div>
 break;
 case SignInStep.Continue:
-<a class="btn" href="@Model.Next">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+@if (Model.Refresh is { })
+{
+<a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+}
 break;
 case SignInStep.SignedIn:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@Model.Copy.SignedIn</p></div>
 break;
 case SignInStep.Sso:
-<div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">@Model.Copy.Change</a></div>
-<a class="btn" href="@Model.SsoUrl">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+@if (Model.Refresh is { })
+{
+<a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+}
 break;
 case SignInStep.SignedOut:
-<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg><p>@Model.Copy.SignedOut</p></div>
-@if (Model.ReturnTo is { } returnTo)
+@if (Model.Refresh is { })
 {
-<a class="btn" href="@returnTo">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+}
+else
+{
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg><p>@Model.Copy.SignedOut</p></div>
 }
 break;
 case SignInStep.SignOutConfirm:
@@ -199,15 +207,15 @@ case SignInStep.Rejected:
 <a class="btn" href="@Model.Link("sign-in")">@Model.Copy.BackToSignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignUp:
-<form method="post" action="/ui/@Model.Slug/sign-up">
+<form method="post" action="@Model.Link("sign-up")">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="sign-up-email">@Model.Copy.Email</label>
-<input id="sign-up-email" name="email" type="email" autocomplete="username" placeholder="@Model.Copy.EmailPlaceholder" required autofocus value="@Model.Email">
+<input id="sign-up-email" name="email" type="email" autocomplete="username" placeholder="@Model.Copy.EmailPlaceholder" required minlength="3" maxlength="254" autofocus value="@Model.Email">
 </div>
 <div class="field">
 <label for="sign-up-password">@Model.Copy.Password</label>
-<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="10" placeholder="@Model.Copy.NewPasswordPlaceholder" required aria-describedby="@Model.ErrorId">
+<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="1024" placeholder="@Model.Copy.NewPasswordPlaceholder" required aria-describedby="@Model.ErrorId">
 </div>
 <button type="submit">@Model.Copy.CreateAccount</button>
 </form>
@@ -223,17 +231,17 @@ case SignInStep.SignUp:
 <p class="alt"><a href="@Model.Link("sign-in")">@Model.Copy.SignIn</a></p>
 break;
 case SignInStep.SignUpCode:
-<form method="post" action="/ui/@Model.Slug/sign-up/verify">
+<form method="post" action="@Model.Link("sign-up/verify")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="pending_token" value="@Model.PendingToken">
 <div class="field">
 <label for="sign-up-code">@Model.Copy.VerificationCode</label>
-<input id="sign-up-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+<input id="sign-up-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
 </div>
 <button type="submit">@Model.Copy.VerifyEmail</button>
 </form>
-<form method="post" action="/ui/@Model.Slug/sign-up/resend">
+<form method="post" action="@Model.Link("sign-up/resend")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="pending_token" value="@Model.PendingToken">
@@ -249,32 +257,32 @@ else
 <div class="row"><a href="@Model.Link("sign-up")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.ChangeEmail</a></div>
 break;
 case SignInStep.Reset:
-<form method="post" action="/ui/@Model.Slug/reset">
+<form method="post" action="@Model.Link("reset")">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="reset-email">@Model.Copy.Email</label>
-<input id="reset-email" name="email" type="email" autocomplete="username" placeholder="@Model.Copy.EmailPlaceholder" required autofocus value="@Model.Email">
+<input id="reset-email" name="email" type="email" autocomplete="username" placeholder="@Model.Copy.EmailPlaceholder" required minlength="3" maxlength="254" autofocus value="@Model.Email">
 </div>
 <button type="submit">@Model.Copy.ResetCodeButton</button>
 </form>
 <p class="alt"><a href="@Model.Link("sign-in")">@Model.Copy.SignIn</a></p>
 break;
 case SignInStep.ResetCode:
-<form method="post" action="/ui/@Model.Slug/reset/complete">
+<form method="post" action="@Model.Link("reset/complete")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <div class="field">
 <label for="reset-code">@Model.Copy.ResetCode</label>
-<input id="reset-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus aria-describedby="@Model.ErrorId">
+<input id="reset-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus aria-describedby="@Model.ErrorId">
 </div>
 <div class="field">
 <label for="reset-password">@Model.Copy.NewPassword</label>
-<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="10" placeholder="@Model.Copy.NewPasswordPlaceholder" required aria-describedby="@Model.ErrorId">
+<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="1024" placeholder="@Model.Copy.NewPasswordPlaceholder" required aria-describedby="@Model.ErrorId">
 </div>
 <p class="hint">@Model.Copy.SubSettingSignsOut</p>
 <button type="submit">@Model.Copy.SetNewPassword</button>
 </form>
-<form method="post" action="/ui/@Model.Slug/reset/resend">
+<form method="post" action="@Model.Link("reset/resend")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 @if (Model.CodeBudgetExhausted)
@@ -289,11 +297,10 @@ else
 <div class="row"><a href="@Model.Link("reset")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.DifferentEmail</a></div>
 break;
 case SignInStep.ResetDone:
-@if (Model.AccountUrl is { } accountUrl)
+@if (Model.Refresh is { })
 {
-<a class="btn secondary" href="@accountUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.BackToAccount</a>
+<a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.SignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 }
-<a class="btn" href="@Model.Link("sign-in")">@Model.Copy.SignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.DeviceEnter:
 <form method="get" action="/ui/@Model.Slug/device">
@@ -330,7 +337,7 @@ case SignInStep.DeviceApproved:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@Model.Copy.DeviceApproved</p></div>
 break;
 case SignInStep.Mfa:
-<form method="post" action="/ui/@Model.Slug/sign-in/mfa">
+<form method="post" action="@Model.Link("sign-in/mfa")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="challenge" value="@Model.Challenge">
@@ -412,7 +419,7 @@ else
 <input type="hidden" name="id" value="@passkey.CredentialId">
 <div class="field">
 <label for="passkey-name-@passkey.CredentialId">@Model.Copy.PasskeyName</label>
-<input id="passkey-name-@passkey.CredentialId" name="name" maxlength="64" autocomplete="off" value="@passkey.Name">
+<input id="passkey-name-@passkey.CredentialId" name="name" minlength="1" maxlength="64" autocomplete="off" required value="@passkey.Name">
 </div>
 <p class="hint">@string.Format(CultureInfo.InvariantCulture, Model.Copy.PasskeyAdded, passkey.CreatedAt.ToString("d", CultureInfo.InvariantCulture)) · @(passkey.LastUsedAt is { } lastUsed ? string.Format(CultureInfo.InvariantCulture, Model.Copy.PasskeyLastUsed, lastUsed.ToString("d", CultureInfo.InvariantCulture)) : Model.Copy.PasskeyNeverUsed)</p>
 <button type="submit" class="secondary">@Model.Copy.Rename</button>
@@ -442,7 +449,7 @@ case SignInStep.TotpSetup:
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="totp-code">@Model.Copy.CodeFromApp</label>
-<input id="totp-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+<input id="totp-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
 </div>
 <p class="hint">@Model.Copy.HintEnableMfa</p>
 <button type="submit">@Model.Copy.TurnOnMfa</button>
@@ -473,24 +480,17 @@ case SignInStep.NotFound:
 break;
 }
 @functions {
-    /// <inheritdoc />
     public HostedLayoutModel LayoutModel => new(Model.Title, Model.Nonce, Model.Theme.ThemeColor, Model.Theme.LogoUrl, Model.Theme.Name,
         Model.Theme.TitleSize, Model.Theme.FooterLinks?.Select(link => (link.Label, link.Url)).ToArray(), Model.Theme.DefaultTheme, Model.Slug,
-        Model.Theme.BackgroundColor, Model.Theme.TextColor, Model.Locale) { PublicOrigin = Model.PublicOrigin };
+        Model.Theme.BackgroundColor, Model.Theme.TextColor, Model.Locale) { PublicOrigin = Model.PublicOrigin, ContinueOnly = Model.Refresh is not null };
 
-    /// <inheritdoc />
     protected override Task ExecuteSectionAsync(string name)
     {
-        // A navigation, not a redirect from the form post: form-action 'self' governs redirects after a submission.
-        if (name == "head" && Model.Step == SignInStep.Continue)
+        if (name == "head" && Model.Refresh is { } refresh)
         {
-<meta http-equiv="refresh" content="0;url=@Model.Next">
-        }
-
-        // The client's validated post-logout URI, after a moment to read the page; the Continue link also goes there.
-        if (name == "head" && Model.Step == SignInStep.SignedOut && Model.ReturnTo is { } returnTo)
-        {
-<meta http-equiv="refresh" content="2;url=@returnTo">
+            WriteLiteral("<meta http-equiv=\"refresh\" content=\"0;url=");
+            Write(refresh);
+            WriteLiteral("\">");
         }
 
         return Task.CompletedTask;

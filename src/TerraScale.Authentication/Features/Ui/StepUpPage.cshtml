@@ -20,12 +20,12 @@ else
 }
 else if (Model.Password)
 {
-<div class="field"><label for="password">@Model.Copy.Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus></div>
+<div class="field"><label for="password">@Model.Copy.Password</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="1" maxlength="1024" autofocus></div>
 <button type="submit">@Model.Copy.VerifyContinue</button>
 }
 else if (Model.MailRequested)
 {
-<div class="field"><label for="code">@Model.Copy.EmailVerificationCode</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" required autofocus></div>
+<div class="field"><label for="code">@Model.Copy.EmailVerificationCode</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" minlength="6" maxlength="6" required autofocus></div>
 <button type="submit">@Model.Copy.VerifyContinue</button>
 }
 else

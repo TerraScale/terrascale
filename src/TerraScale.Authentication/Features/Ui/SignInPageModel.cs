@@ -1,3 +1,4 @@
+using System.Text;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.ProjectTenants;
@@ -91,6 +92,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 {
     /// <summary>The response's CSP nonce, set by <see cref="Render"/>.</summary>
     public string Nonce { get; init; } = string.Empty;
+
+    public string? Refresh { get; init; }
 
     public string Locale { get; init; } = AuthEmails.English;
 
@@ -229,6 +232,38 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         return $"/ui/{this.Slug}/{path}" + (query.Count == 0 ? string.Empty : "?" + string.Join("&", query));
     }
 
+    internal static string? NavigationTarget(string? url)
+    {
+        if (string.IsNullOrEmpty(url) || url.Length > 4096)
+        {
+            return null;
+        }
+
+        var encoded = new StringBuilder(url.Length);
+        foreach (var rune in url.EnumerateRunes())
+        {
+            encoded.Append(rune.Value is > 32 and < 127 ? rune.ToString() : Uri.EscapeDataString(rune.ToString()));
+        }
+
+        var target = encoded.ToString();
+        if (!Uri.TryCreate(target, UriKind.RelativeOrAbsolute, out var parsed))
+        {
+            return null;
+        }
+
+        target = parsed.IsAbsoluteUri ? parsed.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped) : target;
+        return target.Length <= 4096 ? target : null;
+    }
+
+    private static string? ContinueTo(SignInPageModel model) => model.Step switch
+    {
+        SignInStep.Continue => model.Next,
+        SignInStep.Sso => model.SsoUrl,
+        SignInStep.SignedOut => model.ReturnTo,
+        SignInStep.ResetDone => model.Link("sign-in"),
+        _ => null,
+    };
+
     /// <summary>Renders the page with the hosted-page security headers and a fresh nonce.</summary>
     public static IResult Render(HttpContext context, SignInPageModel model, int statusCode = StatusCodes.Status200OK)
     {
@@ -237,7 +272,9 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
         var uiLocales = context.Request.Query["ui_locales"].ToString();
-        var page = SignInPage.Create(model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = uiLocales.Length == 0 ? null : uiLocales });
+        var located = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = uiLocales.Length == 0 ? null : uiLocales };
+        var rendered = located with { Refresh = NavigationTarget(ContinueTo(located)) };
+        var page = SignInPage.Create(rendered);
         page.StatusCode = statusCode;
         return page;
     }

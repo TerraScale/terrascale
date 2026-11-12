@@ -152,13 +152,11 @@ function passkeyDecode(text) {
     });
   }
   function follow(html) {
-    var page = new DOMParser().parseFromString(html, 'text/html');
-    var refresh = page.querySelector('meta[http-equiv="refresh"]');
-    var url = refresh && refresh.getAttribute('content').match(/^0;\s*url=(.+)$/);
-    if (url) { window.location.href = url[1]; return; }
-    var link = page.querySelector('a.btn');
-    if (link) { window.location.href = link.href; return; }
-    window.location.reload();
+    var page = document.createElement('template');
+    page.innerHTML = html;
+    var link = page.content.querySelector('a.delayed-continue');
+    if (link) window.location.replace(link.href);
+    else window.location.reload();
   }
   button.addEventListener('click', function () {
     var address = email ? email.value.trim() : '';
@@ -211,10 +209,10 @@ function passkeyDecode(text) {
         });
       })
       .then(function (response) {
+        if (response.redirected) { window.location.replace(response.url); return; }
         if (!response.ok) throw new Error(i18n.signInFailed || '');
-        return response.text();
+        return response.text().then(follow);
       })
-      .then(follow)
       .catch(function (error) {
         if (error && error.name === 'NotAllowedError') { reset(); return; }
         fail(i18n.signInFailedTitle || '', i18n.signInAgain || '');

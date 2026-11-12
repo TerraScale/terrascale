@@ -176,18 +176,62 @@ test('a personal access token is created with a confirmation, shown once, and re
   await audit.check('access tokens after revoke');
 });
 
-test('an alert rule is created and deleted', async ({ page, audit }) => {
+test('an alert webhook secret is shown once, including two parallel reads, and its rules are deleted', async ({ page, audit }) => {
   const name = unique('latency');
   await page.goto('/notifications/alerts');
   await page.locator('#alert-name').fill(name);
   await page.locator('#alert-threshold').fill('250');
+  await page.locator('#alert-webhook').fill('https://example.com/alerts');
   await page.getByRole('button', { name: 'Create rule', exact: true }).click();
-  await page.waitForLoadState('load');
-  const rule = page.locator('main tr, main li').filter({ hasText: name });
-  await expect(rule).toHaveCount(1);
-  await audit.check('alert rule created');
-  await rule.locator('form[action*="/delete"]').locator('button[type=submit]').click();
-  await page.waitForLoadState('load');
-  await expect(page.locator('main tr, main li').filter({ hasText: name })).toHaveCount(0);
+  const revealed = page.locator('#alert-secret');
+  await expect(revealed).toBeVisible();
+  const secret = (await revealed.innerText()).trim();
+  saveSecret('alert-webhook-secret', secret);
+  expect(/^[A-Za-z0-9_-]{43}$/.test(secret), 'the webhook signing secret has the expected format').toBe(true);
+  await expect(page).toHaveURL((url) => url.origin === dash && url.pathname === '/notifications/alerts' && [...url.searchParams.keys()].every((key) => ['organizationId', 'projectId'].includes(key)));
+  await expect(page.locator('#alert-rules tr').filter({ hasText: name })).toHaveCount(1);
+  await audit.check('alert webhook secret created');
+  await page.getByRole('button', { name: 'Continue to alerts', exact: true }).click();
+  await expect(page.locator('#alert-secret-panel')).toBeHidden();
+  await expect(revealed).toBeEmpty();
+  expect((await page.content()).includes(secret), 'dismissing the panel clears the secret from the DOM').toBe(false);
+  await audit.check('alert webhook secret dismissed');
+  const reloaded = await page.reload();
+  expect(reloaded?.headers()['set-cookie'] ?? '').not.toContain('ts-dashboard-alert-secret=');
+  await expect(revealed).toHaveCount(0);
+  expect((await page.content()).includes(secret), 'the webhook secret is never shown again').toBe(false);
+
+  const parallelName = unique('parallel');
+  const form = await page.locator('form').filter({ has: page.locator('#alert-name') }).evaluate((element) => ({ action: (element as HTMLFormElement).action, values: Object.fromEntries(new FormData(element as HTMLFormElement)) }));
+  const created = await page.request.post(form.action, {
+    form: { ...form.values, name: parallelName, threshold: '250', webhook: 'https://example.com/alerts' },
+    headers: { Origin: dash },
+    maxRedirects: 0,
+  });
+  expect(created.status()).toBe(303);
+  const target = new URL(created.headers().location, dash);
+  expect(target.origin).toBe(dash);
+  expect(target.pathname).toBe('/notifications/alerts');
+  expect([...target.searchParams.keys()].every((key) => ['organizationId', 'projectId'].includes(key)), 'the redirect contains only workspace selectors').toBe(true);
+  const headers = { Cookie: (await page.context().cookies(dash)).map((cookie) => `${cookie.name}=${cookie.value}`).join('; ') };
+  const reads = await Promise.all([page.request.get(target.href, { headers }), page.request.get(target.href, { headers })]);
+  let disclosures = 0;
+  for (const response of reads) {
+    expect(response.status()).toBe(200);
+    const value = /<pre[^>]*id="alert-secret"[^>]*>([^<]+)<\/pre>/.exec(await response.text())?.[1];
+    if (value) {
+      saveSecret('parallel-alert-webhook-secret', value);
+      disclosures += 1;
+    }
+  }
+  expect(disclosures, 'two parallel GETs disclose the secret exactly once').toBe(1);
+  await page.reload();
+  await expect(revealed).toHaveCount(0);
+  for (const ruleName of [name, parallelName]) {
+    const rule = page.locator('#alert-rules tr').filter({ hasText: ruleName });
+    await expect(rule).toHaveCount(1);
+    await rule.locator('form[action*="/delete"]').locator('button[type=submit]').click();
+    await expect(rule).toHaveCount(0);
+  }
   await audit.check('alert rules after delete');
 });

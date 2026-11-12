@@ -516,7 +516,7 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
     protected void Describe()
     {
         Summary("End-session endpoint");
-        Description("OpenID Connect RP-Initiated Logout 1.0, by GET with query parameters or POST with the same parameters as application/x-www-form-urlencoded. post_logout_redirect_uri must exactly match one registered for the client identified by client_id or id_token_hint and, for a project with a nonempty redirect allowlist, an entry in that list. A disallowed project URI answers a local error without navigation. The answer is otherwise the hosted Signed out page; with a validated post_logout_redirect_uri it continues there (with state, if sent) through a Continue link and a 2-second meta refresh. A live hosted session ends only when id_token_hint was issued to its user or the user confirms: otherwise the answer is a Sign out? page whose same-origin form POST (confirm=1, carrying the request's parameters) ends it, and the request itself changes nothing. Access and refresh tokens already issued stay valid until they expire or are revoked.");
+        Description("OpenID Connect RP-Initiated Logout 1.0, by GET with query parameters or POST with the same parameters as application/x-www-form-urlencoded. post_logout_redirect_uri must exactly match one registered for the client identified by client_id or id_token_hint and, for a project with a nonempty redirect allowlist, an entry in that list. A disallowed project URI answers a local error without navigation. The answer is otherwise the hosted Signed out page; with a validated post_logout_redirect_uri it continues there at once (with state, if sent), and a Continue link to the same address appears after 1.5 seconds for a browser that blocks the navigation. A live hosted session ends only when id_token_hint was issued to its user or the user confirms: otherwise the answer is a Sign out? page whose same-origin form POST (confirm=1, carrying the request's parameters) ends it, and the request itself changes nothing. Access and refresh tokens already issued stay valid until they expire or are revoked.");
         Tags("OAuth");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
@@ -550,8 +550,6 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
 
         await sessions.RevokeAsync(tenant, cookie, cancellationToken);
         BrowserSecurity.DeleteSessionCookie(this.HttpContext.Response, tenant);
-        // OpenIddict has validated post_logout_redirect_uri against the client's registration before this runs. The page
-        // navigates there itself, so the user sees that the sign-out happened.
         var returnTo = request.PostLogoutRedirectUri is { } uri
             ? (string.IsNullOrEmpty(request.State) ? uri : Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(uri, Parameters.State, request.State))
             : null;

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
-import { onboard, signInWithPassword, signUp, verify } from '../support/hosted';
+import { hostedReady, onboard, onHosted, signInWithPassword, signUp, verify } from '../support/hosted';
 import { newAddress } from '../support/inbox';
 import { shell } from '../support/shell';
 import { ownerSession, saveCookies, saveSecret, journey } from '../support/state';
@@ -57,7 +57,8 @@ test('a second user signs up on a phone, the Free plan refuses to invite them, a
   await page.locator('#ts-nav-toggle').click();
   await page.locator('.ts-account-trigger').click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await page.waitForLoadState('load');
+  await page.waitForURL(onHosted('sign-in'));
+  await hostedReady(page);
   await page.goto(`${dash}/databases`);
   await signInWithPassword(page, audit, email, password, 'second user');
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/databases');

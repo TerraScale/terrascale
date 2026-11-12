@@ -23,7 +23,7 @@ export async function deleteAccount(page: Page, audit: Audit, browser: Browser, 
   const fresh = await auditedContext(browser, { viewport: desktop });
   const again = await fresh.newPage();
   const refusal = new Audit(again, info);
-  refusal.expectStatus(/^https:\/\/auth\.terrascale\.tech\/ui\/terrascale\/sign-in\/password$/, 401);
+  refusal.expectStatus(/^https:\/\/auth\.terrascale\.tech\/ui\/terrascale\/sign-in\/password(?:\?|$)/, 401);
   await again.goto(`${dash}/login`);
   await again.waitForURL(onHosted('sign-in'));
   await hostedReady(again);

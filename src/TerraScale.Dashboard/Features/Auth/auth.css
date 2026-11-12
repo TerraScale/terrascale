@@ -78,6 +78,15 @@
   gap: var(--ts-s5);
 }
 
+.ts-delayed-continue {
+  animation: ts-delayed-continue 1.5s step-end;
+}
+
+@keyframes ts-delayed-continue {
+  from { visibility: hidden; }
+  to { visibility: visible; }
+}
+
 .ts-login-heading {
   display: grid;
   justify-items: center;

@@ -583,7 +583,7 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         Post("/ui/{slug}/reset/complete");
         Name("ui_password_reset_complete");
         Summary("Set a new password with a reset code");
-        Description("Same-origin form post with email, code and password; the password follows the sign-up policy (400 outside it, the code stays live). Limits: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
+        Description("Same-origin form post with email, code and password; the password follows the sign-up policy (400 outside it, the code stays live). Limits: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and continues to the sign-in page.");
         Tags("Sign-in");
         // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));

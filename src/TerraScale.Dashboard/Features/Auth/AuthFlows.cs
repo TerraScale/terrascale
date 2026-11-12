@@ -78,19 +78,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private async Task<Stored<T>?> ReadAsync<T>(HttpContext context, string cookie, string purpose)
         {
-            var token = context.Request.Cookies[cookie];
-            if (!IsToken(token))
-            {
-                return null;
-            }
-
-            var hash = Key(token);
-            AuthFlowRow? row;
-            await using (var db = await storage.CreateDbContextAsync(context.RequestAborted))
-            {
-                row = await db.AuthFlows.AsNoTracking().SingleOrDefaultAsync(flow => flow.TokenHash == hash && flow.Purpose == purpose, context.RequestAborted);
-            }
-
+            var row = await FindAsync(context, cookie, purpose);
             if (row is null)
             {
                 return null;
@@ -100,6 +88,19 @@ namespace TerraScale.Dashboard.Features.Auth
             try { return new(row, Open<T>(row, credentials.SessionEncryptionKey, purpose)); }
             catch (Exception error) when (error is CryptographicException or FormatException or JsonException)
             { throw new IOException("Authentication flow is invalid."); }
+        }
+
+        private async Task<AuthFlowRow?> FindAsync(HttpContext context, string cookie, string purpose)
+        {
+            var token = context.Request.Cookies[cookie];
+            if (!IsToken(token))
+            {
+                return null;
+            }
+
+            var hash = Key(token);
+            await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
+            return await db.AuthFlows.AsNoTracking().SingleOrDefaultAsync(flow => flow.TokenHash == hash && flow.Purpose == purpose, context.RequestAborted);
         }
 
         private async Task<bool> TakeAsync(AuthFlowRow row, CancellationToken cancellationToken)
@@ -116,6 +117,38 @@ namespace TerraScale.Dashboard.Features.Auth
                 return false;
             }
         }
+
+        public async Task HoldAlertSecretAsync(HttpContext context, AccountContext account, string ruleName, string secret)
+        {
+            await EndAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose);
+            await StoreAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose, new AlertSecretHandoff(account.UserId, StepUpFlow.Browser(context), account.Project?.Id, ruleName, secret), time.GetUtcNow().AddMinutes(2));
+        }
+
+        public async Task<AlertSecretHandoff?> TakeAlertSecretAsync(HttpContext context, AccountContext account)
+        {
+            if (!context.Request.Cookies.ContainsKey(AlertSecretCookie))
+            {
+                return null;
+            }
+
+            context.Response.Cookies.Delete(AlertSecretCookie, Options(context));
+            var row = await FindAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose);
+            if (row is null || !await TakeAsync(row, context.RequestAborted))
+            {
+                return null;
+            }
+
+            var credentials = await identity.ReadAsync(context.RequestAborted);
+            AlertSecretHandoff value;
+            try { value = Open<AlertSecretHandoff>(row, credentials.SessionEncryptionKey, AuthFlowRow.AlertSecretPurpose); }
+            catch (Exception error) when (error is CryptographicException or FormatException or JsonException)
+            { return null; }
+
+            return row.ExpiresAt > time.GetUtcNow().UtcDateTime && value.UserId == account.UserId &&
+                value.Browser == StepUpFlow.Browser(context) && value.ProjectId == account.Project?.Id ? value : null;
+        }
+
+        private const string AlertSecretCookie = "ts-dashboard-alert-secret";
 
         private async Task EndAsync(HttpContext context, string cookie, string purpose)
         {
@@ -177,6 +210,14 @@ namespace TerraScale.Dashboard.Features.Auth
         }
 
         private sealed record Stored<T>(AuthFlowRow Row, T Value);
+    }
+
+    public sealed record AlertSecretHandoff(string UserId, string Browser, string? ProjectId, string RuleName, string Secret)
+    {
+        public override string ToString()
+        {
+            return "Alert secret [REDACTED]";
+        }
     }
 
     public abstract record OidcTake

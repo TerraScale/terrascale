@@ -41,6 +41,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
             if (context.Request.Query["emailChanged"] == "1")
             {
+                context.Response.Headers["Refresh"] = "0;url=/login?returnTo=%2Fprofile";
                 return EmailChangedView.Create(new("Sign-in email changed", DocumentModel.NonceFor(context)));
             }
 

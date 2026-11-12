@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
@@ -26,7 +27,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 
     public static class AlertEndpoints
     {
-        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules)
+        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules, AuthFlows flows)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
@@ -39,10 +40,11 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return HttpRedirects.SeeOther("/");
             }
 
-            return await PageAsync(http, context, rules);
+            var handoff = await flows.TakeAlertSecretAsync(http, context);
+            return await PageAsync(http, context, rules, created: handoff is null ? null : new AlertRule("", handoff.RuleName, "", 0, null, false, null, default), secret: handoff?.Secret);
         }
 
-        internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules, string action)
+        internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules, AuthFlows flows, string action)
         {
             http.Response.Headers.CacheControl = "no-store";
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
@@ -71,7 +73,12 @@ namespace TerraScale.Dashboard.Features.Notifications
                 else
                 {
                     var (rule, secret) = await rules.CreateAsync(context, form, http.RequestAborted);
-                    return await PageAsync(http, context, rules, created: rule, secret: secret, status: 201);
+                    if (secret is not null)
+                    {
+                        await flows.HoldAlertSecretAsync(http, context, rule.Name, secret);
+                    }
+
+                    return HttpRedirects.SeeOther("/notifications/alerts");
                 }
             }
             catch (AccountAccessException error) { return await PageAsync(http, context, rules, error.Message, error.StatusCode); }
