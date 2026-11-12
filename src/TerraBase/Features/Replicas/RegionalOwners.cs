@@ -21,6 +21,8 @@ internal sealed class RegionalOwners(TerraBaseOptions options)
         || (_owners.TryGetValue(options.Region, out var owner) && owner.Node == options.MachineId
             && Volatile.Read(ref _draining) == 0 && TimeProvider.System.GetTimestamp() < Volatile.Read(ref _until));
 
+    internal bool Drained => Volatile.Read(ref _draining) == 1;
+
     internal RegionalOwner? Find(string region) => _owners.GetValueOrDefault(region);
 
     internal void Observe(RegionalOwner owner)

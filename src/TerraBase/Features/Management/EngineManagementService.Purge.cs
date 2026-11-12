@@ -1,6 +1,10 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
+using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -18,6 +22,8 @@ internal sealed partial class EngineManagementService
     private long _purgePassOverdue;
     private long _purgePassOldestTicks;
     private readonly Counter<long> _purgeErrors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.purge.errors");
+    private readonly ConcurrentDictionary<(string Database, DateTimeOffset DeletedAt), byte> _refusedShreds = new();
+    private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), byte> _skippedPurges = new();
 
     private void RegisterPurgeMetrics()
     {
@@ -50,8 +56,19 @@ internal sealed partial class EngineManagementService
         await PutAsync(transaction, DatabasePurge.Kind, database.Id, record, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<bool> ObserveShreddedAsync(TenantContext database, DateTimeOffset deletedAt, CancellationToken token) =>
-        await WriteAsync<bool>(async transaction =>
+    public async ValueTask<ObserveShreddedResult> ObserveShreddedAsync(TenantContext database, DateTimeOffset deletedAt, CancellationToken token)
+    {
+        if (PlatformDatabases.IsPlatformDatabase(database.DatabaseId))
+        {
+            if (_refusedShreds.TryAdd((database.DatabaseId!, deletedAt), 0))
+            {
+                logger.ZLogWarning($"Refused a shred record for platform database {database.DatabaseId:@Database} of project {database.ProjectId:@Project}, deleted at {deletedAt:@DeletedAt} by another node: its catalog record and files stay, and its backups have stopped until an operator removes the record");
+            }
+
+            return new Forbidden("a platform database is never shredded");
+        }
+
+        return await WriteAsync<bool>(async transaction =>
         {
             if (await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, ManagementJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false) is { } known)
             {
@@ -68,6 +85,7 @@ internal sealed partial class EngineManagementService
             }
             return true;
         }, static _ => false, token).ConfigureAwait(false);
+    }
 
     public async Task<bool> EraseShreddedAsync(TenantContext database, CancellationToken token)
     {
@@ -101,6 +119,16 @@ internal sealed partial class EngineManagementService
                 if (record.FormatVersion != 1 || record.Database.DatabaseId != stored.Id || record.ExpectedHolders.Length is 0 or > 1024)
                 {
                     throw new InvalidOperationException("a database purge record has unsupported identity or format");
+                }
+
+                if (PlatformDatabases.IsPlatformDatabase(record.Database.DatabaseId))
+                {
+                    if (_skippedPurges.TryAdd((stored.Id, record.RequestedAt), 0))
+                    {
+                        logger.ZLogWarning($"Skipped a purge record for platform database {stored.Id:@Database} of project {record.Database.ProjectId:@Project}, requested at {record.RequestedAt:@RequestedAt}: a platform database is never purged");
+                    }
+
+                    continue;
                 }
 
                 var localAbsent = await ReadAsync<bool>(async transaction =>

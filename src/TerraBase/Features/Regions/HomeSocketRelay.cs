@@ -2,7 +2,9 @@ using System.Buffers;
 using System.Net;
 using System.Net.WebSockets;
 using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
@@ -87,6 +89,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             KeepAliveInterval = KeepAlive,
             KeepAliveTimeout = KeepAlive,
         });
+        context.Features.GetRequiredFeature<RegionalIngress.Lease>().Dispose();
 
         var toHome = PumpAsync(client, upstream, cancellationToken);
         var toClient = PumpAsync(upstream, client, cancellationToken);

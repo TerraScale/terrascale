@@ -23,7 +23,16 @@ internal static class RegionalForwarding
             }
 
             var ingress = services.GetRequiredService<RegionalIngress>();
-            using var request = await ingress.EnterAsync(context.RequestAborted).ConfigureAwait(false);
+            var parkWhileHeld = !context.WebSockets.IsWebSocketRequest || context.GetEndpoint()?.Metadata.GetMetadata<RegionalIngress.RefusedWhileHeld>() is null;
+            using var request = await ingress.EnterAsync(parkWhileHeld, context.RequestAborted).ConfigureAwait(false);
+            if (request is null || (!parkWhileHeld && owners.Drained))
+            {
+                context.Response.Headers.RetryAfter = "1";
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                return;
+            }
+
+            context.Features.Set(request);
             if (owners.Writer)
             {
                 await next(context).ConfigureAwait(false);

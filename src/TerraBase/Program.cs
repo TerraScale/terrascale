@@ -52,9 +52,9 @@ catch (TerraBaseConfigurationException error)
     await Console.Error.WriteLineAsync($"terrabase: {error.Message}");
     return 2;
 }
-if (options.ShapeStorage is null && environmentName != Environments.Development)
+if (options.ShapeStorage is null && (environmentName != Environments.Development || options.Backup is not null))
 {
-    await Console.Error.WriteLineAsync("terrabase: TERRABASE_SHAPES_ACCESS_KEY_ID, TERRABASE_SHAPES_SECRET_ACCESS_KEY and TERRABASE_SHAPES_CDN_API_TOKEN are required outside Development");
+    await Console.Error.WriteLineAsync("terrabase: TERRABASE_SHAPES_ACCESS_KEY_ID, TERRABASE_SHAPES_SECRET_ACCESS_KEY and TERRABASE_SHAPES_CDN_API_TOKEN are required outside Development and with backup, whose data keys live in shape storage");
     return 2;
 }
 var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], EnvironmentName = environmentName });
