@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Configuration;
@@ -30,7 +31,13 @@ internal sealed class ClosureFanout(
 
     internal const string RegionScope = "region";
 
-    internal const string CheckScope = "check";
+    internal const string Route = "/admin/projects/{project}/closure";
+
+    internal const string VersionQuery = "version";
+
+    internal const string ClosureQuery = "closureId";
+
+    internal const string OrganizationQuery = "authorityOrganizationId";
 
     private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(5);
 
@@ -42,12 +49,16 @@ internal sealed class ClosureFanout(
     public void Refused(string project, string region) => faults.Unacknowledged(project, new(RegionAnswer.NotEmpty), region);
 
     public async Task<RegionAnswer> CheckAsync(string region, string project, ProjectClosureRequest closure, CancellationToken cancellationToken) =>
-        (await AskAsync(region, CheckScope, project, closure, cancellationToken).ConfigureAwait(false)).Answer;
+        (await AskAsync(region, closure, address => new(HttpMethod.Get, new Uri(address, Path(project) + Query(closure))), cancellationToken).ConfigureAwait(false)).Answer;
 
     public async Task<RegionAnswer> SendAsync(string region, ProjectClosureRecord closure, CancellationToken cancellationToken)
     {
-        var reply = await AskAsync(region, RegionScope, closure.ProjectId,
-            new ProjectClosureRequest(closure.FormatVersion, closure.ClosureId, closure.AuthorityOrganizationId), cancellationToken).ConfigureAwait(false);
+        var request = new ProjectClosureRequest(closure.FormatVersion, closure.ClosureId, closure.AuthorityOrganizationId);
+        var reply = await AskAsync(region, request, address => new(HttpMethod.Put, new Uri(address, Path(closure.ProjectId)))
+        {
+            Headers = { { ScopeHeader, RegionScope } },
+            Content = JsonContent.Create(request, ManagementJsonContext.Default.ProjectClosureRequest),
+        }, cancellationToken).ConfigureAwait(false);
         if (reply.Answer == RegionAnswer.Empty)
         {
             reply = new(RegionAnswer.Invalid);
@@ -61,7 +72,16 @@ internal sealed class ClosureFanout(
         return reply.Answer;
     }
 
-    private async Task<RegionReply> AskAsync(string region, string scope, string project, ProjectClosureRequest closure, CancellationToken cancellationToken)
+    private static string Path(string project) => Route.Replace("{project}", Uri.EscapeDataString(project), StringComparison.Ordinal);
+
+    private static string Query(ProjectClosureRequest closure) => QueryString.Create(new Dictionary<string, string?>(StringComparer.Ordinal)
+    {
+        [VersionQuery] = closure.Version.ToString(CultureInfo.InvariantCulture),
+        [ClosureQuery] = closure.ClosureId,
+        [OrganizationQuery] = closure.AuthorityOrganizationId,
+    }).ToUriComponent();
+
+    private async Task<RegionReply> AskAsync(string region, ProjectClosureRequest closure, Func<Uri, HttpRequestMessage> ask, CancellationToken cancellationToken)
     {
         try
         {
@@ -72,13 +92,9 @@ internal sealed class ClosureFanout(
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(PeerTimeout);
-            using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(peer.Address, "/admin/projects/" + Uri.EscapeDataString(project) + "/closure"))
-            {
-                Version = HttpVersion.Version20,
-                VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-                Headers = { { ScopeHeader, scope } },
-                Content = JsonContent.Create(closure, ManagementJsonContext.Default.ProjectClosureRequest),
-            };
+            using var request = ask(peer.Address);
+            request.Version = HttpVersion.Version20;
+            request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
             credential.Sign(request.Headers);
             using var client = http.CreateClient(HomeLocator.HttpClientName);
             using var response = await client.SendAsync(request, timeout.Token).ConfigureAwait(false);
