@@ -65,7 +65,7 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
   const renewal = new Date();
   renewal.setUTCMonth(renewal.getUTCMonth() + 1);
   await expect(fact(page, '#billing-summary', 'Renewal')).toHaveText(renewal.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }));
-  await expect(fact(page, '#billing-payment', 'Payment method')).toHaveText('Visa •••• 4242, expires 12/34');
+  await expect(page.locator('#billing-payment-method')).toHaveText('Visa •••• 4242, expires 12/34');
   await expect(fact(page, '#billing-summary', 'Price')).toHaveText('$20.00 / monthly');
   await expect(page.locator('#billing-usage')).toHaveText("Usage this period: $0.00 so far, within Pro's 2,000,000 included operation units. Units above them cost $5.00 per million.");
   await expect(page.locator('article.ts-plan[aria-current="true"] h3')).toHaveText('Pro');

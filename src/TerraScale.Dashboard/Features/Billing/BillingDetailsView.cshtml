@@ -10,7 +10,7 @@
     <div class="ts-card-body">
         @if (Model.PaymentMethodUnavailable) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Payment method could not be loaded. Reload billing to retry.</p></div> }
         <dl class="ts-billing-facts ts-billing-facts-stacked">
-            <div><dt>Payment method</dt><dd>@(Model.PaymentMethodUnavailable ? "Not reported" : Model.PaymentMethod?.Label ?? (org.PaymentMethodValidated ? "On file" : "Not set"))</dd></div>
+            <div><dt class="ts-sr-only">Payment method</dt><dd id="billing-payment-method">@(Model.PaymentMethodUnavailable ? "Not reported" : Model.PaymentMethod?.Label ?? (org.PaymentMethodValidated ? "On file" : "Not set"))</dd></div>
             @if (details && !Model.DetailsUnavailable && Model.Details is { } recorded)
             {
                 <div><dt>Billing address</dt><dd>@if (recorded.Name.Length > 0) { <span>@recorded.Name</span><br /> }@if (recorded.Address.Count == 0) { <span class="ts-meta">Not recorded</span> } else { <address>@foreach (var line in recorded.Address) { <span>@line</span><br /> }</address> }</dd></div>
