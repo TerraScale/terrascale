@@ -2,10 +2,10 @@ import json
 import sys
 from pathlib import Path
 
-document = json.loads(Path(sys.argv[1]).read_text())
+schema = json.loads(Path(sys.argv[1]).read_text())
 path = "/v1/{project}/step-up"
-entry = document["paths"][path]
-schemas = document["components"]["schemas"]
+entry = schema["paths"][path]
+schemas = schema["components"]["schemas"]
 names = set()
 
 
@@ -26,13 +26,13 @@ def refs(value):
 
 refs(entry)
 out = {
-    "openapi": document["openapi"],
+    "openapi": schema["openapi"],
     "info": {"title": "Project step-up", "version": "v1"},
-    "servers": document["servers"],
+    "servers": schema["servers"],
     "paths": {path: entry},
     "components": {
         "schemas": {name: schemas[name] for name in sorted(names)},
-        "securitySchemes": document["components"]["securitySchemes"],
+        "securitySchemes": schema["components"]["securitySchemes"],
     },
 }
 Path(sys.argv[2]).write_text(json.dumps(out, indent=2) + "\n")
