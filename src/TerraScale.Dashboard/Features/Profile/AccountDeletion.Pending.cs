@@ -67,8 +67,8 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
 
                 return PendingPage(http, completed ? "Finishing dashboard cleanup" : "Account deletion is pending",
-                    completed ? "Account closure is confirmed. This page removes the dashboard records and signs you out." :
-                    "Account closure is still pending on the machine that is closing it. This page keeps checking and does not name a waiting step.",
+                    completed ? "Your account is closed. This page removes the last dashboard records and signs you out." :
+                    "Your account deletion is still being processed. This page keeps checking; you don't need to do anything or submit it again.",
                     attempt, 202);
             }
             catch (AccountAccessException error) when (error.StatusCode is >= 400 and < 500 and not (408 or 429))
