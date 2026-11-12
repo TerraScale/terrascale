@@ -7,7 +7,6 @@ const contextParameters = new Set(['organizationId', 'projectId']);
 const chartWindows = new Set(['range', 'reads', 'writes', 'storage', 'latency']);
 
 const journeyPages: readonly PagePattern[] = [
-  { path: /^\/databases\/[0-9A-HJKMNP-TV-Z]{26}\/settings$/, query: { renamed: /^1$/ } },
   { path: /^\/organization$/, query: { newOrganization: /^(payment|project)$/, payment: /^(success|canceled)$/, draft_id: /^([0-9A-HJKMNP-TV-Z]{26})?$/ } },
   { path: /^\/onboarding$/ },
   { path: /^\/storage$/, query: { bucket: /^[0-9A-HJKMNP-TV-Z]{26}$/, tab: /^(settings)?$/ } },
