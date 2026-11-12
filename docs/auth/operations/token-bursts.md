@@ -45,6 +45,9 @@ answered about 20 admitted and the rest `503` after 10 s before. When all of a b
 admitted request still costs one write on TerraBase's single writer, and an over-limit request's own increment waits
 behind them, so the time to its `429` grows with the burst.
 
+Each refusal is counted per budget in `ts_auth.rate_limit_refused{purpose}`, so a budget that a flood used up shows in
+metrics.
+
 ## Regions
 
 Each budget keeps one count per region (gru, sjc, fra); a region writes only its own, and a read sums the three. A

@@ -37,6 +37,8 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
 
     private static readonly Counter<long> Fallbacks = Meter.CreateCounter<long>("ts_auth.rate_limit_fallback", description: "Rate-limit checks served from this replica's memory because storage failed.");
 
+    private static readonly Counter<long> Refusals = Meter.CreateCounter<long>("ts_auth.rate_limit_refused", description: "Attempts refused because their budget was used up.");
+
     // Fallback warnings are sampled to one a minute; the counter records every one.
     private long warnedAt = long.MinValue;
 
@@ -133,6 +135,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             var debt = debts.Sum();
             if (debt + step > capacity)
             {
+                Refusals.Add(1, new KeyValuePair<string, object?>("purpose", purpose));
                 return TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((debt + step - capacity) / 1000.0)));
             }
 
@@ -289,6 +292,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             var used = components.Where(component => component?.Value.Window == effective).Sum(component => (long)component!.Value.Used);
             if (used >= maximum)
             {
+                Refusals.Add(1, new KeyValuePair<string, object?>("purpose", purpose));
                 var end = cooldown
                     ? DateTimeOffset.FromUnixTimeMilliseconds(effective) + window
                     : DateTimeOffset.FromUnixTimeSeconds((effective + 1) * windowSeconds);
