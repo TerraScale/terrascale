@@ -6,6 +6,7 @@ import { object } from "./decode.js";
 import { parseExactJson } from "./json.js";
 import { region as regionId } from "./catalog.js";
 import { v1Route, v1RoutePath } from "./routes.js";
+import { retrySqlConnect } from "./sql-connect-retry.js";
 import { V1SqlSocket, sqlSocketProtocol } from "./sql-socket.js";
 import { apiService, authService, serviceOrigin } from "../origin.js";
 import { ShapeHints, shapeHintProtocol } from "./shape-hints.js";
@@ -186,12 +187,14 @@ export class V1Transport {
     const url = new URL(await this.url("connectSql", params, signal));
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const token = await this.#accessToken(signal);
-    if (sendsUpgradeHeaders()) {
-      const headers = { authorization: `Bearer ${token}` };
-      if (this.#regionPin !== "") Object.assign(headers, { "X-TerraScale-Region-Pin": this.#regionPin });
-      return V1SqlSocket.open(new WebSocketClass(url.href, { protocols: [sqlSocketProtocol], headers }), signal);
-    }
-    return V1SqlSocket.open(new WebSocketClass(url.href, [sqlSocketProtocol]), signal, token);
+    return retrySqlConnect(async signal => {
+      if (sendsUpgradeHeaders()) {
+        const headers = { authorization: `Bearer ${token}` };
+        if (this.#regionPin !== "") Object.assign(headers, { "X-TerraScale-Region-Pin": this.#regionPin });
+        return V1SqlSocket.open(new WebSocketClass(url.href, { protocols: [sqlSocketProtocol], headers }), signal);
+      }
+      return V1SqlSocket.open(new WebSocketClass(url.href, [sqlSocketProtocol]), signal, token);
+    }, readDeadlineMs, signal);
   }
 
   /** @param {Readonly<Record<string, string>>} params @param {URLSearchParams} query @param {AbortSignal} signal */

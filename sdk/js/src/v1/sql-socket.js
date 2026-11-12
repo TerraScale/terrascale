@@ -1,4 +1,5 @@
 import { array, boolean, malformed, object, string } from "./decode.js";
+import { listenForSqlRefusal } from "./sql-connect-retry.js";
 import { SqlError } from "./errors.js";
 import { parseExactJson, stringifyExactJson } from "./json.js";
 import { decodeSqlResult, encodeStatement, sqlRowObjects, sqlStatement } from "./sql-execute.js";
@@ -93,6 +94,14 @@ export class V1SqlSocket {
       const abort = () => { socket.close(1000, ""); reject(signal?.reason); };
       if (signal?.aborted) return abort();
       signal?.addEventListener("abort", abort, { once: true });
+      listenForSqlRefusal(socket, error => {
+        signal?.removeEventListener("abort", abort);
+        reject(error);
+      });
+      socket.addEventListener("error", () => {
+        signal?.removeEventListener("abort", abort);
+        reject(new SqlSocketClosedError(1006, "connection failed"));
+      }, { once: true });
       socket.addEventListener("open", () => {
         signal?.removeEventListener("abort", abort);
         if (socket.protocol !== sqlSocketProtocol) {

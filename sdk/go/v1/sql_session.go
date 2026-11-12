@@ -249,7 +249,9 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 		return nil, err
 	}
 	target = "ws" + strings.TrimPrefix(target, "http")
-	for refreshed := false; ; refreshed = true {
+	refreshed := false
+	overloads := 1
+	for {
 		token, err := c.bearerToken(ctx, "")
 		if err != nil {
 			return nil, err
@@ -268,6 +270,13 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 			body, _ := io.ReadAll(resp.Body)
 			apiErr := parseAPIError(resp.StatusCode, resp.Header, body)
 			if resp.StatusCode == http.StatusUnauthorized && c.invalidateToken(token, apiErr, refreshed) {
+				refreshed = true
+				continue
+			}
+			if retry, waitErr := waitSQLConnect(ctx, apiErr, overloads); waitErr != nil {
+				return nil, waitErr
+			} else if retry {
+				overloads++
 				continue
 			}
 			return nil, apiErr

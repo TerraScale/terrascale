@@ -32,6 +32,7 @@ mod management;
 mod observability;
 mod reporting;
 mod request_logs;
+mod sql_connect_retry;
 mod sql_exec;
 mod sql_session;
 mod system;
