@@ -14,17 +14,6 @@ namespace TerraScale.Authentication.Features.RateLimiting;
 /// <param name="RetryAfter">How long this replica must wait before retrying.</param>
 public readonly record struct AttemptRejection(DateTimeOffset Until, TimeSpan RetryAfter);
 
-/// <summary>
-/// Fixed attempt windows (one minute unless a caller chooses another) and elapsed cooldowns shared by every replica through conditional writes to
-/// TerraBase, for authentication, recovery, verification and token endpoints. Each region conditionally updates only its
-/// own bucket on its region's single TerraBase node; reads sum the three replicated components.
-/// Delayed replication can admit extra attempts, but never replaces another region's contribution. A replica with a
-/// slower clock never resets a window another replica has already advanced. When storage fails, the same budgets run
-/// on this replica's in-memory buckets (<see cref="LocalAttemptStore"/>) instead, so brute-force protection holds per
-/// replica and an outage of the limiter's storage never takes sign-in down by itself; every fallback is logged and
-/// counted. Other storage faults (rejected credentials, damaged buckets), persistent contention, or a full in-memory
-/// store fail closed with 503; an attempt is never admitted unrecorded.
-/// </summary>
 public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, AuthOptions options, string region = "gru", ILogger<AttemptLimiter>? logger = null)
 {
     /// <summary>The TerraBase table holding up to three regional <see cref="AttemptBucket"/> records per limited subject, plus notice claims.</summary>
