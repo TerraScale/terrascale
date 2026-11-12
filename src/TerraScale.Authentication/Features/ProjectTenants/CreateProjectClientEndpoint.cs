@@ -19,7 +19,7 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        _ = caller.Person;
+        var person = caller.RequirePerson();
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.CreateClientRequest, cancellationToken);
         var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
@@ -38,7 +38,7 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             }
         }
 
-        var person = await proofs.ConsumeHeaderAsync(caller.Person, this.HttpContext.Request, "create_oauth_client", null, cancellationToken);
+        person = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "create_oauth_client", null, cancellationToken);
         var (client, secret) = await this.Tenants.CreateClientAsync(this.HttpContext, person, projectId, name, type, redirects, applications, cancellationToken);
         return Results.Json(Map(client, secret), ProjectTenantJson.Default.ClientBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"/v1/{projectId}/clients/{client.ClientId}");

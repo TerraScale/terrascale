@@ -31,16 +31,20 @@ A project tenant serves, while its project exists:
 Base: `https://auth.terrascale.tech/v1/{project}`. JSON bodies use snake_case.
 
 Customer backends can send `Authorization: Bearer <project secret API key>`.
-The key must belong to this project and have no database restriction. GET
-requires `auth:read`; changes require `auth:write` (write does not imply read).
+The key must belong to this project and have no database restriction. GET requires `auth:read`, except admin-only GET routes require `auth:write`.
+Changes require `auth:write` (write does not imply read).
 Both the key and project IP allowlists apply. Organization keys and exchanged
 API-key JWTs are refused. A revoked or expired secret key answers 401 on the
-next request: management does not cache keys. Every authorized mutation first commits an
-organization audit event named `<operation_id>.requested`, with the key ULID
-as actor and the route as detail. Audit failure prevents the mutation; failed
-mutation attempts can also have an audit event. Step-up operations answer 403 `person_required` to keys.
-Only project admins can issue keys with `auth:write`; members can issue
-`auth:read` keys.
+next request: management does not cache keys. Every mutation commits an organization
+audit event named `<operation_id>.succeeded` in the same atomic save as its change,
+with the key ULID as actor and the route as detail. Audit failure rolls back the
+change. Failed attempts record `<operation_id>.failed` with the HTTP status.
+Step-up operations answer 403 `person_required` to keys. Provider PUT is also
+person-only because it replaces external sign-in credentials and can redirect
+identity trust to a different OAuth application.
+Only project admins can issue, rotate or change allowlists on keys with
+`auth:write`; members can issue `auth:read` keys. Viewers cannot issue auth keys.
+Authentication scopes are never included in TerraBase token-exchange grants.
 
 The five SDKs use their existing credential pattern:
 
@@ -58,8 +62,8 @@ Keep secret keys in the backend. Person credentials remain required for step-up.
 sign-in access token>`, as for `/v1/terrascale`. ts-auth reads the caller's
 effective project role (`platform-contract.md` section 3) on every request:
 
-- `viewer` reads every resource;
-- `admin` changes them;
+- `viewer` reads settings, users, sessions and OAuth clients;
+- `admin` changes resources and reads admin-only routes;
 - an unknown project, or one the caller cannot see, answers `404`; a role too
   low answers `403 forbidden`.
 
@@ -77,12 +81,12 @@ effective project role (`platform-contract.md` section 3) on every request:
 | `GET /clients` | viewer | `auth:read` | `{items: [Client], next: null}` |
 | `POST /clients` | admin | Person only (step-up) | `201 Client` with `client_secret` once for a confidential client |
 | `DELETE /clients/{client_id}` | admin | `auth:write` | `204` |
-| `GET /users/export?format=&limit=&after=` | admin | `auth:read` | Audited directory page (JSON or CSV) |
-| `PUT /providers/{provider}` | admin | `auth:write` | `Settings` |
+| `GET /users/export?format=&limit=&after=` | admin | `auth:write` | Audited directory page (JSON or CSV) |
+| `PUT /providers/{provider}` | admin | Person only (external sign-in credentials) | `Settings` |
 | `DELETE /providers/{provider}` | admin | `auth:write` | `Settings` |
 | `PUT /clients/{client_id}` | admin | Person only (step-up) | `Client` |
 | `POST /clients/{client_id}/secret/rotate` | admin | Person only (step-up) | `ClientSecret` |
-| `GET /webhook-endpoints` | admin | `auth:read` | `{items: [WebhookEndpoint], next: null}` without secrets |
+| `GET /webhook-endpoints` | admin | `auth:write` | `{items: [WebhookEndpoint], next: null}` without secrets |
 | `POST /webhook-endpoints` | admin | Person only (step-up) | `201 WebhookEndpoint` with `secret` once; needs a `create_webhook_endpoint` step-up proof |
 | `DELETE /webhook-endpoints/{id}` | admin | `auth:write` | `204` |
 | `POST /webhook-endpoints/{id}/rotate-secret` | admin | Person only (step-up) | `WebhookSecret` with `secret` once; needs a `rotate_webhook_secret` step-up proof |

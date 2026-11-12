@@ -19,7 +19,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        _ = caller.Person;
+        var person = caller.RequirePerson();
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var sent = this.HttpContext.Request;
         var empty = sent.ContentLength is 0
@@ -31,7 +31,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             throw Invalid("grace_seconds must be 0 to 86400 seconds.");
         }
 
-        _ = await proofs.ConsumeHeaderAsync(caller.Person, this.HttpContext.Request, "rotate_oauth_client", null, cancellationToken);
+        _ = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "rotate_oauth_client", null, cancellationToken);
         var previous = this.HttpContext.Items[Tenancy.ItemKey];
         this.HttpContext.Items[Tenancy.ItemKey] = projectId;
         try

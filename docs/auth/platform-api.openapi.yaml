@@ -1037,7 +1037,7 @@ paths:
       operationId: create_project_api_key
       tags: [API keys]
       summary: Create a project API key
-      description: Needs the project's member role; scopes must be within the caller's. auth:write additionally requires project admin. auth:read and auth:write authorize project Authentication management reads and changes respectively; step-up operations remain person-only. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.
+      description: Needs the project's member role; scopes must be within the caller's. auth:write additionally requires project admin. auth:read authorizes project Authentication management reads; auth:write authorizes changes and admin-only GET routes. Provider PUT and step-up operations remain person-only. Rotation and allowlist changes require the same scope authority as creation. Authentication scopes are excluded from TerraBase grants. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.
       requestBody:
         required: true
         content:

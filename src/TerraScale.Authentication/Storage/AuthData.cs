@@ -6,6 +6,31 @@ namespace TerraScale.Authentication.Storage;
 
 public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
 {
+    private readonly AsyncLocal<WriteAudit?> audit = new();
+
+    public async Task<T> AuditWritesAsync<T>(Change success, Func<CancellationToken, Task<T>> write, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(success);
+        ArgumentNullException.ThrowIfNull(write);
+        var previous = this.audit.Value;
+        var current = new WriteAudit(success);
+        this.audit.Value = current;
+        try
+        {
+            var result = await write(cancellationToken).ConfigureAwait(false);
+            if (!current.Committed && !await this.SaveAsync([], cancellationToken).ConfigureAwait(false))
+            {
+                throw ApiException.Unavailable();
+            }
+
+            return result;
+        }
+        finally
+        {
+            this.audit.Value = previous;
+        }
+    }
+
     public async Task<T> ReadAsync<T>(Func<AuthDbContext, CancellationToken, Task<T>> read, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(read);
@@ -34,6 +59,12 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
     public async Task<bool> SaveAsync(IReadOnlyList<Change> changes, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(changes);
+        var currentAudit = this.audit.Value;
+        if (currentAudit is { Committed: false })
+        {
+            changes = [.. changes, currentAudit.Success];
+        }
+
         if (changes.Count == 0)
         {
             return true;
@@ -56,6 +87,7 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
         try
         {
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            currentAudit?.Committed = true;
             return true;
         }
         catch (DbUpdateException failure) when (IsConflict(failure))
@@ -77,6 +109,13 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
             await transaction.CommitAsync(token).ConfigureAwait(false);
             return result;
         }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private sealed class WriteAudit(Change success)
+    {
+        public Change Success { get; } = success;
+
+        public bool Committed { get; set; }
     }
 
     public static bool IsConflict(DbUpdateException failure) => failure switch

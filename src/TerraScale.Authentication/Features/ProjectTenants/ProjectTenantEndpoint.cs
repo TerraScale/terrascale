@@ -104,7 +104,25 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         }
 
         await keys.RecordUseAsync(key, cancellationToken);
-        return await this.HandleAsync(new ProjectCaller.SecretKey(key), cancellationToken);
+        if (HttpMethods.IsGet(request.Method))
+        {
+            return await this.HandleAsync(new ProjectCaller.SecretKey(key), cancellationToken);
+        }
+
+        var operation = this.HttpContext.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName
+            ?? throw new InvalidOperationException("A management operation must have a name.");
+        try
+        {
+            return await this.Tenants.AuditKeyWriteAsync(key, operation, request.Path,
+                token => this.HandleAsync(new ProjectCaller.SecretKey(key), token), cancellationToken);
+        }
+        catch (Exception error)
+        {
+            var status = error is ApiException failure ? failure.Status
+                : AuthData.IsUnavailable(error) ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status500InternalServerError;
+            await this.Tenants.AuditKeyFailureAsync(key, operation, request.Path, status, CancellationToken.None);
+            throw;
+        }
     }
 
     protected async Task<string> AccessAsync(ProjectCaller caller, string minimum, CancellationToken cancellationToken)
@@ -117,14 +135,8 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
                 await this.Tenants.CheckAccessAsync(person.Id, projectId, minimum, cancellationToken);
                 break;
             case ProjectCaller.SecretKey(var key):
-                await this.Tenants.CheckKeyAccessAsync(key, projectId, HttpMethods.IsGet(this.HttpContext.Request.Method)
+                await this.Tenants.CheckKeyAccessAsync(key, projectId, HttpMethods.IsGet(this.HttpContext.Request.Method) && minimum != Roles.Admin
                     ? TerraBaseScopes.AuthRead : TerraBaseScopes.AuthWrite, this.HttpContext.Connection.RemoteIpAddress, cancellationToken);
-                if (!HttpMethods.IsGet(this.HttpContext.Request.Method))
-                {
-                    var operation = this.HttpContext.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName
-                        ?? throw new InvalidOperationException("A management operation must have a name.");
-                    await this.Tenants.AuditKeyWriteAsync(key, operation + ".requested", this.HttpContext.Request.Path, cancellationToken);
-                }
 
                 break;
             default:

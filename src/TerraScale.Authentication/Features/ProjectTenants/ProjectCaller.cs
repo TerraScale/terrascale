@@ -8,6 +8,17 @@ public abstract record ProjectCaller
 
     public abstract string Id { get; }
 
+    public UserRecord RequirePerson()
+    {
+        if (this is not SignedIn(var user))
+        {
+            throw new ApiException(StatusCodes.Status403Forbidden, "person_required",
+                "This operation requires a person's sign-in access token; project API keys are not allowed.");
+        }
+
+        return user;
+    }
+
     public abstract UserRecord Person { get; }
 
     public sealed record SignedIn(UserRecord User) : ProjectCaller
@@ -21,7 +32,6 @@ public abstract record ProjectCaller
     {
         public override string Id => Key.Id;
 
-        public override UserRecord Person => throw new ApiException(StatusCodes.Status403Forbidden, "person_required",
-            "This step-up operation requires a person's sign-in access token; project API keys are not allowed.");
+        public override UserRecord Person => this.RequirePerson();
     }
 }
