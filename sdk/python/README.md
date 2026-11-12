@@ -261,8 +261,10 @@ exchange runs at a time and concurrent callers share its result. A connect or
 connection-pool failure never reached the server, so writes retry it too; when
 attempts run out the `TerraScaleError` names the cause and says the request was
 not sent. SQL statements and other writes are never replayed after an ambiguous
-failure: a transport failure after sending, 5xx or malformed acknowledgement
-raises `CommitUncertainError`; reconcile state before retrying. Malformed read responses raise `InvalidResponseError`.
+failure: a transport failure after sending, a server code of `commit_uncertain` or
+`write_outcome_unknown`, or a malformed success acknowledgement raises
+`CommitUncertainError`; reconcile state before retrying. Other coded server errors,
+including 503 placement refusals, are definite refusals. Malformed read responses raise `InvalidResponseError`.
 The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Development
@@ -304,6 +306,8 @@ A repeat during that move returns the same 503; a different change returns `409 
 The SDK exposes `ServiceUnavailableError.code == "replica_not_ready"` and `ConflictError.code == "move_in_progress"`. Neither code is automatically retried;
 general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
 The caller bounds this repeat loop to 90 seconds and propagates other errors:
+
+`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
 
 ```python
 deadline = time.monotonic() + 90

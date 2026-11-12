@@ -734,6 +734,8 @@ The SDK exposes `*tb.APIError.Code` with `tb.ErrReplicaNotReady` and `tb.ErrMove
 general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
 The caller bounds this repeat loop to 90 seconds and propagates other errors:
 
+`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
+
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second); defer cancel()
 for { _, err := client.SetDatabasePlacement(ctx, project, database, tb.DatabasePlacement{Regions: []string{"fra"}}); if err == nil { break }; if !errors.Is(err, tb.ErrReplicaNotReady) { return err }

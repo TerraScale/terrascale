@@ -96,15 +96,25 @@ func createEarlierPlaced(ctx context.Context, tb *v1.Client, project, name, writ
 	if err != nil {
 		return err
 	}
+	placementFailure := func(cause error, flags string) error {
+		return fmt.Errorf("database %s was created; its placement was not applied: %w. Run `ts db placement %s %s` to apply it.", name, cause, name, flags)
+	}
 	if writer == "" && len(replicas) != 0 {
+		flags := "-replica-regions " + strings.Join(replicas, ",")
 		writer, err = placementWriter(ctx, tb, project, created.ID)
 		if err != nil {
-			return err
+			return placementFailure(err, flags)
 		}
-		return setPlacement(ctx, tb, project, created.ID, v1.DatabasePlacement{Regions: append([]string{writer}, replicas...)}, out)
+		if err = setPlacement(ctx, tb, project, created.ID, v1.DatabasePlacement{Regions: append([]string{writer}, replicas...)}, out); err != nil {
+			return placementFailure(err, flags)
+		}
+		return nil
 	}
 	if all {
-		return setPlacement(ctx, tb, project, created.ID, v1.DatabasePlacement{AllRegions: true}, out)
+		if err = setPlacement(ctx, tb, project, created.ID, v1.DatabasePlacement{AllRegions: true}, out); err != nil {
+			return placementFailure(err, "-all-regions")
+		}
+		return nil
 	}
 	return emitJSON(out, created)
 }

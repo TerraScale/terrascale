@@ -60,7 +60,7 @@ export const V1ErrorCode = Object.freeze({
   mustRefetch: "must_refetch", payloadTooLarge: "payload_too_large",
   unsupportedMediaType: "unsupported_media_type", uriTooLong: "uri_too_long", shapeBusy: "shape_busy",
   internalError: "internal_error", capacity: "capacity",
-  replicaNotReady: "replica_not_ready", moveInProgress: "move_in_progress", wrongRegion: "wrong_region",
+  replicaNotReady: "replica_not_ready", moveInProgress: "move_in_progress", moveUnresolved: "move_unresolved", wrongRegion: "wrong_region",
 });
 
 /** `401 invalid_key`: the API key is unknown or revoked. */

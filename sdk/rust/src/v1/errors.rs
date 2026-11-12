@@ -66,7 +66,7 @@ pub enum Error {
     /// `401 key_expired`: permanent; replace the key without retry or exchange.
     #[error("terrabase: 401 key_expired{}", fmt_msg(message))]
     KeyExpired { message: Option<String> },
-    /// `500 internal_error`: a mutation may have taken effect.
+    /// `500 internal_error`: the server refused the request.
     #[error("terrabase: 500 internal_error")]
     InternalError,
     /// A refused SQL statement; the request rolled back. `status` is the HTTP
@@ -260,31 +260,21 @@ impl Error {
         }
     }
 
-    /// True when a mutation may have been applied although an error was
-    /// returned: `commit_uncertain`, `internal_error`, any other 5xx (a
-    /// gateway or unknown server failure may follow a commit), a non-2xx
-    /// status outside 4xx, a transport failure, an oversized response to a
-    /// mutation that may have been applied, or an undecodable mutation
-    /// acknowledgement. Only 4xx responses and local errors are certain
-    /// failures. Reconcile an uncertain mutation by reading its effects.
-    /// For reads, which have no effect, the flag only means the request may be
-    /// retried.
+    /// True for server codes declaring an unknown write outcome, a transport
+    /// failure without a response, or an unreadable mutation acknowledgement.
+    /// Other coded server errors are definite refusals; reconcile unknown
+    /// outcomes by reading state before deciding whether to repeat a mutation.
     #[must_use]
     pub fn is_uncertain(&self) -> bool {
         match self {
-            Self::Response { status, error, .. } => {
-                !(400..500).contains(status) && error.is_uncertain()
-            }
-            Self::CommitUncertain
-            | Self::InternalError
-            | Self::Transport(_)
-            | Self::UndecodableAck { .. } => true,
+            Self::Response { error, .. } => error.is_uncertain(),
+            Self::CommitUncertain | Self::Transport(_) | Self::UndecodableAck { .. } => true,
             Self::ResponseTooLarge {
                 may_have_applied, ..
             } => *may_have_applied,
-            Self::Api { status, .. } => !(400..500).contains(status),
-            // A session error frame is a refusal the server reported.
-            Self::Sql { status, .. } => status.is_some_and(|s| !(400..500).contains(&s)),
+            Self::Api { code, .. } => {
+                matches!(code.as_str(), "commit_uncertain" | "write_outcome_unknown")
+            }
             _ => false,
         }
     }

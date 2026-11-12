@@ -33,17 +33,7 @@ routes = sorted(
     if method in ("get", "post", "put", "patch", "delete")
 )
 out = Path(__file__).parent.parent / "contracts" / "openapi-routes.json"
-out.write_text(
-    json.dumps(
-        {
-            "source": origin,
-            "fetched": date.today().isoformat(),
-            "contract": "sdk/SQL-API.md#databases-for-agents",
-            "contract_routes": AGENT_ROUTES,
-            "routes": sorted(set(routes + AGENT_ROUTES)),
-        },
-        indent=1,
-    )
-    + "\n"
-)
+out.write_text(json.dumps({"source": origin, "fetched": date.today().isoformat(),
+                           "contract": "sdk/SQL-API.md#databases-for-agents", "contract_routes": AGENT_ROUTES,
+                           "routes": sorted(set(routes + AGENT_ROUTES))}, indent=1) + "\n")
 print(f"{len(routes)} routes -> {out}")

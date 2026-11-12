@@ -22,23 +22,24 @@ public sealed partial class TerraBaseSqlClient
     /// Regions default to the region that answers. Pass regions or all regions, not both. Requires databases:write.
     /// </summary>
     public Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string project, string name, int? ttlSeconds = null,
-        IReadOnlyList<string>? regions = null, bool? allRegions = null, CancellationToken cancellationToken = default)
+        TerraBaseDatabasePlacement? placement = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ValidateDatabaseTtl(ttlSeconds);
-        ValidatePlacement(regions, allRegions);
+        ValidatePlacement(placement?.Regions, placement?.AllRegions);
         return SendDatabaseAsync(project, HttpMethod.Post, DatabasesPath(project),
-            new(name, TtlSeconds: ttlSeconds, Regions: regions, AllRegions: allRegions), cancellationToken);
+            new(name, TtlSeconds: ttlSeconds, Regions: placement?.Regions, AllRegions: placement?.AllRegions), cancellationToken);
     }
 
     /// <summary>Sets the regions that hold the database, or all-regions mode; pass exactly one. Requires databases:write.</summary>
-    public Task<TerraBaseManagedDatabase> SetDatabasePlacementAsync(string project, string database, IReadOnlyList<string>? regions = null,
-        bool? allRegions = null, CancellationToken cancellationToken = default)
+    public Task<TerraBaseManagedDatabase> SetDatabasePlacementAsync(string project, string database, TerraBaseDatabasePlacement placement,
+        CancellationToken cancellationToken = default)
     {
-        ValidatePlacement(regions, allRegions);
-        if (regions is null && allRegions is null) throw new ArgumentException("Pass regions or allRegions.", nameof(regions));
+        ArgumentNullException.ThrowIfNull(placement);
+        ValidatePlacement(placement.Regions, placement.AllRegions);
+        if (placement.Regions is null && placement.AllRegions is null) throw new ArgumentException("Pass Regions or AllRegions.", nameof(placement));
         return SendDatabaseAsync(project, HttpMethod.Patch, DatabasePath(project, database),
-            new(Regions: regions, AllRegions: allRegions), cancellationToken);
+            new(Regions: placement.Regions, AllRegions: placement.AllRegions), cancellationToken);
     }
 
     /// <summary>
@@ -104,7 +105,7 @@ public sealed partial class TerraBaseSqlClient
             json.TerraBaseManagedDatabase, null, cancellationToken, requestTimeout).ConfigureAwait(false)).Value;
     }
 
-    private static void ValidatePlacement(IReadOnlyList<string>? regions, bool? allRegions)
+    internal static void ValidatePlacement(IReadOnlyList<string>? regions, bool? allRegions)
     {
         if (regions is not null && allRegions is not null) throw new ArgumentException("Pass regions or allRegions, not both.", nameof(regions));
         if (regions is not null)

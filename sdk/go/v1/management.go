@@ -118,6 +118,7 @@ type Project struct {
 // Name addresses Client.Database(ProjectID, Name). Restore results omit Region
 // and may have null placement; lifecycle results include the serving region.
 type ManagedDatabase struct {
+	_         struct{}
 	ID        string `json:"id" ulid:"required"`
 	ProjectID string `json:"projectId" ulid:"required"`
 	Name      string `json:"name"`
@@ -130,10 +131,12 @@ type ManagedDatabase struct {
 	CreatedAt    time.Time  `json:"createdAt"`
 	ExpiresAt    *time.Time `json:"expiresAt"`
 	// Region identifies the answering node; it is absent from restore results.
-	Region           string   `json:"region"`
-	Regions          []string `json:"regions"`
-	AllRegions       bool     `json:"allRegions"`
-	PlacementVersion int64    `json:"placementVersion"`
+	Region           string          `json:"region"`
+	Regions          []string        `json:"regions"`
+	AllRegions       bool            `json:"allRegions"`
+	PlacementVersion int64           `json:"placementVersion"`
+	HomeRegion       json.RawMessage `json:"homeRegion,omitempty"`
+	ReplicaRegions   json.RawMessage `json:"replicaRegions,omitempty"`
 }
 
 // DatabaseUsage is a database's storage and its metered reads and writes.

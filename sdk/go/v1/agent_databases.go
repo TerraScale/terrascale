@@ -14,6 +14,7 @@ import (
 )
 
 type CreateDatabaseOptions struct {
+	_          struct{}
 	Regions    []string `json:"regions,omitzero"`
 	AllRegions bool     `json:"allRegions,omitzero"`
 	TTLSeconds *int64   `json:"ttlSeconds,omitempty"`

@@ -133,13 +133,13 @@ with synthetic values. Both supported .NET frameworks replay them; live producer
 ## Placement
 
 ```csharp
-var db = await client.CreateDatabaseAsync(project, "orders", regions: ["gru", "sjc"]);
-await client.SetDatabasePlacementAsync(project, db.Id, regions: ["fra", "gru", "sjc"]);
+var db = await client.CreateDatabaseAsync(project, "orders", placement: new TerraBaseDatabasePlacement(Regions: ["gru", "sjc"]));
+await client.SetDatabasePlacementAsync(project, db.Id, placement: new TerraBaseDatabasePlacement(Regions: ["fra", "gru", "sjc"]));
 ```
 
 Every region that holds a database is equal. `TerraBaseManagedDatabase` carries `Regions` (every region that holds it,
 sorted by region id; the order has no meaning) and `AllRegions`. `CreateDatabaseAsync` and `SetDatabasePlacementAsync`
-take `regions` (at least one, no duplicates) or `allRegions`, and not both. TerraBase picks which region writes and
+take a `TerraBaseDatabasePlacement` value containing `Regions` (at least one, no duplicates) or `AllRegions`, and not both. TerraBase picks which region writes and
 moves that on its own when the set changes. `Database(projectId, name).GetRegionsAsync` reads each region's pull
 progress; an entry's `Role` is `writer` for the region that commits writes.
 Tests replay `contracts/terrabase/placement/`; live producer qualification has not run. All-regions placement
@@ -398,8 +398,10 @@ The SDK exposes `TerraBaseUnavailableException.ErrorCode == "replica_not_ready"`
 general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
 The caller bounds this repeat loop to 90 seconds and propagates other errors:
 
+`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
+
 ```csharp
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, regions: ["fra"], cancellationToken: deadline.Token); break; }
+for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, placement: new TerraBaseDatabasePlacement(Regions: ["fra"]), cancellationToken: deadline.Token); break; }
     catch (TerraBaseException e) when (e.ErrorCode == "replica_not_ready") { await Task.Delay(1000, deadline.Token); } }
 ```

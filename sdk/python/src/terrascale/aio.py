@@ -83,14 +83,8 @@ class AsyncTerraScale:
         self._issuer = issuer
         if token is None:
             assert api_key is not None
-            self._source = AsyncAPIKeyTokenSource(
-                api_key,
-                project=self.project,
-                scopes=scopes,
-                issuer=issuer,
-                max_attempts=self._max_attempts,
-                http_client=self._http,
-            )
+            self._source = AsyncAPIKeyTokenSource(api_key, project=self.project, scopes=scopes, issuer=issuer,
+                                                  max_attempts=self._max_attempts, http_client=self._http)
         self._headers = {"User-Agent": _spec.USER_AGENT_PREFIX + __version__, "Accept": "application/json"}
         if region is not None and (not isinstance(region, str) or region.strip()):
             self._headers[_spec.REGION_PIN] = _spec.region(region)
@@ -125,7 +119,6 @@ class AsyncTerraScale:
         refreshed = False
         attempt = 0
         conflicts = 0
-
         while True:
             direct = "Authorization" in call.headers
             token = "" if direct or call.anonymous else await self._bearer()
@@ -140,13 +133,8 @@ class AsyncTerraScale:
                     response = await self._http.send(request, auth=None, follow_redirects=False)
                 else:
                     response = await self._http.request(
-                        call.method,
-                        url,
-                        params=call.params or None,
-                        headers=headers,
-                        content=content,
-                        timeout=call.timeout if call.timeout is not None else httpx.USE_CLIENT_DEFAULT,
-                    )
+                        call.method, url, params=call.params or None, headers=headers, content=content,
+                        timeout=call.timeout if call.timeout is not None else httpx.USE_CLIENT_DEFAULT)
             except (httpx.TransportError, httpx.DecodingError) as exc:
                 attempt += 1
                 # A connect or pool failure never reached the server, so even a write can be repeated.
@@ -253,15 +241,11 @@ class AsyncTerraScale:
         regions: Sequence[str] | None = None,
         all_regions: bool | None = None,
     ) -> models.Database:
+        """Create in the selected regions, or the answering region; TTL expiry deletes the database and backups."""
         return await self._send(_spec.create_database(self.project, name, ttl_seconds, regions, all_regions))
 
     async def fork_database(
-        self,
-        source: str,
-        name: str,
-        *,
-        point_in_time: str | None = None,
-        ttl_seconds: int | None = None,
+        self, source: str, name: str, *, point_in_time: str | None = None, ttl_seconds: int | None = None,
     ) -> models.Database:
         """Fork the current database state, or an RFC 3339 point in its restore window, with an independent TTL."""
         operation = await self._send(_spec.fork_database(self.project, source, name, point_in_time, ttl_seconds))
@@ -281,6 +265,7 @@ class AsyncTerraScale:
         regions: Sequence[str] | None = None,
         all_regions: bool | None = None,
     ) -> models.Database:
+        """Set every region holding the database, or all regions; placement refusals are never automatically retried."""
         return await self._send(_spec.set_database_placement(self.project, database, regions, all_regions))
 
     async def clear_database_ttl(self, database: str) -> models.Database:
@@ -288,6 +273,7 @@ class AsyncTerraScale:
         return await self._send(_spec.clear_database_ttl(self.project, database))
 
     async def delete_database(self, database: str) -> None:
+        """Delete the database and backups; a region outside its placement returns 421 wrong_region."""
         await self._send(_spec.delete_database(self.project, database))
 
     async def delete_database_if_id(self, database: str, expected_id: str) -> None:
@@ -303,47 +289,27 @@ class AsyncTerraScale:
         return self._stream(_spec.export_database(self.project, _spec.database_selector(database)))
 
     async def create_scoped_key(
-        self,
-        database: str,
-        access: str,
-        *,
-        project: str | None = None,
-        ttl_seconds: int | None = None,
+        self, database: str, access: str, *, project: str | None = None, ttl_seconds: int | None = None,
     ) -> models.ScopedKey:
         """Mint a key for one database ULID, using this client's API key; the default lifetime is 3600 seconds."""
-        return await self._send(
-            _scoped_key_call(
-                self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds
-            )
-        )
+        return await self._send(_scoped_key_call(
+            self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds))
 
     async def rotate_api_key(self, key_id: str, grace_seconds: int = 0) -> models.RotatedApiKey:
         """Issue a new secret for the caller's API key id; the previous one keeps working for grace_seconds (0 to 86400)."""
         return await self._send(_rotate_key_call(self._api_key, self._issuer, key_id, grace_seconds))
 
     async def create_api_key(
-        self,
-        organization: str,
-        name: str,
-        scopes: Sequence[str],
-        *,
-        project: str | None = None,
-        database: str | None = None,
-        expires_at: str | None = None,
+        self, organization: str, name: str, scopes: Sequence[str], *,
+        project: str | None = None, database: str | None = None, expires_at: str | None = None,
         allowed_cidrs: Sequence[str] | None = None,
     ) -> models.ApiKeySecret:
         """Create an organization key, or a project key with ``project``; the whole key string is answered once."""
-        return await self._send(
-            create_api_key_call(self._issuer, organization, project, name, scopes, database, expires_at, allowed_cidrs)
-        )
+        return await self._send(create_api_key_call(
+            self._issuer, organization, project, name, scopes, database, expires_at, allowed_cidrs))
 
     async def list_api_keys(
-        self,
-        organization: str,
-        *,
-        project: str | None = None,
-        limit: int | None = None,
-        cursor: str | None = None,
+        self, organization: str, *, project: str | None = None, limit: int | None = None, cursor: str | None = None,
     ) -> models.ApiKeyPage:
         """List an organization's keys, or a project's, in creation order; never secrets."""
         return await self._send(list_api_keys_call(self._issuer, organization, project, limit, cursor))
@@ -353,126 +319,101 @@ class AsyncTerraScale:
         await self._send(revoke_api_key_call(self._issuer, organization, project, key))
 
     async def create_project_client(
-        self,
-        name: str,
-        client_type: str,
-        redirect_uris: Sequence[str],
-        *,
-        step_up_proof: str,
+        self, name: str, client_type: str, redirect_uris: Sequence[str], *, step_up_proof: str,
         project: str | None = None,
     ) -> models.ProjectClient:
         """Register a public or confidential OAuth client; a confidential secret is answered once."""
-        return await self._send(
-            create_project_client_call(
-                self._issuer, project if project is not None else self.project, name, client_type, redirect_uris, step_up_proof
-            )
-        )
+        return await self._send(create_project_client_call(
+            self._issuer, project if project is not None else self.project, name, client_type, redirect_uris,
+            step_up_proof))
 
     async def list_project_clients(self, *, project: str | None = None) -> models.ProjectClientPage:
         """List every registered client of the project in one page, without secrets."""
         return await self._send(list_project_clients_call(self._issuer, project if project is not None else self.project))
 
     async def update_project_client(
-        self,
-        client_id: str,
-        name: str,
-        redirect_uris: Sequence[str],
-        *,
-        step_up_proof: str,
+        self, client_id: str, name: str, redirect_uris: Sequence[str], *, step_up_proof: str,
         project: str | None = None,
     ) -> models.ProjectClient:
         """Rename a client and replace its redirect URIs; the id, type and secret stay unchanged."""
-        return await self._send(
-            update_project_client_call(
-                self._issuer, project if project is not None else self.project, client_id, name, redirect_uris, step_up_proof
-            )
-        )
+        return await self._send(update_project_client_call(
+            self._issuer, project if project is not None else self.project, client_id, name, redirect_uris,
+            step_up_proof))
 
     async def rotate_project_client_secret(
-        self,
-        client_id: str,
-        *,
-        step_up_proof: str,
-        grace_seconds: int | None = None,
-        project: str | None = None,
+        self, client_id: str, *, step_up_proof: str, grace_seconds: int | None = None, project: str | None = None,
     ) -> models.ProjectClientSecret:
         """Issue a new secret for a confidential client; the previous one keeps working for grace_seconds (0 to 86400)."""
-        return await self._send(
-            rotate_project_client_secret_call(
-                self._issuer, project if project is not None else self.project, client_id, grace_seconds, step_up_proof
-            )
-        )
+        return await self._send(rotate_project_client_secret_call(
+            self._issuer, project if project is not None else self.project, client_id, grace_seconds, step_up_proof))
 
     async def delete_project_client(self, client_id: str, *, project: str | None = None) -> None:
         """Delete a registered client."""
-        await self._send(delete_project_client_call(self._issuer, project if project is not None else self.project, client_id))
+        await self._send(delete_project_client_call(self._issuer, project if project is not None else self.project,
+                                                    client_id))
 
     async def get_settings(self, *, project: str | None = None) -> models.ProjectSettings:
         """Read the project's end-user sign-in settings; viewer access with the caller's sign-in token."""
         return await self._send(get_settings_call(self._issuer, project if project is not None else self.project))
 
-    async def update_settings(
-        self,
-        update: models.ProjectSettingsUpdate,
-        *,
-        project: str | None = None,
-    ) -> models.ProjectSettings:
+    async def update_settings(self, update: models.ProjectSettingsUpdate, *, project: str | None = None,
+                             ) -> models.ProjectSettings:
         """Update settings; omitted parts stay unchanged and admin access is required."""
-        return await self._send(update_settings_call(self._issuer, project if project is not None else self.project, update))
-
-    async def list_users(
-        self, *, search: str | None = None, limit: int | None = None, after: str | None = None, project: str | None = None
-    ) -> models.ProjectUserPage:
-        """List the project's end users in creation order; ``search`` matches an email substring."""
         return await self._send(
-            list_users_call(self._issuer, project if project is not None else self.project, search, limit, after)
-        )
+            update_settings_call(self._issuer, project if project is not None else self.project, update))
+
+    async def list_users(self, *, search: str | None = None, limit: int | None = None, after: str | None = None,
+                         project: str | None = None) -> models.ProjectUserPage:
+        """List the project's end users in creation order; ``search`` matches an email substring."""
+        return await self._send(list_users_call(self._issuer, project if project is not None else self.project,
+                                                search, limit, after))
 
     async def get_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
         """Read one end user by id."""
-        return await self._send(get_user_call(self._issuer, project if project is not None else self.project, user_id))
+        return await self._send(get_user_call(self._issuer, project if project is not None else self.project,
+                                              user_id))
 
     async def disable_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
         """Disable a user; every session ends and refresh tokens stop at once."""
-        return await self._send(disable_user_call(self._issuer, project if project is not None else self.project, user_id))
+        return await self._send(disable_user_call(self._issuer, project if project is not None else self.project,
+                                                  user_id))
 
     async def enable_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
         """Re-enable a disabled user."""
-        return await self._send(enable_user_call(self._issuer, project if project is not None else self.project, user_id))
+        return await self._send(enable_user_call(self._issuer, project if project is not None else self.project,
+                                                 user_id))
 
     async def delete_user(self, user_id: str, *, project: str | None = None) -> None:
         """Delete a user's account; the address can sign up again."""
         await self._send(delete_user_call(self._issuer, project if project is not None else self.project, user_id))
 
-    async def export_users(
-        self, *, limit: int | None = None, after: str | None = None, project: str | None = None
-    ) -> models.ProjectUserExportPage:
+    async def export_users(self, *, limit: int | None = None, after: str | None = None,
+                           project: str | None = None) -> models.ProjectUserExportPage:
         """Fetch one audited directory-export page; pass the previous page's ``next_cursor`` as ``after``."""
-        return await self._send(export_users_call(self._issuer, project if project is not None else self.project, limit, after))
+        return await self._send(export_users_call(self._issuer, project if project is not None else self.project,
+                                                  limit, after))
 
-    async def set_provider(
-        self, provider: str, update: models.ProjectProviderUpdate, *, project: str | None = None
-    ) -> models.ProjectSettings:
+    async def set_provider(self, provider: str, update: models.ProjectProviderUpdate, *,
+                           project: str | None = None) -> models.ProjectSettings:
         """Configure a federated sign-in provider (google, github, apple or oidc); an omitted secret is kept."""
-        return await self._send(
-            set_provider_call(self._issuer, project if project is not None else self.project, provider, update)
-        )
+        return await self._send(set_provider_call(self._issuer, project if project is not None else self.project,
+                                                  provider, update))
 
     async def delete_provider(self, provider: str, *, project: str | None = None) -> models.ProjectSettings:
         """Remove a federated sign-in provider; the answered settings no longer carry it."""
-        return await self._send(delete_provider_call(self._issuer, project if project is not None else self.project, provider))
+        return await self._send(delete_provider_call(self._issuer, project if project is not None else self.project,
+                                                     provider))
 
-    async def list_sessions(
-        self, *, user_id: str | None = None, limit: int | None = None, after: str | None = None, project: str | None = None
-    ) -> models.ProjectSessionPage:
+    async def list_sessions(self, *, user_id: str | None = None, limit: int | None = None,
+                            after: str | None = None, project: str | None = None) -> models.ProjectSessionPage:
         """List live sessions, optionally of one user, in creation order."""
-        return await self._send(
-            list_sessions_call(self._issuer, project if project is not None else self.project, user_id, limit, after)
-        )
+        return await self._send(list_sessions_call(self._issuer, project if project is not None else self.project,
+                                                   user_id, limit, after))
 
     async def revoke_session(self, session_id: str, *, project: str | None = None) -> None:
         """Revoke one session; the session is signed out at once."""
-        await self._send(revoke_session_call(self._issuer, project if project is not None else self.project, session_id))
+        await self._send(revoke_session_call(self._issuer, project if project is not None else self.project,
+                                             session_id))
 
 
 class AsyncDatabase:
@@ -495,7 +436,9 @@ class AsyncDatabase:
         Recording is best effort, without a cursor or export guarantee."""
         return await self._c._send(_spec.list_database_logs(*self._p, status))
 
+
     async def regions(self) -> models.DatabaseRegions:
+        """Read selected regions and writer-observed pull progress with databases:read; observations are not acknowledgements."""
         return await self._c._send(_spec.get_database_regions(*self._p))
 
     async def delete(self) -> None:

@@ -52,6 +52,8 @@ class Regions:
 
 @dataclass(frozen=True)
 class ReplicaStatus:
+    """One region's pull progress observed by the writer; unknown observations are None."""
+
     region: str
     role: str | None = None
     lag_ms: float | None = None
@@ -62,6 +64,8 @@ class ReplicaStatus:
 
 @dataclass(frozen=True)
 class DatabaseRegions:
+    """Selected regions and writer-observed pull progress sampled at observed_at."""
+
     database_id: str
     observed_at: str
     regions: list[ReplicaStatus] = field(default_factory=list)
@@ -107,6 +111,8 @@ class DatabaseRegions:
 
 @dataclass(frozen=True)
 class Database:
+    """Lifecycle metadata with the answering region, complete region set and placement epoch."""
+
     id: str
     project_id: str
     name: str
@@ -130,7 +136,7 @@ class Database:
         regions = body.get("regions", [])
         if not isinstance(regions, list) or any(not isinstance(r, str) or not r for r in regions):
             raise ValueError("invalid database regions")
-        if len(set(regions)) != len(regions) or regions != sorted(regions):
+        if len(set(regions)) != len(regions):
             raise ValueError("invalid database regions")
         if not isinstance(body.get("allRegions", False), bool):
             raise ValueError("invalid database allRegions")
@@ -147,7 +153,7 @@ class Database:
             previous_name=body.get("previousName"),
             conflict_of=validate_id(body["conflictOf"]) if body.get("conflictOf") is not None else None,
             expires_at=body.get("expiresAt"),
-            regions=list(regions),
+            regions=sorted(regions),
             all_regions=body.get("allRegions", False),
             placement_version=version,
             raw=body,
@@ -175,17 +181,10 @@ class RestoreOperation:
             raise ValueError("invalid restore operation")
         if body["status"] not in ("running", "completed", "failed"):
             raise ValueError("invalid restore operation status")
-        return cls(
-            id=validate_id(body["id"]),
-            operation_id=validate_id(body["operationId"]),
-            status=body["status"],
-            kind=body["kind"],
-            database=body["database"],
-            error_code=body.get("errorCode"),
-            error_message=body.get("errorMessage"),
-            created_at=body["createdAt"],
-            finished_at=body.get("finishedAt"),
-        )
+        return cls(id=validate_id(body["id"]), operation_id=validate_id(body["operationId"]), status=body["status"],
+                   kind=body["kind"], database=body["database"], error_code=body.get("errorCode"),
+                   error_message=body.get("errorMessage"), created_at=body["createdAt"],
+                   finished_at=body.get("finishedAt"))
 
 
 @dataclass(frozen=True)
@@ -203,14 +202,8 @@ class ScopedKey:
             raise ValueError("invalid scoped key metadata")
         if body["access"] not in ("read", "read_write"):
             raise ValueError("invalid scoped key access")
-        return cls(
-            key=body["key"],
-            id=validate_id(body["id"]),
-            project_id=validate_id(body["project_id"]),
-            database=validate_id(body["database"]),
-            access=body["access"],
-            expires_at=body["expires_at"],
-        )
+        return cls(key=body["key"], id=validate_id(body["id"]), project_id=validate_id(body["project_id"]),
+                   database=validate_id(body["database"]), access=body["access"], expires_at=body["expires_at"])
 
 
 @dataclass(frozen=True)
@@ -226,7 +219,8 @@ class RotatedApiKey:
         expiry = body.get("previous_secret_expires_at")
         if expiry is not None and (not isinstance(expiry, int) or isinstance(expiry, bool)):
             raise ValueError("invalid rotated api key expiry")
-        return cls(api_key=body["api_key"], id=validate_id(body["id"]), previous_secret_expires_at=expiry)
+        return cls(api_key=body["api_key"], id=validate_id(body["id"]),
+                   previous_secret_expires_at=expiry)
 
 
 @dataclass(frozen=True)
@@ -410,11 +404,9 @@ class ProjectSettingsMethods:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettingsMethods:
-        return cls(
-            passcode=_bool(body, "passcode", "project sign-in methods"),
-            password=_bool(body, "password", "project sign-in methods"),
-            sign_up=_bool(body, "sign_up", "project sign-in methods"),
-        )
+        return cls(passcode=_bool(body, "passcode", "project sign-in methods"),
+                   password=_bool(body, "password", "project sign-in methods"),
+                   sign_up=_bool(body, "sign_up", "project sign-in methods"))
 
 
 @dataclass(frozen=True)
@@ -438,20 +430,19 @@ class ProjectSettingsBranding:
             raise ValueError("invalid project footer links")
         parsed = []
         for link in links:
-            if not isinstance(link, dict) or not isinstance(link.get("label"), str) or not isinstance(link.get("url"), str):
+            if not isinstance(link, dict) or not isinstance(link.get("label"), str) \
+                    or not isinstance(link.get("url"), str):
                 raise ValueError("invalid project footer links")
             parsed.append((link["label"], link["url"]))
-        return cls(
-            name=_text(body, "name", "project branding name"),
-            logo_url=_text(body, "logo_url", "project branding logo"),
-            theme_color=_text(body, "theme_color", "project branding color"),
-            title_size=_int_or_none(body, "title_size", "project branding title size"),
-            default_theme=_text(body, "default_theme", "project branding theme"),
-            footer_links=tuple(parsed),
-            background_color=_text(body, "background_color", "project branding background"),
-            text_color=_text(body, "text_color", "project branding text"),
-            email_message=_text(body, "email_message", "project branding email message"),
-        )
+        return cls(name=_text(body, "name", "project branding name"),
+                   logo_url=_text(body, "logo_url", "project branding logo"),
+                   theme_color=_text(body, "theme_color", "project branding color"),
+                   title_size=_int_or_none(body, "title_size", "project branding title size"),
+                   default_theme=_text(body, "default_theme", "project branding theme"),
+                   footer_links=tuple(parsed),
+                   background_color=_text(body, "background_color", "project branding background"),
+                   text_color=_text(body, "text_color", "project branding text"),
+                   email_message=_text(body, "email_message", "project branding email message"))
 
 
 @dataclass(frozen=True)
@@ -463,10 +454,8 @@ class ProjectSettingsCounts:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettingsCounts:
-        return cls(
-            users=_int_or_none(body, "users", "project user count") or 0,
-            clients=_int_or_none(body, "clients", "project client count") or 0,
-        )
+        return cls(users=_int_or_none(body, "users", "project user count") or 0,
+                   clients=_int_or_none(body, "clients", "project client count") or 0)
 
 
 @dataclass(frozen=True)
@@ -486,15 +475,12 @@ class ProjectSettingsProvider:
         for key in ("provider", "callback_url"):
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project provider")
-        return cls(
-            provider=body["provider"],
-            configured=_bool(body, "configured", "project provider state"),
-            client_id=_text(body, "client_id", "project provider client id"),
-            issuer=_text(body, "issuer", "project provider issuer"),
-            team_id=_text(body, "team_id", "project provider team id"),
-            key_id=_text(body, "key_id", "project provider key id"),
-            callback_url=body["callback_url"],
-        )
+        return cls(provider=body["provider"], configured=_bool(body, "configured", "project provider state"),
+                   client_id=_text(body, "client_id", "project provider client id"),
+                   issuer=_text(body, "issuer", "project provider issuer"),
+                   team_id=_text(body, "team_id", "project provider team id"),
+                   key_id=_text(body, "key_id", "project provider key id"),
+                   callback_url=body["callback_url"])
 
 
 @dataclass(frozen=True)
@@ -506,10 +492,9 @@ class ProjectSettingsConfiguration:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettingsConfiguration:
-        return cls(
-            redirect_urls=_strings(body, "redirect_urls", "project redirect urls"),
-            session_lifetime_seconds=_int_or_none(body, "session_lifetime_seconds", "project session lifetime"),
-        )
+        return cls(redirect_urls=_strings(body, "redirect_urls", "project redirect urls"),
+                   session_lifetime_seconds=_int_or_none(body, "session_lifetime_seconds",
+                                                          "project session lifetime"))
 
 
 @dataclass(frozen=True)
@@ -541,7 +526,8 @@ class ProjectSettings:
             branding=ProjectSettingsBranding.from_json(body.get("branding") or {}),
             counts=ProjectSettingsCounts.from_json(body.get("counts") or {}),
             providers=[ProjectSettingsProvider.from_json(p) for p in body.get("providers") or []],
-            configuration=ProjectSettingsConfiguration.from_json(configuration) if configuration is not None else None,
+            configuration=ProjectSettingsConfiguration.from_json(configuration)
+            if configuration is not None else None,
         )
 
 
@@ -556,21 +542,20 @@ class ProjectSettingsUpdate:
     def to_body(self) -> dict[str, Any]:
         body: dict[str, Any] = {}
         if self.methods is not None:
-            body["methods"] = {
-                "passcode": self.methods.passcode,
-                "password": self.methods.password,
-                "sign_up": self.methods.sign_up,
-            }
+            body["methods"] = {"passcode": self.methods.passcode, "password": self.methods.password,
+                               "sign_up": self.methods.sign_up}
         if self.branding is not None:
             branding: dict[str, Any] = {}
-            for key in ("name", "logo_url", "theme_color", "default_theme", "background_color", "text_color", "email_message"):
+            for key in ("name", "logo_url", "theme_color", "default_theme", "background_color", "text_color",
+                        "email_message"):
                 value = getattr(self.branding, key)
                 if value is not None:
                     branding[key] = value
             if self.branding.title_size is not None:
                 branding["title_size"] = self.branding.title_size
             if self.branding.footer_links:
-                branding["footer_links"] = [{"label": label, "url": url} for label, url in self.branding.footer_links]
+                branding["footer_links"] = [{"label": label, "url": url}
+                                            for label, url in self.branding.footer_links]
             body["branding"] = branding
         if self.configuration is not None:
             configuration: dict[str, Any] = {"redirect_urls": list(self.configuration.redirect_urls)}
@@ -594,12 +579,8 @@ class ProjectUser:
         for key in ("id", "email", "created_at"):
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project user")
-        return cls(
-            id=validate_id(body["id"]),
-            email=body["email"],
-            created_at=body["created_at"],
-            disabled=_bool(body, "disabled", "project user state"),
-        )
+        return cls(id=validate_id(body["id"]), email=body["email"], created_at=body["created_at"],
+                   disabled=_bool(body, "disabled", "project user state"))
 
 
 @dataclass(frozen=True)
@@ -647,14 +628,12 @@ class ProjectDirectoryUser:
         for key in ("id", "email", "created_at"):
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project directory user")
-        return cls(
-            id=validate_id(body["id"]),
-            email=body["email"],
-            email_verified=_bool(body, "email_verified", "project directory user"),
-            created_at=body["created_at"],
-            disabled=_bool(body, "disabled", "project directory user"),
-            linked_providers=[ProjectLinkedProvider.from_json(p) for p in body.get("linked_providers") or []],
-        )
+        return cls(id=validate_id(body["id"]), email=body["email"],
+                   email_verified=_bool(body, "email_verified", "project directory user"),
+                   created_at=body["created_at"],
+                   disabled=_bool(body, "disabled", "project directory user"),
+                   linked_providers=[ProjectLinkedProvider.from_json(p)
+                                     for p in body.get("linked_providers") or []])
 
 
 @dataclass(frozen=True)
@@ -710,13 +689,8 @@ class ProjectSession:
         for key in ("id", "user_id", "email", "created_at", "expires_at"):
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project session")
-        return cls(
-            id=validate_id(body["id"]),
-            user_id=validate_id(body["user_id"]),
-            email=body["email"],
-            created_at=body["created_at"],
-            expires_at=body["expires_at"],
-        )
+        return cls(id=validate_id(body["id"]), user_id=validate_id(body["user_id"]), email=body["email"],
+                   created_at=body["created_at"], expires_at=body["expires_at"])
 
 
 @dataclass(frozen=True)
@@ -768,20 +742,9 @@ class DatabaseRequestLog:
         request_id = body.get("requestId")
         if request_id is not None and not isinstance(request_id, str):
             raise ValueError("invalid request log requestId")
-        return cls(
-            validate_id(body["id"]),
-            body["time"],
-            body["region"],
-            body["method"],
-            body["route"],
-            status,
-            float(latency),
-            operations,
-            body["isQuery"],
-            request_id,
-            int(body.get("statements") or 0),
-            int(body.get("statementErrors") or 0),
-        )
+        return cls(validate_id(body["id"]), body["time"], body["region"], body["method"], body["route"],
+                   status, float(latency), operations, body["isQuery"], request_id,
+                   int(body.get("statements") or 0), int(body.get("statementErrors") or 0))
 
 
 @dataclass(frozen=True)
@@ -800,9 +763,5 @@ class DatabaseRequestLogs:
         items = body.get("items")
         if not isinstance(items, list) or len(items) > 100:
             raise ValueError("invalid request logs items")
-        return cls(
-            validate_id(body["databaseId"]),
-            [DatabaseRequestLog.from_json(i) for i in items],
-            body["truncated"],
-            body["recordingLimited"],
-        )
+        return cls(validate_id(body["databaseId"]), [DatabaseRequestLog.from_json(i) for i in items],
+                   body["truncated"], body["recordingLimited"])

@@ -6,7 +6,7 @@ import { V1Transport } from "./transport.js";
 // Public probes omit build metadata; only the internal listener emits it.
 const status = record({ status: text, version: text, region: text,
   storageFormat: optional(nullable(text)), revision: optional(nullable(text)), machine: optional(nullable(text)) });
-const databases = record({ items: list(record({ name: text, id: requireId, homeRegion: text })) });
+const databases = record({ items: list(record({ name: text, id: requireId, homeRegion: optional(text) })) });
 /** @typedef {ReturnType<typeof status> & {readonly httpStatus: number}} V1ProbeStatus */
 /** @typedef {ReturnType<typeof databases>} V1PlatformDatabases */
 /** @typedef {{ readonly baseUrl: string; readonly token?: string; readonly fetch?: import("../config.js").FetchLike; readonly maxResponseBytes?: number }} TerraBaseSystemClientConfig */

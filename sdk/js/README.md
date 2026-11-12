@@ -466,6 +466,8 @@ The SDK exposes `TerraBaseV1Error.code` with `V1ErrorCode.replicaNotReady` and `
 general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
 The caller bounds this repeat loop to 90 seconds and propagates other errors:
 
+`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
+
 ```js
 const signal = AbortSignal.timeout(90_000);
 for (;;) { try { await client.setDatabasePlacement(project, database, { regions: ["fra"] }, { signal }); break; }

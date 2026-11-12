@@ -25,17 +25,10 @@ MAX_ATTEMPTS = 4
 MAX_BACKOFF = 30.0
 # 503 codes that mean "try again later". storage_busy and unavailable are the
 # live API's documented 503 codes (openapi/v1.json).
-TRANSIENT = frozenset(
-    {
-        "rate_limited",
-        "capacity",
-        "storage_busy",
-        "unavailable",
-        "storage_unavailable",
-        "dependencies_unavailable",
-        "auth_unavailable",
-    }
-)
+TRANSIENT = frozenset({
+    "rate_limited", "capacity", "storage_busy", "unavailable", "storage_unavailable", "dependencies_unavailable",
+    "auth_unavailable",
+})
 # Gateway answers (502 Bad Gateway, 504 Gateway Timeout): a replay-safe request can be repeated.
 GATEWAY = frozenset({502, 504})
 # Failures raised before any byte of the request reached the server, so even
@@ -74,12 +67,8 @@ class Call:
             return self.parse(response)
         except (ValueError, KeyError, TypeError, AttributeError, IndexError, OverflowError):
             cls = InvalidResponseError if self.replay_safe else CommitUncertainError
-            raise cls(
-                response.status_code,
-                "invalid_response",
-                "invalid response; reconcile writes before retrying",
-                request_id=response_request_id(response.headers),
-            ) from None
+            raise cls(response.status_code, "invalid_response", "invalid response; reconcile writes before retrying",
+                      request_id=response_request_id(response.headers)) from None
 
     def url(self, base_url: str) -> str:
         return (self.base_url or base_url).rstrip("/") + "/" + "/".join(quote(s, safe="") for s in self.path)
@@ -149,23 +138,17 @@ def _page_params(limit: int | None, cursor: str | None) -> dict[str, str]:
 
 # Databases ---------------------------------------------------------------
 
-
 def list_regions() -> Call:
-    return Call("GET", ["v1", "regions"], lambda r: models.Regions.from_json(r.json()), replay_safe=True, anonymous=True)
-
+    return Call("GET", ["v1", "regions"], lambda r: models.Regions.from_json(r.json()), replay_safe=True,
+                anonymous=True)
 
 def _db(project: str, db: str, *extra: str) -> list[str]:
     return ["v1", "projects", project, "databases", db, *extra]
 
 
 def list_databases(project: str, limit: int | None, cursor: str | None) -> Call:
-    return Call(
-        "GET",
-        ["v1", "projects", project, "databases"],
-        lambda r: models.DatabasePage.from_json(r.json()),
-        params=_page_params(limit, cursor),
-        replay_safe=True,
-    )
+    return Call("GET", ["v1", "projects", project, "databases"], lambda r: models.DatabasePage.from_json(r.json()),
+                params=_page_params(limit, cursor), replay_safe=True)
 
 
 def ttl(value: int, maximum: int = 31_536_000) -> int:
@@ -198,9 +181,8 @@ def create_database(
     body.update(placement(regions, all_regions))
     if ttl_seconds is not None:
         body["ttlSeconds"] = ttl(ttl_seconds)
-    return Call(
-        "POST", ["v1", "projects", project, "databases"], lambda r: models.Database.from_json(r.json()), body=body, success=(201,)
-    )
+    return Call("POST", ["v1", "projects", project, "databases"],
+                lambda r: models.Database.from_json(r.json()), body=body, success=(201,))
 
 
 def get_database(project: str, db: str) -> Call:
@@ -213,26 +195,19 @@ LOG_STATUS_CLASSES = ("2xx", "3xx", "4xx", "5xx")
 def list_database_logs(project: str, db: str, status: str | None) -> Call:
     if status is not None and status not in LOG_STATUS_CLASSES:
         raise ValueError("status must be 2xx, 3xx, 4xx or 5xx")
-    return Call(
-        "GET",
-        _db(project, database_selector(db), "logs"),
-        lambda r: models.DatabaseRequestLogs.from_json(r.json()),
-        params={"status": status} if status else {},
-        replay_safe=True,
-    )
+    return Call("GET", _db(project, database_selector(db), "logs"),
+                lambda r: models.DatabaseRequestLogs.from_json(r.json()),
+                params={"status": status} if status else {}, replay_safe=True)
 
 
 def get_database_regions(project: str, db: str) -> Call:
-    return Call("GET", _db(project, db, "regions"), lambda r: models.DatabaseRegions.from_json(r.json()), replay_safe=True)
+    return Call("GET", _db(project, db, "regions"), lambda r: models.DatabaseRegions.from_json(r.json()),
+                replay_safe=True)
 
 
 def rename_database(project: str, database_id: str, new_name: str) -> Call:
-    return Call(
-        "PATCH",
-        _db(project, database_selector(database_id)),
-        lambda r: models.Database.from_json(r.json()),
-        body={"name": database_name(new_name)},
-    )
+    return Call("PATCH", _db(project, database_selector(database_id)),
+                lambda r: models.Database.from_json(r.json()), body={"name": database_name(new_name)})
 
 
 def delete_database(project: str, db: str) -> Call:
@@ -240,12 +215,8 @@ def delete_database(project: str, db: str) -> Call:
 
 
 def delete_database_if_id(project: str, db: str, expected_id: str) -> Call:
-    return Call(
-        "DELETE",
-        _db(project, database_selector(db), "if-id", validate_id(expected_id, "expected database ID")),
-        _none,
-        success=(204,),
-    )
+    return Call("DELETE", _db(project, database_selector(db), "if-id", validate_id(expected_id, "expected database ID")),
+                _none, success=(204,))
 
 
 def fork_database(project: str, source: str, db: str, point_in_time: str | None, ttl_seconds: int | None) -> Call:
@@ -257,31 +228,19 @@ def fork_database(project: str, source: str, db: str, point_in_time: str | None,
     if ttl_seconds is not None:
         body["ttlSeconds"] = ttl(ttl_seconds)
     answer = models.RestoreOperation if point_in_time is not None else models.Database
-    return Call(
-        "POST",
-        _db(project, database_selector(source), *route),
-        lambda r: answer.from_json(r.json()),
-        body=body,
-        success=(202,) if point_in_time is not None else (201,),
-    )
+    return Call("POST", _db(project, database_selector(source), *route),
+                lambda r: answer.from_json(r.json()), body=body,
+                success=(202,) if point_in_time is not None else (201,))
 
 
 def get_restore_operation(project: str, db: str, operation: str) -> Call:
-    return Call(
-        "GET",
-        _db(project, database_selector(db), "restores", validate_id(operation, "operation")),
-        lambda r: models.RestoreOperation.from_json(r.json()),
-        replay_safe=True,
-    )
+    return Call("GET", _db(project, database_selector(db), "restores", validate_id(operation, "operation")),
+                lambda r: models.RestoreOperation.from_json(r.json()), replay_safe=True)
 
 
 def set_database_ttl(project: str, db: str, ttl_seconds: int) -> Call:
-    return Call(
-        "PUT",
-        _db(project, database_selector(db), "ttl"),
-        lambda r: models.Database.from_json(r.json()),
-        body={"ttlSeconds": ttl(ttl_seconds)},
-    )
+    return Call("PUT", _db(project, database_selector(db), "ttl"),
+                lambda r: models.Database.from_json(r.json()), body={"ttlSeconds": ttl(ttl_seconds)})
 
 
 def set_database_placement(project: str, db: str, regions: Sequence[str] | None, all_regions: bool | None) -> Call:
@@ -296,36 +255,21 @@ def clear_database_ttl(project: str, db: str) -> Call:
 
 
 def branch_database(project: str, db: str, branch: str) -> Call:
-    return Call(
-        "POST",
-        _db(project, db, "branches"),
-        lambda r: models.Database.from_json(r.json()),
-        body={"name": database_name(branch)},
-        success=(201,),
-    )
+    return Call("POST", _db(project, db, "branches"),
+                lambda r: models.Database.from_json(r.json()), body={"name": database_name(branch)}, success=(201,))
 
 
 def branch_database_if_id(project: str, db: str, branch: str, expected_id: str) -> Call:
-    return Call(
-        "POST",
-        _db(project, db, "branches", "if-id", validate_id(expected_id, "expected database ID")),
-        lambda r: models.Database.from_json(r.json()),
-        body={"name": database_name(branch)},
-        success=(201,),
-    )
+    return Call("POST", _db(project, db, "branches", "if-id", validate_id(expected_id, "expected database ID")),
+                lambda r: models.Database.from_json(r.json()), body={"name": database_name(branch)}, success=(201,))
 
 
 # SQL ---------------------------------------------------------------------
-
 
 def export_database(project: str, db: str) -> Call:
     return Call("GET", _db(project, db, "export"), _none, headers={"Accept": "text/plain"}, replay_safe=True)
 
 
 def execute(project: str, db: str, statements: list[dict[str, Any]]) -> Call:
-    return Call(
-        "POST",
-        _db(project, db, "sql", "execute"),
-        lambda r: sql_results(r.json(), len(statements)),
-        body={"statements": statements},
-    )
+    return Call("POST", _db(project, db, "sql", "execute"), lambda r: sql_results(r.json(), len(statements)),
+                body={"statements": statements})

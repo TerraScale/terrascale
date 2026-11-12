@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -135,6 +136,9 @@ func runInit(ctx context.Context, s *session, database, lang string, input comma
 		existing = append(existing, db.Name)
 		ids[db.Name] = db.ID
 		regions[db.Name] = db.Region
+		if len(db.Regions) != 0 && !slices.Contains(db.Regions, db.Region) {
+			regions[db.Name] = db.Regions[0]
+		}
 	}
 	if database == "" {
 		switch len(existing) {

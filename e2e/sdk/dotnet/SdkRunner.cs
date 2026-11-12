@@ -340,11 +340,11 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
 
     private async Task PlacementCreateAsync(CancellationToken cancellationToken)
     {
-        var created = await client.CreateDatabaseAsync(project, $"e2e-dotnet-{run}-placed", regions: ["gru", "fra"], cancellationToken: cancellationToken);
+        var created = await client.CreateDatabaseAsync(project, $"e2e-dotnet-{run}-placed", placement: new TerraBaseDatabasePlacement(Regions: ["gru", "fra"]), cancellationToken: cancellationToken);
         try
         {
             Same(string.Join(",", created.Regions), "fra,gru", "created regions");
-            var repeated = await client.SetDatabasePlacementAsync(project, created.Id, regions: ["fra", "gru"], cancellationToken: cancellationToken);
+            var repeated = await client.SetDatabasePlacementAsync(project, created.Id, placement: new TerraBaseDatabasePlacement(Regions: ["fra", "gru"]), cancellationToken: cancellationToken);
             if (repeated.PlacementVersion != created.PlacementVersion) throw new InvalidOperationException("An unchanged placement changed its version.");
         }
         finally
@@ -355,7 +355,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
 
     private async Task PlacementSetAsync(CancellationToken cancellationToken)
     {
-        var created = await client.CreateDatabaseAsync(project, $"e2e-dotnet-{run}-move", regions: ["gru"], cancellationToken: cancellationToken);
+        var created = await client.CreateDatabaseAsync(project, $"e2e-dotnet-{run}-move", placement: new TerraBaseDatabasePlacement(Regions: ["gru"]), cancellationToken: cancellationToken);
         using var http = new HttpClient(TerraBaseHttp.CreateHandler());
         var regional = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions
         {
@@ -368,7 +368,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         {
             await client.Database(project, created.Id).ExecuteAsync("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)", cancellationToken: cancellationToken);
             await client.Database(project, created.Id).ExecuteAsync("INSERT INTO placement_rows VALUES (1)", cancellationToken: cancellationToken);
-            var added = await client.SetDatabasePlacementAsync(project, created.Id, regions: ["gru", "fra"], cancellationToken: cancellationToken);
+            var added = await client.SetDatabasePlacementAsync(project, created.Id, placement: new TerraBaseDatabasePlacement(Regions: ["gru", "fra"]), cancellationToken: cancellationToken);
             Same(string.Join(",", added.Regions), "fra,gru", "added region");
             if (added.PlacementVersion <= created.PlacementVersion) throw new InvalidOperationException("Membership did not raise placement version.");
             var progress = await client.Database(project, created.Id).GetRegionsAsync(cancellationToken);
@@ -381,7 +381,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
             {
                 try
                 {
-                    updated = await client.SetDatabasePlacementAsync(project, created.Id, regions: ["fra"], cancellationToken: deadline.Token);
+                    updated = await client.SetDatabasePlacementAsync(project, created.Id, placement: new TerraBaseDatabasePlacement(Regions: ["fra"]), cancellationToken: deadline.Token);
                     break;
                 }
                 catch (TerraBaseUnavailableException error) when (error.ErrorCode == "replica_not_ready")

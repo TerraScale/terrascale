@@ -63,6 +63,7 @@ impl Database {
     }
 }
 
+/// Lifecycle metadata, including the answering region, complete region set and placement epoch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectDatabaseInfo {

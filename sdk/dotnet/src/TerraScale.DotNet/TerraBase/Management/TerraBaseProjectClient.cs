@@ -19,14 +19,14 @@ public sealed partial class TerraBaseProjectClient
     }
 
     /// <summary>
-    /// Creates a database in the called region, or in <paramref name="regions"/>. Every region is equal.
+    /// Creates a database in the called region, or in <paramref name="placement"/>. Every region is equal.
     /// Sent once; a regional pin may refuse a different region.
     /// </summary>
-    public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, IReadOnlyList<string>? regions = null, CancellationToken cancellationToken = default)
+    public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, TerraBaseDatabasePlacement? placement = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
-        if (regions is { Count: 0 }) throw new ArgumentException("Pass at least one region.", nameof(regions));
-        var body = TerraBaseConnection.Json(new TerraBaseCreateDatabaseRequest(name, regions), Json.TerraBaseCreateDatabaseRequest);
+        TerraBaseSqlClient.ValidatePlacement(placement?.Regions, placement?.AllRegions);
+        var body = TerraBaseConnection.Json(new TerraBaseCreateDatabaseRequest(name, placement?.Regions, placement?.AllRegions), Json.TerraBaseCreateDatabaseRequest);
         return (await connection.SendAsync(HttpMethod.Post, path + "/databases", body, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 
@@ -62,4 +62,4 @@ public sealed partial class TerraBaseProjectClient
 
 }
 
-internal sealed record TerraBaseCreateDatabaseRequest(string Name, IReadOnlyList<string>? Regions);
+internal sealed record TerraBaseCreateDatabaseRequest(string Name, IReadOnlyList<string>? Regions, bool? AllRegions);

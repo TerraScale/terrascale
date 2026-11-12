@@ -57,6 +57,7 @@ const (
 	ErrWrongRegion     ErrorCode = "wrong_region"
 	ErrReplicaNotReady ErrorCode = "replica_not_ready"
 	ErrMoveInProgress  ErrorCode = "move_in_progress"
+	ErrMoveUnresolved  ErrorCode = "move_unresolved"
 )
 
 // Codes synthesized for Management responses whose body is a plain JSON
@@ -84,7 +85,8 @@ type APIError struct {
 	// Body preserves the complete response body, including malformed errors.
 	Body json.RawMessage
 	// RequestID is the response's X-Request-ID, when supplied by the service.
-	RequestID  string
+	RequestID string
+	// HomeRegion is the routing hint naming the region that orders writes.
 	HomeRegion string
 	Regions    []string
 	// Region and Machine identify the accepting node on write_outcome_unknown.

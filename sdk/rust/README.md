@@ -217,6 +217,8 @@ The SDK exposes `Error::code()` returning `Some("replica_not_ready")` or `Some("
 general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
 The caller bounds this repeat loop to 90 seconds and propagates other errors:
 
+`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
+
 ```rust
 let change = DatabasePlacement { regions: Some(vec!["fra".into()]), ..Default::default() };
 tokio::time::timeout(Duration::from_secs(90), async { loop { match client.set_database_placement(database, &change).await {

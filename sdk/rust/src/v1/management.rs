@@ -16,6 +16,7 @@ pub struct ManagementPage<T> {
     pub next: Option<String>,
 }
 
+/// Complete region set or every-region placement; never combined with earlier placement fields.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabasePlacement {
@@ -84,7 +85,7 @@ impl Client {
 }
 
 impl Database {
-    /// `POST P/databases` in an explicit home region.
+    /// `POST P/databases` with the complete selected region set or every-region placement.
     pub async fn create_with_placement(
         &self,
         placement: &DatabasePlacement,
