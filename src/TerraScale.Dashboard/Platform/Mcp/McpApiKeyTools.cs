@@ -11,6 +11,7 @@ using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Backups;
 using TerraScale.TerraBase.Contracts.Management;
 
@@ -153,7 +154,13 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     return await ExecuteAsync(home);
                 }
             }
-            var database = await management.GetDatabaseAsync(scope.ProjectId, databaseId);
+            TerraBaseManagedDatabase database;
+            try { database = await management.GetDatabaseAsync(scope.ProjectId, databaseId); }
+            catch (TerraBaseWrongRegionException wrong) when (DatabaseRegion.Resolve(regions, wrong.HomeRegion) is { } route && route.Id != region.Id)
+            {
+                database = await rpc.User<IManagementService>(scope.AccessToken, route.Id).WithCancellationToken(ct).GetDatabaseAsync(scope.ProjectId, databaseId);
+            }
+
             region = DatabaseRegion.Resolve(await databases.RegionsAsync(ct), DatabaseBackend.Map(database).Route)
                 ?? throw new AccountAccessException("The regions serving this database are unavailable. Try again shortly.", 503);
             management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
@@ -218,7 +225,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
         private static McpDatabase Output(TerraBaseManagedDatabase item)
         {
             var db = DatabaseBackend.Map(item);
-            return new(db.Id, db.Name, "ready", db.Route, db.Regions ?? throw new HttpRequestException("The database service did not return its regions."),
+            return new(db.Id, db.Name, "ready", db.Route, [.. (db.Regions ?? throw new HttpRequestException("The database service did not return its regions.")).Order(StringComparer.Ordinal)],
                 db.CreatedAt, db.AllRegions, db.ExpiresAt);
         }
         private static CallToolResult Reply<T>(T value, JsonTypeInfo<T> type) => new()

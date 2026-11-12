@@ -59,7 +59,7 @@ authenticated HTTP/2 peer calls, with the run's shared peer credential. Namespac
 peer the other's source address, which the pull endpoint uses to identify the replica. The client, metrics and
 PostgreSQL ports are 8080/9091/6432 for gru and 8180/9191/6532 for fra; the data directories are
 `$E2E_STATE/terrabase` and `$E2E_STATE/terrabase-fra`. The edge and run CA cover
-`gru.api.terrascale.tech` and `fra.api.terrascale.tech`. The dashboard reads the same peers file, as in production, so a call for a database in fra goes to fra's internal listener; ts-auth keeps using gru's.
+`gru.api.terrascale.tech` and `fra.api.terrascale.tech`. In two-region mode the journey gives the dashboard the cells' peers file so it can call each region's TerraBase: a call for a database in fra goes to fra's internal listener; ts-auth keeps using gru's. Production's dashboard needs the equivalent before customers place databases outside its own region; whether it has it is being checked separately.
 Discovery returns gru and fra, both known to the dashboard map; the default cell still identifies as local.
 
 Both regions use the same signed R2 stand-in, with separate `terrascale-gru-files` and `terrascale-fra-files`

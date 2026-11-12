@@ -474,10 +474,10 @@ namespace TerraScale.Dashboard.Common.Databases
         public string? Route { get; } = error.HomeRegion;
     }
 
-    public sealed class DatabaseRegionsCopyingException(IReadOnlyList<string> added, IReadOnlyList<string> serving)
+    public sealed class DatabaseRegionsCopyingException(IReadOnlyList<string> added, IReadOnlyList<string> copying, IReadOnlyList<string> serving)
         : DatabaseProviderException(HttpStatusCode.ServiceUnavailable,
-            $"{RegionNames.List(added)} added. {(added.Count == 1 ? "It is" : "They are")} still copying this database, which usually takes about half a minute. " +
-            $"Save again to finish; until then {RegionNames.List(serving)} {(serving.Count == 1 ? "keeps" : "keep")} serving.")
+            (added.Count > 0 ? $"{RegionNames.List(added)} added. {(added.Count == 1 ? "It is" : "They are")}" : $"{RegionNames.List(copying)} {(copying.Count == 1 ? "is" : "are")}") +
+            $" still copying this database, which usually takes about half a minute. Save again to finish; until then {RegionNames.List(serving)} {(serving.Count == 1 ? "keeps" : "keep")} serving.")
     {
         public const string Code = "replica_not_ready";
     }

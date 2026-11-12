@@ -6,17 +6,22 @@ test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the
 test.describe.configure({ mode: 'default', timeout: 180_000 });
 test.use({ storageState: sessionFile('placement-setup') });
 
-type Database = { id: string; regions: string[] };
+type Database = { id: string; name: string; regions: string[] };
 
 const copying = 'Frankfurt added. It is still copying this database, which usually takes about half a minute. Save again to finish; until then São Paulo keeps serving.';
+const stillCopying = 'Frankfurt is still copying this database, which usually takes about half a minute. Save again to finish; until then São Paulo keeps serving.';
 
 async function routed(send: (origin: string) => Promise<APIResponse>): Promise<APIResponse> {
   const response = await send(home);
   return response.status() === 421 ? send(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech`) : response;
 }
 
+async function read(cells: Cells, id: string): Promise<Database> {
+  return json<Database>(await routed((origin) => cells.get(`${origin}${database(id)}`)));
+}
+
 async function stored(cells: Cells, id: string): Promise<string[]> {
-  return (await json<Database>(await routed((origin) => cells.get(`${origin}${database(id)}`)))).regions;
+  return (await read(cells, id)).regions;
 }
 
 async function settled(cells: Cells, id: string): Promise<void> {
@@ -26,6 +31,55 @@ async function settled(cells: Cells, id: string): Promise<void> {
 async function remove(cells: Cells, id: string): Promise<void> {
   const response = await routed((origin) => cells.delete(`${origin}${database(id)}`));
   expect([204, 404], 'the temporary database is deleted').toContain(response.status());
+}
+
+async function moveToSaoPaulo(cells: Cells, id: string): Promise<void> {
+  const statuses: number[] = [];
+  await expect.poll(async () => {
+    const response = await routed((origin) => cells.patch(`${origin}${database(id)}`, { data: { regions: ['gru'] } }));
+    statuses.push(response.status());
+    expect([200, 503], '200 updated or 503 still copying').toContain(response.status());
+    return response.status();
+  }, { message: 'the API moves the database to São Paulo', timeout: 90_000, intervals: [1_000] }).toBe(200);
+  console.log(`API move to São Paulo statuses: ${JSON.stringify(statuses)}`);
+  expect(await stored(cells, id)).toEqual(['gru']);
+}
+
+async function renameInDashboard(page: Page, cells: Cells, id: string): Promise<string> {
+  const current = (await read(cells, id)).name;
+  const renamed = name('ui-renamed');
+  await page.goto(`/databases/${id}/settings`);
+  await page.locator('#rename-name').fill(renamed);
+  await page.locator('#rename-confirm').fill(current);
+  await page.getByRole('button', { name: 'Rename database', exact: true }).click();
+  await page.waitForURL((url) => url.pathname === `/databases/${id}/settings` && url.searchParams.get('renamed') === '1');
+  await expect(page.locator('.ts-db-head .ts-db-title')).toHaveText(renamed);
+  await expect(page.locator('main .ts-alert-success .ts-alert-title')).toHaveText(`Database renamed to ${renamed}`);
+  expect((await read(cells, id)).name).toBe(renamed);
+  return renamed;
+}
+
+async function deleteFromStaleDangerPage(page: Page, cells: Cells, id: string, current: string): Promise<void> {
+  await moveToSaoPaulo(cells, id);
+  const fresh = await page.context().newPage();
+  try {
+    await fresh.goto(`/databases/${id}/danger`);
+    expect(await badges(fresh), 'the danger page shows the record from before the API move').toEqual(['fra']);
+    await fresh.locator('main').getByRole('button', { name: 'Delete database', exact: true }).click();
+    const dialog = fresh.locator('dialog[open]');
+    await expect(dialog).toBeVisible();
+    await dialog.locator('input[name="confirmName"]').fill(current);
+    await dialog.getByRole('button', { name: 'Delete database', exact: true }).click();
+    await fresh.waitForURL((url) => url.pathname === '/databases');
+    await expect(fresh.locator('main tr').filter({ hasText: current })).toHaveCount(0);
+    expect((await routed((origin) => cells.get(`${origin}${database(id)}`))).status(), 'TerraBase no longer has the database').toBe(404);
+  } finally {
+    await fresh.close();
+  }
+}
+
+async function badges(page: Page): Promise<string[]> {
+  return (await page.locator('.ts-db-head .ts-db-region').evaluateAll((chips) => chips.map((chip) => chip.getAttribute('data-region') ?? ''))).sort();
 }
 
 async function inSaoPaulo(cells: Cells): Promise<Database> {
@@ -100,6 +154,7 @@ test('D2 D3 add Frankfurt, then drop São Paulo and read an earlier row through 
     await expect(region(page, 'database-regions', 'gru')).not.toBeChecked();
     await settled(cells, created.id);
     expect((await sql(cells, replica, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1]]);
+    await deleteFromStaleDangerPage(page, cells, created.id, await renameInDashboard(page, cells, created.id));
   } finally {
     await remove(cells, created.id);
   }
@@ -115,14 +170,16 @@ test('D4 replace São Paulo with Frankfurt in one save', async ({ page, cells })
     await region(page, 'database-regions', 'gru').uncheck();
     expect(await save(page), 'the first save adds Frankfurt and answers that it is still copying').toBe(202);
     await expect(page.locator('#regions-pending')).toHaveText(copying);
+    expect(await badges(page), 'the header shows the stored regions').toEqual(['fra', 'gru']);
     await expect(region(page, 'database-regions', 'fra')).toBeChecked();
     await expect(region(page, 'database-regions', 'gru')).not.toBeChecked();
     expect(await stored(cells, created.id)).toEqual(['fra', 'gru']);
-    await saveUntilDone(page, copying, 'D4 save again');
+    await saveUntilDone(page, stillCopying, 'D4 save again');
     await expect(region(page, 'database-regions', 'fra')).toBeChecked();
     await expect(region(page, 'database-regions', 'gru')).not.toBeChecked();
     await settled(cells, created.id);
     expect((await sql(cells, replica, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1]]);
+    await deleteFromStaleDangerPage(page, cells, created.id, await renameInDashboard(page, cells, created.id));
   } finally {
     await remove(cells, created.id);
   }

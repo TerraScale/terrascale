@@ -307,7 +307,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 "not_empty" => holder switch
                 {
                     Holder.Organization => "Delete the organization's projects first.",
-                    Holder.Project => "Delete the project's databases, API keys and backup destination first.",
+                    Holder.Project => "Delete the project's databases, file buckets, API keys and backup destination first.",
                     _ => throw new UnreachableException(),
                 },
                 "invitation_pending" => "This email already has a pending invitation.",

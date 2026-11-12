@@ -128,14 +128,15 @@ namespace TerraScale.Dashboard.Common.Databases
             DemandName(context.Project!, name);
             DemandRoom(context.Organization!);
             var scope = Scope(context);
-            var home = await HomeAsync(context, source, cancellationToken);
-            ManagedDatabase remote;
-            try { remote = await backend.BranchAsync(scope, home, id, name, cancellationToken, ttlSeconds); }
-            catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
+            var (remote, home) = await RoutedAsync(context, source, async (_, route) =>
             {
-                remote = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name && database.BranchedFrom == source.Id)
-                    ?? throw new AccountAccessException("A database with this name already exists.", 409);
-            }
+                try { return (await backend.BranchAsync(scope, route, id, name, cancellationToken, ttlSeconds), route); }
+                catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
+                {
+                    return ((await backend.ListAsync(scope, route, cancellationToken)).FirstOrDefault(database => database.Name == name && database.BranchedFrom == source.Id)
+                        ?? throw new AccountAccessException("A database with this name already exists.", 409), route);
+                }
+            }, cancellationToken);
             if (remote.ProjectId != scope.ProjectId || remote.Name != name || string.IsNullOrEmpty(remote.Id) || remote.Id == source.Id || remote.BranchedFrom != source.Id)
             {
                 throw new HttpRequestException("Database branching returned an invalid identity.");
@@ -184,7 +185,8 @@ namespace TerraScale.Dashboard.Common.Databases
             var database = Database(context, id);
             if (!context.CanManage) { throw new AccountAccessException("Organization management access is required."); }
             if (PlatformDatabases.IsPlatform(context.Organization!.Id)) { throw PlatformDatabases.ReadOnly(); }
-            var remote = await backend.SetTtlAsync(Scope(context), await HomeAsync(context, database, cancellationToken), id, ttlSeconds, cancellationToken);
+            var scope = Scope(context);
+            (var remote, database) = await RoutedAsync(context, database, async (current, route) => (await backend.SetTtlAsync(scope, route, id, ttlSeconds, cancellationToken), current), cancellationToken);
             if (remote.Id != id || remote.ProjectId != context.Project!.Id || remote.Name != database.Name ||
                 ttlSeconds is null && remote.ExpiresAt is not null || ttlSeconds is not null && remote.ExpiresAt is null)
             {
@@ -239,8 +241,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
 
             var scope = Scope(context);
-            var home = await HomeAsync(context, database, cancellationToken);
-            var remote = await backend.RenameAsync(scope, home, id, name, cancellationToken);
+            (var remote, database, var home) = await RoutedAsync(context, database, async (current, route) => (await backend.RenameAsync(scope, route, id, name, cancellationToken), current, route), cancellationToken);
             var placement = await RemotePlacementAsync(remote, cancellationToken);
             if (remote.Id != id || remote.ProjectId != scope.ProjectId || remote.Name != name || remote.Route != home.Id ||
                 remote.CreatedAt != database.CreatedAt || remote.BranchedFrom != database.BranchedFrom || remote.AllRegions != database.AllRegions ||
@@ -269,7 +270,7 @@ namespace TerraScale.Dashboard.Common.Databases
             return database;
         }
 
-        public async Task<DatabaseRecord> PlaceAsync(AccountContext context, string id, IReadOnlyList<string> regions, CancellationToken cancellationToken)
+        public async Task<DatabaseRecord> PlaceAsync(AccountContext context, string id, IReadOnlyList<string> regions, IReadOnlyList<string> offered, CancellationToken cancellationToken)
         {
             context = await CurrentAsync(context, cancellationToken);
             var database = DemandPlacement(context, id);
@@ -278,22 +279,57 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new AccountAccessException("This database's regions are unavailable. Reload the page and try again.", 409);
             }
 
-            var home = await HomeAsync(context, database, cancellationToken);
             var catalog = await backend.RegionsAsync(cancellationToken);
-            var before = Regions(database).Select(code => DatabaseRegion.Resolve(catalog, code)?.Id ?? code.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
-            string[] selected = [.. regions.Select(code => before.FirstOrDefault(known => known.Equals(code.Trim(), StringComparison.OrdinalIgnoreCase)) ?? ResolveRegion(catalog, code).Id)
-                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-            var chosen = selected.ToHashSet(StringComparer.Ordinal);
-            var everywhere = database.AllRegions && chosen.IsSupersetOf(before) && catalog.All(region => chosen.Contains(region.Id));
+            HashSet<string> Ids(DatabaseRecord record) => Regions(record).Select(code => DatabaseRegion.Resolve(catalog, code)?.Id ?? code.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
+            var seen = Ids(database);
             var scope = Scope(context);
-            try { return await SavePlacementAsync(context, database, await backend.PlaceAsync(scope, home, id, everywhere ? [] : Capped(selected), everywhere, cancellationToken), "database.placement", cancellationToken); }
-            catch (TerraBaseException error) when (error.ErrorCode == DatabaseRegionsCopyingException.Code)
+            return await RoutedAsync(context, database, async (current, route) =>
             {
-                var stored = await SavePlacementAsync(context, database, await backend.GetAsync(scope, home, id, cancellationToken), "database.placement", cancellationToken);
-                var now = Regions(stored).Select(code => DatabaseRegion.Resolve(catalog, code)?.Id ?? code.ToLowerInvariant()).ToArray();
-                string[] added = [.. selected.Where(region => !before.Contains(region))];
-                throw new DatabaseRegionsCopyingException(added.Length > 0 ? added : selected,
-                    [.. now.Concat(before).Distinct(StringComparer.Ordinal).Where(region => !chosen.Contains(region))]);
+                var before = Ids(current);
+                if (!before.SetEquals(seen))
+                {
+                    throw new AccountAccessException("This database's regions changed in another session. Check them and save again.", 409);
+                }
+
+                string[] selected = [.. regions.Select(code => before.FirstOrDefault(known => known.Equals(code.Trim(), StringComparison.OrdinalIgnoreCase)) ?? ResolveRegion(catalog, code).Id)
+                    .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+                var chosen = selected.ToHashSet(StringComparer.Ordinal);
+                var everywhere = current.AllRegions && offered.Count > 0 &&
+                    offered.All(code => chosen.Contains(DatabaseRegion.Resolve(catalog, code.Trim())?.Id ?? code.Trim().ToLowerInvariant()));
+                try { return await SavePlacementAsync(context, current, await backend.PlaceAsync(scope, route, id, everywhere ? [] : Capped(selected), everywhere, cancellationToken), "database.placement", cancellationToken); }
+                catch (TerraBaseException error) when (error.ErrorCode == DatabaseRegionsCopyingException.Code)
+                {
+                    ManagedDatabase pending;
+                    try { pending = await backend.GetAsync(scope, route, id, cancellationToken); }
+                    catch (DatabaseWrongRegionException)
+                    {
+                        await SyncAsync(context, cancellationToken);
+                        return Database(context, id);
+                    }
+
+                    var stored = await SavePlacementAsync(context, current, pending, null, cancellationToken);
+                    var now = Regions(stored).Select(code => DatabaseRegion.Resolve(catalog, code)?.Id ?? code.ToLowerInvariant()).ToArray();
+                    throw new DatabaseRegionsCopyingException([.. selected.Where(region => !before.Contains(region))], selected,
+                        [.. now.Concat(before).Distinct(StringComparer.Ordinal).Where(region => !chosen.Contains(region))]);
+                }
+            }, cancellationToken);
+        }
+
+        private async Task<T> RoutedAsync<T>(AccountContext context, DatabaseRecord database, Func<DatabaseRecord, DatabaseRegion, Task<T>> call, CancellationToken cancellationToken)
+        {
+            var home = await HomeAsync(context, database, cancellationToken);
+            try { return await call(database, home); }
+            catch (DatabaseWrongRegionException)
+            {
+                await SyncAsync(context, cancellationToken);
+                var synced = Database(context, database.Id);
+                var route = await HomeAsync(context, synced, cancellationToken);
+                if (route.Id == home.Id)
+                {
+                    throw;
+                }
+
+                return await call(synced, route);
             }
         }
 
@@ -331,7 +367,7 @@ namespace TerraScale.Dashboard.Common.Databases
             return placed.Length == 0 ? throw new AccountAccessException("Choose at least one region.", 422) : Capped(placed);
         }
 
-        private async Task<DatabaseRecord> SavePlacementAsync(AccountContext context, DatabaseRecord database, ManagedDatabase remote, string audit, CancellationToken cancellationToken)
+        private async Task<DatabaseRecord> SavePlacementAsync(AccountContext context, DatabaseRecord database, ManagedDatabase remote, string? audit, CancellationToken cancellationToken)
         {
             var scope = Scope(context);
             if (remote.Id != database.Id || remote.ProjectId != scope.ProjectId)
@@ -354,7 +390,10 @@ namespace TerraScale.Dashboard.Common.Databases
                 current.AllRegions = record.AllRegions;
                 current.Endpoint = record.Endpoint;
                 current.PlacementRevision = checked(current.PlacementRevision + 1);
-                org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, audit, current.Name, "database", accounts.Now));
+                if (audit is not null)
+                {
+                    org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, audit, current.Name, "database", accounts.Now));
+                }
             }, cancellationToken);
             database.Region = record.Region;
             database.Regions = [.. record.Regions];
@@ -378,7 +417,11 @@ namespace TerraScale.Dashboard.Common.Databases
             }
 
             var scope = Scope(context);
-            await backend.DeleteAsync(scope, await HomeAsync(context, database, cancellationToken), id, cancellationToken);
+            database = await RoutedAsync(context, database, async (current, route) =>
+            {
+                await backend.DeleteAsync(scope, route, id, cancellationToken);
+                return current;
+            }, cancellationToken);
             await accounts.UpdateOrganizationAsync(context, org =>
             {
                 if (!org.CanManage(context.UserId))

@@ -109,13 +109,16 @@ namespace TerraScale.Dashboard.Features.Databases
 
         private static Task<McpDatabase> DatabaseOutput(DatabaseRecord db)
         {
-            return Task.FromResult(new McpDatabase(db.Id, db.Name, db.Status, db.Region, DatabaseService.ServingRegions(db), db.CreatedAt, db.AllRegions, db.ExpiresAt));
+            return Task.FromResult(new McpDatabase(db.Id, db.Name, db.Status, db.Region, [.. DatabaseService.ServingRegions(db).Order(StringComparer.OrdinalIgnoreCase)], db.CreatedAt, db.AllRegions, db.ExpiresAt));
         }
     }
 
-    public record McpDatabase(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? ExpiresAt);
+    public record McpDatabase(string Id, string Name, string Status, [property: Description(McpDatabase.RegionDescription)] string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? ExpiresAt)
+    {
+        public const string RegionDescription = "The region the dashboard routes this database's requests through; see placement for every region the database runs in.";
+    }
     public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
-    public sealed record McpDatabaseDetail(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions,
+    public sealed record McpDatabaseDetail(string Id, string Name, string Status, [property: Description(McpDatabase.RegionDescription)] string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions,
         string Endpoint, IReadOnlyList<string> Regions,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Unavailable, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? BackupsEnabled, bool CanManage, bool CanBranch, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? ExpiresAt);
 }

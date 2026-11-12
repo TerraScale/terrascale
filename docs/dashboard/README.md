@@ -12,7 +12,7 @@ Production runs on OCI gru under ts-orch; see the
 [OCI deployment contract](oci-deployment.md).
 
 [Agent databases](agent-databases.md) describes TTL, forks and the database MCP lifecycle.
-[Database placement](database-placement.md) describes home moves and replica controls.
+[Database placement](database-placement.md) describes how a database's regions are chosen and saved.
 [Sign-in flow](auth/sign-in-flow.md) describes the OIDC flow, its lifetime and the callback failure pages.
 
 SDK language tabs defines the shared dashboard, docs and landing control.

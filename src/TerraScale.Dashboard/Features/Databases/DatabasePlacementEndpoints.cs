@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var asked = form["regions"].OfType<string>().Select(code => code.Trim()).Where(code => code.Length > 0).ToArray();
             try
             {
-                var database = await databases.PlaceAsync(context, id, Selection(form, ""), http.RequestAborted);
+                var database = await databases.PlaceAsync(context, id, Selection(form, ""), [.. form["offered"].OfType<string>()], http.RequestAborted);
                 return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "replication")) : Results.Json(DatabaseEndpoints.DatabaseOutput(database));
             }
             catch (DatabaseRegionsCopyingException copying) when (DatabaseResults.WantsHtml(http))

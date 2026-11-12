@@ -90,6 +90,7 @@ for(var i = 0; i < (Model.Grants?.Count ?? 0); i++){var grant = Model.Grants![i]
 @if(Model.RegionsForm is { Notice.Length: > 0 } pending){<div class="ts-alert ts-alert-warning" id="regions-pending" role="status"><p class="ts-alert-body">@pending.Notice</p></div>}
 @if(Model.CanPlace){
 <form method="post" action="/api/v1/dashboard/databases/placement" class="ts-form" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" />
+@foreach(var region in Model.Choices){<input type="hidden" name="offered" value="@region.Code" />}
 @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.RegionMap, RegionMapModel>(Model.RegionMap))
 <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save regions</button></div></form>
 }else{
