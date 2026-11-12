@@ -11,9 +11,6 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
     private const string PlatformCreator = PlatformDatabases.OrganizationId;
     private const string PlatformOrganizationName = "TerraScale";
 
-    private static readonly Unavailable PlatformDatabaseOrphaned = new(
-        "a platform database file has no catalog record; the file audit deletes it 24 hours after it first sees it", "platform_database_orphaned");
-
     public async ValueTask<EnsurePlatformResult> EnsurePlatformAsync(CancellationToken cancellationToken)
     {
         var tenants = await ReadAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: false, cancellationToken), static error => error, cancellationToken)
@@ -44,12 +41,9 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
             }
         }
 
-        if (pending is not null)
-        {
-            return pending;
-        }
-
-        return conflicts.Count == 0 ? new Done() : new PlatformConflicts(conflicts);
+        return pending is not null ? new PlatformPending(conflicts, pending)
+            : conflicts.Contains(PlatformDatabases.Orphaned) ? new PlatformOrphaned(conflicts)
+            : conflicts.Count == 0 ? new Done() : new PlatformConflicts(conflicts);
     }
 
     private async ValueTask<PlatformState> SeedDatabaseAsync(string name, (string Id, string ProjectId) database, CancellationToken cancellationToken)
@@ -64,7 +58,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         var tenant = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Enterprise, database.ProjectId, database.Id);
         return engine.HasDatabaseFiles(tenant)
             && !await ReadAsync(transaction => OwnedFileAsync(transaction, tenant, cancellationToken), static _ => true, cancellationToken).ConfigureAwait(false)
-                ? PlatformDatabaseOrphaned
+                ? PlatformDatabases.Orphaned
                 : await AddPlatformDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false);
     }
 
@@ -72,7 +66,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
     {
         Done done => done,
         Conflict conflict => new PlatformConflicts([conflict]),
-        Unavailable unavailable => unavailable,
+        Unavailable unavailable => new PlatformPending([], unavailable),
         NotFound => throw new UnreachableException(),
     };
 

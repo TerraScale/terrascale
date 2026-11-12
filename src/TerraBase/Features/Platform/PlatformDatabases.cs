@@ -29,6 +29,9 @@ internal static class PlatformDatabases
         [Dashboard] = (DashboardId, DashboardProjectId),
     };
 
+    public static readonly Conflict Orphaned = new(
+        "a platform database file has no catalog record; the file audit deletes it 24 hours after it first sees it", "platform_database_orphaned");
+
     public static bool IsPlatform(string? organizationId) => organizationId == OrganizationId;
 
     public static bool IsPlatformProject(string? projectId) => projectId is AuthProjectId or DashboardProjectId;
@@ -50,23 +53,29 @@ internal static class PlatformDatabases
 
 internal sealed class PlatformSeedProgress
 {
-    private volatile bool _finished;
+    private volatile bool _ready;
     private volatile string? _pending;
 
     public PlatformSeedProgress(IMeterFactory meters)
     {
         ArgumentNullException.ThrowIfNull(meters);
         meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.platform.seed_pending", Observe,
-            description: "One, labelled with its reason, while the platform database seed holds readiness.");
+            description: "One, labelled with its reason, while the platform database seed is still trying.");
     }
 
-    internal bool Finished => _finished;
+    internal bool Ready => _ready;
 
     internal void Wait(string reason) => _pending = reason;
 
+    internal void Serve(string reason)
+    {
+        _pending = reason;
+        _ready = true;
+    }
+
     internal void Finish()
     {
-        _finished = true;
+        _ready = true;
         _pending = null;
     }
 
@@ -76,7 +85,11 @@ internal sealed class PlatformSeedProgress
 
 public sealed record PlatformConflicts(IReadOnlyList<Conflict> Conflicts);
 
-public readonly union EnsurePlatformResult(Done, PlatformConflicts, Unavailable);
+public sealed record PlatformPending(IReadOnlyList<Conflict> Conflicts, Unavailable Reason);
+
+public sealed record PlatformOrphaned(IReadOnlyList<Conflict> Conflicts);
+
+public readonly union EnsurePlatformResult(Done, PlatformConflicts, PlatformPending, PlatformOrphaned);
 
 public interface IPlatformCatalog
 {
@@ -97,6 +110,7 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
             await gate.Opened.WaitAsync(stoppingToken).ConfigureAwait(false);
         }
 
+        HashSet<string> reported = [with(StringComparer.Ordinal)];
         string? failure = null;
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -108,20 +122,21 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
                         progress.Finish();
                         logger.ZLogInformation($"Platform databases are seeded");
                         return;
-                    case PlatformConflicts conflicts:
+                    case PlatformConflicts settled:
+                        Report(settled.Conflicts, reported);
                         progress.Finish();
-                        foreach (var conflict in conflicts.Conflicts)
-                        {
-                            logger.ZLogError($"Platform databases conflict with existing catalog records: {conflict.Code:@Code}");
-                        }
-
                         return;
-                    case Unavailable unavailable:
-                        progress.Wait(unavailable.Code);
-                        if (failure != unavailable.Message)
+                    case PlatformOrphaned orphaned:
+                        Report(orphaned.Conflicts, reported);
+                        progress.Serve(PlatformDatabases.Orphaned.Code);
+                        break;
+                    case PlatformPending pending:
+                        Report(pending.Conflicts, reported);
+                        progress.Wait(pending.Reason.Code);
+                        if (failure != pending.Reason.Message)
                         {
-                            failure = unavailable.Message;
-                            logger.ZLogWarning($"Platform databases not seeded yet: {unavailable.Message:@Reason}; retrying");
+                            failure = pending.Reason.Message;
+                            logger.ZLogWarning($"Platform databases not seeded yet: {pending.Reason.Message:@Reason}; retrying");
                         }
 
                         break;
@@ -138,6 +153,17 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
             }
 
             await Task.Delay(Retry, time, stoppingToken).ConfigureAwait(false);
+        }
+    }
+
+    private void Report(IReadOnlyList<Conflict> conflicts, HashSet<string> reported)
+    {
+        foreach (var conflict in conflicts)
+        {
+            if (reported.Add(conflict.Code))
+            {
+                logger.ZLogError($"Platform databases conflict with existing records: {conflict.Code:@Code}; {conflict.Message:@Reason}");
+            }
         }
     }
 }
