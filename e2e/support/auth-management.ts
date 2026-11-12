@@ -275,11 +275,17 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
     expect(events.some(event => event.actor === management.writeKey.slice(0, 26)
       && event.action === action && event.source === 'ts-auth')).toBe(true);
   }
-  const audit = await page.request.get(auth + '/v1/terrascale/organizations/' + current.organizationId + '/audit-events', {
-    headers: { Authorization: 'Bearer ' + management.ownerToken }, params: { limit: 100 },
-  });
-  expect(audit.status()).toBe(200);
-  const events = (await audit.json()).items as { actor: string; action: string; detail: string }[];
+  const events: { actor: string; action: string; detail: string }[] = [];
+  let after: string | undefined;
+  do {
+    const audit = await page.request.get(auth + '/v1/terrascale/organizations/' + current.organizationId + '/audit-events', {
+      headers: { Authorization: 'Bearer ' + management.ownerToken }, params: { limit: 100, ...(after ? { after } : {}) },
+    });
+    expect(audit.status()).toBe(200);
+    const result = await audit.json();
+    events.push(...result.items);
+    after = result.next ?? undefined;
+  } while (after);
   for (const action of ['apiKey.created', 'apiKey.revoked']) {
     expect(events.some(event => event.action === action)).toBe(true);
   }
