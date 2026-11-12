@@ -84,10 +84,7 @@ type APIError struct {
 	// Body preserves the complete response body, including malformed errors.
 	Body json.RawMessage
 	// RequestID is the response's X-Request-ID, when supplied by the service.
-	RequestID string
-	// HomeRegion and Regions are the database's home and every region that
-	// holds it, as region ids (X-TerraBase-Database-Home and
-	// X-TerraBase-Database-Regions), on a 421 ErrWrongRegion.
+	RequestID  string
 	HomeRegion string
 	Regions    []string
 	// Region and Machine identify the accepting node on write_outcome_unknown.

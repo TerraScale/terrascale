@@ -170,7 +170,7 @@ public sealed class TerraBaseWrongRegionException : TerraBaseException
     /// <summary>The region that orders writes (<c>X-TerraBase-Database-Home</c>); null for a pin mismatch.</summary>
     public string? HomeRegion { get; internal init; }
 
-    /// <summary>Every region that serves the database, its home first (<c>X-TerraBase-Database-Regions</c>); empty for a pin mismatch.</summary>
+    /// <summary>Every region that serves the database, in routing-hint order (<c>X-TerraBase-Database-Regions</c>); empty for a pin mismatch.</summary>
     public IReadOnlyList<string> Regions { get; internal init; } = [];
 }
 

@@ -84,7 +84,6 @@ Options go before or after the command and its operands; -- ends options.
   db placement <db> (-regions <a,b> | -all-regions)
                                           set the regions that hold the database
   db regions <db>                         print each region's pull progress
-                                          replica's pull progress
   backup list | create <db>               list or take a database's backups
   backup policy <db>                      read the snapshot schedule and retention
   backup policy-set <db> <cron|none> <days> set five-field UTC cron and 1..35 days
