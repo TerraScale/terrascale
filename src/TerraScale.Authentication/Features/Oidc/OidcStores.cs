@@ -690,7 +690,9 @@ public sealed class OidcTokenStore(AuthData data, Credentials credentials, IOpen
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
-        return await data.ReadAsync((db, token) => db.OidcTokens.Where(entry => entry.ExpirationDate <= now).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        return await data.ReadAsync((db, token) => db.OidcTokens.Where(entry => entry.ExpirationDate <= now
+                || entry.Type == TokenTypeIdentifiers.RefreshToken && db.OidcAuthorizations.Any(authorization => authorization.Id == entry.AuthorizationId && authorization.Status == Statuses.Revoked))
+            .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
     private async IAsyncEnumerable<OidcToken> FindAsync(string? subject, string? client, string? authorization, string? status, string? type,

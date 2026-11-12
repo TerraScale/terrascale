@@ -208,7 +208,10 @@ was selected; the discarded historical backup choice cannot be recovered.
 ### Expiry
 
 `StorageSweeper` runs every 10 minutes and deletes expired `auth_flows`, `sessions` (and with them their access tokens
-and codes), expired `mcp_codes`, and MCP clients that never finished a first sign-in within 24 hours.
+and codes), expired `mcp_codes`, and MCP clients that never finished a first sign-in within 24 hours. It revokes an
+expired browser session's grant at ts-auth (RFC 7009) before it deletes the row, as a request that finds its session
+expired and sign-out do, so ts-auth prunes that sign-in's refresh tokens; a row it cannot decrypt holds no grant it can
+revoke and is deleted.
 
 Project and organization deletion delete `alert_rules` and `log_drains` (their events and cursors cascade) and the
 organization's `allowance_alerts`.

@@ -199,7 +199,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
             var now = time.GetUtcNow();
             if ((record.SessionExpiresAt ?? record.ExpiresAt) <= now)
             {
-                await RemoveAsync(row, "expired", cancellationToken);
+                await ExpireAsync(row, record, cancellationToken);
                 return null;
             }
 
@@ -346,6 +346,40 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
             }
             return record;
         }
+    }
+
+    public async Task ExpireBrowserSessionsAsync(CancellationToken cancellationToken)
+    {
+        var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
+        var now = time.GetUtcNow().UtcDateTime;
+        List<SessionRow> expired;
+        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        {
+            expired = await db.Sessions.AsNoTracking().Where(row => row.Kind == SessionRow.Browser && row.ExpiresAt <= now).ToListAsync(cancellationToken);
+        }
+
+        foreach (var row in expired)
+        {
+            SessionRecord record;
+            try { record = Open(row, key); }
+            catch (IOException)
+            {
+                await RemoveAsync(row, "unreadable", cancellationToken);
+                continue;
+            }
+
+            await ExpireAsync(row, record, cancellationToken);
+        }
+    }
+
+    private async Task ExpireAsync(SessionRow row, SessionRecord record, CancellationToken cancellationToken)
+    {
+        if (row.Kind == SessionRow.Browser)
+        {
+            await auth.RevokeAsync(record, cancellationToken);
+        }
+
+        await RemoveAsync(row, "expired", cancellationToken);
     }
 
     public async Task EndAsync(HttpContext context)

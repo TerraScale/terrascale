@@ -31,7 +31,10 @@ masks a spent entry's effective status. Ancestry loss alone is not that evidence
 
 Revocation conditionally updates the authorization in TerraBase through the
 existing SDK store. It covers descendants still being issued without scanning
-token entries. A storage failure propagates rather than granting tokens or
+token entries. The pruner deletes a revoked authorization's refresh-token
+entries on its next pass (every 10 minutes): until then the revoked
+authorization refuses each of them, and afterwards their reference no longer
+resolves to an entry, so a replay is refused either way. A storage failure propagates rather than granting tokens or
 pretending revocation succeeded. Credential validation also checks for replay
 when a refresh loses its consumption transaction or becomes spent after initial
 validation. Entity caching stays disabled.
