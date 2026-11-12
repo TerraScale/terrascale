@@ -131,11 +131,20 @@ internal sealed class HomeMoves(
                 : [.. placement.Replicas.Where(region => region != marker.Target).Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
             var promotion = await PromoteAsync(peer, marker, new HomePromoteRequest(marker.MoveId, options.Region, marker.Version, next, placement?.AllRegions ?? false, record?.Name, record?.Identity))
                 .ConfigureAwait(false);
-            promoted = promotion.Promoted ?? await SettleAsync(peer, marker).ConfigureAwait(false);
-            refusal = promotion.NameTaken ? ManagementErrors.NameTaken with
+            promoted = promotion switch
             {
-                Message = $"Another database in {marker.Target} already uses this name. Rename one of them, then save again.",
-            } : null;
+                HomePromoteAnswer answer => answer.Promoted,
+                Conflict => false,
+                Unavailable => await SettleAsync(peer, marker).ConfigureAwait(false),
+            };
+            refusal = promotion switch
+            {
+                Conflict { Code: "name_taken" } => ManagementErrors.NameTaken with
+                {
+                    Message = $"Another database in {marker.Target} already uses this name. Rename one of them, then save again.",
+                },
+                HomePromoteAnswer or Conflict or Unavailable => null,
+            };
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -200,25 +209,27 @@ internal sealed class HomeMoves(
         return result;
     }
 
-    private async Task<(bool? Promoted, bool NameTaken)> PromoteAsync(ReplicaPeer peer, HomeMoveMarker marker, HomePromoteRequest request)
+    private async Task<PromoteResult> PromoteAsync(ReplicaPeer peer, HomeMoveMarker marker, HomePromoteRequest request)
     {
         using var response = await PostAsync(peer, marker, "promote", JsonContent.Create(request, ReplicasJsonContext.Default.HomePromoteRequest), CancellationToken.None)
             .ConfigureAwait(false);
-        var nameTaken = false;
+        string? code = null;
         if (response is { IsSuccessStatusCode: false })
         {
             var refusal = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             logger.ZLogWarning($"The target region refused promotion: {(int)response.StatusCode:@Status} {refusal:@Body}");
-            nameTaken = response.StatusCode == HttpStatusCode.Conflict
-                && JsonSerializer.Deserialize(refusal, TerraBaseJsonContext.Default.ErrorBody)?.Error.Code == "name_taken";
+            code = response.StatusCode == HttpStatusCode.Conflict
+                ? JsonSerializer.Deserialize(refusal, TerraBaseJsonContext.Default.ErrorBody)?.Error.Code : null;
         }
 
-        return (response switch
+        return response switch
         {
-            { StatusCode: HttpStatusCode.OK } => (await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.HomePromoteAnswer).ConfigureAwait(false))?.Promoted,
-            { StatusCode: HttpStatusCode.Conflict or HttpStatusCode.NotFound } => false,
-            _ => (bool?)null,
-        }, nameTaken);
+            { StatusCode: HttpStatusCode.OK } => await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.HomePromoteAnswer).ConfigureAwait(false) is { } answer
+                ? answer : (PromoteResult)ReplicaNotReady,
+            { StatusCode: HttpStatusCode.Conflict } when code == "name_taken" => ManagementErrors.NameTaken,
+            { StatusCode: HttpStatusCode.Conflict or HttpStatusCode.NotFound } => new Conflict("the target refused promotion", "move_aborted"),
+            _ => ReplicaNotReady,
+        };
     }
 
     private async Task<bool?> SettleAsync(ReplicaPeer peer, HomeMoveMarker marker)
@@ -303,7 +314,7 @@ internal sealed class HomeMoves(
             }
 
             IReadOnlyList<string> next = [.. request.ReplicaRegions.Where(region => region != options.Region)];
-            return await AdoptAsync(database, request.FromRegion, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), failedHome: null, cancellationToken, request.Name, request.Identity)
+            return await AdoptAsync(database, request.FromRegion, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), failedHome: null, request.Name, request.Identity, cancellationToken)
                 .ConfigureAwait(false);
         }
         finally
@@ -335,7 +346,7 @@ internal sealed class HomeMoves(
             await replication.SuspendAsync(database).ConfigureAwait(false);
             try
             {
-                return await AdoptAsync(database, fromRegion, new DatabasePlacement(options.Region, next, version, placement.AllRegions), failedHome, cancellationToken)
+                return await AdoptAsync(database, fromRegion, new DatabasePlacement(options.Region, next, version, placement.AllRegions), failedHome, name: null, identity: null, cancellationToken)
                     .ConfigureAwait(false) is HomePromoteAnswer { Promoted: true };
             }
             finally
@@ -349,7 +360,7 @@ internal sealed class HomeMoves(
         }
     }
 
-    private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, HomeLease? failedHome, CancellationToken cancellationToken, string? name = null, DatabaseIdentity? identity = null)
+    private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, HomeLease? failedHome, string? name, DatabaseIdentity? identity, CancellationToken cancellationToken)
     {
         if (name is not null)
         {

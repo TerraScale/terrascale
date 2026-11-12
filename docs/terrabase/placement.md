@@ -36,6 +36,7 @@ Until then, requests using `homeRegion`, `replicaRegions` or `allRegions`, and r
 |---|---|
 | `400 invalid_request` | bad or unserved regions; `homeRegion` is not a replica region |
 | `409 move_in_progress` | another move of this database is running |
+| `409 name_taken` | another database of the project has this name in the target region; rename one and repeat |
 | `421 wrong_region` | the request reached a region other than the home |
 | `503 replica_not_ready` | no requested replica can take over yet; added regions remain members (move-home itself changes nothing on this refusal) |
 | `503 move_unresolved` | the move outcome is being settled with the target; writes stay paused until it is; retry |

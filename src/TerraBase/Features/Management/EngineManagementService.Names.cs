@@ -9,7 +9,7 @@ internal sealed partial class EngineManagementService
 
     private sealed record NameMember(string Id, string Name, string Home, long Version);
 
-    private sealed record NamePlan(Dictionary<string, NameMember?> Members, Dictionary<string, string> Names);
+    private sealed record NamePlan(IReadOnlyDictionary<string, NameMember?> Members, IReadOnlyDictionary<string, string> Names);
 
     public async ValueTask<bool> ReconcileDatabaseNameAsync(
         TenantContext database, string name, string home, long version, Func<TenantContext, CancellationToken, Task<string?>> resolve, CancellationToken cancellationToken)
