@@ -48,15 +48,15 @@ function render(object, query) {
 }
 
 const api = [
-  ['GET', /^\/v1\/prices$/, () => list([...objects.values()].filter((object) => object.id.startsWith('price_')))],
+  ['GET', /^\/v1\/prices$/, () => list([...objects.values()].filter((object) => object.id.startsWith('price_'))), {}, {}, ['active', 'currency', 'type', 'limit', 'expand', 'product']],
   ['POST', /^\/v1\/customers$/, (form) => store({ id: id('cus'), metadata: fields(form, 'metadata'), name: form.get('name'), email: form.get('email') }), {}, {}, ['name', 'email', 'metadata']],
   ['GET', /^\/v1\/customers\/search$/, (query) => {
     const organization = /^metadata\['organization_id'\]:'([0-9A-Z]{26})'$/.exec(query.get('query') ?? '')?.[1];
     if (!organization) return undefined;
     const customers = [...objects.values()].filter((object) => object.id.startsWith('cus_') && object.metadata.organization_id === organization);
     return { data: customers, has_more: false, next_page: null };
-  }],
-  ['GET', /^\/v1\/customers\/(cus_\w+)$/, (query, [customer]) => find('cus', customer)],
+  }, {}, {}, ['query', 'limit', 'page']],
+  ['GET', /^\/v1\/customers\/(cus_\w+)$/, (query, [customer]) => find('cus', customer), {}, {}, ['expand']],
   ['POST', /^\/v1\/customers\/(cus_\w+)$/, (form, [customer]) => {
     const found = find('cus', customer);
     return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
@@ -76,15 +76,15 @@ const api = [
     'allowed_payment_method_types[0]': (value) => value === 'card',
     'allowed_payment_method_types[1]': (value) => value === 'link',
     'allowed_payment_method_types[2]': (value) => value === null,
-  }, ['mode', 'customer', 'client_reference_id', 'success_url', 'cancel_url', 'expires_at', 'billing_address', 'payment_method', 'allowed_payment_method_types', 'line_items', 'metadata', 'tax_id', 'customer_update', 'subscription_data']],
-  ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }],
-  ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session)],
+  }, ['mode', 'customer', 'client_reference_id', 'success_url', 'cancel_url', 'expires_at', 'billing_address_collection', 'payment_method_collection', 'allowed_payment_method_types', 'line_items', 'metadata', 'tax_id_collection', 'customer_update', 'subscription_data']],
+  ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }, {}, ['customer', 'limit', 'starting_after']],
+  ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session), {}, {}, ['expand']],
   ['POST', /^\/v1\/checkout\/sessions\/(cs_test_\w+)\/expire$/, (form, [session]) => {
     const found = find('cs', session);
     return found?.status === 'open' ? Object.assign(found, { status: 'expired', url: null }) : found;
   }, {}, {}, []],
-  ['GET', /^\/v1\/subscriptions$/, (query) => list(owned('sub', query.get('customer'))), { customer: customerId, status: /^all$/ }],
-  ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription)],
+  ['GET', /^\/v1\/subscriptions$/, (query) => list(owned('sub', query.get('customer'))), { customer: customerId, status: /^all$/ }, {}, ['customer', 'status', 'limit', 'starting_after']],
+  ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription), {}, {}, ['expand']],
   ['POST', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [subscription]) => {
     const found = find('sub', subscription);
     return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
@@ -96,17 +96,17 @@ const api = [
     log.cancels.push({ subscription: subscription.id, customer: subscription.customer, organization: subscription.metadata.organization_id });
     return Object.assign(subscription, { status: 'canceled' });
   }],
-  ['GET', /^\/v1\/invoices$/, (query) => list(owned('in', query.get('customer')).filter((invoice) => (!query.has('subscription') || invoice.parent.subscription_details.subscription === query.get('subscription')) && (!query.has('status') || invoice.status === query.get('status')))), { customer: customerId }],
-  ['GET', /^\/v1\/invoice_payments$/, (query) => list([...objects.values()].filter((payment) => payment.id.startsWith('inpay_') && payment.invoice === query.get('invoice') && payment.status === query.get('status'))), { invoice: /^in_\w+$/, status: /^paid$/ }],
-  ['GET', /^\/v1\/refunds$/, (query) => list([...objects.values()].filter((refund) => refund.id.startsWith('re_') && refund.payment_intent === query.get('payment_intent'))), { payment_intent: /^pi_\w+$/ }],
+  ['GET', /^\/v1\/invoices$/, (query) => list(owned('in', query.get('customer')).filter((invoice) => (!query.has('subscription') || invoice.parent.subscription_details.subscription === query.get('subscription')) && (!query.has('status') || invoice.status === query.get('status')))), { customer: customerId }, {}, ['customer', 'subscription', 'status', 'limit', 'starting_after']],
+  ['GET', /^\/v1\/invoice_payments$/, (query) => list([...objects.values()].filter((payment) => payment.id.startsWith('inpay_') && payment.invoice === query.get('invoice') && payment.status === query.get('status'))), { invoice: /^in_\w+$/, status: /^paid$/ }, {}, ['invoice', 'status', 'limit']],
+  ['GET', /^\/v1\/refunds$/, (query) => list([...objects.values()].filter((refund) => refund.id.startsWith('re_') && refund.payment_intent === query.get('payment_intent'))), { payment_intent: /^pi_\w+$/ }, {}, ['payment_intent', 'charge', 'limit']],
   ['POST', /^\/v1\/refunds$/, (form) => {
     const payment = find('pi', form.get('payment_intent'));
     if (!payment || Number(form.get('amount')) !== payment.amount) return undefined;
     const refund = store({ id: id('re'), amount: payment.amount, payment_intent: payment.id, status: refundStatuses.get(payment.id) ?? 'succeeded' });
     log.refunds.push({ payment: payment.id, subscription: payment.subscription, amount: refund.amount });
     return refund;
-  }, { payment_intent: /^pi_\w+$/ }, {}, ['payment_intent', 'amount']],
-  ['GET', /^\/v1\/invoiceitems$/, () => list([]), { customer: customerId }],
+  }, { payment_intent: /^pi_\w+$/ }, {}, ['payment_intent', 'charge', 'amount', 'reason']],
+  ['GET', /^\/v1\/invoiceitems$/, () => list([]), { customer: customerId }, {}, ['customer', 'created', 'limit']],
 ];
 
 function complete(session) {
