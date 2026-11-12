@@ -490,6 +490,10 @@ internal sealed partial class RegionalHandoff(
         {
             return DrainRefused(progress, "the regional owner changed during the drain", "owner_changed", error);
         }
+        catch (NatsKVWrongLastRevisionException error)
+        {
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
     }
 
     private async Task<RegionalDrainResult> DrainCoreAsync(string target, DrainProgress progress, CancellationToken cancellationToken)

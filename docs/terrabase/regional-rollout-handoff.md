@@ -47,7 +47,8 @@ withdraws ingress from the source and drains in-flight responses.
 
 Drain transport failures return HTTP 503, `Retry-After: 1` and the standard error
 body code `target_unreachable` for target readiness, preparation, verification or
-activation, or `observer_unreachable` for route observation after the owner CAS.
+activation, `observer_unreachable` for route observation after the owner CAS, or
+`drain_unavailable` for admitting, reserving, collecting, priming or quiescing.
 The message names the phase and peer; the warning includes the exception. A
 non-caller deadline returns `drain_timeout` with the same phase and peer context.
 Caller cancellation propagates. Retirement probe failures log the exception type
