@@ -65,7 +65,8 @@ successor and adds no ancestry binding, and its answer carries no
 `refresh_token`, so the client keeps the one it has; nothing sent later changes
 its expiry. Every use still checks the client's authentication, the token
 entry's status, the authorization's status, the credential ancestry and the
-user's epoch, state and second factor. RFC 7009 revocation (which the
+user's epoch, state, second factor and that the user is not disabled. RFC 7009
+revocation (which the
 dashboard sends when a token is revoked on Profile → Access tokens), sign-out
 everywhere, a password reset, turning MFA on or off and account deletion end
 it at once, as they end a rotating grant.
