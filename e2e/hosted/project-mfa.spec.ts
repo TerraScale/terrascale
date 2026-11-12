@@ -22,27 +22,40 @@ function totp(secret: string): string {
   return ((digest.readUInt32BE(offset) & 0x7fffffff) % 1000000).toString().padStart(6, '0');
 }
 
-test('projects require MFA enrollment, replace sessions and sign users out everywhere', async ({ browser }, info) => {
-  const runId = journey().runId + '-' + randomBytes(4).toString('hex');
-  const email = await newAddress('mfa-owner-' + runId);
-  const endUser = await newAddress('mfa-end-user-' + runId);
-  const password = randomBytes(24).toString('base64url');
-  saveSecret('project-mfa-password', password);
-  const owner = await auditedContext(browser, { viewport: desktop });
-  const first = await auditedContext(browser, { viewport: desktop });
-  const second = await auditedContext(browser, { viewport: desktop });
-  const admin = await owner.newPage();
-  const page = await first.newPage();
-  const audit = new Audit(page, info);
-  const adminAudit = new Audit(admin, info);
-  try {
+test.describe('project MFA and session policy', () => {
+  let runId: string;
+  let owner: BrowserContext;
+  let first: BrowserContext;
+  let second: BrowserContext;
+  let admin: Page;
+  let page: Page;
+  let adminAudit: Audit;
+  let endUser: string;
+  let password: string;
+  let issuer: string;
+  let project: string;
+  let cookie: string;
+  let client: string;
+
+  test.beforeAll(async ({ browser }, info) => {
+    runId = journey().runId + '-' + randomBytes(4).toString('hex');
+    const email = await newAddress('mfa-owner-' + runId);
+    endUser = await newAddress('mfa-end-user-' + runId);
+    password = randomBytes(24).toString('base64url');
+    saveSecret('project-mfa-password', password);
+    owner = await auditedContext(browser, { viewport: desktop });
+    first = await auditedContext(browser, { viewport: desktop });
+    second = await auditedContext(browser, { viewport: desktop });
+    admin = await owner.newPage();
+    page = await first.newPage();
+    adminAudit = new Audit(admin, info);
     await signUp(admin, adminAudit, email, password, 'MFA project owner');
     await verify(admin, email);
     await onboard(admin, adminAudit, 'MFA owner', 'MFA policy', 'MFA project owner');
     await admin.goto(dash + '/auth/overview');
-    const issuer = (await admin.locator('#auth-issuer').textContent())!;
-    const project = new URL(issuer).pathname.split('/').filter(Boolean)[0];
-    const cookie = 'tsauth_session_' + project;
+    issuer = (await admin.locator('#auth-issuer').textContent())!;
+    project = new URL(issuer).pathname.split('/').filter(Boolean)[0];
+    cookie = 'tsauth_session_' + project;
     await admin.goto(dash + '/auth/clients');
     await admin.getByRole('button', { name: 'Add application', exact: true }).first().click();
     await admin.locator('#auth-client-name').fill('MFA journey');
@@ -50,7 +63,7 @@ test('projects require MFA enrollment, replace sessions and sign users out every
     await admin.locator('#auth-create-client').getByRole('button', { name: 'Add application', exact: true }).click();
     await confirmWithPassword(admin, adminAudit, password, 'create project application');
     await expect(admin.locator('#auth-created-client-id')).toBeVisible();
-    const client = (await admin.locator('#auth-created-client-id').textContent())!;
+    client = (await admin.locator('#auth-created-client-id').textContent())!;
 
     await admin.goto(dash + '/auth/mfa-sessions');
     await admin.locator('input[name=require_mfa]').check();
@@ -61,7 +74,17 @@ test('projects require MFA enrollment, replace sessions and sign users out every
     await expect(admin.locator('input[name=require_mfa]')).toBeChecked();
     await expect(admin.locator('#auth-inactivity')).toHaveValue('15');
     await adminAudit.check('required TOTP and session policy saved');
+  });
 
+  test.afterAll(async () => {
+    for (const context of [owner, first, second]) {
+      await saveCookies(context);
+      await context.close();
+    }
+  });
+
+  test('projects require MFA enrollment, replace sessions and sign users out everywhere', async ({ browser }, info) => {
+    const audit = new Audit(page, info);
     await page.goto(auth + '/ui/' + project + '/sign-up');
     await page.locator('#sign-up-email').fill(endUser);
     await enterSecret(page.locator('#sign-up-password'), password);
@@ -326,12 +349,7 @@ test('projects require MFA enrollment, replace sessions and sign users out every
     await audit.finish();
     await otherAudit.finish();
     await adminAudit.finish();
-  } finally {
-    for (const context of [owner, first, second]) {
-      await saveCookies(context);
-      await context.close();
-    }
-  }
+  });
 });
 
 test.describe('password-only MFA enrollment', () => {
