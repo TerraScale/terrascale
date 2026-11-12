@@ -1,8 +1,12 @@
 import { randomBytes } from 'node:crypto';
+import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { connect } from 'node:http2';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse, type Page } from '@playwright/test';
 import { test, authenticatedCells, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
-import { dash, production } from '../support/stack';
+import { dash, production, stateDir } from '../support/stack';
 import { Audit, auditedContext } from '../support/audit';
 import { saveCookies, saveSecret } from '../support/state';
 import { confirmWithPassword, onboard, signUp, verify } from '../support/hosted';
@@ -338,7 +342,7 @@ test('R8 a TTL branch keeps its identity through catalog sync, a move and a rena
   }
 });
 
-const multiple = test.extend<{ owner: { cells: Cells; projectId: string; page: Page; audit: Audit } }>({
+const multiple = test.extend<{ owner: { cells: Cells; projectId: string; organizationId: string; page: Page; audit: Audit } }>({
   owner: async ({ browser, playwright, request }, use, info) => {
     const context = await auditedContext(browser, {});
     try {
@@ -351,7 +355,9 @@ const multiple = test.extend<{ owner: { cells: Cells; projectId: string; page: P
       await verify(page, email);
       await onboard(page, audit, 'Catalog owner', 'C35 catalog project', 'catalog owner');
       const projectId = new URL(page.url()).searchParams.get('projectId') ?? '';
+      const organizationId = new URL(page.url()).searchParams.get('organizationId') ?? '';
       expect(projectId).not.toBe('');
+      expect(organizationId).not.toBe('');
       await page.goto(`${dash}/organization?tab=billing`);
       await page.locator('article.ts-plan', { has: page.locator('#plan-pro') }).getByRole('button', { name: 'Upgrade to Pro', exact: true }).click();
       await page.waitForURL(url => url.origin === 'https://checkout.stripe.com' && url.pathname.startsWith('/c/pay/cs_test_'));
@@ -362,7 +368,7 @@ const multiple = test.extend<{ owner: { cells: Cells; projectId: string; page: P
       const key = await createApiKey(page, audit, name('catalog-key'), 'catalog owner');
       const cells = await authenticatedCells(playwright.request, request, key, projectId);
       try {
-        await use({ cells, projectId, page, audit });
+        await use({ cells, projectId, organizationId, page, audit });
       } finally {
         await cells.dispose();
       }
@@ -392,6 +398,25 @@ async function rename(cells: Cells, region: string, id: string, label: string, p
 
 async function recordedName(cells: Cells, id: string, projectId: string): Promise<string> {
   return (await json<{ name: string }>(await cells.get(`${replica}${database(id, projectId)}`))).name;
+}
+
+async function catalogRecord<T>(cell: string, path: string): Promise<T> {
+  const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
+  const session = connect(cell);
+  const stream = session.request({ ':method': 'GET', ':path': path, 'x-terrabase-peer-credential': credential });
+  session.on('error', error => stream.destroy(error));
+  try {
+    const response = once(stream, 'response');
+    stream.end();
+    const [headers] = await response;
+    let body = '';
+    stream.setEncoding('utf8');
+    for await (const chunk of stream) body += chunk;
+    expect(Number(headers[':status']), path).toBe(200);
+    return JSON.parse(body) as T;
+  } finally {
+    session.close();
+  }
 }
 
 async function convergedNames(cells: Cells, ids: string[], real: string[], expected: string[], projectId: string): Promise<void> {
@@ -553,12 +578,14 @@ multiple('R13 promotion resolves a same-home name swap through placement before 
   }
 });
 
-multiple('R14 a sweep resolves a same-home holder excluded from its listing through placement', async ({ owner: { cells, projectId } }) => {
+multiple('R14 a sweep resolves a same-home holder excluded from its listing through placement', async ({ owner: { cells, projectId, organizationId } }) => {
   const a = name('lookup-a');
   const b = name('lookup-b');
   const freed = name('lookup-freed');
   const x = await named(cells, home, a, ['gru', 'fra'], projectId);
   const y = await named(cells, home, b, ['gru', 'fra'], projectId);
+  const holder = () => catalogRecord<{ name: string; homeRegion: string; replicaRegions: string[] }>('http://127.0.0.2:8081',
+    `/v1/sync/organizations/${organizationId}/projects/${projectId}/databases/${y.id}/placement`);
   try {
     for (const row of [x, y]) {
       await seed(cells, row.id, projectId);
@@ -566,13 +593,21 @@ multiple('R14 a sweep resolves a same-home holder excluded from its listing thro
     }
     expect(await recordedName(cells, y.id, projectId)).toBe(b);
     await answer(await patch(cells, y.id, ['gru'], projectId), 200, '200 holder excluded from fra listing');
-    await expect.poll(async () => (await json<Database>(await cells.get(`${replica}${database(y.id, projectId)}`))).regions,
+    await expect.poll(async () => (await holder()).replicaRegions,
       { message: 'fra has recorded the holder removal before its home renames it', timeout: 45_000, intervals: [250, 500, 1000] })
-      .toEqual(['gru']);
-    expect(await recordedName(cells, y.id, projectId)).toBe(b);
+      .toEqual([]);
+    expect(await holder()).toMatchObject({ name: b, homeRegion: 'gru' });
+    let after: string | null = null;
+    do {
+      const listing: { databases: { databaseId: string }[]; next: string | null } = await catalogRecord('http://127.0.0.1:8081',
+        '/v1/sync/regions/fra/databases' + (after ? `?after=${encodeURIComponent(after)}` : ''));
+      expect(listing.databases.map(row => row.databaseId), 'the home listing excludes the holder').not.toContain(y.id);
+      after = listing.next;
+    } while (after);
     await rename(cells, home, y.id, freed, projectId);
     await rename(cells, home, x.id, b, projectId);
-    await convergedNames(cells, [x.id, y.id], [a, b, freed], [b, freed], projectId);
+    await convergedNames(cells, [x.id], [a, b], [b], projectId);
+    expect((await holder()).name).toBe(freed);
     expect((await json<Database>(await cells.get(`${home}${database(y.id, projectId)}`))).regions).toEqual(['gru']);
     console.log('R14 holder removed from fra membership/listing, retained in fra catalog; sweep used home placement lookup without promotion');
   } finally {
