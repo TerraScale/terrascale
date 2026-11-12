@@ -44,6 +44,7 @@ public sealed class SessionRow
             builder.HasKey(row => row.Id);
             builder.HasIndex(row => row.TokenHash).IsUnique();
             builder.HasIndex(row => new { row.UserId, row.Kind, row.ExpiresAt });
+            builder.HasIndex(row => new { row.Kind, row.Id, row.ExpiresAt });
             builder.Property(row => row.Version).IsConcurrencyToken();
         }
     }

@@ -150,8 +150,8 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 49, Level = LogLevel.Warning, Message = "Account deletion did not end the billing of organization {OrganizationId} with {ErrorType} {ErrorCode}; the deletion cleanup retries it.")]
         internal static partial void AccountDeletionDidNotEndBilling(this ILogger logger, string organizationId, string errorType, string errorCode);
 
-        [LoggerMessage(EventId = 50, Level = LogLevel.Warning, Message = "Revoking the ts-auth grant of an expired dashboard session failed ({ErrorType}, status {Status}, code {ErrorCode}); its row stays for the next pass.")]
-        internal static partial void RevokingAnExpiredSessionFailed(this ILogger logger, string errorType, object? status, string errorCode);
+        [LoggerMessage(EventId = 50, Level = LogLevel.Warning, Message = "Revoking the ts-auth grant of expired dashboard session {SessionId} failed ({ErrorType}, status {Status}, code {ErrorCode}); its row stays for the next pass.")]
+        internal static partial void RevokingAnExpiredSessionFailed(this ILogger logger, string sessionId, string errorType, object? status, string errorCode);
 
         [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
         internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);

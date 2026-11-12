@@ -38,10 +38,11 @@ public sealed class Challenges(AuthData data, TimeProvider clock)
             && challenge.ExpiresAt > clock.GetUtcNow() ? binding : null;
     }
 
-    public async Task<int> PruneAsync(CancellationToken cancellationToken)
+    public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
-        return await data.ReadAsync((db, token) => db.Challenges.Where(challenge => challenge.ExpiresAt <= now).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        return await data.InBatchesAsync(batchSize, (db, token) => db.Challenges.Where(challenge => challenge.ExpiresAt <= now)
+            .OrderBy(challenge => challenge.ExpiresAt).Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
     private static void ValidateTokenHash(string tokenHash)

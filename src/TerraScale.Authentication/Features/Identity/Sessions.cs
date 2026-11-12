@@ -126,8 +126,10 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
-        return await data.InBatchesAsync(batchSize, (db, token) => db.Sessions.Where(session => session.Revoked || session.ExpiresAt <= now).OrderBy(session => session.ExpiresAt)
-            .Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        return await data.InBatchesAsync(batchSize, (db, token) => db.Sessions.Where(session => session.Revoked).OrderBy(session => session.ExpiresAt)
+            .Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
+            + await data.InBatchesAsync(batchSize, (db, token) => db.Sessions.Where(session => session.ExpiresAt <= now).OrderBy(session => session.ExpiresAt)
+                .Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<IssuedSession?> IssueAsync(UserRecord user, DateTimeOffset createdAt, DateTimeOffset expiresAt, CancellationToken cancellationToken, Change? extra = null)
