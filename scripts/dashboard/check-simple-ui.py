@@ -3,9 +3,8 @@
 
 Cards have titles, fields have labels, stats have values: no subtitles, hints, captions or eyebrows.
 Also reject a Datastar attribute, in single or double quotes, whose Razor value is a C# conditional with a branch that is
-null, null!, null as T, default, default(T) or default!, also in a conditional nested in a branch: Razor renders that branch
-as an empty value and Datastar throws on it. That check skips Razor and HTML comments and does not follow a conditional
-inside a call, a lambda or a switch expression.
+null, null!, null as T, default, default(T) or default!, also in a conditional nested in a branch, a lambda body or a
+switch arm: Razor renders that branch as an empty value and Datastar throws on it. That check skips Razor and HTML comments.
 """
 import re
 import sys
@@ -124,7 +123,69 @@ def has_null_branch(expression):
                 continue
             branches = [unwrapped(expression[question + 1:index]), unwrapped(expression[index + 1:])]
             return any(NULL.fullmatch(branch) or has_null_branch(branch) for branch in branches)
-    return False
+    return any(NULL.fullmatch(body) or has_null_branch(body) for body in nested_bodies(expression))
+
+
+def nested_bodies(expression):
+    index = 0
+    while index < len(expression):
+        char = expression[index]
+        if is_literal(expression, index):
+            index = literal_end(expression, index)
+            continue
+        if expression.startswith('=>', index):
+            body = unwrapped(expression[index + 2:])
+            if body.startswith('{'):
+                yield body[1:closing(body, 1, '}')]
+            else:
+                yield body
+            return
+        if expression.startswith('switch', index) and expression[index + 6:index + 7] in (' ', '(', '{'):
+            brace = expression.find('{', index + 6)
+            if brace != -1 and not any(char for _, char in top_level(expression[index + 6:brace]) if not char.isspace()):
+                body = expression[brace + 1:closing(expression, brace + 1, '}')]
+                for arm in switch_arms(body):
+                    if NULL.fullmatch(arm) or has_null_branch(arm):
+                        yield arm
+                index = brace + len(body) + 2
+                continue
+        if char in OPENERS:
+            end = closing(expression, index + 1, OPENERS[char])
+            yield from nested_bodies(expression[index + 1:end])
+            index = end + 1
+            continue
+        index += 1
+
+
+def switch_arms(body):
+    arm = []
+    depth = 0
+    for index, char in enumerate(body):
+        if char in OPENERS:
+            depth += 1
+        elif char in OPENERS.values():
+            depth -= 1
+        if depth == 0 and char == ',':
+            yield from arm_expression(arm)
+            arm = []
+            continue
+        arm.append(char)
+    yield from arm_expression(arm)
+
+
+def arm_expression(chars):
+    text = ''.join(chars)
+    arrow = None
+    depth = 0
+    for index, char in enumerate(text):
+        if char in OPENERS:
+            depth += 1
+        elif char in OPENERS.values():
+            depth -= 1
+        elif depth == 0 and text.startswith('=>', index):
+            arrow = index
+    if arrow is not None:
+        yield unwrapped(text[arrow + 2:])
 
 
 def null_datastar_values(text):
