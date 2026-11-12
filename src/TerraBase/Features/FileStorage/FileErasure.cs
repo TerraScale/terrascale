@@ -27,14 +27,16 @@ internal interface IProjectFileErasure
     ValueTask<bool> EraseAsync(ProjectFiles project, FileErasureFence fenced, DateTimeOffset until, CancellationToken cancellationToken);
 }
 
-internal sealed class FileErasure(SystemCatalog catalog, IFileObjectStore objects, IRegionCatalog regions, TimeProvider time) : IProjectFileErasure
+internal sealed class FileErasure(SystemCatalog catalog, IFileObjectStore objects, IRegionCatalog regions, TimeProvider time, FileCleanupFaults faults) : IProjectFileErasure
 {
     internal const string Purges = "file_object_purges";
     internal const string ProjectPurges = "file_project_purges";
+    internal const string ClosedProjects = "closed_projects";
     internal static readonly TimeSpan UploadLifetime = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan UploadMargin = TimeSpan.FromMinutes(1);
     internal static readonly TimeSpan SweepPeriod = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan LateObjects = TimeSpan.FromHours(24);
+    private static readonly TimeSpan LongestGap = LateObjects / 2;
     private const int Page = 100;
     private const int ParallelDeletes = 16;
     private string? _purgesAfter;
@@ -198,11 +200,6 @@ internal sealed class FileErasure(SystemCatalog catalog, IFileObjectStore object
 
     internal async ValueTask SweepProjectsAsync(CancellationToken cancellationToken)
     {
-        if (!objects.Configured)
-        {
-            return;
-        }
-
         var page = await catalog.ReadAsync<ManagementPage<FileProjectPurge>?>(async transaction =>
             await SystemCatalog.ListAsync(transaction, ProjectPurges, _projectsAfter, Page, FileStorageJsonContext.Default.FileProjectPurge, purge => purge.Id, cancellationToken).ConfigureAwait(false),
             static _ => null, cancellationToken).ConfigureAwait(false);
@@ -213,74 +210,115 @@ internal sealed class FileErasure(SystemCatalog catalog, IFileObjectStore object
 
         foreach (var purge in page.Items)
         {
-            var startedAt = time.GetUtcNow();
-            if (purge.SweepAt > startedAt)
+            try
             {
-                continue;
+                await SweepProjectAsync(purge, cancellationToken).ConfigureAwait(false);
             }
-
-            var closed = await catalog.ReadAsync<ClosedProject?>(async transaction =>
-                new(await SystemCatalog.GetAsync(transaction, ProjectClosure.Kind, purge.Id, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)),
-                static _ => null, cancellationToken).ConfigureAwait(false);
-            if (closed is null)
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                continue;
+                faults.Failed(ClosedProjects, purge.Id, null, error);
             }
-
-            if (closed.Closure is not { FormatVersion: 2 } closure || closure.ProjectId != purge.Id || closure.AuthorityOrganizationId != purge.OrganizationId
-                || !EntityIds.IsValid(closure.ProjectId) || !EntityIds.IsValid(closure.AuthorityOrganizationId))
-            {
-                throw new InvalidOperationException("a file sweep marker names no version-2 closure of its project and organization");
-            }
-
-            if (!await SweepAsync(FileStorageUsage.ProjectObjects(closure.AuthorityOrganizationId, closure.ProjectId), cancellationToken).ConfigureAwait(false))
-            {
-                continue;
-            }
-
-            _ = await catalog.WriteAsync<bool>(async transaction =>
-            {
-                if (await SystemCatalog.GetAsync(transaction, ProjectPurges, purge.Id, FileStorageJsonContext.Default.FileProjectPurge, cancellationToken).ConfigureAwait(false) != purge)
-                {
-                    return false;
-                }
-
-                if (startedAt >= purge.Until)
-                {
-                    _ = await transaction.DeleteAsync(ProjectPurges, purge.Id, cancellationToken).ConfigureAwait(false);
-                    return true;
-                }
-
-                var age = startedAt - purge.Since;
-                var next = startedAt + (age > SweepPeriod ? age : SweepPeriod);
-                await SystemCatalog.PutAsync(transaction, ProjectPurges, purge.Id, purge with { SweepAt = next < purge.Until ? next : purge.Until },
-                    FileStorageJsonContext.Default.FileProjectPurge, cancellationToken).ConfigureAwait(false);
-                return true;
-            }, static _ => false, cancellationToken).ConfigureAwait(false);
         }
 
         _projectsAfter = page.Next;
     }
 
-    private async ValueTask<bool> SweepAsync(string prefix, CancellationToken cancellationToken)
+    private async ValueTask SweepProjectAsync(FileProjectPurge purge, CancellationToken cancellationToken)
     {
-        var emptied = true;
-        foreach (var region in await regions.ServingAsync(cancellationToken).ConfigureAwait(false))
+        var startedAt = time.GetUtcNow();
+        var ended = startedAt >= purge.Until;
+        if (!objects.Configured)
         {
-            var listed = await objects.ListAsync(region, prefix, cancellationToken).ConfigureAwait(false);
-            if (listed.Keys.Any(key => !key.StartsWith(prefix, StringComparison.Ordinal)))
+            if (ended)
             {
-                throw new IOException("the object store listed a key outside the project's prefix");
+                await MoveAsync(purge, null, cancellationToken).ConfigureAwait(false);
             }
 
-            await Parallel.ForEachAsync(listed.Keys, new ParallelOptions { MaxDegreeOfParallelism = ParallelDeletes, CancellationToken = cancellationToken },
-                async (key, token) => await objects.DeleteAsync(region, key, token).ConfigureAwait(false))
-                .ConfigureAwait(false);
-            emptied &= !listed.Truncated;
+            return;
         }
 
-        return emptied;
+        if (purge.SweepAt > startedAt)
+        {
+            return;
+        }
+
+        var closed = await catalog.ReadAsync<ClosedProject?>(async transaction =>
+            new(await SystemCatalog.GetAsync(transaction, ProjectClosure.Kind, purge.Id, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)),
+            static _ => null, cancellationToken).ConfigureAwait(false);
+        if (closed is null)
+        {
+            return;
+        }
+
+        if (closed.Closure is not { FormatVersion: 2 } closure || closure.ProjectId != purge.Id || closure.AuthorityOrganizationId != purge.OrganizationId
+            || !EntityIds.IsValid(closure.ProjectId) || !EntityIds.IsValid(closure.AuthorityOrganizationId))
+        {
+            throw new InvalidOperationException("a file sweep marker names no version-2 closure of its project and organization");
+        }
+
+        var swept = await SweepAsync(closure.ProjectId, FileStorageUsage.ProjectObjects(closure.AuthorityOrganizationId, closure.ProjectId), cancellationToken).ConfigureAwait(false);
+        if (swept.Cut)
+        {
+            return;
+        }
+
+        if (ended)
+        {
+            await MoveAsync(purge, swept.Failed ? startedAt + LongestGap : null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var age = startedAt - purge.Since;
+        var next = startedAt + (age > SweepPeriod ? age : SweepPeriod);
+        await MoveAsync(purge, next < purge.Until ? next : purge.Until, cancellationToken).ConfigureAwait(false);
     }
+
+    private async ValueTask<Swept> SweepAsync(string project, string prefix, CancellationToken cancellationToken)
+    {
+        var swept = new Swept(false, false);
+        foreach (var region in await regions.ServingAsync(cancellationToken).ConfigureAwait(false))
+        {
+            try
+            {
+                var listed = await objects.ListAsync(region, prefix, cancellationToken).ConfigureAwait(false);
+                if (listed.Keys.Any(key => !key.StartsWith(prefix, StringComparison.Ordinal)))
+                {
+                    throw new IOException("the object store listed a key outside the project's prefix");
+                }
+
+                await Parallel.ForEachAsync(listed.Keys, new ParallelOptions { MaxDegreeOfParallelism = ParallelDeletes, CancellationToken = cancellationToken },
+                    async (key, token) => await objects.DeleteAsync(region, key, token).ConfigureAwait(false))
+                    .ConfigureAwait(false);
+                swept = swept with { Cut = swept.Cut || listed.Truncated };
+            }
+            catch (Exception error) when (FileStorageService.StoreFailure(error) && !cancellationToken.IsCancellationRequested)
+            {
+                faults.Failed(ClosedProjects, project, region, error);
+                swept = swept with { Failed = true };
+            }
+        }
+
+        return swept;
+    }
+
+    private async ValueTask MoveAsync(FileProjectPurge purge, DateTimeOffset? next, CancellationToken cancellationToken) =>
+        _ = await catalog.WriteAsync<bool>(async transaction =>
+        {
+            if (await SystemCatalog.GetAsync(transaction, ProjectPurges, purge.Id, FileStorageJsonContext.Default.FileProjectPurge, cancellationToken).ConfigureAwait(false) != purge)
+            {
+                return false;
+            }
+
+            if (next is not { } sweepAt)
+            {
+                _ = await transaction.DeleteAsync(ProjectPurges, purge.Id, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+
+            await SystemCatalog.PutAsync(transaction, ProjectPurges, purge.Id, purge with { SweepAt = sweepAt },
+                FileStorageJsonContext.Default.FileProjectPurge, cancellationToken).ConfigureAwait(false);
+            return true;
+        }, static _ => false, cancellationToken).ConfigureAwait(false);
 
     private ValueTask<bool> MarkAsync(ProjectFiles project, FileErasureFence fenced, CancellationToken cancellationToken) =>
         catalog.WriteAsync<bool>(async transaction =>
@@ -307,6 +345,8 @@ internal sealed class FileErasure(SystemCatalog catalog, IFileObjectStore object
     private sealed record NextBucket(bool Fenced, bool Marked, FileBucket? Bucket);
 
     private sealed record ClosedProject(ProjectClosureRecord? Closure);
+
+    private readonly record struct Swept(bool Cut, bool Failed);
 
     private sealed record Listed(BucketPurge? Stop, IReadOnlyList<FileObject> Files);
 }

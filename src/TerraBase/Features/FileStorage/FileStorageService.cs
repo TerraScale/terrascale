@@ -1,6 +1,5 @@
 using Amazon.Runtime;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -16,7 +15,7 @@ using TerraBase.Primitives;
 namespace TerraBase.Features.FileStorage;
 
 internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine engine, IFileObjectStore objects,
-    IStorageQuota quota, TerraBaseOptions options, TimeProvider time, ICatalogGate gate, FileErasure erasure, IMeterFactory meters, ILogger<FileStorageService> logger)
+    IStorageQuota quota, TerraBaseOptions options, TimeProvider time, ICatalogGate gate, FileErasure erasure, FileCleanupFaults faults)
     : BackgroundService, IFileStorage
 {
     private const int ListPage = 50;
@@ -24,11 +23,8 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     private static readonly Forbidden Denied = new("the bucket rules deny this operation", "access_denied");
     private static readonly NotFound Missing = new("the bucket or file does not exist");
     private static readonly Conflict LiveFiles = new("delete the bucket's files and let uploads in progress complete or expire before deleting the bucket");
-    private static readonly Action<ILogger, string, Exception?> CleanupIncomplete = LoggerMessage.Define<string>(
-        LogLevel.Warning, new EventId(1, "FileCleanupIncomplete"), "File storage cleanup of {Pass} could not finish; the next pass tries again");
     private static readonly Unavailable Busy = new("file storage is unavailable; retry");
     private static readonly TimeSpan BucketErasureBudget = TimeSpan.FromSeconds(10);
-    private readonly Counter<long> _cleanupErrors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.file_storage.cleanup_errors");
     private string? _kindAfter;
     private string? _fileAfter;
     private string? _sweepKind;
@@ -384,21 +380,12 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         return checksum is { Length: 44 } && Convert.TryFromBase64String(checksum, bytes, out var written) && written == 32;
     }
 
-    private static bool StoreFailure(Exception error) => error is AmazonServiceException or AmazonClientException or HttpRequestException or IOException;
+    internal static bool StoreFailure(Exception error) => error is AmazonServiceException or AmazonClientException or HttpRequestException or IOException;
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        Task[] passes =
-        [
-            RunEveryAsync("expired_files", TimeSpan.FromSeconds(30), SweepAsync, stop.Token),
-            RunEveryAsync("late_objects", TimeSpan.FromSeconds(5), erasure.PurgeLateObjectsAsync, stop.Token),
-            RunEveryAsync("closed_projects", FileErasure.SweepPeriod, erasure.SweepProjectsAsync, stop.Token),
-        ];
-        _ = await Task.WhenAny(passes).ConfigureAwait(false);
-        await stop.CancelAsync().ConfigureAwait(false);
-        await Task.WhenAll(passes).ConfigureAwait(false);
-    }
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.WhenAll(
+        RunEveryAsync("expired_files", TimeSpan.FromSeconds(30), SweepAsync, stoppingToken),
+        RunEveryAsync("late_objects", TimeSpan.FromSeconds(5), erasure.PurgeLateObjectsAsync, stoppingToken),
+        RunEveryAsync(FileErasure.ClosedProjects, FileErasure.SweepPeriod, erasure.SweepProjectsAsync, stoppingToken));
 
     private async Task RunEveryAsync(string name, TimeSpan period, Func<CancellationToken, ValueTask> pass, CancellationToken stoppingToken)
     {
@@ -410,10 +397,9 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
                 continue;
             }
             try { await pass(stoppingToken).ConfigureAwait(false); }
-            catch (Exception error) when (StoreFailure(error) || error is QueryCapacityException)
+            catch (Exception error) when (error is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
             {
-                _cleanupErrors.Add(1, new KeyValuePair<string, object?>("pass", name));
-                CleanupIncomplete(logger, name, error);
+                faults.Failed(name, null, null, error);
             }
         }
     }

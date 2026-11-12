@@ -60,6 +60,7 @@ public static class FileStorageExtensions
     public static IServiceCollection AddTerraBaseFileStorage(this IServiceCollection services) => services
         .AddSingleton<IFileObjectStore, S3FileObjectStore>()
         .AddSingleton<IFileStorageUsage, FileStorageUsage>()
+        .AddSingleton<FileCleanupFaults>()
         .AddSingleton<FileErasure>()
         .AddSingleton<IProjectFileErasure>(provider => provider.GetRequiredService<FileErasure>())
         .AddSingleton(provider => new Lazy<IProjectFileErasure>(provider.GetRequiredService<IProjectFileErasure>))
