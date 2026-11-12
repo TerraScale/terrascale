@@ -1,13 +1,15 @@
+using System.Buffers;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 
 namespace TerraScale.DotNet;
 
-internal sealed record TerraScaleService(string Host, bool Regional, string Name)
+internal sealed record TerraScaleService(string Host, string Name)
 {
-    internal static readonly TerraScaleService Api = new("api.terrascale.tech", true, "the TerraBase API");
+    internal static readonly TerraScaleService Api = new("api.terrascale.tech", "the TerraBase API");
 
-    internal static readonly TerraScaleService Auth = new("auth.terrascale.tech", true, "ts-auth");
+    internal static readonly TerraScaleService Auth = new("auth.terrascale.tech", "ts-auth");
 
     internal bool Serves(string host)
     {
@@ -21,7 +23,7 @@ internal sealed record TerraScaleService(string Host, bool Regional, string Name
             return true;
         }
 
-        return Regional && host.EndsWith("." + Host, StringComparison.Ordinal) && host[..^(Host.Length + 1)] is { Length: > 0 } label
+        return host.EndsWith("." + Host, StringComparison.Ordinal) && host[..^(Host.Length + 1)] is { Length: > 0 } label
             && !label.Contains('.', StringComparison.Ordinal);
     }
 }
@@ -30,43 +32,138 @@ internal static class TerraScaleOrigin
 {
     private static readonly IPNetwork NetBirdNetwork = IPNetwork.Parse("100.64.0.0/10");
 
+    private static readonly SearchValues<char> OriginCharacters =
+        SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.:[]/");
+
+    private static readonly SearchValues<char> LabelCharacters = SearchValues.Create("abcdefghijklmnopqrstuvwxyz0123456789-");
+
+    private static readonly SearchValues<char> HexCharacters = SearchValues.Create("0123456789abcdef");
+
     internal static Uri Parse(Uri? address, string label, string parameter, TerraScaleService service, bool netBird)
     {
-        if (address is not { IsAbsoluteUri: true })
-        {
-            throw new ArgumentException($"{label} must be an absolute https URL.", parameter);
-        }
-
-        if (!(address.Scheme == Uri.UriSchemeHttps || address.Scheme == Uri.UriSchemeHttp && (address.IsLoopback || netBird && IsNetBird(address))))
+        var (scheme, host, port) = Strict(address?.OriginalString)
+            ?? throw new ArgumentException($"{label} must be exactly scheme://host[:port], such as https://{service.Host}.", parameter);
+        if (scheme == Uri.UriSchemeHttp && !(Loopback(host) || netBird && IsNetBird(host)))
         {
             throw new ArgumentException(netBird
                 ? $"{label} must use https; plain http is allowed only for localhost, 127.0.0.0/8, [::1] and NetBird 100.64.0.0/10 addresses."
                 : $"{label} must use https; plain http is allowed only for localhost, 127.0.0.0/8 and [::1].", parameter);
         }
 
-        if (address.UserInfo.Length != 0)
-        {
-            throw new ArgumentException($"{label} must not carry user info.", parameter);
-        }
-
-        if (address.Query.Length != 0 || address.Fragment.Length != 0 || address.OriginalString.AsSpan().ContainsAny('?', '#'))
-        {
-            throw new ArgumentException($"{label} must not carry a query or a fragment.", parameter);
-        }
-
-        if (address.AbsolutePath != "/")
-        {
-            throw new ArgumentException($"{label} must be an origin without a path.", parameter);
-        }
-
-        if (!service.Serves(address.Host))
+        if (!service.Serves(host))
         {
             throw new ArgumentException($"{label} names a TerraScale host that does not serve {service.Name}.", parameter);
         }
 
-        return new Uri(address.GetLeftPart(UriPartial.Authority) + "/");
+        return Uri.TryCreate($"{scheme}://{host}{(port.Length == 0 ? "" : ":" + port)}/", UriKind.Absolute, out var origin)
+            ? origin
+            : throw new ArgumentException($"{label} must be exactly scheme://host[:port], such as https://{service.Host}.", parameter);
     }
 
-    private static bool IsNetBird(Uri address) =>
-        IPAddress.TryParse(address.IdnHost, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork && NetBirdNetwork.Contains(ip);
+    private static (string Scheme, string Host, string Port)? Strict(string? raw)
+    {
+        if (raw is null || raw.AsSpan().ContainsAnyExcept(OriginCharacters))
+        {
+            return null;
+        }
+
+        var lower = raw.ToLowerInvariant();
+        var split = lower.IndexOf("://", StringComparison.Ordinal);
+        if (split < 0)
+        {
+            return null;
+        }
+
+        var scheme = lower[..split];
+        var rest = lower[(split + 3)..];
+        rest = rest.EndsWith('/') ? rest[..^1] : rest;
+        if (scheme is not ("https" or "http") || rest.Contains('/', StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var (host, after) = (rest, "");
+        if (rest.StartsWith('['))
+        {
+            var end = rest.IndexOf(']', StringComparison.Ordinal);
+            if (end < 0 || Ipv6(rest[1..end]) is null)
+            {
+                return null;
+            }
+
+            (host, after) = (rest[..(end + 1)], rest[(end + 1)..]);
+        }
+        else if (rest.IndexOf(':', StringComparison.Ordinal) is var colon and >= 0)
+        {
+            (host, after) = (rest[..colon], rest[colon..]);
+        }
+
+        if (!host.StartsWith('[') && !Name(host))
+        {
+            return null;
+        }
+
+        if (after.Length == 0)
+        {
+            return (scheme, host, "");
+        }
+
+        var port = after[1..];
+        if (after[0] != ':' || !Digits(port) || port.Length > 5 || port[0] == '0' || int.Parse(port, CultureInfo.InvariantCulture) > 65535)
+        {
+            return null;
+        }
+
+        return (scheme, host, scheme == "https" && port == "443" || scheme == "http" && port == "80" ? "" : port);
+    }
+
+    private static bool Digits(string text) => text.Length > 0 && !text.AsSpan().ContainsAnyExceptInRange('0', '9');
+
+    private static bool Ipv4(string host) =>
+        host.Split('.') is { Length: 4 } octets
+        && octets.All(octet => Digits(octet) && octet.Length <= 3 && !(octet.Length > 1 && octet[0] == '0') && int.Parse(octet, CultureInfo.InvariantCulture) <= 255);
+
+    private static ushort[]? Ipv6(string text)
+    {
+        var halves = text.Split("::");
+        if (text.Length == 0 || halves.Length > 2)
+        {
+            return null;
+        }
+
+        string[][] parts = [.. halves.Select(half => half.Length == 0 ? [] : half.Split(':'))];
+        var count = parts.Sum(half => half.Length);
+        if (parts.Length == 1 ? count != 8 : count > 7)
+        {
+            return null;
+        }
+
+        if (!parts.All(half => half.All(group => group.Length is >= 1 and <= 4 && !group.AsSpan().ContainsAnyExcept(HexCharacters))))
+        {
+            return null;
+        }
+
+        string[] groups = [.. parts[0], .. Enumerable.Repeat("0", 8 - count), .. parts.Length == 2 ? parts[1] : []];
+        return [.. groups.Select(group => ushort.Parse(group, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture))];
+    }
+
+    private static bool Name(string host)
+    {
+        var labels = host.Split('.');
+        if (!labels.All(label => label.Length > 0 && !label.AsSpan().ContainsAnyExcept(LabelCharacters)))
+        {
+            return false;
+        }
+
+        var last = labels[^1];
+        var numeric = Digits(last) || last.StartsWith("0x", StringComparison.Ordinal) && !last.AsSpan(2).ContainsAnyExcept(HexCharacters);
+        return !numeric || Ipv4(host);
+    }
+
+    private static bool Loopback(string host) =>
+        host == "localhost" || host.StartsWith("127.", StringComparison.Ordinal) && Ipv4(host)
+        || host.StartsWith('[') && Ipv6(host[1..^1]) is [0, 0, 0, 0, 0, 0, 0, 1];
+
+    private static bool IsNetBird(string host) =>
+        IPAddress.TryParse(host, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork && NetBirdNetwork.Contains(ip);
 }

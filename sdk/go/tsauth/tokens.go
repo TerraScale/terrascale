@@ -450,14 +450,16 @@ func tokenEndpoint(issuer string) (string, error) {
 }
 
 func parseIssuer(issuer string) (*url.URL, error) {
-	base, path, err := origin.Split(cmp.Or(issuer, DefaultIssuer), origin.Auth)
+	scheme, rest, _ := strings.Cut(cmp.Or(issuer, DefaultIssuer), "://")
+	authority, tenant, _ := strings.Cut(rest, "/")
+	base, err := origin.Parse(scheme+"://"+authority, origin.Auth)
 	if err != nil {
 		return nil, fmt.Errorf("tsauth: Issuer %w", err)
 	}
-	if tenant := strings.TrimPrefix(path, "/"); tenant != "terrascale" && entityid.Check(tenant) != nil {
+	if tenant != "terrascale" && entityid.Check(tenant) != nil {
 		return nil, errors.New("tsauth: Issuer must be a ts-auth origin followed by one tenant segment: terrascale or a project id")
 	}
-	return url.Parse(base + path)
+	return url.Parse(base + "/" + tenant)
 }
 
 // requestToken posts form to the token endpoint and decodes the token.

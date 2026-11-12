@@ -31,8 +31,12 @@ rule every SDK shares (`sdk/SQL-API.md`): https, or http only for `localhost`,
 was kept before; and a `terrascale.tech` host only for its own service
 (`api.terrascale.tech` and `<cell>.api.terrascale.tech` for TerraBase,
 `auth.terrascale.tech` and `<cell>.auth.terrascale.tech` for ts-auth), so
-`authBaseUrl` refuses `api.terrascale.tech` and its regional hosts. The client
-throws a `TypeError` when it is built.
+`authBaseUrl` refuses `api.terrascale.tech` and its regional hosts. The string is
+checked as written, before the URL parser can repair it: whitespace, `%`, `\`, a
+non-ASCII character, a trailing dot, an empty user info, an IPv4 address in any
+form but four decimal octets and a port with a leading zero are refused, where
+earlier versions sent to the repaired host. The client throws a `TypeError` when
+it is built.
 
 `rotateOrganizationApiKey` and `rotateProjectApiKey` of
 `createTerraScaleIdentityManagementClient` take the `rotate_api_key` step-up

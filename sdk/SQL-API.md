@@ -38,17 +38,16 @@ it is given, `https://auth.terrascale.tech/terrascale` by default, whatever orig
 Every SDK checks the TerraBase origin (`BaseAddress`, `baseUrl`, `Config.BaseURL`, `base_url`, `endpoint`) and the
 ts-auth origin (the options above, .NET `TerraScaleAuthClientOptions.BaseAddress`, JS/TS `apiBaseUrl`, Go
 `Config.TSAuthBaseURL` and `tsauth` `Issuer`, Rust `ClientConfig::auth_base_url`) with one rule when the client is built,
-before any request:
+before any request. The rule reads the string as the caller wrote it, before a URL parser can repair it:
 
 | Part | Rule |
 |---|---|
-| Scheme | `https`. `http` only for a loopback host: `localhost`, an IPv4 address in `127.0.0.0/8` or `[::1]`. .NET also takes `http` to a NetBird `100.64.0.0/10` address for TerraBase's private listener and for `AuthAddress`. |
-| Host case | Any case; the SDK uses it in lower case. |
-| Default port | `:443` (`:80` for `http`) is the same origin as no port; any other port is kept. |
-| Path | None; a trailing `/` is allowed. An issuer (Go `tsauth`, Python `issuer=`) is the ts-auth origin and one tenant segment, `terrascale` or a project id (a canonical ULID), such as `/terrascale`. |
-| Query, fragment | Refused, also when empty (`?`, `#`). |
-| User info | Refused. |
+| Form | Exactly `scheme://host` or `scheme://host:port`, with an optional single trailing `/`. Anything else is refused: user info (also an empty `@`), a path, a query or a fragment (also an empty `?` or `#`), a backslash, a percent sign, whitespace, a control or non-ASCII character, and a missing or doubled `/` after the scheme. |
+| Scheme | `https` in any ASCII case. `http` only for `localhost` (any ASCII case), an IPv4 address in `127.0.0.0/8` and `[::1]` (the IPv6 loopback address in any spelling, such as `[0:0:0:0:0:0:0:1]`); not for an IPv4-mapped IPv6 address or any other name. .NET also takes `http` to a NetBird `100.64.0.0/10` address for TerraBase's private listener and for `AuthAddress`. |
+| Host | ASCII letters, digits and hyphens in dot-separated labels, with no trailing dot (`xn--` labels are ordinary labels); or an IPv4 address written as four decimal octets without leading zeros; or a bracketed IPv6 address of hex groups, without a zone id or a dotted IPv4 part. A name whose last label is all digits, or `0x` and hex digits, is an IPv4 address and must be written as one. The SDK uses the host in lower case. |
+| Port | Decimal 1 to 65535 without leading zeros. `:443` (`:80` for `http`) is the same origin as no port; any other port is kept. |
 | TerraScale's own hosts | Under `terrascale.tech` the TerraBase origin is `api.terrascale.tech` or `<cell>.api.terrascale.tech`, and the ts-auth origin is `auth.terrascale.tech` or `<cell>.auth.terrascale.tech`, with one label for the cell (`gru`, `sjc`, `fra` today); any other `terrascale.tech` host is refused for both. An API key goes to `https://auth.terrascale.tech` only when the TerraBase origin is `https://api.terrascale.tech` in any case, with or without `:443` and `/`. |
+| Issuer | An issuer (Go `tsauth` `Issuer`, Python `issuer=`) is a ts-auth origin without the trailing `/`, then `/` and one tenant, `terrascale` or a project id (a canonical ULID), unescaped, such as `https://auth.terrascale.tech/terrascale`. |
 
 ## Databases for agents
 

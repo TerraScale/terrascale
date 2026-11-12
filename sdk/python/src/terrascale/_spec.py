@@ -3,14 +3,13 @@ clients, plus the retry rule."""
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import random
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import httpx
 
@@ -24,64 +23,104 @@ USER_AGENT_PREFIX = "terrascale-python/"
 REGION_PIN = "X-TerraScale-Region-Pin"
 MAX_ATTEMPTS = 4
 MAX_BACKOFF = 30.0
-API_SERVICE = ("api.terrascale.tech", True, "the TerraBase API")
-AUTH_SERVICE = ("auth.terrascale.tech", True, "ts-auth")
+API_SERVICE = ("api.terrascale.tech", "the TerraBase API")
+AUTH_SERVICE = ("auth.terrascale.tech", "ts-auth")
 DEFAULT_ISSUER = "https://auth.terrascale.tech/terrascale"
+_ORIGIN_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.:[]/")
 
 
-def loopback(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
+def _digits(text: str) -> bool:
+    return text != "" and all(c in "0123456789" for c in text)
+
+
+def _ipv4(host: str) -> bool:
+    octets = host.split(".")
+    return len(octets) == 4 and all(
+        _digits(octet) and len(octet) <= 3 and not (len(octet) > 1 and octet[0] == "0") and int(octet) <= 255
+        for octet in octets)
+
+
+def _ipv6(text: str) -> list[int] | None:
+    halves = text.split("::")
+    if not text or len(halves) > 2:
+        return None
+    parts = [half.split(":") if half else [] for half in halves]
+    count = sum(len(half) for half in parts)
+    if len(parts) == 1 and count != 8 or len(parts) == 2 and count > 7:
+        return None
+    if not all(1 <= len(group) <= 4 and all(c in "0123456789abcdef" for c in group) for half in parts for group in half):
+        return None
+    tail = parts[1] if len(parts) == 2 else []
+    return [int(group, 16) for group in parts[0] + ["0"] * (8 - count) + tail]
+
+
+def _name(host: str) -> bool:
+    labels = host.split(".")
+    if not all(label and all(c in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in label) for label in labels):
         return False
+    last = labels[-1]
+    numeric = _digits(last) or last.startswith("0x") and all(c in "0123456789abcdef" for c in last[2:])
+    return _ipv4(host) if numeric else True
 
 
-def _serves(service: tuple[str, bool, str], host: str) -> bool:
+def _loopback(host: str) -> bool:
+    if host == "localhost" or host.startswith("127.") and _ipv4(host):
+        return True
+    return host.startswith("[") and _ipv6(host[1:-1]) == [0, 0, 0, 0, 0, 0, 0, 1]
+
+
+def _strict(raw: object) -> tuple[str, str, str] | None:
+    if not isinstance(raw, str) or not all(c in _ORIGIN_CHARACTERS for c in raw):
+        return None
+    scheme, split, rest = raw.lower().partition("://")
+    rest = rest.removesuffix("/")
+    if not split or scheme not in ("https", "http") or "/" in rest:
+        return None
+    host, after = rest, ""
+    if rest.startswith("["):
+        end = rest.find("]")
+        if end < 0 or _ipv6(rest[1:end]) is None:
+            return None
+        host, after = rest[:end + 1], rest[end + 1:]
+    elif ":" in rest:
+        host, after = rest[:rest.index(":")], rest[rest.index(":"):]
+    if not host.startswith("[") and not _name(host):
+        return None
+    if not after:
+        return scheme, host, ""
+    port = after[1:]
+    if after[0] != ":" or not _digits(port) or len(port) > 5 or port[0] == "0" or int(port) > 65535:
+        return None
+    return scheme, host, "" if (scheme, port) in (("https", "443"), ("http", "80")) else port
+
+
+def _serves(service: tuple[str, str], host: str) -> bool:
     if host != "terrascale.tech" and not host.endswith(".terrascale.tech"):
         return True
-    own, regional, _ = service
+    own = service[0]
     label = host.removesuffix("." + own)
-    return host == own or regional and label != host and label != "" and "." not in label
+    return host == own or label != host and label != "" and "." not in label
 
 
-def split_origin(raw: str, what: str, service: tuple[str, bool, str]) -> tuple[str, str]:
-    try:
-        parts = urlsplit(raw)
-        port = parts.port
-    except ValueError:
-        raise ValueError(f"{what} must be an absolute https URL") from None
-    host = parts.hostname or ""
-    if not host:
-        raise ValueError(f"{what} must be an absolute https URL")
-    if parts.scheme != "https" and not (parts.scheme == "http" and loopback(host)):
+def service_origin(raw: str, what: str, service: tuple[str, str]) -> str:
+    checked = _strict(raw)
+    if checked is None:
+        raise ValueError(f"{what} must be exactly scheme://host[:port], such as https://{service[0]}")
+    scheme, host, port = checked
+    if scheme == "http" and not _loopback(host):
         raise ValueError(f"{what} must use https; plain http is allowed only for localhost, 127.0.0.0/8 and [::1]")
-    if parts.username is not None or parts.password is not None:
-        raise ValueError(f"{what} must not carry user info")
-    if parts.query or parts.fragment or "?" in raw or "#" in raw:
-        raise ValueError(f"{what} must not carry a query or a fragment")
     if not _serves(service, host):
-        raise ValueError(f"{what} names a TerraScale host that does not serve {service[2]}")
-    shown = f"[{host}]" if ":" in host else host
-    if port is not None and (parts.scheme, port) not in (("https", 443), ("http", 80)):
-        shown += f":{port}"
-    return f"{parts.scheme}://{shown}", parts.path.rstrip("/")
-
-
-def service_origin(raw: str, what: str, service: tuple[str, bool, str]) -> str:
-    base, path = split_origin(raw, what, service)
-    if path:
-        raise ValueError(f"{what} must be an origin without a path")
-    return base
+        raise ValueError(f"{what} names a TerraScale host that does not serve {service[1]}")
+    return f"{scheme}://{host}" + (f":{port}" if port else "")
 
 
 def issuer_parts(issuer: str | None) -> tuple[str, str]:
-    base, path = split_origin(issuer or DEFAULT_ISSUER, "issuer", AUTH_SERVICE)
-    tenant = path.removeprefix("/")
-    if path.count("/") != 1 or tenant != "terrascale" and not is_valid_id(tenant):
+    scheme, _, rest = (issuer or DEFAULT_ISSUER).partition("://")
+    authority, _, tenant = rest.partition("/")
+    base = service_origin(f"{scheme}://{authority}", "issuer", AUTH_SERVICE)
+    if tenant != "terrascale" and not is_valid_id(tenant):
         raise ValueError("issuer must be a ts-auth origin followed by one tenant segment: terrascale or a project id")
-    return base, path
+    return base, "/" + tenant
 
 
 # 503 codes that mean "try again later". storage_busy and unavailable are the

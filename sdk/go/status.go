@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"net/url"
@@ -65,11 +66,7 @@ func (s *StatusClient) Latency(ctx context.Context, region string) (*LatencyResp
 }
 
 func statusResolveBase(raw string) (string, error) {
-	base := strings.TrimSpace(raw)
-	if base == "" {
-		return DefaultStatusBaseURL, nil
-	}
-	status, err := origin.Parse(base, origin.Status)
+	status, err := origin.Parse(cmp.Or(raw, DefaultStatusBaseURL), origin.Status)
 	if err != nil {
 		return "", &ValidationError{Field: "status_base_url", Message: err.Error()}
 	}

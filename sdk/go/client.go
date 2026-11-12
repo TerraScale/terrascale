@@ -88,11 +88,11 @@ type Client struct {
 // NewClient validates local configuration and constructs a Client;
 // successful construction does not establish service readiness.
 func NewClient(cfg Config) (*Client, error) {
-	base, err := origin.Parse(cmp.Or(strings.TrimSpace(cfg.APIBaseURL), DefaultAPIBaseURL), origin.API)
+	base, err := origin.Parse(cmp.Or(cfg.APIBaseURL, DefaultAPIBaseURL), origin.API)
 	if err != nil {
 		return nil, &ValidationError{Field: "api_base_url", Message: err.Error()}
 	}
-	authBase, err := origin.Parse(cmp.Or(strings.TrimSpace(cfg.TSAuthBaseURL), origin.Auth.Default()), origin.Auth)
+	authBase, err := origin.Parse(cmp.Or(cfg.TSAuthBaseURL, origin.Auth.Default()), origin.Auth)
 	if err != nil {
 		return nil, &ValidationError{Field: "ts_auth_base_url", Message: err.Error()}
 	}
