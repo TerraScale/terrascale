@@ -1,3 +1,4 @@
+using Grpc.AspNetCore.Server;
 using TerraBase.Configuration;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
@@ -16,6 +17,7 @@ internal static class RegionalForwarding
             var served = metadata?.Listeners.Contains(TerraBaseListener.Client) == true
                 || ReferenceEquals(metadata, ListenerMetadata.Management)
                 || ReferenceEquals(metadata, ListenerMetadata.Internal)
+                    && context.GetEndpoint()?.Metadata.GetMetadata<GrpcMethodMetadata>() is null
                     && !context.Request.Path.StartsWithSegments("/v1/rollout")
                     && !context.Request.Path.StartsWithSegments("/v1/sync")
                 || context.Request.Path.StartsWithSegments("/admin/organizations")
