@@ -29,10 +29,13 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 INSERT INTO organization_projects_regions (id, organization_id, regions, status, is_default, spend_cap_cents, read_limit, write_limit, replication_limit)
                 SELECT id, organization_id,
                     CASE
-                        WHEN length(region) > 0 AND NOT EXISTS (
-                            SELECT 1 FROM json_each(organization_projects.regions)
-                            WHERE json_each.key = 0 AND upper(json_each.value) = upper(organization_projects.region))
-                        THEN json_insert(regions, '$[0]', region)
+                        WHEN length(region) > 0 THEN (
+                            SELECT json_group_array(value) FROM (
+                                SELECT organization_projects.region AS value, -1 AS position
+                                UNION ALL
+                                SELECT value, key FROM json_each(organization_projects.regions)
+                                WHERE upper(value) <> upper(organization_projects.region)
+                                ORDER BY position))
                         ELSE regions
                     END,
                     status, is_default, spend_cap_cents, read_limit, write_limit, replication_limit
@@ -98,6 +101,12 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 type: "TEXT",
                 nullable: false,
                 defaultValue: "");
+
+            migrationBuilder.Sql("""
+                UPDATE organization_projects
+                SET region = coalesce(json_extract(regions, '$[0]'), ''),
+                    backup_region = coalesce(json_extract(regions, '$[0]'), '');
+                """);
         }
     }
 }

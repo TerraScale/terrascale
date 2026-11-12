@@ -264,6 +264,8 @@ namespace TerraScale.Dashboard.Features.Organizations
                 else
                 {
                     var project = context.Organization?.Projects.GetValueOrDefault(projectId ?? "") ?? throw new AccountAccessException("Project is unavailable.", 404);
+                    regions = [.. project.Regions.Where(region => regions.Contains(region, StringComparer.OrdinalIgnoreCase)),
+                        .. regions.Where(region => !project.Regions.Contains(region, StringComparer.OrdinalIgnoreCase))];
                     await operations.UpdateProjectAsync(context with { Project = project }, name, regions, http.RequestAborted);
                 }
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));

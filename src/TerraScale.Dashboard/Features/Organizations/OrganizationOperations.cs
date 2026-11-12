@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 throw new AccountAccessException("Project admin access is required to rename this project.");
             }
 
-            var placementRequested = regions is { Count: > 0 };
+            var placementRequested = regions is not null;
             if (!context.CanManage && placementRequested)
             {
                 throw new AccountAccessException("Organization management is required to change project placement. Submit only a project name.");
@@ -104,6 +104,11 @@ namespace TerraScale.Dashboard.Features.Organizations
                 if (current.OrganizationId != org.Id)
                 {
                     throw new AccountAccessException("Project is unavailable.", 404);
+                }
+
+                if (project.Name == name && current.Regions.SequenceEqual(chosen))
+                {
+                    return;
                 }
 
                 current.Name = name;
