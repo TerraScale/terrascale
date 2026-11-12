@@ -54,7 +54,7 @@ function strictOrigin(raw) {
   if (rest.startsWith("[")) {
     const end = rest.indexOf("]");
     const groups = end < 0 ? null : ipv6(rest.slice(1, end));
-    if (groups === null || groups.every((group) => group === 0)) return null;
+    if (groups === null || groups.every((group, index) => group === 0 || (index === 5 && group === 0xffff))) return null;
     host = rest.slice(0, end + 1);
     after = rest.slice(end + 1);
   } else if (rest.includes(":")) {

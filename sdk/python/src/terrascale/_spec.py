@@ -83,7 +83,7 @@ def _strict(raw: object) -> tuple[str, str, str] | None:
     if rest.startswith("["):
         end = rest.find("]")
         groups = _ipv6(rest[1:end]) if end >= 0 else None
-        if groups is None or not any(groups):
+        if groups is None or groups in ([0] * 8, [0, 0, 0, 0, 0, 0xFFFF, 0, 0]):
             return None
         host, after = rest[:end + 1], rest[end + 1:]
     elif ":" in rest:

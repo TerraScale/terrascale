@@ -119,7 +119,7 @@ fn strict(raw: &str) -> Option<(String, String, Option<u16>)> {
     }
     let (host, after) = if rest.starts_with('[') {
         let end = rest.find(']')?;
-        if ipv6(&rest[1..end])? == [0; 8] {
+        if matches!(ipv6(&rest[1..end])?, [0, 0, 0, 0, 0, 0 | 0xffff, 0, 0]) {
             return None;
         }
         rest.split_at(end + 1)

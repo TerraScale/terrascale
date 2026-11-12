@@ -102,7 +102,7 @@ internal static class TerraScaleOrigin
         if (rest.StartsWith('['))
         {
             var end = rest.IndexOf(']', StringComparison.Ordinal);
-            if (end < 0 || Ipv6(rest[1..end]) is not { } groups || groups.All(group => group == 0))
+            if (end < 0 || Ipv6(rest[1..end]) is null or [0, 0, 0, 0, 0, 0 or 0xffff, 0, 0])
             {
                 return null;
             }

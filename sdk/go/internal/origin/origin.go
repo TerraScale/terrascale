@@ -70,7 +70,7 @@ func strict(raw string) (string, string, string, bool) {
 			return "", "", "", false
 		}
 		host, after = rest[:end+1], rest[end+1:]
-		if groups, ok := ipv6(host[1:end]); !ok || groups == [8]uint16{} {
+		if groups, ok := ipv6(host[1:end]); !ok || groups == [8]uint16{} || groups == [8]uint16{5: 0xffff} {
 			return "", "", "", false
 		}
 	} else if colon := strings.IndexByte(rest, ':'); colon >= 0 {
