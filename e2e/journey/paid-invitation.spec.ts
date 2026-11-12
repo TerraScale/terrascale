@@ -80,8 +80,8 @@ test('the Pro owner invites a second user, who signs up through the emailed link
 
   await page.locator('.ts-account-trigger').click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await page.waitForLoadState('load');
-  await page.goto(`${dash}/login`);
+  await page.waitForURL(onHosted('sign-in'));
+  await hostedReady(page);
   await signInWithPassword(page, audit, email, password, 'invited user');
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/onboarding');
   const memberName = `Member ${owner.runId}`;
@@ -92,8 +92,8 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await audit.check('invited user on the Personal overview after onboarding');
   await page.locator('.ts-account-trigger').click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await page.waitForLoadState('load');
-  await page.goto(`${dash}/login`);
+  await page.waitForURL(onHosted('sign-in'));
+  await hostedReady(page);
   await signInWithPassword(page, audit, email, password, 'invited user again');
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/organizations/choose');
   const choices = page.locator('main').getByRole('button');
