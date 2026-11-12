@@ -78,7 +78,7 @@ export const en = {
 
   homeStats: {
     regions: 'Serving regions',
-    writeRegion: 'Regions you choose',
+    writeRegion: 'Regions that accept writes',
     statements: 'Statements per transaction',
   },
 
@@ -255,7 +255,7 @@ export const en = {
       storageLimit: 'Storage limit',
       pitr: 'Point-in-time recovery',
       backupRetention: 'Backup retention',
-      regionsPerDatabase: 'Regions per database',
+      regionsPerDatabase: 'Metered regions per database',
       support: 'Support response target',
       noCeiling: 'No plan ceiling',
       seconds: '{n} s',
@@ -319,7 +319,7 @@ export const en = {
           q: 'What does Enterprise include?',
           a: 'Enterprise has a ${enterprisePriceUsd} monthly support base plus usage. Contact sales for terms; Enterprise is not sold through checkout.',
         },
-        { q: 'How are extra regions billed?', a: 'The catalog lists how many regions a database may include on each plan. Stored bytes are counted once for the database; copies in the other regions of the set have no separate charge. Plan write caps and SQL read fair use apply.' },
+        { q: 'How are extra regions billed?', a: 'Writes and stored bytes are metered once per database, in the region that orders its writes. Copies in the other regions you choose have no separate charge. Plan write caps and SQL read fair use apply.' },
       ],
       contactSales: 'Contact Sales',
     },

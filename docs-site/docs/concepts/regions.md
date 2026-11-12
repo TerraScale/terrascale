@@ -4,7 +4,7 @@ title: Regions
 
 # Regions
 
-A database lives in a set of regions you choose, at least one. Every region of the set accepts reads and writes. You pick the set; TerraBase decides which region of the set orders the database's writes, and moves that when the set changes.
+A database lives in a set of regions you choose, at least one. Every region of the set accepts reads and writes. The region you call accepts the write; depending on the connection it commits it locally and confirms it, or forwards it to the region that orders writes. You pick the set; TerraBase decides which region of the set orders the database's writes, and moves that when the set changes.
 
 | Region | ID |
 | --- | --- |
@@ -25,7 +25,7 @@ Content-Type: application/json
 
 The list must contain at least one serving region, with no duplicates. The response lists `regions` sorted by region id. That order carries no meaning and does not say which region orders writes. Omit `regions` and the called region holds the database.
 
-Sending every serving region, including regions added later, uses the every-region placement instead of a list. Send a list or every-region placement, not both.
+To place the database in every serving region, including regions added later, send `{"allRegions":true}` and do not send `regions`. The CLI flag is `-all-regions`. Send a list or `allRegions: true`, not both.
 
 Change the set by sending the new set:
 
@@ -75,7 +75,7 @@ The CLI on the regions release takes the same list: `ts db create example -regio
 
 ## Earlier fields
 
-`homeRegion`, `replicaRegions`, `allRegions` and `POST …/move-home` still work during the transition. New calls send `regions`. `allRegions: true` is the every-region placement. Responses list `regions`.
+`homeRegion`, `replicaRegions` and `POST …/move-home` are earlier fields and still work during the transition. New calls send `regions`. `allRegions: true`, sent without `regions`, is how you ask for every serving region, including regions added later. Responses list `regions`.
 
 ## Connect from any region
 
@@ -83,10 +83,10 @@ REST requests and Postgres sessions can reach the database from any region of it
 
 At any moment one region of the set orders that database's writes. TerraBase picks it and moves it when the regions change. You do not choose it. `TerraScale-Durability: home` waits until that region has applied a local write. The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and that region applies the write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
-A region of the set can lag behind the region that orders writes. Postgres and WebSocket sessions preserve read-your-writes by using the ordering region until the region you call catches up. REST reads are eventually consistent. A region that already holds the database can serve reads it already holds while the ordering region is unreachable.
+A region of the set can lag behind the region that orders writes. Postgres and WebSocket sessions preserve read-your-writes by using the ordering region until the region you call catches up. REST reads are eventually consistent. A region that already holds the database can serve reads it already holds while the ordering region is unreachable. A database in a single region waits for that region.
 
 ## Storage and billing
 
 Database files in every region of the set are encrypted at rest. Adding a region places a copy of your data in that region.
 
-The [pricing catalog](https://terrascale.tech/pricing.json) lists how many regions a database may include on each plan. Stored bytes are metered in the region that orders writes. Copies in the other regions of the set are not billed separately. See [pricing](/pricing).
+The catalog's regionsPerDatabase counts the regions in which a database's writes and stored bytes are metered: one per database on every plan. Copies in the database's other regions are not billed separately. See [pricing](/pricing).

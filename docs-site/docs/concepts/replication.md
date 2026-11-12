@@ -4,7 +4,7 @@ title: Replication
 
 # Replication
 
-A database lives in a set of regions you choose, at least one. Every region of the set accepts reads and writes. At any moment one region of the set orders that database's writes. TerraBase picks it and moves it when the regions change. See [regions](/concepts/regions) to set the set.
+A database lives in a set of regions you choose, at least one. Every region of the set accepts reads and writes. The region you call accepts the write; depending on the connection it commits it locally and confirms it, or forwards it to the region that orders writes. At any moment one region of the set orders that database's writes. TerraBase picks it and moves it when the regions change. See [regions](/concepts/regions) to set the set.
 
 ## Reads and writes
 
@@ -32,7 +32,7 @@ Two regions writing the same column at nearly the same time are resolved by the 
 Regions catch up after a restart or a temporary connection failure. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has. A region that already holds the database can serve SQL reads while
 the ordering region is unreachable, using the state it already holds.
 
-TerraBase picks the region that orders writes and moves it when the database's regions change. You do not choose that region.
+If the region that orders a database's writes stops responding and the database has other regions, the most caught-up one takes over within about 15 to 45 seconds, and writes move there. The region that stopped never accepts another write for that database until it has caught up as a follower of the new one. A database in a single region waits for that region. TerraBase picks the region that orders writes and moves it when the database's regions change. You do not choose that region.
 
 | Durability | A write is acknowledged when | Lost if the ordering region fails |
 | --- | --- | --- |
