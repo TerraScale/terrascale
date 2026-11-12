@@ -186,8 +186,8 @@ export class V1Transport {
     if (WebSocketClass === undefined) throw new TypeError("This runtime has no WebSocket; pass one as the WebSocket client option.");
     const url = new URL(await this.url("connectSql", params, signal));
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const token = await this.#accessToken(signal);
     return retrySqlConnect(async signal => {
-      const token = await this.#accessToken(signal);
       if (sendsUpgradeHeaders()) {
         const headers = { authorization: `Bearer ${token}` };
         if (this.#regionPin !== "") Object.assign(headers, { "X-TerraScale-Region-Pin": this.#regionPin });

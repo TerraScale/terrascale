@@ -235,9 +235,10 @@ between attempts. A 401 credential refresh does not consume an overload attempt.
 `Retry-After` means no retry. If the capped wait cannot fit the remaining connection deadline, or the attempts
 are exhausted, the SDK returns the existing HTTP refusal immediately with its uncapped `retryAfter`
 (`RetryAfter` / `retry_after`) delay. Cancellation interrupts the wait; asyncio task cancellation and Rust
-future cancellation also stop connection work. Browser WebSockets expose neither the upgrade status nor headers,
-so browsers cannot retry refused upgrades. In Node, upgrade retries require a WebSocket implementation that
-exposes the HTTP response, such as `ws` through its `unexpected-response` event.
+future cancellation also stop connection work. The JavaScript SDK retries refused upgrades only when its
+WebSocket client exposes the upgrade response, for example `ws` passed as the `WebSocket` option through its
+`unexpected-response` event. Browsers and Node's built-in `WebSocket` do not expose the upgrade response;
+a refused upgrade fails immediately with the existing error in those runtimes.
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 Failures before execution keep each SDK's generic HTTP error types (401, 404, 421 wrong_region with routing hints,
