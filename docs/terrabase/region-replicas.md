@@ -159,8 +159,10 @@ listener, as for every peer request.
 
 - `terrabase.replica.lag` (ms): from the home's commit, on its clock, to the replica holding it after the notice's pull.
 - `terrabase.replica.pulls` (`result` = `pushed` (applied from a notice's answer), `changed`, `unchanged`, `failed`).
-- `terrabase.replica.verifications` (`result` = `equal`, `diverged`, `skipped`, `failed`).
+- `terrabase.replica.verifications` (`result` = `equal`, `diverged`, `skipped`, `failed`); skipped rounds also have
+  `reason` = `missing_held_revision`, `home_page_moved` or `comparison_moved`.
 - `terrabase.replica.rebootstraps`: replicas deleted and bootstrapped again after a divergence.
+- `terrabase.replica.tracked_followers`: number of tracked followers; zero distinguishes an empty follower set from fresh verification.
 - `terrabase.replica.max_lag` (ms) and `terrabase.replica.max_verification_age` (s): the worst replica on the node.
 
 ## Known gaps

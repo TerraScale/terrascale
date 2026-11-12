@@ -1,6 +1,9 @@
 using NATS.Client.KeyValueStore;
+using System.Diagnostics;
 using System.Text.Json;
+using TerraBase.Errors;
 using TerraBase.Features.Replicas;
+using TerraBase.Tenancy;
 using TerraBase.Hosting;
 using ZLogger;
 
@@ -13,6 +16,15 @@ internal sealed partial class RegionalHandoff
     private const string Retiring = "retiring";
     private const string Recovering = "recovering";
     private const int ProtocolVersion = 2;
+
+    private enum PendingStep
+    {
+        Restart,
+        Readiness,
+        CatchUp
+    }
+
+    private PendingStep? _lastRetiringStep;
     private RegionalOwner? _startupOwner;
     private bool _protocolPublished;
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
@@ -273,66 +285,126 @@ internal sealed partial class RegionalHandoff
         return false;
     }
 
-    private async Task<NatsKVEntry<byte[]>?> BeginDrainAsync(INatsKVStore kv, string target, CancellationToken token)
+    private async Task<DrainReservation> BeginDrainAsync(INatsKVStore kv, string target, DrainProgress progress, CancellationToken token)
     {
+        var entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
+        if (entry is null)
+        {
+            return DrainRefused(progress, "regional owner unavailable");
+        }
+        var owner = Decode(entry.Value.Value!);
+        var resuming = owner.Transfer is { Phase: Retiring } existing && existing.Source == options.MachineId
+            && existing.SourceSession == _session && existing.Target == target;
+        if (owner.Transfer is { } prior && !resuming)
+        {
+            if (prior.Phase != Retiring)
+            {
+                return DrainRefused(progress, "another regional transfer is still in progress");
+            }
+            if (await ReplacedSourcePendingAsync(prior, owner, progress, token).ConfigureAwait(false) is { } pending)
+            {
+                var label = PendingLabel(pending);
+                LogSourceRetiring(logger, _lastRetiringStep == pending ? LogLevel.Debug : LogLevel.Information,
+                    options.Region, prior.SourceSession, label);
+                _lastRetiringStep = pending;
+                return new Unavailable("the source is still retiring; waiting for " + label, "source_retiring");
+            }
+        }
+        _lastRetiringStep = null;
+        progress.Phase = DrainPhase.Readiness;
+        progress.Peer = target;
         var candidate = await SelfRegionPeerAsync(target, token).ConfigureAwait(false);
         if (candidate is null
             || await StatusAsync(new Uri(candidate.InternalListener(options.InternalPort), "/v1/rollout/status"), token).ConfigureAwait(false)
                 is not { Ready: true, Session.Length: > 0, Node: var candidateNode } || candidateNode != target)
         {
-            return null;
+            return DrainRefused(progress, "the target has not passed readiness", "target_not_ready");
         }
-        var entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
-        if (entry is null)
+        progress.Phase = DrainPhase.Reserve;
+        progress.Peer = options.MachineId;
+        if (resuming)
         {
-            return null;
+            return entry.Value;
         }
-        var owner = Decode(entry.Value.Value!);
-        if (owner.Transfer is { } prior)
+        if (owner.Transfer is not null)
         {
-            if (prior is { Phase: Retiring } && prior.Source == options.MachineId && prior.SourceSession == _session && prior.Target == target)
-            {
-                return entry;
-            }
-            if (prior.Phase != Retiring || !await ReplacedSourceReadyAsync(prior, owner, token).ConfigureAwait(false))
-            {
-                return null;
-            }
             owner = owner with { Transfer = null };
             var cleared = await kv.UpdateAsync(options.Region, Encode(owner), entry.Value.Revision, cancellationToken: token).ConfigureAwait(false);
             entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
             if (entry?.Revision != cleared)
             {
-                return null;
+                return DrainRefused(progress, "the regional owner changed while clearing retirement", "owner_changed");
             }
         }
         if (owner.Node != options.MachineId && owner.Node != target)
         {
-            return null;
+            return DrainRefused(progress, "the regional owner changed before reservation", "owner_changed");
         }
         var transfer = new RegionalTransfer(Guid.NewGuid().ToString("N"), options.MachineId, target, _session, Preparing,
             DateTimeOffset.UtcNow + DrainBudget, owner.Epoch);
         var reserved = owner with { Transfer = transfer };
         var revision = await kv.UpdateAsync(options.Region, Encode(reserved), entry.Value.Revision, cancellationToken: token).ConfigureAwait(false);
         entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
-        return entry?.Revision == revision ? entry : null;
+        return entry?.Revision == revision ? entry.Value : DrainRefused(progress, "the stop reservation changed", "owner_changed");
     }
 
-    private async Task<bool> ReplacedSourceReadyAsync(RegionalTransfer transfer, RegionalOwner owner, CancellationToken token)
+    private async Task<PendingStep?> ReplacedSourcePendingAsync(RegionalTransfer transfer, RegionalOwner owner, DrainProgress progress, CancellationToken token)
     {
-        var source = await SelfRegionPeerAsync(transfer.Source, token).ConfigureAwait(false);
-        if (source is null)
+        var pending = PendingStep.Readiness;
+        progress.Phase = DrainPhase.Readiness;
+        progress.Peer = transfer.Source;
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
+        attempt.CancelAfter(AttemptBudget);
+        try
         {
-            return false;
+            var source = await SelfRegionPeerAsync(transfer.Source, attempt.Token).ConfigureAwait(false);
+            if (source is null)
+            {
+                return PendingStep.Restart;
+            }
+            var address = source.InternalListener(options.InternalPort);
+            var status = await StatusAsync(new Uri(address, "/v1/rollout/status"), attempt.Token).ConfigureAwait(false);
+            if (status is { Session: var session } && session == transfer.SourceSession)
+            {
+                return PendingStep.Restart;
+            }
+            if (status is not { Ready: true, Session.Length: > 0 } || status.Node != transfer.Source)
+            {
+                return pending;
+            }
+            pending = PendingStep.CatchUp;
+            if (status.Owner != owner.Node || status.Epoch < owner.Epoch)
+            {
+                return pending;
+            }
+            progress.Phase = DrainPhase.Prime;
+            using var primed = await _http.PostAsync(new Uri(address, "/v1/rollout/prime?source=" + Uri.EscapeDataString(owner.Node)), null, token).ConfigureAwait(false);
+            return primed.IsSuccessStatusCode ? null : pending;
         }
-        var address = source.InternalListener(options.InternalPort);
-        if (await StatusAsync(new Uri(address, "/v1/rollout/status"), token).ConfigureAwait(false)
-            is not { Ready: true, Session.Length: > 0 } status || status.Node != transfer.Source
-            || status.Session == transfer.SourceSession || status.Owner != owner.Node || status.Epoch < owner.Epoch)
+        catch (Exception error) when (error is HttpRequestException || error is OperationCanceledException && !token.IsCancellationRequested)
         {
-            return false;
+            token.ThrowIfCancellationRequested();
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                var errorType = error.GetType().Name;
+                var label = PendingLabel(pending);
+                LogRetiringProbeFailed(logger, error, errorType, progress.Label, progress.Peer, label);
+            }
+            return pending;
         }
-        using var primed = await _http.PostAsync(new Uri(address, "/v1/rollout/prime?source=" + Uri.EscapeDataString(owner.Node)), null, token).ConfigureAwait(false);
-        return primed.IsSuccessStatusCode;
     }
+
+    private static string PendingLabel(PendingStep pending) => pending switch
+    {
+        PendingStep.Restart => "restart with a different session",
+        PendingStep.Readiness => "readiness",
+        PendingStep.CatchUp => "catch-up to the current writer",
+        _ => throw new UnreachableException()
+    };
+
+    [LoggerMessage(Message = "Regional source still retiring in {Region}, source session {SourceSession}: waiting for {Pending}")]
+    private static partial void LogSourceRetiring(ILogger logger, LogLevel level, string region, string sourceSession, string pending);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Regional retirement probe failed with {ErrorType} during {Phase} with peer {Peer}; waiting for {Pending}")]
+    private static partial void LogRetiringProbeFailed(ILogger logger, Exception exception, string errorType, string phase, string peer, string pending);
 }
