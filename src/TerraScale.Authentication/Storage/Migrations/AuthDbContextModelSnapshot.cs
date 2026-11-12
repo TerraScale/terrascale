@@ -2344,31 +2344,15 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("created_at");
 
-                    b.Property<DateTime?>("DisabledAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("disabled_at");
-
                     b.Property<string>("EventTypes")
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("event_types");
 
-                    b.Property<DateTime?>("FirstFailureAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("first_failure_at");
-
                     b.Property<string>("InstanceId")
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
-
-                    b.Property<DateTime>("LastServedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("last_served_at");
-
-                    b.Property<DateTime>("LeaseUntil")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("lease_until");
 
                     b.Property<string>("PreviousSecretBox")
                         .HasColumnType("TEXT")
@@ -2402,14 +2386,53 @@ namespace TerraScale.Authentication.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DisabledAt", "LeaseUntil");
-
                     b.HasIndex("ProjectId", "Id");
+
+                    b.ToTable("webhook_endpoints", (string)null);
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookEndpointStateRecord", b =>
+                {
+                    b.Property<string>("EndpointId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("endpoint_id");
+
+                    b.Property<DateTime?>("DisabledAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("disabled_at");
+
+                    b.Property<DateTime?>("FirstFailureAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("first_failure_at");
+
+                    b.Property<DateTime>("LastServedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_served_at");
+
+                    b.Property<DateTime>("LeaseUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("lease_until");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("EndpointId");
+
+                    b.HasIndex("DisabledAt", "LeaseUntil");
 
                     b.HasIndex("ProjectId", "LastServedAt")
                         .IsDescending(false, true);
 
-                    b.ToTable("webhook_endpoints", (string)null);
+                    b.ToTable("webhook_endpoint_states", (string)null);
                 });
 
             modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookOutboxRecord", b =>
@@ -2728,6 +2751,15 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
                         .WithMany()
                         .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookEndpointStateRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Features.Webhooks.WebhookEndpointRecord", null)
+                        .WithOne()
+                        .HasForeignKey("TerraScale.Authentication.Features.Webhooks.WebhookEndpointStateRecord", "EndpointId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

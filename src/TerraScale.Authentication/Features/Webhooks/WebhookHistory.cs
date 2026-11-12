@@ -96,7 +96,7 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
         }
 
         var row = outbox.NewEvent(projectId, "webhook.test", "", endpointId: endpointId) with { Status = "expanded" };
-        if (!await data.SaveAsync([Change.Assert(endpoint), Change.Insert(row), Change.Insert(NewDelivery(row, endpointId))], cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync([Change.Insert(row), Change.Insert(NewDelivery(row, endpointId))], cancellationToken).ConfigureAwait(false))
         {
             throw new ApiException(409, "version_conflict", "The endpoint changed concurrently.");
         }
@@ -107,8 +107,8 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
     internal static WebhookDeliveryRecord NewDelivery(WebhookOutboxRecord row, string endpointId) =>
         new(AuthIds.New(), row.ProjectId, endpointId, row.EventId, "pending", 0, row.OccurredAt, row.OccurredAt);
 
-    internal async Task<Versioned<WebhookEndpointRecord>> EndpointAsync(string projectId, string endpointId, CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => db.WebhookEndpoints.Where(row => row.ProjectId == projectId && row.Id == endpointId)
+    internal async Task<Versioned<WebhookEndpointStateRecord>> EndpointAsync(string projectId, string endpointId, CancellationToken cancellationToken) =>
+        await data.ReadAsync((db, token) => db.WebhookEndpointStates.Where(row => row.ProjectId == projectId && row.EndpointId == endpointId)
             .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false)
         ?? throw new ApiException(404, "not_found", "No such endpoint.");
 }

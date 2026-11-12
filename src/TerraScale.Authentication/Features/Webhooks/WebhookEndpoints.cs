@@ -14,7 +14,10 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Features.Webhooks;
 
 public sealed record WebhookEndpointRecord(string InstanceId, string Id, string ProjectId, string Url, IReadOnlyList<string> EventTypes,
-    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default, DateTimeOffset? FirstFailureAt = null, DateTimeOffset? DisabledAt = null, DateTimeOffset LeaseUntil = default, DateTimeOffset LastServedAt = default);
+    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default);
+
+public sealed record WebhookEndpointStateRecord(string EndpointId, string ProjectId, DateTimeOffset? FirstFailureAt = null,
+    DateTimeOffset? DisabledAt = null, DateTimeOffset LeaseUntil = default, DateTimeOffset LastServedAt = default);
 
 public sealed record CreateWebhookEndpointRequest(string? Url, IReadOnlyList<string>? EventTypes);
 
@@ -52,6 +55,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
         if (!await data.SaveAsync(
             [
                 Change.Insert(endpoint),
+                Change.Insert(new WebhookEndpointStateRecord(id, projectId)),
                 ProjectAuthSettings.Write(current with { InstanceId = projectId }, settingsVersion),
             ], cancellationToken).ConfigureAwait(false))
         {
@@ -61,9 +65,13 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
         return (endpoint, secret);
     }
 
-    public async Task<IReadOnlyList<WebhookEndpointRecord>> ListAsync(string projectId, CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => db.WebhookEndpoints.Where(endpoint => endpoint.ProjectId == projectId && endpoint.InstanceId == projectId)
-            .OrderBy(endpoint => endpoint.CreatedAt).ThenBy(endpoint => endpoint.Id).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+    public async Task<IReadOnlyList<WebhookEndpointBody>> ListAsync(string projectId, CancellationToken cancellationToken) =>
+        await data.ReadAsync((db, token) => (from endpoint in db.WebhookEndpoints
+                                             join state in db.WebhookEndpointStates on endpoint.Id equals state.EndpointId
+                                             where endpoint.ProjectId == projectId && endpoint.InstanceId == projectId
+                                             orderby endpoint.CreatedAt, endpoint.Id
+                                             select new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, null, null, state.DisabledAt))
+            .ToListAsync(token), cancellationToken).ConfigureAwait(false);
 
     public async Task<bool> DeleteAsync(string projectId, string id, CancellationToken cancellationToken)
     {

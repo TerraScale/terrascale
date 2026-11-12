@@ -130,7 +130,7 @@ test('auth webhooks verify signup signatures, retry failures and replay the orig
   });
 });
 
-test('auth webhook backlog of 200 in one project allows another project through and drains in order', async ({ browser }, info) => {
+test('auth webhook enqueue of 200 in one project allows another project through and drains in order', async ({ browser }, info) => {
   await onLocalStack(async () => {
     const owner = journey();
     const context = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
@@ -178,18 +178,28 @@ test('auth webhook backlog of 200 in one project allows another project through 
       await onboard(otherPage, otherAudit, 'Healthy owner', `Healthy ${owner.runId}`, 'fairness healthy owner');
       const enqueueB = await register(otherPage, otherAudit, pathB, otherPassword);
       await enqueueA();
-      for (let offset = 1; offset < 200; offset += 8) {
-        await Promise.all(Array.from({ length: Math.min(8, 200 - offset) }, () => enqueueA()));
-      }
-      await enqueueB();
       await expect.poll(async () => {
         const rows = await (await fetch(`${receiver}/deliveries`)).json() as (Delivery & { path: string })[];
-        return rows.filter(row => row.path === pathB).length;
+        return rows.filter(row => row.path === pathA).length;
       }).toBe(1);
-      const before = await (await fetch(`${receiver}/deliveries`)).json() as (Delivery & { path: string })[];
-      expect(before.filter(row => row.path === pathA)).toHaveLength(1);
-      expect(before.filter(row => row.path === pathB)[0]).toMatchObject({ valid: true, code: 200 });
-      expect((await fetch(`${receiver}/release`, { method: 'POST', body: JSON.stringify({ path: pathA }) })).status).toBe(200);
+      await Promise.all([
+        (async () => {
+          for (let offset = 1; offset < 200; offset += 8) {
+            await Promise.all(Array.from({ length: Math.min(8, 200 - offset) }, () => enqueueA()));
+          }
+        })(),
+        (async () => {
+          await enqueueB();
+          await expect.poll(async () => {
+            const rows = await (await fetch(`${receiver}/deliveries`)).json() as (Delivery & { path: string })[];
+            return rows.filter(row => row.path === pathB).length;
+          }).toBe(1);
+          const before = await (await fetch(`${receiver}/deliveries`)).json() as (Delivery & { path: string })[];
+          expect(before.filter(row => row.path === pathA)).toHaveLength(1);
+          expect(before.filter(row => row.path === pathB)[0]).toMatchObject({ valid: true, code: 200 });
+          expect((await fetch(`${receiver}/release`, { method: 'POST', body: JSON.stringify({ path: pathA }) })).status).toBe(200);
+        })(),
+      ]);
       await expect.poll(async () => {
         const rows = await (await fetch(`${receiver}/deliveries`)).json() as (Delivery & { path: string })[];
         return rows.filter(row => row.path === pathA).length;
@@ -271,16 +281,21 @@ test('auth webhook timeouts release delivery lanes for another project within on
       }))).flat();
       const healthyOwner = accounts[2];
       const healthy = await register(healthyOwner.page, healthyOwner.audit, healthyOwner.password, false);
-      await Promise.all(failing.map(async endpoint => {
-        for (let count = 0; count < 10; count++) await endpoint.enqueue();
-      }));
+      const saturatingAt = performance.now();
+      await Promise.all(failing.slice(0, 4).map(endpoint => endpoint.enqueue()));
       await expect.poll(async () => {
         const rows = await (await fetch(receiver + '/deliveries')).json() as (Delivery & { path: string })[];
         return new Set(rows.filter(row => failing.some(endpoint => endpoint.path === row.path)).map(row => row.path)).size;
       }).toBe(4);
+      expect(performance.now() - saturatingAt).toBeLessThan(20_000);
       const queuedAt = performance.now();
       const deadline = AbortSignal.timeout(30_000);
-      await healthy.enqueue();
+      await Promise.all([
+        healthy.enqueue(),
+        ...failing.map(async (endpoint, index) => {
+          for (let count = index < 4 ? 1 : 0; count < 10; count++) await endpoint.enqueue();
+        }),
+      ]);
       let rows = await (await fetch(receiver + '/deliveries')).json() as (Delivery & { path: string })[];
       while (!rows.some(row => row.path === healthy.path)) {
         const response = await fetch(receiver + '/wait?after=' + rows.length, { signal: deadline });
@@ -291,7 +306,7 @@ test('auth webhook timeouts release delivery lanes for another project within on
       expect(delivered).toMatchObject({ valid: true, code: 200, event: { type: 'webhook.test' } });
       expect(performance.now() - queuedAt).toBeLessThan(30_000);
       expect(rows.filter(row => failing.some(endpoint => endpoint.path === row.path)).length).toBeLessThanOrEqual(5);
-      console.log('Webhook timeouts: five failing endpoints with ten deliveries each; healthy project delivered within one 30-second endpoint pass.');
+      console.log('Webhook timeouts: four occupied lanes, five failing endpoints with ten deliveries each; healthy project delivered within one 30-second endpoint pass.');
       await healthyOwner.page.goto(dash + '/auth/webhooks');
       await healthyOwner.page.locator('tr').filter({ hasText: healthy.path }).getByRole('button', { name: 'Delete', exact: true }).click();
       await Promise.all(accounts.map(async ({ page, audit, email, password }) => {
