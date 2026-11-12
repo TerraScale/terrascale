@@ -1,7 +1,8 @@
 # All-regions placement
 
 A database created or updated with `allRegions: true` holds a full copy in **every serving region**, now and later.
-TerraScale's own databases (ts-auth and ts-dashboard, [platform databases](platform-databases.md)) always use it.
+TerraScale's own databases (ts-auth and ts-dashboard, [platform databases](platform-databases.md)) never use it: each region
+seeds its own, homed there with no replicas ([placement lock](platform-placement-lock.md)).
 
 ## API
 

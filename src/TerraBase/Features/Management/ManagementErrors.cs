@@ -14,7 +14,7 @@ internal static class ManagementErrors
 
     public static readonly Conflict WrongRegion = new("the database is managed in another region: send it to its home region", "wrong_region");
 
-    public static readonly Conflict PlatformPlacementLocked = new("platform databases are placed in every region and their placement cannot change", "platform_placement_locked");
+    public static readonly Conflict PlatformPlacementLocked = new("a platform database stays homed in the region that seeds it; its home cannot move", "platform_placement_locked");
 
     public static readonly Conflict PlatformDatabaseProtected = new(
         "platform databases cannot be deleted, renamed or given a TTL, and no other database can take their names", "platform_database_protected");

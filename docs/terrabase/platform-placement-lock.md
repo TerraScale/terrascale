@@ -1,30 +1,32 @@
 # Platform database placement lock
 
-The platform databases (`ts-auth` and `ts-dashboard`, [platform-databases.md](platform-databases.md)) are seeded in
-[all-regions placement](all-regions-placement.md) with no recorded home. That placement cannot be turned off.
+The platform databases (`ts-auth` and `ts-dashboard`, [platform-databases.md](platform-databases.md)) are seeded in each
+region on their own: homed in the region that seeds them, with no replicas and placement version 1. That placement cannot
+change.
 
 ## API
 
-`PATCH /v1/projects/{project}/databases/{database}` on a database of the platform organization:
+On a database of the platform organization:
 
-- `{"allRegions": true}` alone answers 200 with the unchanged database. It writes nothing, so the record keeps no home
-  and the same placement version.
-- Any other body answers `409 platform_placement_locked`: `{"allRegions": false}`, any `replicaRegions` list (including
-  `[]`), or `allRegions` together with `replicaRegions`. The catalog record is unchanged.
+- A placement change through `PATCH /v1/projects/{project}/databases/{database}` (`allRegions` or `replicaRegions`)
+  answers 200 with the unchanged database. It writes nothing, so the record keeps its home, its empty replica list and
+  its placement version.
+- Moving its home answers `409 platform_placement_locked`. The catalog record is unchanged.
 
-The management service enforces the same rule, so a commit `set_database_regions` operation on a platform database fails
-with the same code. This placement rule does not change deletion authorization or permanent-purge behavior.
+Peer placement updates skip records homed here, and home leases skip the platform databases. This placement rule does not
+change deletion authorization: deleting, renaming or setting a TTL on a platform database is refused on its own
+([platform-databases.md](platform-databases.md)).
 
 ## Restore and branch
 
-- A branch copies the source placement (`EngineManagementService.BranchDatabaseAsync`), and a database of the platform
-  organization is recorded with no home, so a branch of a platform database is also in every region. The lock applies
-  to the branch as well.
+- A branch copies the source placement (`EngineManagementService.BranchDatabaseAsync`), so a branch of a platform
+  database is homed in the same region with no replicas. As a database of the platform organization, it keeps that
+  placement as well.
 - Whole-backup, point-in-time and selective restores of platform sources answer `409 recovery_erasure_fenced`
   ([copy placement](recovery-copy-placement.md)). No restore can produce a platform copy
   with another placement.
 
-This changes no storage format or replication protocol. It adds the 409 response.
+This changes no storage format or replication protocol.
 
 ## Proof
 
