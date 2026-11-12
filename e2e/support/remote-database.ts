@@ -1,9 +1,22 @@
-import { test, expect, type APIRequestContext, type Page, type Response } from '@playwright/test';
-import type { Audit } from './audit';
+import { expect, type APIRequestContext, type Page, type Response } from '@playwright/test';
+import { test as base, type Audit } from './audit';
 import { auth, dash } from './stack';
 import { journey, saveSecret } from './state';
 
-export async function manageRemoteDatabase(page: Page, request: APIRequestContext, audit: Audit): Promise<void> {
+export { expect };
+
+export const test = base.extend<{ remoteDatabase: () => Promise<void> }>({
+  remoteDatabase: async ({ page, request, audit }, use) => {
+    let cleanup: (() => Promise<void>) | undefined;
+    try {
+      await use(() => manageRemoteDatabase(page, request, audit, remove => { cleanup = remove; }));
+    } finally {
+      if (cleanup) await cleanup();
+    }
+  },
+});
+
+async function manageRemoteDatabase(page: Page, request: APIRequestContext, audit: Audit, cleanup: (remove: () => Promise<void>) => void): Promise<void> {
   const discovery = await request.get('https://api.terrascale.tech/v1/regions');
   expect(discovery.status()).toBe(200);
   const serving = (await discovery.json()).regions as string[];
@@ -19,7 +32,6 @@ export async function manageRemoteDatabase(page: Page, request: APIRequestContex
   const renamed = 'renamed-' + name;
   let id = '';
   let deleted = false;
-  let submitted = false;
   const failures: Response[] = [];
   const failed = (response: Response) => {
     if (response.url().startsWith(dash + '/') && [503, 504].includes(response.status())) failures.push(response);
@@ -38,7 +50,7 @@ export async function manageRemoteDatabase(page: Page, request: APIRequestContex
 
   async function healthy(label: string): Promise<void> {
     if (failures.length) await answered(failures[0]);
-    await expect(page.locator('[role="alert"], .ts-alert-error, .ts-field-error'), label + ' shows no error alert').toHaveCount(0);
+    await expect(page.locator('[role="alert"]:visible, .ts-alert-error:visible, .ts-field-error:visible'), label + ' shows no error alert').toHaveCount(0);
     await audit.check(label);
   }
 
@@ -47,7 +59,8 @@ export async function manageRemoteDatabase(page: Page, request: APIRequestContex
   }
 
   async function submit(action: string, click: () => Promise<void>): Promise<void> {
-    const answer = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/dashboard/databases/' + action);
+    const path = '/api/v1/dashboard/databases' + (action === 'create' ? '' : '/' + action);
+    const answer = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === path);
     await click();
     const response = await answer;
     if (action === 'create') id = /\/databases\/([0-9A-HJKMNP-TV-Z]{26})/.exec(response.headers().location ?? '')?.[1] ?? '';
@@ -113,7 +126,15 @@ export async function manageRemoteDatabase(page: Page, request: APIRequestContex
     await expect(page.locator('#create-database-regions input[name="regions"]:checked')).toHaveValue(new RegExp('^' + region + '$', 'i'));
     await page.locator('#database-name').fill(name);
     await healthy('remote database creation dialog');
-    submitted = true;
+    cleanup(async () => {
+      if (deleted) return;
+      try {
+        if (id) await removeInDashboard();
+        if (!deleted) await removeThroughApi();
+      } catch {
+        await removeThroughApi();
+      }
+    });
     await submit('create', () => page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click());
     expect(id, 'creation returns the remote database id').toBeTruthy();
     await page.waitForURL(url => url.pathname === '/databases/' + id);
@@ -135,20 +156,6 @@ export async function manageRemoteDatabase(page: Page, request: APIRequestContex
     await expect(page.locator('.ts-db-head .ts-db-title')).toHaveText(renamed);
     await healthy('remote database name persists after reload');
     await removeInDashboard();
-  } catch (error) {
-    if (submitted && !deleted) {
-      try {
-        if (id) await removeInDashboard();
-        if (!deleted) await removeThroughApi();
-      } catch (dashboardCleanup) {
-        try {
-          await removeThroughApi();
-        } catch (apiCleanup) {
-          throw new AggregateError([error, dashboardCleanup, apiCleanup], 'remote database flow and cleanup failed');
-        }
-      }
-    }
-    throw error;
   } finally {
     page.off('response', failed);
   }
