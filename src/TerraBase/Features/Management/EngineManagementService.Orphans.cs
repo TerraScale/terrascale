@@ -189,7 +189,12 @@ internal sealed partial class EngineManagementService
         {
             return false;
         }
-        if (await ReadAsync<bool>(transaction => RemovedHomeFileAsync(transaction, database, cancellationToken), static _ => false, cancellationToken).ConfigureAwait(false))
+        var removedHome = await ReadAsync<bool?>(async transaction => await RemovedHomeFileAsync(transaction, database, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
+        if (removedHome is null)
+        {
+            return false;
+        }
+        if (removedHome.Value)
         {
             var removed = await engine.RecordDatabaseDeleteIntentAsync(database, token => ReadAsync<bool>(async transaction =>
                 await RemovedHomeFileAsync(transaction, database, token).ConfigureAwait(false)

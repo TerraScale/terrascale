@@ -42,6 +42,11 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
         var database = new TenantContext(entry.OrganizationId, PlanTier.Hobby, entry.ProjectId, entry.DatabaseId);
         var placement = new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions);
         var stored = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
+        if (stored is TenantDatabaseRecord newer && newer.Placement.Version > placement.Version)
+        {
+            return true;
+        }
+
         if (stored is TenantDatabaseRecord unchanged && unchanged.Name == entry.Name
             && unchanged.Placement.Home == placement.Home && unchanged.Placement.Version == placement.Version
             && unchanged.Placement.AllRegions == placement.AllRegions && DatabaseRegions.SameSet(unchanged.Placement.Replicas, placement.Replicas)

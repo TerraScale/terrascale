@@ -209,6 +209,11 @@ internal sealed partial class RegionReplication
             {
                 await ResolveMissingAsync(home, database, refreshLookups, budget.Token).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && budget.IsCancellationRequested)
+            {
+                deferred = true;
+                break;
+            }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 faults.Failed(database, home.Region, error);
@@ -299,18 +304,19 @@ internal sealed partial class RegionReplication
 
     private async Task<Dictionary<(string, string, string), ReplicaCatalogEntry>?> ListAsync(ReplicaPeer home, CancellationToken cancellationToken)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(PlacementTimeout);
         var listed = new Dictionary<(string, string, string), ReplicaCatalogEntry>();
         string? after = null;
         try
         {
             do
             {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(PlacementTimeout);
                 var address = new Uri(home.Internal, $"/v1/sync/regions/{options.Region}/databases" + (after is null ? "" : $"?after={Uri.EscapeDataString(after)}"));
                 var page = await _http.GetFromJsonAsync(address, ReplicasJsonContext.Default.ReplicaCatalogPage, timeout.Token).ConfigureAwait(false);
                 if (page is null)
                 {
+                    logger.ZLogWarning($"Region {home.Region}'s home returned no catalog page; its replicas keep serving what they hold");
                     return null;
                 }
 
@@ -323,9 +329,9 @@ internal sealed partial class RegionReplication
             }
             while (after is not null);
         }
-        catch (Exception error) when (error is HttpRequestException or JsonException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (error is HttpRequestException or JsonException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            logger.ZLogInformation($"Region {home.Region}'s home is unreachable; its replicas keep serving what they hold: {error.GetType().Name:@Error}");
+            logger.ZLogWarning($"Region {home.Region}'s home is unreachable; its replicas keep serving what they hold: {error.GetType().Name:@Error}");
             return null;
         }
 

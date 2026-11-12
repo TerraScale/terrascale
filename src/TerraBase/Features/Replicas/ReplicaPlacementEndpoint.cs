@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog, TerraBaseOptions options, RegionalOwners owners) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -15,7 +15,7 @@ internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog, TerraBas
         Name("getReplicatedDatabasePlacement");
         Summary("Reads the placement this node records for a database");
         Description("Internal listener only, behind the peer credential; 404 on the public listener. The database's name and the placement this node "
-            + "records, which names its home after a move, or 404 when this node's catalog does not record it (it was deleted).");
+            + "records, which names its home after a move. Only the regional writer can answer; other nodes return 503. A missing record at the writer returns 404.");
         Tags("Administration");
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
@@ -26,12 +26,17 @@ internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog, TerraBas
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
+        HttpContext.Response.Headers.CacheControl = "no-store";
+        if (!owners.Writer)
+        {
+            return ErrorResponse.From(new Unavailable("this machine is not the regional writer", "not_writer"));
+        }
+
         if (ReplicaRoutes.Database(HttpContext) is not { } database)
         {
             return ErrorResponse.From(new NotFound("the database does not exist"));
         }
 
-        HttpContext.Response.Headers.CacheControl = "no-store";
         return await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) switch
         {
             TenantDatabaseRecord { Placement: var placement } record => TypedResults.Json(
@@ -39,7 +44,8 @@ internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog, TerraBas
                     placement.Home, placement.Replicas, placement.Version, placement.AllRegions, placement.Home == options.Region ? record.Identity : null),
                 ReplicasJsonContext.Default.ReplicaCatalogEntry),
             Unavailable error => ErrorResponse.From(error),
-            _ => ErrorResponse.From(new NotFound("the database does not exist")),
+            NotFound when !owners.Writer => ErrorResponse.From(new Unavailable("this machine is not the regional writer", "not_writer")),
+            NotFound => ErrorResponse.From(new NotFound("the database does not exist")),
         };
     }
 }

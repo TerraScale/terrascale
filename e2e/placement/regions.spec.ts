@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync, readdirSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -409,7 +410,7 @@ async function recordedName(cells: Cells, id: string, projectId: string): Promis
   return (await json<{ name: string }>(await cells.get(`${replica}${database(id, projectId)}`))).name;
 }
 
-async function catalogRecord<T>(cell: string, path: string): Promise<T> {
+async function catalogRecord<T>(cell: string, path: string, status = 200): Promise<T> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(cell);
   const stream = session.request({ ':method': 'GET', ':path': path, 'x-terrabase-peer-credential': credential });
@@ -421,7 +422,7 @@ async function catalogRecord<T>(cell: string, path: string): Promise<T> {
     let body = '';
     stream.setEncoding('utf8');
     for await (const chunk of stream) body += chunk;
-    expect(Number(headers[':status']), path).toBe(200);
+    expect(Number(headers[':status']), path).toBe(status);
     return JSON.parse(body) as T;
   } finally {
     session.close();
@@ -749,5 +750,56 @@ test('R18 deletion at the home retires a database while its follower is removed'
     expect(listed.items.map(item => item.id)).not.toContain(created.id);
   } finally {
     if (!deleted) await removeDatabase(cells, created.id);
+  }
+});
+
+test('R19 an unprimed non-writer in the home region cannot confirm deletion', async ({ cells }) => {
+  const created = await create(cells, ['gru']);
+  const directory = mkdtempSync(join(stateDir, 'non-writer-'));
+  const source = readFileSync(join(stateDir, 'pids', 'terrabase.pid'), 'utf8').trim();
+  const environment = Object.fromEntries(readFileSync(`/proc/${source}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
+    const split = value.indexOf('=');
+    return [value.slice(0, split), value.slice(split + 1)];
+  }));
+  writeFileSync(join(directory, 'peers'), 'journey-1 gru 127.0.0.1\njourney-unprimed gru 127.0.0.3\n', { mode: 0o600 });
+  const token = randomBytes(32).toString('hex');
+  saveSecret('non-writer-nats', token);
+  writeFileSync(join(directory, 'nats-token'), token, { mode: 0o600 });
+  const log = join(directory, 'node.log');
+  const output = openSync(log, 'w', 0o600);
+  const node = spawn('dotnet', [join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.dll')], {
+    env: {
+      ...environment,
+      TS_NODE: 'journey-unprimed',
+      TS_PEERS_FILE: join(directory, 'peers'),
+      TS_NATS_URL: 'nats://127.0.0.3:4222',
+      TERRABASE_NATS_TOKEN_FILE: join(directory, 'nats-token'),
+      TERRABASE_DATA_DIRECTORY: join(directory, 'data'),
+      TERRABASE_PORT: '8280',
+      TERRABASE_METRICS_PORT: '9291',
+      TERRABASE_POSTGRES_PORT: '6632',
+    },
+    stdio: ['ignore', output, output],
+  });
+  closeSync(output);
+  const exited = once(node, 'exit');
+  const path = `/v1/sync/organizations/${journey().organizationId}/projects/${journey().projectId}/databases/${created.id}/placement`;
+  try {
+    await seed(cells, created.id);
+    await expect.poll(() => {
+      expect(node.exitCode, 'the real non-writer node stays running').toBeNull();
+      return readFileSync(log, 'utf8').includes('Application started.');
+    }, { message: 'the unprimed home-region node opens its listeners' }).toBe(true);
+    expect(await catalogRecord('http://127.0.0.3:8081', '/v1/rollout/status')).toMatchObject({ node: 'journey-unprimed', writer: false });
+    expect(await catalogRecord('http://127.0.0.1:8081', path)).toMatchObject({ databaseId: created.id, homeRegion: 'gru' });
+    expect(await catalogRecord('http://127.0.0.3:8081', path, 503)).toMatchObject({ error: { code: 'not_writer' } });
+    const missing = path.slice(0, -'/placement'.length - 1) + (created.id.endsWith('0') ? '1' : '0') + '/placement';
+    expect(await catalogRecord('http://127.0.0.1:8081', missing, 404)).toMatchObject({ error: { code: 'not_found' } });
+    expect(await catalogRecord('http://127.0.0.3:8081', missing, 503)).toMatchObject({ error: { code: 'not_writer' } });
+    expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3]]);
+  } finally {
+    node.kill('SIGTERM');
+    await exited;
+    await removeDatabase(cells, created.id);
   }
 });
