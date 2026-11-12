@@ -1,6 +1,6 @@
 import type { APIRequestContext } from '@playwright/test';
 import { deleteAccount } from '../support/account';
-import { test, expect } from '../support/audit';
+import { test, expect } from '../support/remote-database';
 import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
 import { runOperations, sdks } from '../support/sdk';
 import { shell } from '../support/shell';
@@ -83,6 +83,10 @@ test.describe('database deletion', () => {
     await expect(page.locator('main tr').filter({ hasText: current.databaseName })).toHaveCount(0);
     await audit.check('databases after deletion');
   });
+  test('the dashboard creates, renames and deletes a database outside its own region', async ({ remoteDatabase }) => {
+    await remoteDatabase();
+  });
+
   test('placement regions create, add and remove a non-writer', async ({ request }) => {
     const current = journey();
     const headers = await placementHeaders(request);
