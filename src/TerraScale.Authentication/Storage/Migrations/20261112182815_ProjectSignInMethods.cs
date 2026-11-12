@@ -50,7 +50,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                 name: "IX_users_instance_id_username",
                 table: "users");
 
-
             migrationBuilder.DropColumn(
                 name: "username",
                 table: "users");

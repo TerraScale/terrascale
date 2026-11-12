@@ -11,7 +11,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Storage.Migrations
 {
     [DbContext(typeof(AuthDbContext))]
-    [Migration("20261112180026_ProjectSignInMethods")]
+    [Migration("20261112182815_ProjectSignInMethods")]
     partial class ProjectSignInMethods
     {
         /// <inheritdoc />
@@ -1099,6 +1099,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasIndex("UserId");
 
                     b.HasIndex("InstanceId", "Id");
+
+                    b.HasIndex(new[] { "ExpiresAt" }, "IX_sessions_revoked_expires_at")
+                        .HasFilter("revoked");
 
                     b.ToTable("sessions", null, t =>
                         {
