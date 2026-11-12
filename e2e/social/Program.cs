@@ -73,7 +73,7 @@ internal static class Program
         var pendingOpen = pendingLinks.GetMethod("Open", BindingFlags.Static | BindingFlags.NonPublic)!;
         var pendingProvider = SocialProviders.Seal(options, "project", SocialProviders.Facebook, null, "client", "secret", null, null, null);
         var pending = pendingType.GetConstructors().Single().Invoke(["pending-id", "user@example.invalid",
-            new LinkedProvider("facebook", "https://www.facebook.com", "client", "123"), pendingProvider, issuedAt.AddMinutes(10).ToUnixTimeSeconds()]);
+            new LinkedProvider("facebook", "https://www.facebook.com", "client", "123"), typeof(SocialSignIn).GetMethod("ConfigurationHash", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [pendingProvider])!, issuedAt.AddMinutes(10).ToUnixTimeSeconds()]);
         var pendingToken = (string)pendingSeal.Invoke(null, [options, "project", pending])!;
         Require(pendingOpen.Invoke(null, [options, "project", pendingToken, new FixedClock(issuedAt.AddMinutes(10).AddSeconds(-1))]) is not null, "pending link before expiry");
         Require(pendingOpen.Invoke(null, [options, "project", pendingToken, new FixedClock(issuedAt.AddMinutes(10))]) is null, "pending link ten-minute expiry");

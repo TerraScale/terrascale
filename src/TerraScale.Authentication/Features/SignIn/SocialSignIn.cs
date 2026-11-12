@@ -297,7 +297,7 @@ public sealed partial class SocialSignIn(IHttpClientFactory clients, AuthOptions
         }
     }
 
-    private static string ConfigurationHash(SocialProviderRecord provider) =>
+    internal static string ConfigurationHash(SocialProviderRecord provider) =>
         Tokens.Sha256Hex(JsonSerializer.Serialize(provider, SocialJson.Default.SocialProviderRecord));
 
     private static string StateContext(string tenant) => "social-state:" + tenant;

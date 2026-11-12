@@ -35,7 +35,7 @@ public sealed class SocialStartEndpoint(SocialSignIn social, HostedAuth hosted) 
         try
         {
             var (location, sealedState) = await social.StartAsync(tenant, provider, next, cancellationToken);
-            this.HttpContext.Response.Cookies.Delete(PendingSocialLinks.Cookie(tenant), PendingSocialLinks.CookieOptions(tenant));
+            PendingSocialLinks.Delete(this.HttpContext, tenant);
             this.HttpContext.Response.Cookies.Append(SocialSignIn.Cookie(tenant), sealedState, SocialFlow.CookieOptions(tenant));
             return Results.Redirect(location.AbsoluteUri);
         }

@@ -287,7 +287,8 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
     {
         var pending = PendingSocialLinks.Open(options, tenant, token, clock);
         return pending is not null
-            && (await new ProjectAuthSettings(data).GetAsync(tenant, cancellationToken).ConfigureAwait(false)).Provider(pending.Identity.Provider) == pending.Provider
+            && (await new ProjectAuthSettings(data).GetAsync(tenant, cancellationToken).ConfigureAwait(false)).Provider(pending.Identity.Provider) is { } provider
+            && SocialSignIn.ConfigurationHash(provider) == pending.ConfigurationHash
             ? pending : null;
     }
 

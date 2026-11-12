@@ -107,11 +107,11 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
 
             var clock = context.RequestServices.GetRequiredService<TimeProvider>();
             var options = context.RequestServices.GetRequiredService<AuthOptions>();
-            var pending = new PendingSocialLink(Tokens.RandomToken(32), email, external!, provider,
+            var pending = new PendingSocialLink(Tokens.RandomToken(32), email, external!, SocialSignIn.ConfigurationHash(provider),
                 (clock.GetUtcNow() + PendingSocialLinks.Lifetime).ToUnixTimeSeconds());
             var token = PendingSocialLinks.Seal(options, tenant, pending);
             await reservation.EnqueueSocialAsync(tenant, email, token, AuthEmails.Locale(context.Request));
-            context.Response.Cookies.Append(PendingSocialLinks.Cookie(tenant), token, PendingSocialLinks.CookieOptions(tenant));
+            PendingSocialLinks.Write(context, tenant, token);
             return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, email, resumed.Next) { CodeRequest = "sign-in" });
         }
 

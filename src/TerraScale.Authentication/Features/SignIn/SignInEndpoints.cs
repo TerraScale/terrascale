@@ -86,7 +86,7 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
-        var pendingToken = this.HttpContext.Request.Cookies[PendingSocialLinks.Cookie(tenant)];
+        var pendingToken = PendingSocialLinks.Read(this.HttpContext, tenant);
         var pendingIdentity = PendingSocialLinks.Open(options, tenant, pendingToken, this.HttpContext.RequestServices.GetRequiredService<TimeProvider>());
         pendingIdentity = pendingIdentity?.Email == form.Email?.Trim() ? pendingIdentity : null;
         var address = pendingIdentity?.Email ?? form.Email?.Trim() ?? string.Empty;
@@ -116,7 +116,7 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         }
         else
         {
-            this.HttpContext.Response.Cookies.Delete(PendingSocialLinks.Cookie(tenant), PendingSocialLinks.CookieOptions(tenant));
+            PendingSocialLinks.Delete(this.HttpContext, tenant);
             await reservation.EnqueueCodeAsync(tenant, address, PasscodePurpose.SignIn, AuthEmails.Locale(this.HttpContext.Request));
         }
 
@@ -160,7 +160,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         var magic = MagicLinks.Open(options, SignInFlow.Tenant(this.HttpContext), form.Challenge,
             this.HttpContext.RequestServices.GetRequiredService<TimeProvider>());
         var tenant = SignInFlow.Tenant(this.HttpContext);
-        var pendingSocial = this.HttpContext.Request.Cookies[PendingSocialLinks.Cookie(tenant)];
+        var pendingSocial = PendingSocialLinks.Read(this.HttpContext, tenant);
         var pendingIdentity = PendingSocialLinks.Open(options, tenant, pendingSocial, this.HttpContext.RequestServices.GetRequiredService<TimeProvider>());
         var address = pendingIdentity?.Email ?? magic?.Email ?? form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
@@ -184,7 +184,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
             : await passcodes.RedeemAsync(tenant, address, form.Code ?? string.Empty, PasscodePurpose.SignIn, cancellationToken: cancellationToken);
         if (user is not null && pendingSocial is not null)
         {
-            this.HttpContext.Response.Cookies.Delete(PendingSocialLinks.Cookie(tenant), PendingSocialLinks.CookieOptions(tenant));
+            PendingSocialLinks.Delete(this.HttpContext, tenant);
         }
         if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
         {
@@ -886,7 +886,7 @@ internal static class SignInFlow
         {
             "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method)
                 || PendingSocialLinks.Open(context.RequestServices.GetRequiredService<AuthOptions>(), Tenant(context),
-                    context.Request.Cookies[PendingSocialLinks.Cookie(Tenant(context))], context.RequestServices.GetRequiredService<TimeProvider>()) is not null,
+                    PendingSocialLinks.Read(context, Tenant(context)), context.RequestServices.GetRequiredService<TimeProvider>()) is not null,
             "sign-in/verify" => theme.Passcode || theme.MagicLink || theme.Providers.Count > 0,
             "sign-in/password" or "reset" or "reset/complete" or "reset/resend" => theme.Password,
             "sign-up" or "sign-up/verify" or "sign-up/resend" => theme.SignUp,

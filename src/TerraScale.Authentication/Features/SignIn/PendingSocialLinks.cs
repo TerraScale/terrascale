@@ -3,18 +3,20 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Features.ProjectTenants;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using TerraScale.Authentication.Security;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
-internal sealed record PendingSocialLink(string Id, string Email, LinkedProvider Identity, SocialProviderRecord Provider, long ExpiresAt)
+internal sealed record PendingSocialLink(string Id, string Email, LinkedProvider Identity, string ConfigurationHash, long ExpiresAt)
 {
     public override string ToString() => nameof(PendingSocialLink);
 }
 
 internal static class PendingSocialLinks
 {
+    private static readonly ChunkingCookieManager Cookies = new();
+
     internal static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
 
     internal static string Cookie(string tenant) => "tsauth_social_link_" + tenant;
@@ -28,6 +30,12 @@ internal static class PendingSocialLinks
         IsEssential = true,
         MaxAge = Lifetime,
     };
+
+    internal static string? Read(HttpContext context, string tenant) => Cookies.GetRequestCookie(context, Cookie(tenant));
+
+    internal static void Write(HttpContext context, string tenant, string token) => Cookies.AppendResponseCookie(context, Cookie(tenant), token, CookieOptions(tenant));
+
+    internal static void Delete(HttpContext context, string tenant) => Cookies.DeleteCookie(context, Cookie(tenant), CookieOptions(tenant));
 
     internal static string Seal(AuthOptions options, string tenant, PendingSocialLink proof) =>
         SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(proof, PendingSocialJson.Default.PendingSocialLink), Context(tenant));

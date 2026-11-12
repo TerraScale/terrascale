@@ -60,7 +60,7 @@ public sealed class RequestMagicLinkEndpoint(SignInMail mail, HostedAuth hosted,
         }
 
         var tenant = SignInFlow.Tenant(context);
-        context.Response.Cookies.Delete(PendingSocialLinks.Cookie(tenant), PendingSocialLinks.CookieOptions(tenant));
+        PendingSocialLinks.Delete(context, tenant);
         var browser = Tokens.RandomToken(32);
         await reservation.EnqueueMagicLinkAsync(tenant, email, Tokens.Sha256Hex(browser), next, AuthEmails.Locale(context.Request));
         context.Response.Cookies.Append(MagicLinks.Cookie(tenant), browser, MagicLinks.CookieOptions(tenant));

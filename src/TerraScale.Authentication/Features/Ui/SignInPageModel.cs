@@ -288,7 +288,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
             Refresh = NavigationTarget(ContinueTo(located)),
             CodeRequest = located.CodeRequest ?? (located.Step == SignInStep.Code
                 && PendingSocialLinks.Open(context.RequestServices.GetRequiredService<AuthOptions>(), located.Slug,
-                    context.Request.Cookies[PendingSocialLinks.Cookie(located.Slug)], context.RequestServices.GetRequiredService<TimeProvider>()) is not null
+                    PendingSocialLinks.Read(context, located.Slug), context.RequestServices.GetRequiredService<TimeProvider>()) is not null
                 ? "sign-in" : null),
         };
         var page = SignInPage.Create(rendered);
