@@ -471,7 +471,7 @@ multiple('R11 a conflicting promotion is refused before takeover and succeeds af
     await answer(await patch(cells, x.id, ['fra'], projectId), 409, 'name_taken');
     await page.goto(`${dash}/databases/${x.id}/replication`);
     await page.locator('#database-regions input[name="regions"][value="gru" i]').uncheck();
-    audit.expectStatus(/\/api\/v1\/dashboard\/databases\/placement$/, 409);
+    audit.expectStatus(/\/api\/v1\/dashboard\/databases\/placement(?:\?|$)/, 409);
     const refused = page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/v1/dashboard/databases/placement');
     await page.getByRole('button', { name: 'Save regions', exact: true }).click();
@@ -572,6 +572,30 @@ multiple('R14 a sweep resolves a same-home holder excluded from its listing thro
     await convergedNames(cells, [x.id, y.id], [a, b, freed], [b, freed], projectId);
     expect((await json<Database>(await cells.get(`${home}${database(y.id, projectId)}`))).regions).toEqual(['gru']);
     console.log('R14 holder removed from fra membership/listing, retained in fra catalog; sweep used home placement lookup without promotion');
+  } finally {
+    for (const row of [x, y]) await removeDatabase(cells, row.id, projectId);
+  }
+});
+
+multiple('R15 an observed intermediate home rename still converges after a swap', async ({ owner: { cells, projectId } }) => {
+  const a = name('intermediate-a');
+  const b = name('intermediate-b');
+  const temporary = name('intermediate-tmp');
+  const x = await named(cells, home, a, ['gru', 'fra'], projectId);
+  const y = await named(cells, home, b, ['gru', 'fra'], projectId);
+  try {
+    for (const row of [x, y]) {
+      await seed(cells, row.id, projectId);
+      await observed(cells, row.id, projectId);
+    }
+    await rename(cells, home, x.id, temporary, projectId);
+    await expect.poll(() => recordedName(cells, x.id, projectId),
+      { message: 'the follower observes the intermediate name before the swap finishes', timeout: 45_000, intervals: [250, 500, 1000] })
+      .toBe(temporary);
+    await rename(cells, home, y.id, a, projectId);
+    await rename(cells, home, x.id, b, projectId);
+    await convergedNames(cells, [x.id, y.id], [a, b, temporary], [b, a], projectId);
+    console.log('R15 reproduced the intermediate-name precondition that broke the old assertion; both final names converged');
   } finally {
     for (const row of [x, y]) await removeDatabase(cells, row.id, projectId);
   }
