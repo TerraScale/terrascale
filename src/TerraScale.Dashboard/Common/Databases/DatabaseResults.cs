@@ -25,9 +25,17 @@ namespace TerraScale.Dashboard.Common.Databases
 
         internal static string Message(Exception error)
         {
-            return error is AccountAccessException or DatabaseWrongRegionException or DatabaseSqlException or SqlOutcomeUnknownException ? error.Message
-                : error is TerraBaseException { ErrorCode: "operation_allowance" } ? AllowanceUsed : Generic(error) + Reason(error) + RetryHint(error);
+            return error switch
+            {
+                AccountAccessException or DatabaseWrongRegionException or DatabaseSqlException or SqlOutcomeUnknownException or DatabaseRegionsCopyingException => error.Message,
+                TerraBaseException { ErrorCode: "operation_allowance" } => AllowanceUsed,
+                TerraBaseException { ErrorCode: MoveInProgress } => RegionsChanging,
+                _ => Generic(error) + Reason(error) + RetryHint(error),
+            };
         }
+
+        internal const string MoveInProgress = "move_in_progress";
+        internal const string RegionsChanging = "Another change to this database's regions is still running. Try again in a moment.";
 
         private static int? RetrySeconds(Exception error)
         {
@@ -64,6 +72,7 @@ namespace TerraScale.Dashboard.Common.Databases
             return Results.Problem(Message(error), statusCode: Status(error), extensions: error switch
             {
                 SqlOutcomeUnknownException unknown => new Dictionary<string, object?> { ["operationId"] = unknown.AttemptId, ["outcome"] = "unknown" },
+                DatabaseRegionsCopyingException => new Dictionary<string, object?> { ["code"] = DatabaseRegionsCopyingException.Code },
                 DatabaseSqlException { Code: { } code } sql => new Dictionary<string, object?> { ["code"] = code, ["sqlstate"] = sql.Sqlstate },
                 _ when RetrySeconds(error) is { } seconds => new Dictionary<string, object?> { ["retryAfterSeconds"] = seconds },
                 // TerraBase's stable error code travels with its refusal, so clients can tell one 409 from another.

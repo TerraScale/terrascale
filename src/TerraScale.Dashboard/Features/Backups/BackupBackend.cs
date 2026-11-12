@@ -150,11 +150,10 @@ namespace TerraScale.Dashboard.Features.Backups
         {
             var token = await AccessAsync(scope, ["databases:read"], cancellationToken);
             var readback = await rpc.User<IManagementService>(token, home.Id).WithCancellationToken(cancellationToken).GetDatabaseAsync(scope.ProjectId, targetName);
-            var placed = new ManagedDatabase(readback.Id, readback.ProjectId, readback.Name, readback.CreatedAt, readback.BranchedFrom,
-                readback.HomeRegion, readback.ReplicaRegions, readback.AllRegions);
+            var placed = DatabaseBackend.Map(readback) with { PreviousName = null, ConflictOf = null, ExpiresAt = null };
             if (!TerraScaleIds.IsValid(placed.Id) || placed.ProjectId != scope.ProjectId ||
                 placed.Id == databaseId || placed.BranchedFrom != databaseId || placed.Name != targetName ||
-                placed.HomeRegion != home.Id || placed.ReplicaRegions is null)
+                placed.Route != home.Id || placed.Regions is null)
             {
                 throw new HttpRequestException("Backup restoration could not be confirmed in its project.");
             }
@@ -196,7 +195,7 @@ namespace TerraScale.Dashboard.Features.Backups
         {
             if (error is TerraBaseWrongRegionException wrong)
             {
-                return new DatabaseWrongRegionException(wrong.Region, wrong.HomeRegion, wrong.Regions);
+                return new DatabaseWrongRegionException(wrong);
             }
 
             var code = error.ErrorCode;

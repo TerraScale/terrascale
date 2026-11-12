@@ -1,9 +1,17 @@
+using System.Diagnostics;
+
 namespace TerraScale.Dashboard.Common.UI
 {
     public enum RegionMapMode
     {
         Select,
         ReadOnly,
+    }
+
+    public enum RegionMapFit
+    {
+        Form,
+        Page,
     }
 
     public sealed record RegionMapRegion(string Code, string Name = "", string Country = "", string Detail = "")
@@ -15,6 +23,7 @@ namespace TerraScale.Dashboard.Common.UI
 
     public sealed record RegionMapModel(string Id, RegionMapMode Mode, IReadOnlyList<RegionMapRegion> Regions, IReadOnlyList<string> Selected)
     {
+        public required RegionMapFit Fit { get; init; }
         public string Label { get; init; } = "Regions";
         public string LabelledBy { get; init; } = "";
         public string Field { get; init; } = "regions";
@@ -23,16 +32,23 @@ namespace TerraScale.Dashboard.Common.UI
         public bool Bleed { get; init; }
         public string Minimum { get; init; } = "";
 
-        public static RegionMapModel Select(string id, IEnumerable<string> regions, IEnumerable<string> selected)
+        public static RegionMapModel Select(string id, IEnumerable<string> regions, IEnumerable<string> selected, RegionMapFit fit)
         {
-            return new(id, RegionMapMode.Select, Rows(regions), [.. selected]);
+            return new(id, RegionMapMode.Select, Rows(regions), [.. selected]) { Fit = fit };
         }
 
         public static RegionMapModel ReadOnly(string id, IEnumerable<string> regions)
         {
             var rows = Rows(regions);
-            return new(id, RegionMapMode.ReadOnly, rows, [.. rows.Select(row => row.Code)]);
+            return new(id, RegionMapMode.ReadOnly, rows, [.. rows.Select(row => row.Code)]) { Fit = RegionMapFit.Page };
         }
+
+        public string FitName => Fit switch
+        {
+            RegionMapFit.Form => "form",
+            RegionMapFit.Page => "page",
+            _ => throw new UnreachableException(),
+        };
 
         public static IReadOnlyList<RegionMapRegion> Rows(IEnumerable<string> regions)
         {
