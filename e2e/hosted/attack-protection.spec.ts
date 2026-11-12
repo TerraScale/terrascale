@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { test, expect, Audit, auditedContext } from '../support/audit';
 import { hostedReady, signUp, verify, onboard } from '../support/hosted';
@@ -76,6 +77,7 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
     for (let index = 0; index < 10; index++) expect((await attempt('wrong-password-' + index)).status()).toBe(401);
     const locked = await attempt(password);
     expect(locked.status()).toBe(401);
+    await expectStoredSubjectKeyed(tenant!, email);
     const unknown = await page.request.post(`${auth}/ui/${tenant}/sign-in/password`, {
       headers, form: { email: `unknown-${suffix}@example.com`, password },
     });
@@ -168,3 +170,25 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
     await context.close();
   }
 });
+
+async function expectStoredSubjectKeyed(tenant: string, email: string): Promise<void> {
+  const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[3];
+  const session = connect('http://127.0.0.1:8081');
+  const stream = session.request({
+    ':method': 'POST',
+    ':path': `/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute`,
+    'content-type': 'application/json',
+    'x-terrabase-peer-credential': credential,
+  });
+  stream.end(JSON.stringify({ statements: [{ sql: 'SELECT subject FROM account_locks WHERE instance_id = ?', args: [tenant] }] }));
+  let body = '';
+  for await (const chunk of stream) body += chunk;
+  session.close();
+  const answer = JSON.parse(body) as { results?: { rows: unknown[][] }[]; error?: { message: string } };
+  expect(answer.error?.message ?? '').toBe('');
+  const subjects = (answer.results?.[0]?.rows ?? []).map(row => String(row[0]));
+  expect(subjects, 'the lock counter row exists').toHaveLength(1);
+  expect(subjects[0], 'the stored counter key is the keyed fold, not the plain SHA-256 hex of the email')
+    .toMatch(/^fold-\d+$/);
+  expect(subjects[0]).not.toBe(createHash('sha256').update(email).digest('hex'));
+}

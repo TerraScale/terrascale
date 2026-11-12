@@ -193,7 +193,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
         Metadata(new BotChallengeForm("sign_in", SignInStep.Password, PasswordPrompt: true));
         Name("ui_sign_in_password");
         Summary("Sign in with a password");
-        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: the IP call bucket of 120 refilling 30 per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: 10 attempts per normalized email per 15 minutes; with account lockout on, the account locks after 10 failures for 30 minutes. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));

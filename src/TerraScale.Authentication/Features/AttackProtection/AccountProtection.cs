@@ -8,6 +8,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
@@ -18,7 +19,7 @@ public sealed record AccountLockRecord(string InstanceId, string Subject, string
 
 public sealed record KnownDeviceRecord(string InstanceId, string UserId, string Fingerprint, DateTimeOffset LastSeen);
 
-public sealed class AccountProtection(AuthData data, ProjectAuthSettings projects, SignInMail mail, AuthOptions options, TimeProvider clock)
+public sealed class AccountProtection(AuthData data, ProjectAuthSettings projects, SignInMail mail, AuthOptions options, TimeProvider clock, AttemptLimiter limiter)
 {
     public async Task<bool> PasswordAttemptAsync(string tenant, string email, UserRecord? user, bool valid, string locale, CancellationToken cancellationToken)
     {
@@ -27,7 +28,7 @@ public sealed class AccountProtection(AuthData data, ProjectAuthSettings project
             return valid;
         }
 
-        var subject = Tokens.Sha256Hex(email);
+        var subject = limiter.Fold(email);
         using var reservation = mail.Reserve();
         for (var round = 0; round < 3; round++)
         {
@@ -130,10 +131,12 @@ public sealed class AccountProtection(AuthData data, ProjectAuthSettings project
 
     public Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken)
     {
-        var cutoff = clock.GetUtcNow().AddDays(-90);
+        var stale = clock.GetUtcNow().AddDays(-90);
+        var idle = clock.GetUtcNow().AddHours(-24);
         return data.InBatchesAsync(batchSize, async (db, token) =>
-            await db.KnownDevices.Where(row => row.LastSeen <= cutoff).OrderBy(row => row.LastSeen).Take(batchSize).ExecuteDeleteAsync(token)
-            + await db.AccountLocks.Where(row => row.LastAttempt <= cutoff).OrderBy(row => row.LastAttempt).Take(batchSize).ExecuteDeleteAsync(token),
+            await db.KnownDevices.Where(row => row.LastSeen <= stale).OrderBy(row => row.LastSeen).Take(batchSize).ExecuteDeleteAsync(token)
+            + await db.AccountLocks.Where(row => row.LastAttempt <= idle && (row.LockedUntil == null || row.LockedUntil <= clock.GetUtcNow()))
+                .OrderBy(row => row.LastAttempt).Take(batchSize).ExecuteDeleteAsync(token),
             cancellationToken);
     }
 }

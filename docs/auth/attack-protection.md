@@ -58,6 +58,7 @@ Its generic response reveals neither account existence nor token validity.
 The database version check clears the lock and digest atomically, so a reused link cannot
 unlock a later lock. Password attempts use the same concurrency protection and fail closed
 after three failed optimistic-concurrency attempts.
+A lock on an address that has no account yet is not mailed; if the address signs up during the lock, password sign-in waits for the lock to end (at most 30 minutes).
 
 ## New-device notices
 
@@ -69,5 +70,6 @@ The cookie lasts 90 days and is isolated by project. Passwords, bearer credentia
 raw device cookies are not stored in device history.
 
 Sign-up records the first device without a notice. The background pruner removes device
-history and password-attempt records older than 90 days. Existing projects explicitly
+history older than 90 days and idle, unlocked password-attempt counters older than 24 hours.
+Existing projects explicitly
 retain breach checks and lockout on, with bot challenge and new-device notices off.
