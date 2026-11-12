@@ -130,7 +130,10 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   preflight's `GET /domains` claims the run's first slot and calls at once. A test's wait for its slot is added to
   its timeout. Inboxes are never deleted: a deleted address can be registered again by anyone, while the
   account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
-  password and token are registered secrets. Errors name the "inbox provider".
+  password and token are registered secrets. Errors name the "inbox provider" and include the method, path, HTTP status
+  and any `RateLimit-*` / `Retry-After` response headers; a 429 with a valid `Retry-After` of at most 60 s (seconds or
+  HTTP date) reserves one repeat no earlier than that delay in the same slot series, failing immediately if no slot
+  fits before the mail poll deadline, which also bounds its requests.
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach
