@@ -1,6 +1,8 @@
 using NATS.Client.KeyValueStore;
 using System.Text.Json;
+using TerraBase.Errors;
 using TerraBase.Features.Replicas;
+using TerraBase.Tenancy;
 using TerraBase.Hosting;
 using ZLogger;
 
@@ -273,66 +275,122 @@ internal sealed partial class RegionalHandoff
         return false;
     }
 
-    private async Task<NatsKVEntry<byte[]>?> BeginDrainAsync(INatsKVStore kv, string target, CancellationToken token)
+    private async Task<DrainReservation> BeginDrainAsync(INatsKVStore kv, string target, CancellationToken token)
     {
+        var entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
+        if (entry is null)
+        {
+            return DrainRefused("regional owner unavailable");
+        }
+        var owner = Decode(entry.Value.Value!);
+        var resuming = owner.Transfer is { Phase: Retiring } existing && existing.Source == options.MachineId
+            && existing.SourceSession == _session && existing.Target == target;
+        if (owner.Transfer is { } prior && !resuming)
+        {
+            if (prior.Phase != Retiring)
+            {
+                return DrainRefused("another regional transfer is still in progress");
+            }
+            if (await ReplacedSourcePendingAsync(prior, owner, token).ConfigureAwait(false) is { } pending)
+            {
+                await LogRetiringAsync(prior, pending, token).ConfigureAwait(false);
+                return new Unavailable("the source is still retiring; waiting for " + pending, "source_retiring");
+            }
+        }
         var candidate = await SelfRegionPeerAsync(target, token).ConfigureAwait(false);
         if (candidate is null
             || await StatusAsync(new Uri(candidate.InternalListener(options.InternalPort), "/v1/rollout/status"), token).ConfigureAwait(false)
                 is not { Ready: true, Session.Length: > 0, Node: var candidateNode } || candidateNode != target)
         {
-            return null;
+            return DrainRefused("the target has not passed readiness", "target_not_ready");
         }
-        var entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
-        if (entry is null)
+        if (resuming)
         {
-            return null;
+            return entry.Value;
         }
-        var owner = Decode(entry.Value.Value!);
-        if (owner.Transfer is { } prior)
+        if (owner.Transfer is not null)
         {
-            if (prior is { Phase: Retiring } && prior.Source == options.MachineId && prior.SourceSession == _session && prior.Target == target)
-            {
-                return entry;
-            }
-            if (prior.Phase != Retiring || !await ReplacedSourceReadyAsync(prior, owner, token).ConfigureAwait(false))
-            {
-                return null;
-            }
             owner = owner with { Transfer = null };
             var cleared = await kv.UpdateAsync(options.Region, Encode(owner), entry.Value.Revision, cancellationToken: token).ConfigureAwait(false);
             entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
             if (entry?.Revision != cleared)
             {
-                return null;
+                return DrainRefused("the regional owner changed while clearing retirement", "owner_changed");
             }
         }
         if (owner.Node != options.MachineId && owner.Node != target)
         {
-            return null;
+            return DrainRefused("the regional owner changed before reservation", "owner_changed");
         }
         var transfer = new RegionalTransfer(Guid.NewGuid().ToString("N"), options.MachineId, target, _session, Preparing,
             DateTimeOffset.UtcNow + DrainBudget, owner.Epoch);
         var reserved = owner with { Transfer = transfer };
         var revision = await kv.UpdateAsync(options.Region, Encode(reserved), entry.Value.Revision, cancellationToken: token).ConfigureAwait(false);
         entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
-        return entry?.Revision == revision ? entry : null;
+        return entry?.Revision == revision ? entry.Value : DrainRefused("the stop reservation changed", "owner_changed");
     }
 
-    private async Task<bool> ReplacedSourceReadyAsync(RegionalTransfer transfer, RegionalOwner owner, CancellationToken token)
+    private async Task<string?> ReplacedSourcePendingAsync(RegionalTransfer transfer, RegionalOwner owner, CancellationToken token)
     {
-        var source = await SelfRegionPeerAsync(transfer.Source, token).ConfigureAwait(false);
-        if (source is null)
+        var pending = "readiness";
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
+        attempt.CancelAfter(AttemptBudget);
+        try
         {
-            return false;
+            var source = await SelfRegionPeerAsync(transfer.Source, attempt.Token).ConfigureAwait(false);
+            if (source is null)
+            {
+                return "restart with a different session";
+            }
+            var address = source.InternalListener(options.InternalPort);
+            var status = await StatusAsync(new Uri(address, "/v1/rollout/status"), attempt.Token).ConfigureAwait(false);
+            if (status is { Session: var session } && session == transfer.SourceSession)
+            {
+                return "restart with a different session";
+            }
+            if (status is not { Ready: true, Session.Length: > 0 } || status.Node != transfer.Source)
+            {
+                return pending;
+            }
+            pending = "catch-up to the current writer";
+            if (status.Owner != owner.Node || status.Epoch < owner.Epoch)
+            {
+                return pending;
+            }
+            using var primed = await _http.PostAsync(new Uri(address, "/v1/rollout/prime?source=" + Uri.EscapeDataString(owner.Node)), null, token).ConfigureAwait(false);
+            return primed.IsSuccessStatusCode ? null : pending;
         }
-        var address = source.InternalListener(options.InternalPort);
-        if (await StatusAsync(new Uri(address, "/v1/rollout/status"), token).ConfigureAwait(false)
-            is not { Ready: true, Session.Length: > 0 } status || status.Node != transfer.Source
-            || status.Session == transfer.SourceSession || status.Owner != owner.Node || status.Epoch < owner.Epoch)
+        catch (Exception error) when (error is HttpRequestException || error is OperationCanceledException && !token.IsCancellationRequested)
         {
-            return false;
+            token.ThrowIfCancellationRequested();
+            return pending;
         }
-        using var primed = await _http.PostAsync(new Uri(address, "/v1/rollout/prime?source=" + Uri.EscapeDataString(owner.Node)), null, token).ConfigureAwait(false);
-        return primed.IsSuccessStatusCode;
     }
+
+    private async Task LogRetiringAsync(RegionalTransfer transfer, string pending, CancellationToken token)
+    {
+        LogSourceRetiring(logger, null, options.Region, transfer.SourceSession, pending);
+        foreach (var database in services.GetRequiredService<RegionReplication>().Following)
+        {
+            LogSourceRetiring(logger, database.DatabaseId, options.Region, transfer.SourceSession, pending);
+        }
+        TenantContext? after = null;
+        do
+        {
+            if (await services.GetRequiredService<IReplicaCatalog>().ListHomedAsync(options.Region, after, token).ConfigureAwait(false) is not TenantDatabasePage page)
+            {
+                logger.ZLogWarning($"Retiring source database catalog unavailable in {options.Region:@Region}");
+                return;
+            }
+            foreach (var database in page.Databases)
+            {
+                LogSourceRetiring(logger, database.DatabaseId, options.Region, transfer.SourceSession, pending);
+            }
+            after = page.Next;
+        }
+        while (after is not null);
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Regional source still retiring for database {Database} in {Region}, source session {SourceSession}: waiting for {Pending}")]
+    private static partial void LogSourceRetiring(ILogger logger, string? database, string region, string sourceSession, string pending);
 }

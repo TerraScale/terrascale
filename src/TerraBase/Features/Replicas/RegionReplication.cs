@@ -52,6 +52,7 @@ internal sealed partial class RegionReplication(
     private readonly SemaphoreSlim _pulls = new(MaxConcurrentPulls, MaxConcurrentPulls);
     private readonly SemaphoreSlim _verifying = new(1, 1);
     private readonly HttpClient _http = PeerHttp.Create(credential);
+    private readonly string _session = Guid.NewGuid().ToString("N");
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private readonly Lock _gate = new();
     private IReadOnlyList<ReplicaPeer> _peers = [];
@@ -76,6 +77,9 @@ internal sealed partial class RegionReplication(
 
     private string Region => options.Region;
 
+    [LoggerMessage(Message = "Replica verification skipped for database {Database} in follower region {Region}, session {Session}: {Reason}")]
+    private static partial void LogVerificationSkipped(ILogger logger, LogLevel level, string database, string region, string session, string reason);
+
     internal IReadOnlyCollection<TenantContext> Following => [.. _followers.Values.Select(follower => follower.Database)];
 
     public override async Task StartAsync(CancellationToken cancellationToken)
@@ -91,6 +95,8 @@ internal sealed partial class RegionReplication(
             "The largest lag of this node's replicas behind their homes.");
         _ = _meter.CreateObservableGauge("terrabase.replica.max_verification_age", () => _followers.Values.Select(follower => follower.VerificationAge.TotalSeconds)
             .DefaultIfEmpty(0).Max(), "s", "The longest time any of this node's replicas went without a completed verification against its home.");
+        _ = _meter.CreateObservableGauge("terrabase.replica.tracked_followers", () => _followers.Count, "{follower}",
+            "The number of followers contributing to replica verification age.");
         _verifier = new ReplicaVerifier(replicas, _http);
 
         if (options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
@@ -488,6 +494,7 @@ internal sealed partial class RegionReplication(
         private int _pullRequested;
         private long _lastChangedAt;
         private Task<VerificationRound>? _verification;
+        private VerificationSkipReason? _lastSkipReason;
 
         private Follower(RegionReplication owner, TenantContext database, ReplicaPeer home)
         {
@@ -693,12 +700,13 @@ internal sealed partial class RegionReplication(
                 await (round.Verdict switch
                 {
                     Equal => EqualRoundAsync(round, now, cancellationToken),
-                    Moved => MovedRoundAsync(now),
+                    VerificationSkipped skipped => SkippedRoundAsync(skipped, now),
                     Diverged => DivergedRoundAsync(verifier, round, now, cancellationToken),
                 });
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
+                _lastSkipReason = null;
                 Count("failed");
                 _owner.Logger.ZLogInformation($"A replica verification round failed and is retried: {error.GetType().Name:@Error}");
                 _nextVerify = _owner.Time.GetUtcNow() + RetryGap;
@@ -710,6 +718,7 @@ internal sealed partial class RegionReplication(
 
             async Task EqualRoundAsync(VerificationRound round, DateTimeOffset now, CancellationToken cancellationToken)
             {
+                _lastSkipReason = null;
                 Count("equal");
                 _cursor = round.Next;
                 if (round.Next is null)
@@ -724,14 +733,19 @@ internal sealed partial class RegionReplication(
                 }
             }
 
-            async Task MovedRoundAsync(DateTimeOffset now)
+            async Task SkippedRoundAsync(VerificationSkipped skipped, DateTimeOffset now)
             {
-                Count("skipped");
+                _owner._verifications?.Add(1, new KeyValuePair<string, object?>("result", "skipped"),
+                    new KeyValuePair<string, object?>("reason", skipped.Label));
+                LogVerificationSkipped(_owner.Logger, _lastSkipReason == skipped.Reason ? LogLevel.Debug : LogLevel.Information,
+                    Database.DatabaseId!, _owner.Region, _owner._session, skipped.Label);
+                _lastSkipReason = skipped.Reason;
                 _nextVerify = now + RetryGap;
             }
 
             async Task DivergedRoundAsync(ReplicaVerifier verifier, VerificationRound round, DateTimeOffset now, CancellationToken cancellationToken)
             {
+                _lastSkipReason = null;
                 Count("diverged");
                 _owner.Logger.ZLogError($"Replica of database {Database.DatabaseId:@Database} in project {Database.ProjectId:@Project} diverged from its home in region {_home.Region:@Home}: {round.Where:@Where}");
                 await HealAsync(verifier, now, cancellationToken).ConfigureAwait(false);

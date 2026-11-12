@@ -36,7 +36,10 @@ withdraws ingress from the source and drains in-flight responses.
    stopping only the recorded source process. This phase survives controller
    death and the source's drain response. A second stop remains blocked until
    the source restarts with a different session, passes readiness and catches
-   up from the current writer.
+   up from the current writer. While blocked, the drain answers HTTP 503 with
+   `Retry-After: 1` and the standard error body code `source_retiring`; its message
+   names the pending restart with a different session, readiness or catch-up step.
+   The refusal logs the database id, source session and pending step.
 5. `recovering`: if activation never committed, CAS back to the retained source
    at a new epoch. It reacquires exclusive admission and any partially moved
    database leases. Once admitted, it clears recovery and resumes replication.

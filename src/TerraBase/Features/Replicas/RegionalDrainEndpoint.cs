@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -15,13 +16,16 @@ internal sealed class RegionalDrainEndpoint(RegionalHandoff handoff) : EndpointW
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
         Produces(StatusCodes.Status204NoContent);
-        Produces(StatusCodes.Status503ServiceUnavailable);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var target = HttpContext.Request.Query["target"].ToString();
-        return await handoff.DrainAsync(target, cancellationToken).ConfigureAwait(false)
-            ? TypedResults.NoContent() : TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        return await handoff.DrainAsync(target, cancellationToken).ConfigureAwait(false) switch
+        {
+            Done => TypedResults.NoContent(),
+            Unavailable error => ErrorResponse.From(error)
+        };
     }
 }

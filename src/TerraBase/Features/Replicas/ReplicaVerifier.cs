@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Engine.Revisions;
 using TerraBase.Engine;
@@ -7,7 +8,27 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed record VerificationRound(ReplicaVerdict Verdict, ChecksumCursor? Next, string? Where);
+internal readonly union VerificationVerdict(Equal, Diverged, VerificationSkipped);
+
+internal enum VerificationSkipReason
+{
+    MissingHeldRevision,
+    HomePageMoved,
+    ComparisonMoved
+}
+
+internal sealed record VerificationSkipped(VerificationSkipReason Reason)
+{
+    public string Label => Reason switch
+    {
+        VerificationSkipReason.MissingHeldRevision => "missing_held_revision",
+        VerificationSkipReason.HomePageMoved => "home_page_moved",
+        VerificationSkipReason.ComparisonMoved => "comparison_moved",
+        _ => throw new UnreachableException()
+    };
+}
+
+internal sealed record VerificationRound(VerificationVerdict Verdict, ChecksumCursor? Next, string? Where);
 
 internal sealed class ReplicaVerifier(IDatabaseReplicas replicas, HttpClient http)
 {
@@ -16,7 +37,7 @@ internal sealed class ReplicaVerifier(IDatabaseReplicas replicas, HttpClient htt
     public async Task<VerificationRound> RoundAsync(TenantContext database, Uri source, ChecksumCursor? cursor, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
-        for (var attempt = 0; attempt < Attempts; attempt++)
+        for (var attempt = 0; ; attempt++)
         {
             if (attempt > 0 || replicas.HeldRevision(database) is null)
             {
@@ -24,27 +45,26 @@ internal sealed class ReplicaVerifier(IDatabaseReplicas replicas, HttpClient htt
             }
 
             var round = await ObserveAsync(database, source, cursor, cancellationToken).ConfigureAwait(false);
-            if (round.Verdict is not Moved)
+            if (round.Verdict is not VerificationSkipped || attempt == Attempts - 1)
             {
                 return round;
             }
         }
 
-        return new VerificationRound(new Moved(), cursor, null);
     }
 
     internal async Task<VerificationRound> ObserveAsync(TenantContext database, Uri source, ChecksumCursor? cursor, CancellationToken cancellationToken)
     {
         if (replicas.HeldRevision(database) is not { } held)
         {
-            return new VerificationRound(new Moved(), cursor, null);
+            return new VerificationRound(new VerificationSkipped(VerificationSkipReason.MissingHeldRevision), cursor, null);
         }
 
         var page = await http.GetFromJsonAsync(Address(source, held, cursor), ReplicasJsonContext.Default.ReplicaChecksumPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("the home answered no checksums");
         if (page.Moved)
         {
-            return new VerificationRound(new Moved(), cursor, null);
+            return new VerificationRound(new VerificationSkipped(VerificationSkipReason.HomePageMoved), cursor, null);
         }
 
         var comparison = await replicas.CompareAsync(database, held, page.Ranges, cancellationToken).ConfigureAwait(false);
@@ -52,7 +72,7 @@ internal sealed class ReplicaVerifier(IDatabaseReplicas replicas, HttpClient htt
         {
             { Verdict: Equal } => new VerificationRound(new Equal(), page.Next, null),
             { Verdict: Diverged, Where: var where } => new VerificationRound(new Diverged(), null, where),
-            null or { Verdict: Moved } => new VerificationRound(new Moved(), cursor, null),
+            null or { Verdict: Moved } => new VerificationRound(new VerificationSkipped(VerificationSkipReason.ComparisonMoved), cursor, null),
         };
     }
 
