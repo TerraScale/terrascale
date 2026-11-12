@@ -251,17 +251,17 @@ function requireProof(value) {
   return value;
 }
 
-const signInTokenPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
+const managementCredentialPattern = /^(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|[0-9A-HJKMNP-TV-Z]{26}_[0-9abcdefghjkmnpqrstvwxyz]{52})$/u;
 const maximumExportCursorLength = 8192;
 
 /**
  * @param {string} token
  * @returns {string}
  */
-function signInToken(token) {
-  if (typeof token !== "string" || !signInTokenPattern.test(token))
+function managementCredential(token) {
+  if (typeof token !== "string" || !managementCredentialPattern.test(token))
     throw new TypeError(
-      "signInToken must be a compact TerraScale account sign-in JWT.",
+      "Present a TerraScale sign-in JWT or a project secret API key.",
     );
   return token;
 }
@@ -338,7 +338,7 @@ export class TsAuthProjectsClient {
       method: "GET",
       path: `v1/${requireId(projectId, "projectId")}/settings`,
       routeName: "tsauth.projects.get_settings",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -358,7 +358,7 @@ export class TsAuthProjectsClient {
       method: "PUT",
       path: `v1/${requireId(projectId, "projectId")}/settings`,
       routeName: "tsauth.projects.update_settings",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
       body: request,
     });
   }
@@ -386,7 +386,7 @@ export class TsAuthProjectsClient {
       method: "GET",
       path: `v1/${requireId(projectId, "projectId")}/users`,
       routeName: "tsauth.projects.list_users",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
       query: {
         ...(request.search === undefined ? {} : { q: request.search }),
         ...(request.limit === undefined ? {} : { limit: request.limit }),
@@ -410,7 +410,7 @@ export class TsAuthProjectsClient {
       method: "GET",
       path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}`,
       routeName: "tsauth.projects.get_user",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -453,7 +453,7 @@ export class TsAuthProjectsClient {
       method: "DELETE",
       path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}`,
       routeName: "tsauth.projects.delete_user",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -476,7 +476,7 @@ export class TsAuthProjectsClient {
       method: "GET",
       path: `v1/${requireId(projectId, "projectId")}/users/export`,
       routeName: "tsauth.projects.export_users",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
       query: {
         ...(request.limit === undefined ? {} : { limit: request.limit }),
         ...(request.after === undefined ? {} : { after: request.after }),
@@ -513,7 +513,7 @@ export class TsAuthProjectsClient {
       method: "PUT",
       path: `v1/${requireId(projectId, "projectId")}/providers/${provider}`,
       routeName: "tsauth.projects.set_provider",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
       body: request,
     });
   }
@@ -543,7 +543,7 @@ export class TsAuthProjectsClient {
       method: "DELETE",
       path: `v1/${requireId(projectId, "projectId")}/providers/${provider}`,
       routeName: "tsauth.projects.delete_provider",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -565,7 +565,7 @@ export class TsAuthProjectsClient {
       method: "GET",
       path: `v1/${requireId(projectId, "projectId")}/sessions`,
       routeName: "tsauth.projects.list_sessions",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
       query: {
         ...(request.userId === undefined
           ? {}
@@ -591,7 +591,7 @@ export class TsAuthProjectsClient {
       method: "DELETE",
       path: `v1/${requireId(projectId, "projectId")}/sessions/${requireId(sessionId, "sessionId")}`,
       routeName: "tsauth.projects.revoke_session",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -610,7 +610,7 @@ export class TsAuthProjectsClient {
       method: "GET",
       path: `v1/${requireId(projectId, "projectId")}/clients`,
       routeName: "tsauth.projects.list_clients",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -632,7 +632,7 @@ export class TsAuthProjectsClient {
       method: "POST",
       path: `v1/${requireId(projectId, "projectId")}/clients`,
       routeName: "tsauth.projects.create_client",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
       body: request,
       stepUpProof: requireProof(options.stepUpProof),
     });
@@ -656,7 +656,7 @@ export class TsAuthProjectsClient {
       method: "PUT",
       path: `v1/${requireId(projectId, "projectId")}/clients/${requireId(clientId, "clientId")}`,
       routeName: "tsauth.projects.update_client",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
       body: request,
       stepUpProof: requireProof(options.stepUpProof),
     });
@@ -687,7 +687,7 @@ export class TsAuthProjectsClient {
       method: "POST",
       path: `v1/${requireId(projectId, "projectId")}/clients/${requireId(clientId, "clientId")}/secret/rotate`,
       routeName: "tsauth.projects.rotate_client_secret",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
       body: {
         ...(options.grace_seconds === undefined
           ? {}
@@ -712,7 +712,7 @@ export class TsAuthProjectsClient {
       method: "DELETE",
       path: `v1/${requireId(projectId, "projectId")}/clients/${requireId(clientId, "clientId")}`,
       routeName: "tsauth.projects.delete_client",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -734,7 +734,7 @@ export class TsAuthProjectsClient {
         action === "disable"
           ? "tsauth.projects.disable_user"
           : "tsauth.projects.enable_user",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
     });
   }
 }

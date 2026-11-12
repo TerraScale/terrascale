@@ -14,8 +14,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
         this.Describe("update_project_settings", "Change a project tenant's settings", "Omitted methods are unchanged and a sent branding replaces the branding (null clears a value). At least one of passcode and password stays on; logo_url and footer links are https, colours #rrggbb, name 1 to 64 characters, title_size 20 to 40, default_theme light/dark/system and email_message at most 500 plain-text characters (only newline controls). Name, logo and accent also brand verification, sign-in and reset emails; sender stays TerraScale. Configuration replaces the project redirect allowlist (at most 100 exact URLs; empty adds no restriction) and session lifetime (300 to 2592000 seconds). Needs the admin project role.", "Project tenants", typeof(UpdateSettingsRequest), StatusCodes.Status200OK, typeof(SettingsBody));
     }
 
-    /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.UpdateSettingsRequest, cancellationToken);

@@ -105,8 +105,9 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
         }
 
+        var allowed = key.Scopes.Where(scope => scope is not (TerraBaseScopes.AuthRead or TerraBaseScopes.AuthWrite)).ToArray();
         var requested = request.GetScopes();
-        if (requested.Except(key.Scopes).Any())
+        if (requested.Except(allowed).Any())
         {
             return OidcResults.Forbid(Errors.InvalidScope, "A requested scope exceeds the key's.");
         }
@@ -120,7 +121,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
         }
 
-        var identity = Identity(key.Id, key.OrganizationId, project, requested.IsEmpty ? key.Scopes : requested, lifetime)
+        var identity = Identity(key.Id, key.OrganizationId, project, requested.IsEmpty ? allowed : requested, lifetime)
             .SetClaim(KeyIdClaim, key.Id)
             .SetClaim(KeyGenerationClaim, ApiKeys.Generation(secret))
             .SetExpirationDate(now + lifetime);
@@ -197,6 +198,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(Errors.InvalidTarget, "The organization or project is not one this user reaches.");
         }
 
+        allowed = [.. allowed.Where(scope => scope is not (TerraBaseScopes.AuthRead or TerraBaseScopes.AuthWrite))];
         var requested = request.GetScopes();
         if (requested.Except(allowed).Any())
         {

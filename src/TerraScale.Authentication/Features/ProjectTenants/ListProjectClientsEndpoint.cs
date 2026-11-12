@@ -13,8 +13,7 @@ public sealed class ListProjectClientsEndpoint(TenantDirectory tenants, Platform
         this.Describe("list_project_clients", "List OAuth clients", "Every client of the tenant in one page, without secrets. Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ClientPageBody));
     }
 
-    /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         return Results.Json(new ClientPageBody([.. (await this.Tenants.ClientsAsync(projectId, cancellationToken)).Select(client => Map(client))], null), ProjectTenantJson.Default.ClientPageBody);

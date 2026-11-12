@@ -590,19 +590,24 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
         this.HttpContext.Response.Headers.CacheControl = "no-store";
         try
         {
-            if (await authentication.AuthenticateAsync(this.HttpContext.Request, cancellationToken) is not { } caller)
-            {
-                this.HttpContext.Response.Headers.WWWAuthenticate = "Bearer realm=\"ts-auth\"";
-                return Results.Json(new ErrorBody(new ErrorDetail("unauthorized", "Present a sign-in access token of this tenant.")), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status401Unauthorized);
-            }
-
-            return await this.HandleAsync(caller, cancellationToken);
+            return await this.AuthenticateAndHandleAsync(cancellationToken);
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)
         {
             // TerraBase failures (TerraBaseException is an HttpRequestException): fail closed, details stay in the logs.
             throw ApiException.Unavailable(error);
         }
+    }
+
+    protected virtual async Task<IResult> AuthenticateAndHandleAsync(CancellationToken cancellationToken)
+    {
+        if (await authentication.AuthenticateAsync(this.HttpContext.Request, cancellationToken) is not { } caller)
+        {
+            this.HttpContext.Response.Headers.WWWAuthenticate = "Bearer realm=\"ts-auth\"";
+            return Results.Json(new ErrorBody(new ErrorDetail("unauthorized", "Present a sign-in access token of this tenant.")), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        return await this.HandleAsync(caller, cancellationToken);
     }
 
     /// <summary>Handles a call of the signed-in <paramref name="caller"/>.</summary>

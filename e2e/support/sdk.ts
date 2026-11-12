@@ -114,7 +114,7 @@ function execute(sdk: Sdk, env: NodeJS.ProcessEnv): Promise<{ code: number | nul
   });
 }
 
-export async function runOperations(sdk: Sdk, group: Group): Promise<void> {
+export async function runOperations(sdk: Sdk, group: Group, management?: { user: string; readKey: string; writeKey: string }): Promise<void> {
   const current = journey<Journey & Partial<Pick<PaidJourney, 'secondDatabaseName'>>>();
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
   const planned = operations.filter((op) => op.group === group);
@@ -128,6 +128,7 @@ export async function runOperations(sdk: Sdk, group: Group): Promise<void> {
       TERRASCALE_PROJECT_ID: current.projectId,
       TERRASCALE_DATABASE_NAME: current.databaseName,
       E2E_DATABASE_ID: current.databaseId,
+      ...(management ? { E2E_AUTH_USER: management.user, E2E_AUTH_READ_KEY: management.readKey, E2E_AUTH_WRITE_KEY: management.writeKey } : {}),
       ...(current.secondDatabaseName ? { E2E_OTHER_DATABASE: current.secondDatabaseName } : {}),
       E2E_GROUP: group,
       E2E_RUN_ID: `${current.runId}${Date.now().toString(36)}`,

@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
@@ -22,6 +23,47 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         var project = await platform.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
         PlatformDirectory.RequireRole(await platform.ProjectAccessAsync(userId, project.Value.OrganizationId, projectId, cancellationToken).ConfigureAwait(false), minimum);
     }
+
+    public async Task CheckKeyAccessAsync(ApiKeyRecord key, string projectId, string scope, IPAddress? address, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        var project = await platform.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        if (key.ProjectId != projectId || key.OrganizationId != project.Value.OrganizationId || key.Database is not null
+            || await platform.ClosureAsync("organization", key.OrganizationId, cancellationToken).ConfigureAwait(false) is not null
+            || await platform.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            throw PlatformDirectory.NotFound();
+        }
+
+        if (!key.Scopes.Contains(scope, StringComparer.Ordinal))
+        {
+            throw new ApiException(StatusCodes.Status403Forbidden, "insufficient_scope", $"This operation requires {scope}.");
+        }
+
+        if (!Allows(key.AllowedCidrs, address) || !Allows(project.Value.AllowedCidrs, address))
+        {
+            throw new ApiException(StatusCodes.Status403Forbidden, "ip_not_allowed", "The request address is outside the key or project's IP allowlist.");
+        }
+    }
+
+    public Task<IResult> AuditKeyWriteAsync(ApiKeyRecord key, string operation, string target, Func<CancellationToken, Task<IResult>> write, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return data.AuditWritesAsync(platform.Audit(key.OrganizationId, key.Id, operation + ".succeeded", key.ProjectId, target), write, cancellationToken);
+    }
+
+    public async Task AuditKeyFailureAsync(ApiKeyRecord key, string operation, string target, int status, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        if (!await data.SaveAsync(platform.Audit(key.OrganizationId, key.Id, operation + ".failed", key.ProjectId, $"{target} status={status}"), cancellationToken).ConfigureAwait(false))
+        {
+            throw ApiException.Unavailable();
+        }
+    }
+
+    private static bool Allows(IReadOnlyList<string>? cidrs, IPAddress? address) =>
+        cidrs is not { Count: > 0 }
+        || address is not null && cidrs.Any(cidr => IPNetwork.Parse(cidr).Contains(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address));
 
     public async Task<Page<UserRecord>> UsersAsync(string projectId, string? query, int limit, string? after, CancellationToken cancellationToken)
     {

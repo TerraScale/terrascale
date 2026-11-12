@@ -67,6 +67,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
 
     private Task RunAsync(JsonElement op, CancellationToken cancellationToken) => Text(op, "id") switch
     {
+        "auth.manage_user" => ManageUserAsync(cancellationToken),
         "sql.execute.positional" => ExecutePositionalAsync(op, cancellationToken),
         "sql.execute.named" => ExecuteNamedAsync(op, cancellationToken),
         "sql.execute.statement" => ExecuteStatementAsync(op, cancellationToken),
@@ -97,6 +98,25 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         "agent.scoped_key_outside" => ScopedKeyOutsideAsync(op, cancellationToken),
         var other => throw new InvalidOperationException($"No implementation for {other}."),
     };
+
+    private async Task ManageUserAsync(CancellationToken cancellationToken)
+    {
+        using var http = new HttpClient();
+        var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions
+        {
+            BaseAddress = new Uri("https://auth.terrascale.tech"),
+            InstanceSlug = "terrascale",
+        });
+        var read = Required("E2E_AUTH_READ_KEY");
+        var write = Required("E2E_AUTH_WRITE_KEY");
+        var user = Required("E2E_AUTH_USER");
+        var listed = await auth.Projects.ListUsersAsync(read, project, cancellationToken: cancellationToken);
+        Same(listed.Items.Any(item => item.Id == user) ? "found" : "missing", "found", "read key lists user");
+        var refusal = await RefusedAsync<TerraScaleAuthException>(() => auth.Projects.DisableUserAsync(read, project, user, cancellationToken));
+        Same(((int?)refusal.StatusCode)?.ToString(CultureInfo.InvariantCulture) ?? "missing", "403", "read key cannot disable");
+        Same((await auth.Projects.DisableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "disabled", "write key disables");
+        Same((await auth.Projects.EnableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "enabled", "write key enables");
+    }
 
     private async Task ExecutePositionalAsync(JsonElement op, CancellationToken cancellationToken)
     {

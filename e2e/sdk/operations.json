@@ -3,6 +3,11 @@
   "table": "e2e_{sdk}_{run}",
   "operations": [
     {
+      "id": "auth.manage_user",
+      "group": "a",
+      "title": "auth:read lists users; auth:write disables and re-enables a project user"
+    },
+    {
       "id": "sql.execute.positional",
       "group": "a",
       "title": "execute with positional arguments",

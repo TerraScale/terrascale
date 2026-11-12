@@ -15,8 +15,9 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         this.Describe("update_project_client", "Update an OAuth client", "Changes a client's display name and redirect URIs; its client_id stays the same and no secret is answered. redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments, and each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty. Needs the admin project role.", "Project tenants", typeof(UpdateClientRequest), StatusCodes.Status200OK, typeof(ClientBody));
     }
 
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
+        var person = caller.RequirePerson();
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.UpdateClientRequest, cancellationToken);
         var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
@@ -34,7 +35,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             }
         }
 
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "update_oauth_client", null, cancellationToken);
+        _ = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "update_oauth_client", null, cancellationToken);
         var previous = this.HttpContext.Items[Tenancy.ItemKey];
         this.HttpContext.Items[Tenancy.ItemKey] = projectId;
         try

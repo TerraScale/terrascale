@@ -14,8 +14,7 @@ public sealed class DeleteProjectUserEndpoint(TenantDirectory tenants, Users use
         this.Describe("delete_project_user", "Delete an end user", "Needs the admin project role. Its email is released and its sessions and tokens stop working at once.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }
 
-    /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         _ = await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken);

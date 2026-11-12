@@ -12,7 +12,9 @@ Authority: `src/TerraScale.Authentication/Features/ProjectTenants/` endpoints,
 | GET /v1/{project}/sessions | list_project_sessions | viewer | 200 ProjectSessionPageBody |
 | DELETE /v1/{project}/sessions/{session} | revoke_project_session | admin | 204 empty |
 
-Bearer is a terrascale sign-in user token; project/API-key/end-user tokens fail.
+Bearer is a terrascale sign-in user token or an unrestricted secret API key of
+this project. GET requires auth:read and mutations auth:write; step-up routes
+refuse keys with 403 person_required. Exchanged API-key and end-user JWTs fail.
 JSON uses **snake_case** at runtime: id/email/created_at/disabled; page items/next.
 Every member is required; next alone is nullable. IDs are canonical uppercase ULIDs.
 q is an email substring; limit 1..100 defaults to 50; after is opaque, list-bound.

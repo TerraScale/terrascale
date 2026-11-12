@@ -13,7 +13,7 @@ public sealed class ListWebhookEndpointsEndpoint(TenantDirectory tenants, Platfo
         this.Describe("list_webhook_endpoints", "List webhook endpoints", "The project's registered webhook endpoints, without secrets. Needs the admin project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookEndpointPageBody));
     }
 
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var endpoints = await webhooks.ListAsync(projectId, cancellationToken);

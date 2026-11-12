@@ -57,10 +57,10 @@ public sealed partial class TerraScaleAuthClient
     /// <summary>OIDC discovery, JWKS, token, revocation, and userinfo.</summary>
     public TerraScaleAuthOidcClient Oidc { get; }
 
-    /// <summary>Platform organizations, projects, members and API keys, using a user sign-in token.</summary>
+    /// <summary>Platform organizations, projects, members and API keys, using a sign-in token or a project secret API key.</summary>
     public TerraScaleAuthPlatformClient Platform { get; }
 
-    /// <summary>Project tenant settings, end users, sessions and OAuth clients under <c>/v1/{project}</c>, using a user sign-in token.</summary>
+    /// <summary>Project tenant settings, end users, sessions and OAuth clients under <c>/v1/{project}</c>, using a sign-in token or a project secret API key.</summary>
     public TerraScaleAuthProjectsClient Projects { get; }
 
     /// <summary>The validated instance slug every management route is scoped to.</summary>

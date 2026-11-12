@@ -41,6 +41,7 @@ from .auth import (
 )
 from .client import _error, _settings
 from .errors import CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes
+from .ids import is_valid_id
 from .session import AsyncSqlSession
 from .sql import Args, Row, Statement, StatementResult
 
@@ -122,7 +123,13 @@ class AsyncTerraScale:
         conflicts = 0
         while True:
             direct = "Authorization" in call.headers
-            token = "" if direct or call.anonymous else await self._bearer()
+            project_key = (
+                self._api_key
+                if call.base_url is not None and len(call.path) > 1 and call.path[0] == "v1"
+                and is_valid_id(call.path[1])
+                else None
+            )
+            token = "" if direct or call.anonymous else project_key or await self._bearer()
             headers = dict(call.headers) if direct else {**self._headers, **call.headers}
             if not direct and not call.anonymous:
                 headers["Authorization"] = f"Bearer {token}"
@@ -154,7 +161,7 @@ class AsyncTerraScale:
                 if self._source is not None:
                     self._source.reject(err)
                 raise err
-            if response.status_code == 401 and self._source is not None and not refreshed and not direct:
+            if response.status_code == 401 and self._source is not None and not refreshed and not direct and project_key is None:
                 # Refresh an ordinary token refusal once, never a permanent key refusal.
                 self._source.invalidate(token)
                 refreshed = True

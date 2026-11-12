@@ -23,12 +23,17 @@ public static class TerraBaseScopes
 
     public const string SqlWrite = "sql:write";
 
-    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite];
+    public const string AuthRead = "auth:read";
+
+    public const string AuthWrite = "auth:write";
+
+    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite, AuthRead, AuthWrite];
 
     public static IReadOnlyList<string> For(string? projectRole) => projectRole switch
     {
         Roles.Viewer => [DatabasesRead, SqlRead],
-        Roles.Member or Roles.Admin => All,
+        Roles.Member => [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite, AuthRead],
+        Roles.Admin => All,
         _ => [],
     };
 }
@@ -179,6 +184,11 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            if (projectId is not null && key.Value.Scopes.Except(TerraBaseScopes.For(authority.Role)).Any())
+            {
+                throw PlatformDirectory.Forbidden();
+            }
+
             var changed = key.Value with { AllowedCidrs = allowedCidrs };
             return new PlatformDirectory.Plan<ApiKeyRecord>(
                 [.. authority.Assertions, Change.Update(key, changed),
@@ -196,6 +206,11 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            if (projectId is not null && key.Value.Scopes.Except(TerraBaseScopes.For(authority.Role)).Any())
+            {
+                throw PlatformDirectory.Forbidden();
+            }
+
             var now = clock.GetUtcNow();
             var secret = $"{keyId}_{RandomNumberGenerator.GetString(Alphabet, 52)}";
             var rotated = key.Value with

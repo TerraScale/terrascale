@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import ipaddress
 import json
@@ -10,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
-from terrascale import Statement, TerraScale, is_valid_id, new_id
+from terrascale import AsyncTerraScale, Statement, TerraScale, is_valid_id, new_id
 from terrascale.errors import ServiceUnavailableError
 
 spec = json.loads(Path(os.environ["E2E_OPERATIONS"]).read_text(encoding="utf-8"))
@@ -54,6 +55,23 @@ class Item:
 
 class Thrown(Exception):
     pass
+
+
+def auth_manage_user(op):
+    user = os.environ["E2E_AUTH_USER"]
+    with TerraScale(api_key=os.environ["E2E_AUTH_READ_KEY"], project=project) as read:
+        same(any(item.id == user for item in read.list_users().items), True, "read key lists user")
+        same(status(lambda: read.disable_user(user)), 403, "read key cannot disable")
+    with TerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:
+        same(write.disable_user(user).disabled, True, "write key disables")
+        same(write.enable_user(user).disabled, False, "write key enables")
+
+    async def asynchronous():
+        async with AsyncTerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:
+            same((await write.disable_user(user)).disabled, True, "async write key disables")
+            same((await write.enable_user(user)).disabled, False, "async write key enables")
+
+    asyncio.run(asynchronous())
 
 
 def execute_positional(op):
@@ -390,6 +408,7 @@ def placement_set(op):
 
 
 operations = {
+    "auth.manage_user": auth_manage_user,
     "sql.execute.positional": execute_positional,
     "sql.execute.named": execute_named,
     "sql.execute.statement": execute_statement,

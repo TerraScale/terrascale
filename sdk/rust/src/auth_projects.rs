@@ -1,7 +1,7 @@
 //! Project tenant administration under `/v1/{project}`.
 //!
 //! Every call authenticates with the operator's own TerraScale account
-//! sign-in token (compact JWT): the producer checks the project role per
+//! sign-in token or project secret API key: the producer checks role or scope per
 //! request, viewer for reads and admin for changes. Obtain a client with
 //! [`crate::TerraScaleClient::projects`].
 
@@ -367,7 +367,9 @@ fn invalid_body(error: serde_json::Error) -> Error {
 }
 
 /// Project tenant administration client. Obtain with
-/// [`crate::TerraScaleClient::projects`].
+/// [`crate::TerraScaleClient::projects`]. Pass a sign-in token or a project secret
+/// API key to management calls: auth:read for reads, auth:write for changes.
+/// Operations requiring step-up accept only a person's sign-in token.
 #[derive(Clone)]
 pub struct ProjectsClient {
     shared: SharedClient,

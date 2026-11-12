@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createTerraBaseClient, createTerraBaseClientFromEnvironment, generateId, isValidId, staticBaseUrlResolver } from '../../../sdk/js/src/index.js';
 
+import { createTsAuthClient } from '../../../sdk/js/src/ts-auth.js';
+
 const spec = JSON.parse(readFileSync(process.env.E2E_OPERATIONS, 'utf8'));
 const run = process.env.E2E_RUN_ID;
 const project = process.env.TERRASCALE_PROJECT_ID;
@@ -63,6 +65,20 @@ async function status(work) {
 }
 
 const operations = {
+  async 'auth.manage_user'() {
+    const auth = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: 'terrascale' }).projects;
+    const read = process.env.E2E_AUTH_READ_KEY;
+    const write = process.env.E2E_AUTH_WRITE_KEY;
+    const user = process.env.E2E_AUTH_USER;
+    const listed = await auth.listUsers(read, project);
+    check(listed.ok && listed.value.items.some(item => item.id === user), 'read key lists the user');
+    const refused = await auth.disableUser(read, project, user);
+    check(!refused.ok && refused.status === 403, 'read key cannot disable');
+    const disabled = await auth.disableUser(write, project, user);
+    check(disabled.ok && disabled.value.disabled, 'write key disables');
+    const enabled = await auth.enableUser(write, project, user);
+    check(enabled.ok && !enabled.value.disabled, 'write key enables');
+  },
   async 'placement.create'() {
     const created = await client.createDatabase(project, `e2e-js-${run}-placed`, { regions: ['gru', 'fra'] });
     try {

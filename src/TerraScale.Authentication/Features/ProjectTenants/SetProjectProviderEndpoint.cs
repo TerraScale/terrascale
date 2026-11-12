@@ -14,14 +14,14 @@ public sealed class SetProjectProviderEndpoint(TenantDirectory tenants, ProjectA
     {
         Put(Root + "/providers/{provider}");
         this.Describe("set_project_provider", "Configure a social sign-in provider",
-            "provider is google, github, apple or oidc. The project's own OAuth client: client_id and client_secret (Apple: the Services ID and the .p8 private key, with team_id and key_id; oidc: also the https issuer). client_secret is stored encrypted and never answered; omitted, the stored one is kept. Register callback_url at the provider. Needs the admin project role.",
+            "provider is google, github, apple or oidc. The project's own OAuth client: client_id and client_secret (Apple: the Services ID and the .p8 private key, with team_id and key_id; oidc: also the https issuer). client_secret is stored encrypted and never answered; omitted, the stored one is kept. Register callback_url at the provider. Needs a person with the admin project role because this changes the external sign-in credentials; project API keys are refused.",
             "Project tenants", typeof(SetProviderRequest), StatusCodes.Status200OK, typeof(SettingsBody));
     }
 
-    /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
+        _ = caller.RequirePerson();
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var provider = this.HttpContext.GetRouteValue("provider") is string name && SocialProviders.Names.Contains(name) ? name : throw PlatformDirectory.NotFound();
 

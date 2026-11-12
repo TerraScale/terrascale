@@ -17,8 +17,9 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         this.Describe("rotate_project_client_secret", "Rotate an OAuth client's secret", "Issues a new client_secret for a confidential client and answers it exactly once; only its OpenIddict hash is kept. The previous secret keeps working for grace_seconds (default 3600, 0 to 86400), then is refused like any wrong secret; rotating again inside the grace replaces the previous secret. Needs the admin project role.", "Project tenants", typeof(RotateClientRequest), StatusCodes.Status200OK, typeof(ClientSecretBody));
     }
 
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
+        var person = caller.RequirePerson();
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var sent = this.HttpContext.Request;
         var empty = sent.ContentLength is 0
@@ -30,7 +31,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             throw Invalid("grace_seconds must be 0 to 86400 seconds.");
         }
 
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "rotate_oauth_client", null, cancellationToken);
+        _ = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "rotate_oauth_client", null, cancellationToken);
         var previous = this.HttpContext.Items[Tenancy.ItemKey];
         this.HttpContext.Items[Tenancy.ItemKey] = projectId;
         try

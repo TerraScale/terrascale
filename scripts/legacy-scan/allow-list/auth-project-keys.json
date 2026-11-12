@@ -1,0 +1,5 @@
+[
+  {"repo": "terrascale", "path": "^e2e/support/auth-management\\.ts$", "terms": ["webhooks"], "match": "webhook-endpoints", "reason": "Project secret keys must be refused by the Authentication lifecycle endpoint creation and secret-rotation step-up routes (A1)."},
+  {"repo": "terrascale", "path": "^sdk/dotnet/contracts/auth/project-management-keys\\.md$", "terms": ["webhooks"], "match": "webhook create/rotate", "reason": "Documents the person-only Authentication lifecycle step-up operations that refuse project secret keys (A1)."},
+  {"repo": "terrascale", "path": "^src/TerraScale\\.Authentication/Hosting/OpenApiSetup\\.cs$", "terms": ["webhooks"], "match": "create_webhook_endpoint|rotate_webhook_secret", "reason": "Keeps the Authentication lifecycle creation and secret-rotation operations person-only in OpenAPI (A1)."}
+]

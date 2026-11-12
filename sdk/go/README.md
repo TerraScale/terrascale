@@ -732,3 +732,7 @@ ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second); defer 
 for { _, err := client.SetDatabasePlacement(ctx, project, database, tb.DatabasePlacement{Regions: []string{"fra"}}); if err == nil { break }; if !errors.Is(err, tb.ErrReplicaNotReady) { return err }
     select { case <-ctx.Done(): return ctx.Err(); case <-time.After(time.Second): } }
 ```
+
+## Project Authentication management
+
+Use `client.WithToken(secretKey)` for `ProjectUsers`, `DisableProjectUser` and `EnableProjectUser`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
