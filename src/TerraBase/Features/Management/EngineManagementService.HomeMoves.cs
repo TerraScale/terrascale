@@ -9,7 +9,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-public sealed record HomeMoveMarker(string MoveId, string OrganizationId, string ProjectId, string DatabaseId, string Target, long Version)
+public sealed record HomeMoveMarker(string MoveId, string OrganizationId, string ProjectId, string DatabaseId, string Target, long Version, IReadOnlyList<string>? RequestedRegions = null)
 {
     public TenantContext Database => new(OrganizationId, PlanTier.Hobby, ProjectId, DatabaseId);
 }
@@ -22,7 +22,7 @@ internal readonly union CompleteHomeMoveResult(ManagedDatabase, NotFound, Unavai
 
 internal interface IHomeMoveCatalog
 {
-    ValueTask<BeginHomeMoveResult> BeginHomeMoveAsync(TenantContext database, string target, CancellationToken cancellationToken);
+    ValueTask<BeginHomeMoveResult> BeginHomeMoveAsync(TenantContext database, string target, IReadOnlyList<string>? requestedRegions, CancellationToken cancellationToken);
 
     ValueTask<CompleteHomeMoveResult> CompleteHomeMoveAsync(HomeMoveMarker marker, CancellationToken cancellationToken);
 
@@ -45,7 +45,7 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
         IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken) =>
         await GetAsync(transaction, HomeMoves, databaseId, ManagementJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is not null;
 
-    public ValueTask<BeginHomeMoveResult> BeginHomeMoveAsync(TenantContext database, string target, CancellationToken cancellationToken)
+    public ValueTask<BeginHomeMoveResult> BeginHomeMoveAsync(TenantContext database, string target, IReadOnlyList<string>? requestedRegions, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         return WriteAsync<BeginHomeMoveResult>(async transaction =>
@@ -78,12 +78,12 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
                     : $"homeRegion must be one of the database's replica regions: {string.Join(", ", record.Replicas)}");
             }
 
-            if (await GetAsync(transaction, HomeMoves, database.DatabaseId, ManagementJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is not null)
+            if (await GetAsync(transaction, HomeMoves, database.DatabaseId, ManagementJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is { } pending)
             {
-                return MoveInProgress;
+                return DatabaseRegions.SameSet(pending.RequestedRegions, requestedRegions) ? RegionSetPlacement.PlacementNotReady : (BeginHomeMoveResult)MoveInProgress;
             }
 
-            var marker = new HomeMoveMarker(EntityIds.New(time).ToString(), database.OrganizationId, database.ProjectId, database.DatabaseId, target, record.PlacementVersion + 1);
+            var marker = new HomeMoveMarker(EntityIds.New(time).ToString(), database.OrganizationId, database.ProjectId, database.DatabaseId, target, record.PlacementVersion + 1, requestedRegions);
             await PutAsync(transaction, HomeMoves, database.DatabaseId, marker, ManagementJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false);
             return new HomeMoveStart(marker, record);
         }, static error => error, cancellationToken);
@@ -167,7 +167,8 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
             foreach (var (project, id) in await CatalogTables.AllRegionDatabasesAsync(transaction, options.Region, cancellationToken).ConfigureAwait(false))
             {
                 if (await CatalogTables.DatabaseAsync(transaction, project, id, cancellationToken).ConfigureAwait(false) is { } record
-                    && !record.Replicas.SequenceEqual(replicas, StringComparer.Ordinal))
+                    && !record.Replicas.SequenceEqual(replicas, StringComparer.Ordinal)
+                    && !await HomeMovePendingAsync(transaction, id, cancellationToken).ConfigureAwait(false))
                 {
                     await CatalogTables.PutDatabaseAsync(transaction, record with
                     {

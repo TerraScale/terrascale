@@ -1,10 +1,24 @@
+import type { APIRequestContext } from '@playwright/test';
 import { deleteAccount } from '../support/account';
 import { test, expect } from '../support/audit';
 import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
 import { runOperations, sdks } from '../support/sdk';
 import { shell } from '../support/shell';
 import { onLocalStack } from '../support/stack';
-import { journey, setupFinished } from '../support/state';
+import { journey, saveSecret, setupFinished } from '../support/state';
+
+async function placementHeaders(request: APIRequestContext): Promise<{ Authorization: string }> {
+  const current = journey();
+  const basic = Buffer.from(`${current.apiKey.slice(0, 26)}:${current.apiKey}`).toString('base64');
+  const answer = await request.post('https://auth.terrascale.tech/terrascale/oauth/token', {
+    headers: { Authorization: `Basic ${basic}` },
+    form: { grant_type: 'client_credentials', project: current.projectId },
+  });
+  expect(answer.status()).toBe(200);
+  const token = (await answer.json()).access_token as string;
+  saveSecret('placement-project-token', token);
+  return { Authorization: `Bearer ${token}` };
+}
 
 const sweepPass = 15_000;
 
@@ -23,6 +37,33 @@ test.describe('SDK group A', () => {
 });
 
 test.describe('database deletion', () => {
+  test('placement refuses removing the last region and keeps serving', async ({ request }) => {
+    const current = journey();
+    const headers = await placementHeaders(request);
+    const url = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases/${current.databaseId}`;
+    const before = await request.get(url, { headers });
+    expect(before.status()).toBe(200);
+    const original = await before.json();
+    for (const data of [
+      { regions: [] },
+      { regions: null },
+      { regions: ['c18-unserved-region'] },
+      { regions: [current.databaseRegion.toLowerCase(), current.databaseRegion.toLowerCase()] },
+      { regions: [current.databaseRegion.toLowerCase()], homeRegion: current.databaseRegion.toLowerCase() },
+      { regions: [current.databaseRegion.toLowerCase()], replicaRegions: [] },
+      { regions: [current.databaseRegion.toLowerCase()], allRegions: false },
+    ]) {
+      const refused = await request.patch(url, { headers, data });
+      expect(refused.status()).toBe(400);
+      expect((await refused.json()).error.code).toBe('invalid_request');
+    }
+    const after = await request.get(url, { headers });
+    expect(after.status()).toBe(200);
+    expect((await after.json()).regions).toEqual(original.regions);
+    const query = await request.post(`${url}/sql/execute`, { headers, data: { statements: [{ sql: 'SELECT 1' }] } });
+    expect(query.status()).toBe(200);
+  });
+
   test('delete the journey database on its danger page by typing its name', async ({ page, audit }) => {
     const current = journey();
     await page.goto(`/databases/${current.databaseId}/danger`);
@@ -41,6 +82,59 @@ test.describe('database deletion', () => {
     await page.waitForURL((url) => url.pathname === '/databases');
     await expect(page.locator('main tr').filter({ hasText: current.databaseName })).toHaveCount(0);
     await audit.check('databases after deletion');
+  });
+  test('placement regions create, add and remove a non-writer', async ({ request }) => {
+    const current = journey();
+    const headers = await placementHeaders(request);
+    const databases = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases`;
+    const servingResponse = await request.get('https://api.terrascale.tech/v1/regions');
+    expect(servingResponse.status()).toBe(200);
+    const serving = (await servingResponse.json()).regions as string[];
+    const writer = current.databaseRegion.toLowerCase();
+    const other = serving.find(region => region !== writer);
+    const name = `placement-${current.runId}`;
+    const created = await request.post(databases, { headers, data: { name, regions: [writer] } });
+    expect(created.status()).toBe(201);
+    const database = await created.json();
+    expect(database.regions).toEqual([writer]);
+    expect(database.homeRegion).toBe(writer);
+    expect(database.replicaRegions).toEqual([]);
+    const url = `${databases}/${database.id}`;
+    try {
+      const selected = other ? [writer, other] : [writer];
+      const added = await request.patch(url, { headers, data: { regions: selected } });
+      expect(added.status()).toBe(200);
+      expect((await added.json()).regions).toEqual([...selected].sort());
+      const observations = await request.get(`${url}/regions`, { headers });
+      expect(observations.status()).toBe(200);
+      const status = await observations.json();
+      expect(status.regions.map((region: { region: string }) => region.region)).toEqual([...selected].sort());
+      expect(status.regions.filter((region: { role: string | null }) => region.role === 'writer').map((region: { region: string }) => region.region)).toEqual([writer]);
+      const removed = await request.patch(url, { headers, data: { regions: [writer] } });
+      expect(removed.status()).toBe(200);
+      expect((await removed.json()).regions).toEqual([writer]);
+      const repeated = await request.patch(url, { headers, data: { regions: [writer] } });
+      expect(repeated.status()).toBe(200);
+      expect((await repeated.json()).regions).toEqual([writer]);
+    } finally {
+      expect((await request.delete(url, { headers })).status()).toBe(204);
+    }
+    if (other) {
+      const ordered = [writer, other].sort().reverse();
+      const two = await request.post(databases, { headers, data: { name, regions: ordered } });
+      expect(two.status()).toBe(201);
+      const body = await two.json();
+      expect(body.homeRegion).toBe(ordered[0]);
+      expect(body.regions).toEqual([writer, other].sort());
+      expect((await request.delete(`${databases}/${body.id}`, { headers })).status()).toBe(204);
+    }
+    const legacy = await request.post(databases, { headers, data: { name, homeRegion: writer, replicaRegions: [] } });
+    expect(legacy.status()).toBe(201);
+    const body = await legacy.json();
+    expect(body.homeRegion).toBe(writer);
+    expect(body.replicaRegions).toEqual([]);
+    expect(body.regions).toEqual([writer]);
+    expect((await request.delete(`${databases}/${body.id}`, { headers })).status()).toBe(204);
   });
 });
 

@@ -29,6 +29,7 @@ internal static class ManagementExtensions
         services.AddSingleton<PlanFanout>();
         services.AddSingleton<EnrollmentFanout>();
         services.AddSingleton<RemoteDatabases>();
+        services.AddSingleton<RegionSetPlacement>();
         services.AddHttpClient(RemoteDatabases.HttpClientName);
         return services
             .AddTerraBaseManagementBackups()

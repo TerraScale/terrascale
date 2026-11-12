@@ -85,6 +85,7 @@ internal static class DatabaseTtlAnswer
         NotFound error => ManagementRoute.DatabaseNotFound(error),
         Forbidden error => ErrorResponse.From(error),
         Conflict error => ErrorResponse.From(error),
+        Validation error => ErrorResponse.From(error),
         Unavailable error => ErrorResponse.From(error),
     };
 }

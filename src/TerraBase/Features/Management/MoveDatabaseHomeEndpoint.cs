@@ -22,7 +22,8 @@ internal sealed class MoveDatabaseHomeEndpoint(IManagementService management, Ho
         Metadata(AnchoredRevocation.Instance);
         Name("moveDatabaseHome");
         Summary("Moves a database's home to one of its replica regions");
-        Description("The replica in homeRegion catches up, writes pause briefly, the home switches and the old home becomes a replica region. "
+        Description("Transitional: this endpoint and the old placement fields are removed by category C23 of batch db4a5ba7 once every consumer sends regions. "
+            + "The replica in homeRegion catches up, writes pause briefly, the home switches and the old home becomes a replica region. "
             + "No acknowledged write is lost. Answers when the move is done. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
@@ -59,7 +60,7 @@ internal sealed class MoveDatabaseHomeEndpoint(IManagementService management, Ho
             case ManagedDatabase database when database.Home(options.Region) != options.Region:
                 return DatabaseRegions.HomeRegion(database.Home(options.Region), database.Regions(options.Region));
             case ManagedDatabase database:
-                return await moves.MoveAsync(new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id), request.HomeRegion, cancellationToken)
+                return await moves.MoveAsync(new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id), request.HomeRegion, null, cancellationToken)
                     .ConfigureAwait(false) switch
                 {
                     ManagedDatabase moved => TypedResults.Ok(ManagedDatabaseBody.From(moved, options.Region)),

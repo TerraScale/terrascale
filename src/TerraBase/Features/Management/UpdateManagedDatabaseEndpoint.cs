@@ -9,15 +9,23 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply) : Endpoint<DatabaseRegionsRequest, IResult>
+internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply, RegionSetPlacement placement) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     public override void Configure()
     {
         Patch(ProjectApiRoute.Database);
         Metadata(AnchoredRevocation.Instance);
         Name("updateDatabase");
-        Summary("Renames a database or sets its replica regions");
-        Description("Renames a database or sets its replica regions (up to 8 regions other than the home, which pull its pages and serve SQL reads). allRegions places a replica in every serving region, including regions that join later. The home moves with move-home. " + ProjectApiRoute.IdentityDescription);
+        Summary("Renames a database or sets its regions");
+        Description("Sets regions to a nonempty set of distinct serving region ids, with at most 8 replicas besides the writer, including any intermediate superset. "
+            + "Response regions are sorted by id; their order carries no meaning. If the current writer is excluded, missing requested regions are added and stay added; "
+            + "a call that adds regions returns 503 replica_not_ready with the old writer and existing members plus requested regions still selected. Nothing is unstaged on any refusal. "
+            + "When no regions need adding, including on the first call, TerraBase reads replica status and tries one candidate: the first requested region, in region-id order, that has replicated this database at least once; the move brings it up to date and refuses with 503 replica_not_ready when it can't. "
+            + "It promotes that region, then removes every unselected region and returns 200. No ready candidate or a repeat during the same regions move returns 503 replica_not_ready; a different move returns 409 move_in_progress. "
+            + "A regions request that changes nothing leaves the placement version unchanged; changing membership or the writer raises it. Transitional fields and move-home remain until category C23 of batch db4a5ba7. "
+            + "Old-field PATCH still bumps the placement version when repeated, but now refuses with 409 move_in_progress while a move is pending, "
+            + "so membership cannot consume the move's reserved version or diverge from the placement sent to the target. "
+            + "Send regions separately from homeRegion, replicaRegions and allRegions. A name change must be sent separately. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -54,7 +62,7 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
 
         if (request.Name is not null)
         {
-            return request.HomeRegion is not null || request.ReplicaRegions is not null || request.AllRegions is not null
+            return request.HomeRegion is not null || request.ReplicaRegions is not null || request.AllRegions is not null || request.HasRegions
                 ? ErrorResponse.From(new Validation("name cannot be combined with placement fields"))
                 : ManagementRoute.CheckDatabaseName(new NameRequest(request.Name)) switch
                 {
@@ -64,6 +72,16 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         }
 
         var serving = await regions.ServingAsync(cancellationToken).ConfigureAwait(false);
+        if (request.HasRegions && DatabaseRegions.CheckSet(request, serving) is { } invalidSelection)
+        {
+            return ErrorResponse.From(invalidSelection);
+        }
+
+        if (request.Regions is { } selected)
+        {
+            return await placement.UpdateAsync(HttpContext, database, selected, cancellationToken).ConfigureAwait(false);
+        }
+
         var all = request.AllRegions == true;
         Valid<IReadOnlyList<string>> checkedRegions = request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change here: use move-home")
             : all && request.ReplicaRegions is not null ? new Validation("send replicaRegions or allRegions, not both")
@@ -86,6 +104,7 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         NotFound error => ManagementRoute.DatabaseNotFound(error),
         Forbidden error => ErrorResponse.From(error),
         Conflict error => ErrorResponse.From(error),
+        Validation error => ErrorResponse.From(error),
         Unavailable error => ErrorResponse.From(error),
     };
 }

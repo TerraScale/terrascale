@@ -48,7 +48,7 @@ public readonly union CreateDatabaseResult(ManagedDatabase, NotFound, Forbidden,
 
 public readonly union HomeDatabaseCountResult(long, Unavailable);
 
-public readonly union SetDatabaseRegionsResult(ManagedDatabase, NotFound, Forbidden, Conflict, Unavailable);
+public readonly union SetDatabaseRegionsResult(ManagedDatabase, NotFound, Forbidden, Conflict, Unavailable, Validation);
 
 public readonly union FindDatabaseRecordResult(ManagedDatabase, NotFound, Unavailable);
 
@@ -108,6 +108,9 @@ internal interface IManagementService
 
     ValueTask<SetDatabaseRegionsResult> SetDatabaseTtlAsync(
         string userId, string organizationId, string projectId, string databaseId, long? ttlSeconds, CancellationToken cancellationToken);
+
+    ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionSetAsync(
+        string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> selected, CancellationToken cancellationToken);
 
     ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
         string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken,

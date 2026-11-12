@@ -7,10 +7,10 @@ namespace TerraBase.Features.ApiReference;
 internal static class ApiExamples
 {
     private const string Database = """
-        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"expiresAt":null}
+        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"placementVersion":1,"regions":["gru-1"],"expiresAt":null}
         """;
     private const string Expiring = """
-        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"run-42","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"expiresAt":"2026-10-07T13:00:00Z"}
+        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"run-42","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"placementVersion":1,"regions":["gru-1"],"expiresAt":"2026-10-07T13:00:00Z"}
         """;
     private const string ReadGrant = """{"table":"notes","where":"owner_id = :sub","columns":["id","owner_id","body"],"updatedAt":"2026-11-04T12:00:00Z"}""";
     private const string DeclaredSchema = """{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""";
@@ -81,11 +81,11 @@ internal static class ApiExamples
         "createFileBucket" => "{\"name\":\"avatars\",\"rules\":" + BucketRules + "}",
         "setFileBucketRules" => "{\"rules\":" + BucketRules + "}",
         "createFileUpload" => """{"name":"hello.txt","contentType":"text/plain","size":5,"sha256":"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=","metadata":{"userId":"01ARZ3NDEKTSV4RRFFQ69G5FAE"}}""",
-        "createDatabase" => """{"name":"run-42","ttlSeconds":3600}""",
+        "createDatabase" => """{"name":"run-42","ttlSeconds":3600,"regions":["gru-1"]}""",
         "setDatabaseTtl" => """{"ttlSeconds":3600}""",
         "putReadGrant" => """{"where":"owner_id = :sub","columns":["id","owner_id","body"]}""",
         "branchDatabase" or "branchDatabaseIfId" => """{"name":"main_branch","ttlSeconds":3600}""",
-        "updateDatabase" => """{"replicaRegions":[]}""",
+        "updateDatabase" => """{"regions":["gru-1","sjc-1"]}""",
         "moveDatabaseHome" => """{"homeRegion":"sjc"}""",
         "restoreBackup" => """{"name":"restored"}""",
         "planPointInTime" => """{"pointInTime":"2026-10-07T12:00:13Z","destination":"platform"}""",
@@ -111,10 +111,10 @@ internal static class ApiExamples
         "readyz" => $$"""{"status":"{{(status == "503" ? "unavailable" : "ready")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "createDatabase" or "setDatabaseTtl" => Expiring,
         "getDatabase" or "updateDatabase" or "clearDatabaseTtl" or "moveDatabaseHome" => Database,
-        "getDatabaseRegions" => """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","homeRegion":"gru-1","observedAt":"2026-10-07T12:00:00Z","replicas":[{"region":"sjc-1","lagMs":120.5,"lastPulledAt":"2026-10-07T12:00:09Z","lastVerified":"2026-10-07T11:58:00Z","revision":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}]}""",
+        "getDatabaseRegions" => """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","homeRegion":"gru-1","observedAt":"2026-10-07T12:00:00Z","replicas":[{"region":"sjc-1","lagMs":120.5,"lastPulledAt":"2026-10-07T12:00:09Z","lastVerified":"2026-10-07T11:58:00Z","revision":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}],"regions":[{"region":"gru-1","role":"writer","lagMs":null,"lastPulledAt":null,"lastVerified":null,"revision":null},{"region":"sjc-1","role":null,"lagMs":120.5,"lastPulledAt":"2026-10-07T12:00:09Z","lastVerified":"2026-10-07T11:58:00Z","revision":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}]}""",
         "putReadGrant" or "getReadGrant" => ReadGrant,
         "listReadGrants" => "{\"grants\":[" + ReadGrant + "]}",
-        "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"expiresAt":"2026-10-07T13:00:00Z"}""",
+        "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"placementVersion":1,"regions":["gru-1"],"expiresAt":"2026-10-07T13:00:00Z"}""",
         "listDatabases" => Page(Database),
         "createBackup" => Backup,
         "listBackups" => Page(Backup),
@@ -155,6 +155,7 @@ internal static class ApiExamples
         "408" => "request_timeout",
         "409" when id == "deleteDatabase" => "database_replicated, wrong_region, move_in_progress",
         "409" when id == "moveDatabaseHome" => "move_in_progress",
+        "409" when id == "updateDatabase" => "move_in_progress, name_taken, platform_placement_locked, wrong_region",
         "409" when id == "deleteDatabaseIfId" => "database_identity_mismatch, wrong_region, move_in_progress",
         "409" when id == "branchDatabaseIfId" => "database_identity_changed, name_taken",
         "409" when id is "createDatabase" or "branchDatabase" or "restoreBackup" or "restorePointInTime" => "name_taken",
@@ -167,7 +168,7 @@ internal static class ApiExamples
         "421" => "region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region",
         "429" when id == "executeSql" => "quota_exceeded, tenant_busy, tenant_memory",
         "429" => "tenant_busy, tenant_memory",
-        "503" when id == "moveDatabaseHome" => "replica_not_ready, move_unresolved, storage_busy",
+        "503" when id is "moveDatabaseHome" or "updateDatabase" => "replica_not_ready, move_unresolved, storage_busy, write_outcome_unknown, unavailable",
         "503" when id == "planPointInTime" => "pitr_plan_limit, pitr_plan_timeout, pitr_plan_unavailable, storage_busy",
         "503" when id is "getRestoreWindow" or "restorePointInTime" or "rewindPointInTime" => "pitr_plan_limit, storage_busy, capacity, unavailable",
         "503" when id == "healthz" => "bucket_missing",
