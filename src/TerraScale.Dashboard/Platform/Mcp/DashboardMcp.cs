@@ -162,7 +162,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     {
                         if (DatabaseResults.Status(error) is >= 500 or 408)
                         {
-                            ServiceSloTelemetry.MarkBad(http);
+                            ServiceSloTelemetry.MarkFailure(error, http);
                         }
 
                         Log(request.Services).MCPToolFailedUpstreamWithCode(LoggedTool(request.Params?.Name),
@@ -176,7 +176,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                         return Failure("The billing provider could not complete the request. Return to billing to reconcile before trying again.");
                     }
                     catch (McpProtocolException error) when (error.ErrorCode is McpErrorCode.InvalidParams or McpErrorCode.MethodNotFound or McpErrorCode.ParseError) { throw; }
-                    catch { ServiceSloTelemetry.MarkBad(http); throw; }
+                    catch (Exception error) { ServiceSloTelemetry.MarkFailure(error, http); throw; }
                 }))
                 .WithTools(CachedTools.Value);
         }
