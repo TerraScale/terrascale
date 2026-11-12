@@ -172,6 +172,8 @@ public static class App
         builder.Services.AddSingleton<Invitations>();
         builder.Services.AddSingleton<TenantDirectory>();
         builder.Services.AddSingleton<ProjectAuthSettings>();
+        builder.Services.AddSingleton<SignUpRestrictions>();
+        builder.Services.AddSingleton<ProjectInvitations>();
         builder.Services.AddSingleton<WebhookEndpoints>();
         builder.Services.AddHttpClient(SsoConnections.HttpClientName, client =>
         {

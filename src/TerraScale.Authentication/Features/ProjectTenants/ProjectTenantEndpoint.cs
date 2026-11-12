@@ -11,7 +11,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
 /// <summary>Sign-in methods; at least one of passcode and password stays on.</summary>
-public sealed record MethodsBody(bool Passcode, bool Password, bool SignUp);
+public sealed record MethodsBody(bool Passcode, bool Password, string SignUpMode);
 
 /// <summary>Hosted page branding; null shows the project's name and the default theme.</summary>
 public sealed record BrandingBody(string? Name, string? LogoUrl, string? ThemeColor, int? TitleSize = null, string? DefaultTheme = null,
@@ -35,16 +35,16 @@ public sealed record ProviderBody(string Provider, bool Configured, string? Clie
 
 /// <summary>A project tenant's settings.</summary>
 public sealed record SettingsBody(string ProjectId, string Issuer, string DiscoveryUrl, string SignInUrl, MethodsBody Methods, BrandingBody Branding, CountsBody Counts,
-    IReadOnlyList<ProviderBody> Providers, ConfigurationBody? Configuration = null);
+    IReadOnlyList<ProviderBody> Providers, ConfigurationBody? Configuration = null, RestrictionsBody? Restrictions = null);
 
 /// <summary><c>PUT /v1/{project}/providers/{provider}</c>: an omitted client_secret keeps the stored one.</summary>
 public sealed record SetProviderRequest(string? ClientId, string? ClientSecret, string? Issuer = null, string? TeamId = null, string? KeyId = null);
 
 /// <summary>Changes to the sign-in methods; an omitted method is unchanged.</summary>
-public sealed record MethodsPatch(bool? Passcode, bool? Password, bool? SignUp);
+public sealed record MethodsPatch(bool? Passcode, bool? Password, string? SignUpMode);
 
 /// <summary><c>PUT /v1/{project}/settings</c>: an omitted part is unchanged; a sent branding replaces the branding.</summary>
-public sealed record UpdateSettingsRequest(MethodsPatch? Methods, BrandingBody? Branding, ConfigurationBody? Configuration = null);
+public sealed record UpdateSettingsRequest(MethodsPatch? Methods, BrandingBody? Branding, ConfigurationBody? Configuration = null, RestrictionsBody? Restrictions = null);
 
 /// <summary>An end user of the tenant.</summary>
 public sealed record ProjectUserBody(string Id, string Email, DateTimeOffset CreatedAt, bool Disabled);
@@ -158,11 +158,11 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
             await db.OidcApplications.LongCountAsync(application => application.InstanceId == projectId, token).ConfigureAwait(false)), cancellationToken);
         var issuer = OidcIssuer.Issuer(options, projectId).AbsoluteUri;
         return new(projectId, issuer, issuer + "/.well-known/openid-configuration", new Uri(options.PublicOrigin, $"ui/{projectId}/sign-in").AbsoluteUri,
-            new(settings.Passcode, settings.Password, settings.SignUp), new(settings.Name, settings.LogoUrl, settings.ThemeColor, settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.EmailMessage),
+            new(settings.Passcode, settings.Password, settings.SignUpMode), new(settings.Name, settings.LogoUrl, settings.ThemeColor, settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.EmailMessage),
             counts,
             [.. SocialProviders.Names.Select(name => settings.Provider(name) is { } record
                 ? new ProviderBody(name, true, record.ClientId, record.Issuer, record.TeamId, record.KeyId, SocialProviders.Callback(options, projectId, name).AbsoluteUri)
-                : new ProviderBody(name, false, null, null, null, null, SocialProviders.Callback(options, projectId, name).AbsoluteUri))], settings.Configuration ?? ConfigurationBody.Default);
+                : new ProviderBody(name, false, null, null, null, null, SocialProviders.Callback(options, projectId, name).AbsoluteUri))], settings.Configuration ?? ConfigurationBody.Default, settings.Restrictions ?? RestrictionsBody.Default);
     }
 
     /// <summary>An end user.</summary>
@@ -178,6 +178,11 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
+[JsonSerializable(typeof(RestrictionsBody))]
+[JsonSerializable(typeof(ProjectInvitationBody))]
+[JsonSerializable(typeof(CreateProjectInvitationRequest))]
+[JsonSerializable(typeof(ProjectInvitationPageBody))]
+[JsonSerializable(typeof(WaitlistPageBody))]
 [JsonSerializable(typeof(SettingsBody))]
 [JsonSerializable(typeof(UpdateSettingsRequest))]
 [JsonSerializable(typeof(SetProviderRequest))]

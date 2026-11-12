@@ -319,6 +319,5 @@ while True:
         time.sleep(1)
 ```
 
-## Project Authentication management
 
-Construct `TerraScale(api_key=secret_key, project=project_id)` or `AsyncTerraScale`; project management calls send the secret directly to ts-auth. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
+Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.

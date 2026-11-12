@@ -289,7 +289,7 @@ public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
 /// <c>POST /ui/{slug}/sign-up</c>: starts a sign-up and asks for the emailed code. The page is
 /// the same whether or not the address has an account; an existing account is mailed a sign-in code instead.
 /// </summary>
-public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options, SignUpRestrictions restrictions) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -339,6 +339,21 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
             return sso;
         }
 
+        if (await restrictions.AdmissionAsync(SignInFlow.Tenant(this.HttpContext), address, false, cancellationToken) is null)
+        {
+            if (await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), false, cancellationToken) is { } wait)
+            {
+                return HostedAuth.TooMany(wait);
+            }
+
+            var joined = await restrictions.JoinAsync(SignInFlow.Tenant(this.HttpContext), address, cancellationToken);
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
+                joined ? null : "Sign-up is unavailable for this address.")
+            {
+                Notice = joined ? "Your request has been received." : null,
+            }, joined ? StatusCodes.Status200OK : StatusCodes.Status403Forbidden);
+        }
+
         var (pending, refusal) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext),
             AuthEmails.Locale(this.HttpContext.Request), cancellationToken);
         return refusal is { } limited
@@ -354,7 +369,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
 /// page is the same whether or not the address still has a pending sign-up; an address with an account is mailed a
 /// sign-in code instead.
 /// </summary>
-public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, AuthOptions options, SignUpRestrictions restrictions) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -384,6 +399,11 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
+        if (await restrictions.AdmissionAsync(SignInFlow.Tenant(this.HttpContext), address, false, cancellationToken) is null)
+        {
+            return SignInFlow.Refused(this.HttpContext);
+        }
+
         using var reservation = mail.Reserve();
         if (await hosted.LimitMailAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken) is { } refusal)
         {
@@ -838,7 +858,7 @@ internal static class SignInFlow
             "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method),
             "sign-in/verify" => theme.Passcode,
             "sign-in/password" or "reset" or "reset/complete" or "reset/resend" => theme.Password,
-            "sign-up" or "sign-up/verify" or "sign-up/resend" => theme.SignUp,
+            "sign-up" or "sign-up/verify" or "sign-up/resend" => true,
             _ => true,
         };
     }
@@ -861,6 +881,7 @@ internal static class SignInFlow
     public static string? SafeNext(HttpContext context, string? next) =>
         next is not null && Tenancy.Resolved(context) is { } tenant
             && (next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
+                || HostedTheme.Of(context).RedirectUrls.Contains(next, StringComparer.Ordinal)
                 || next == SecurityPath(tenant)
                 || next == AuthOptions.DashboardOrigin + "/profile"
                 || next == AuthOptions.DashboardOrigin + "/profile?tab=security"

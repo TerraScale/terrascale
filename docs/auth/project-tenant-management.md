@@ -94,7 +94,7 @@ effective project role (`platform-contract.md` section 3) on every request:
 ```text
 Settings = {
   project_id, issuer, discovery_url, sign_in_url,
-  methods: { passcode: bool, password: bool, sign_up: bool },
+  methods: { passcode: bool, password: bool, sign_up_mode: "public" | "restricted" | "waitlist" },
   branding: { name: string|null, logo_url: string|null, theme_color: string|null },
   counts: { users: int, clients: int }
 }
@@ -111,11 +111,12 @@ POST /webhook-endpoints body = { url, event_types }
 Webhook endpoints are described in [webhooks.md](webhooks.md).
 
 - `methods`: at least one of `passcode` and `password` stays on (`400
-  invalid_request` otherwise). `sign_up: false` hides self sign-up. A new project
+  invalid_request` otherwise). `sign_up_mode: "restricted"` requires an invitation or allowlist match. A new project
   has every method on.
 - `branding.logo_url` is an `https` URL; `theme_color` is `#rrggbb`; `name` is 1
   to 64 characters. `null` clears a value; the hosted pages then show the
   project's name and the default theme.
 - Redirect URIs are absolute `https` URLs, or `http` on `localhost` and loopback
   addresses, without fragments; 1 to 10 per client.
-- Errors use the platform API's error body `{error: {code, message}}`.
+
+See [Sign-up restrictions](signup-restrictions.md) for modes, email restrictions, invitations and the waitlist.

@@ -1983,9 +1983,15 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("providers");
 
-                    b.Property<bool>("SignUp")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("sign_up");
+                    b.Property<string>("Restrictions")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("restrictions");
+
+                    b.Property<string>("SignUpMode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("sign_up_mode");
 
                     b.Property<string>("SubscribedWebhookEvents")
                         .HasColumnType("TEXT")
@@ -2015,6 +2021,111 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.ToTable("project_auth_settings", null, t =>
                         {
                             t.HasCheckConstraint("ck_project_auth_settings_title_size", "title_size IS NULL OR title_size BETWEEN 20 AND 40");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectTenants.ProjectInvitationRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("email");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RedirectUrl")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("redirect_url");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("token_hash");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("ProjectId", "Id");
+
+                    b.HasIndex("ProjectId", "Email", "Status");
+
+                    b.ToTable("project_invitations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_project_invitation_status", "status IN ('pending', 'accepted', 'revoked')");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectTenants.WaitlistRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("email");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Email")
+                        .IsUnique();
+
+                    b.HasIndex("ProjectId", "Id");
+
+                    b.ToTable("project_waitlist", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_project_waitlist_status", "status IN ('pending', 'approved', 'rejected')");
                         });
                 });
 
@@ -2670,6 +2781,24 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
                         .WithOne()
                         .HasForeignKey("TerraScale.Authentication.Features.ProjectTenants.ProjectAuthSettingsRecord", "InstanceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectTenants.ProjectInvitationRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectTenants.WaitlistRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

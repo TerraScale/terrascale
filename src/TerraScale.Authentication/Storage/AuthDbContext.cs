@@ -35,6 +35,7 @@ public sealed partial class AuthDbContext(DbContextOptions<AuthDbContext> option
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
+        ConfigureSignUp(modelBuilder);
         ConfigureIdentity(modelBuilder);
         ConfigurePlatform(modelBuilder);
         ConfigureOidc(modelBuilder);

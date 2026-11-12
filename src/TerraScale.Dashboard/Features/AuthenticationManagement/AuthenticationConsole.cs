@@ -27,7 +27,8 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
             var known = parts switch
             {
-                ["settings" or "branding" or "configuration" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
+                ["settings" or "restrictions" or "invitations" or "branding" or "configuration" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
+                ["invitations", _, "revoke"] or ["waitlist", _, "approve" or "reject"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
                 ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
@@ -60,8 +61,27 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             {
                 switch (parts)
                 {
+                    case ["invitations"]:
+                        await projects.CreateInvitationAsync(session, project, new(form["email"].ToString()), cancel);
+                        break;
+                    case ["invitations", var invitation, "revoke"]:
+                        await projects.RevokeProjectInvitationAsync(session, project, invitation, cancel);
+                        break;
+                    case ["waitlist", var entry, "approve"]:
+                        await projects.ApproveWaitlistAsync(session, project, entry, cancel);
+                        break;
+                    case ["waitlist", var entry, "reject"]:
+                        await projects.RejectWaitlistAsync(session, project, entry, cancel);
+                        break;
+                    case ["restrictions"]:
+                        var current = await projects.GetSettingsAsync(session, project, cancel);
+                        await projects.UpdateSettingsAsync(session, project, new(
+                            Methods: current.Methods with { SignUpMode = form["sign_up_mode"].ToString() },
+                            Restrictions: new(RestrictionList(form["allowlist"]), RestrictionList(form["blocklist"]),
+                                form["block_disposable_emails"] == "on", form["block_email_aliases"] == "on")), cancel);
+                        break;
                     case ["settings"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up"] == "on")), cancel);
+                        await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString())), cancel);
                         break;
                     case ["branding"]:
                         await projects.UpdateSettingsAsync(session, project, new(Branding: HostedBranding(form)), cancel);
@@ -164,9 +184,12 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         // At least one first factor stays on; ts-auth enforces the same rule.
-        public static TsAuthProjectMethods Methods(bool passcode, bool password, bool signUp)
+        private static string[] RestrictionList(string? value) =>
+            (value ?? "").Split(['\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        public static TsAuthProjectMethods Methods(bool passcode, bool password, string signUpMode)
         {
-            return passcode || password ? new(passcode, password, signUp) : throw new AccountAccessException("Keep email passcode or password sign-in on.", 422);
+            return passcode || password ? new(passcode, password, signUpMode) : throw new AccountAccessException("Keep email passcode or password sign-in on.", 422);
         }
 
         // Empty values clear a branding field.
@@ -364,6 +387,8 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         break;
                     case "users": var users = await projects.ListUsersAsync(session, project, Value(page.Search), Value(page.After), cancel); page = page with { Users = users.Items, Next = users.Next }; break;
                     case "sessions": var live = await projects.ListSessionsAsync(session, project, Value(page.User), Value(page.After), cancel); page = page with { Sessions = live.Items, Next = live.Next }; break;
+                    case "invitations": var invitations = await projects.ListInvitationsAsync(session, project, Value(page.After), cancel); page = page with { Invitations = invitations.Items, Next = invitations.Next }; break;
+                    case "waitlist": var waitlist = await projects.ListWaitlistAsync(session, project, Value(page.After), cancel); page = page with { Waitlist = waitlist.Items, Next = waitlist.Next }; break;
                     case "clients": page = page with { Clients = await projects.ListClientsAsync(session, project, cancel) }; break;
                     case "logs":
                         var events = context.CanManageProject ? await projects.ListEventsAsync(session, project, Value(page.After), cancel) : new TsAuthPlatformPage<TsAuthWebhookEvent>([], null);
@@ -403,51 +428,5 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public IReadOnlyList<TsAuthProjectSession>? Sessions { get; init; }
         public IReadOnlyList<TsAuthProjectOAuthClient>? Clients { get; init; }
         public IReadOnlyList<TsAuthWebhookEndpoint>? Webhooks { get; init; }
-        public IReadOnlyList<TsAuthWebhookEvent>? Events { get; init; }
-        public IReadOnlyDictionary<string, IReadOnlyList<TsAuthWebhookDelivery>> Deliveries { get; init; } = new Dictionary<string, IReadOnlyList<TsAuthWebhookDelivery>>();
-        public string? Next { get; init; }
-        public IFormCollection? Draft { get; init; }
-        public bool Saved { get; init; }
-        public string Heading => Section.Key == "overview" ? "Authentication" : "Authentication: " + Section.Title;
-    }
-
-    public sealed record AuthenticationSection(string Key, string Title, string Icon, string Group)
-    {
-        public static AuthenticationSection? Find(string key)
-        {
-            return All.FirstOrDefault(section => section.Key == key);
-        }
-
-        public static readonly AuthenticationSection[] All =
-        [
-            new("overview", "Overview", "LayoutDashboard", ""),
-            new("users", "Users", "Users", "Users"),
-            new("sessions", "Sessions", "Monitor", "Users"),
-            new("sign-in", "Sign-in methods", "LockKeyhole", "Sign-in"),
-            new("social", "Social sign-in", "Fingerprint", "Sign-in"),
-            new("configuration", "Configuration", "Settings", "Sign-in"),
-            new("clients", "OAuth applications", "Boxes", "Developers"),
-            new("webhooks", "Webhooks", "Zap", "Developers"),
-            new("logs", "Logs", "ScrollText", "Developers"),
-            new("branding", "Branding", "Wand2", "Customize"),
-            new("danger", "Danger zone", "TriangleAlert", "Danger")
-        ];
-    }
-
-    // The social sign-in providers ts-auth supports, in its order, with where the customer creates the OAuth client.
-    public sealed record AuthenticationProvider(string Key, string Name, string ClientIdLabel, string ConsoleName, string ConsoleUrl)
-    {
-        public static AuthenticationProvider? Find(string key)
-        {
-            return All.FirstOrDefault(provider => provider.Key == key);
-        }
-
-        public static readonly AuthenticationProvider[] All =
-        [
-            new("google", "Google", "Client ID", "Google Cloud console credentials", "https://console.cloud.google.com/apis/credentials"),
-            new("github", "GitHub", "Client ID", "GitHub Developer settings, OAuth Apps", "https://github.com/settings/developers"),
-            new("apple", "Apple", "Services ID", "Apple Developer Certificates, IDs & Profiles", "https://developer.apple.com/account/resources/identifiers/list/serviceId"),
-            new("oidc", "OpenID Connect", "Client ID", "", "")
-        ];
-    }
-}
+        public IReadOnlyList<TsAuthProjectInvitation>? Invitations { get; init; }
+        public IReadOnlyList<TsAuthWaitlistEntry>? Waitlist { get; init; }

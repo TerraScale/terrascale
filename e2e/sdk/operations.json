@@ -136,7 +136,7 @@
         "big": "9007199254740993",
         "r": 1.5,
         "flag": true,
-        "t": "héllo ✓",
+        "t": "h\u00e9llo \u2713",
         "b": "AAEC/w==",
         "absent": null
       },
@@ -323,6 +323,42 @@
       "sql": "SELECT 1",
       "status": 404,
       "code": "unknown_database"
+    },
+    {
+      "id": "auth.create_invitation",
+      "group": "b",
+      "title": "create invitation",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.list_invitations",
+      "group": "b",
+      "title": "list invitations",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.revoke_invitation",
+      "group": "b",
+      "title": "revoke invitation",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.list_waitlist",
+      "group": "b",
+      "title": "list waitlist",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.approve_waitlist",
+      "group": "b",
+      "title": "approve waitlist",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.reject_waitlist",
+      "group": "b",
+      "title": "reject waitlist",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
     }
   ]
 }

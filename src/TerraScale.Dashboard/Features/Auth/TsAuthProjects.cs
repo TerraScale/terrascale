@@ -6,6 +6,12 @@ namespace TerraScale.Dashboard.Features.Auth
     // Every call carries the signed-in user's own token; ts-auth checks the project role each time.
     public interface ITsAuthProjects
     {
+        Task<TsAuthProjectInvitation> CreateInvitationAsync(SessionRecord session, string projectId, TsAuthCreateProjectInvitation request, CancellationToken cancellationToken);
+        Task<TsAuthPlatformPage<TsAuthProjectInvitation>> ListInvitationsAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken);
+        Task RevokeProjectInvitationAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken);
+        Task<TsAuthPlatformPage<TsAuthWaitlistEntry>> ListWaitlistAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken);
+        Task ApproveWaitlistAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken);
+        Task RejectWaitlistAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken);
         Task<TsAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
         Task<TsAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TsAuthProjectSettingsUpdate update, CancellationToken cancellationToken);
         // The update carries the provider's client secret; never log or store it.
@@ -36,6 +42,38 @@ namespace TerraScale.Dashboard.Features.Auth
     public sealed partial class TsAuthGateway : ITsAuthProjects
     {
         public const int ProjectPageSize = 25;
+
+        public Task<TsAuthProjectInvitation> CreateInvitationAsync(SessionRecord session, string projectId, TsAuthCreateProjectInvitation request, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(() => Client().Projects.CreateInvitationAsync(Bearer(session), Id(projectId), request, cancellationToken));
+        }
+
+        public Task<TsAuthPlatformPage<TsAuthProjectInvitation>> ListInvitationsAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(() => Client().Projects.ListInvitationsAsync(Bearer(session), Id(projectId), ProjectPageSize, Blank(after), cancellationToken));
+        }
+
+        public Task RevokeProjectInvitationAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(async () => { await Client().Projects.RevokeInvitationAsync(Bearer(session), Id(projectId), Id(id), cancellationToken); return true; });
+        }
+
+        public Task<TsAuthPlatformPage<TsAuthWaitlistEntry>> ListWaitlistAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(() => Client().Projects.ListWaitlistAsync(Bearer(session), Id(projectId), ProjectPageSize, Blank(after), cancellationToken));
+        }
+
+        public Task ApproveWaitlistAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(async () => { await Client().Projects.ApproveWaitlistAsync(Bearer(session), Id(projectId), Id(id), cancellationToken); return true; });
+        }
+
+        public Task RejectWaitlistAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(async () => { await Client().Projects.RejectWaitlistAsync(Bearer(session), Id(projectId), Id(id), cancellationToken); return true; });
+        }
+
+
 
         public Task<TsAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
         {

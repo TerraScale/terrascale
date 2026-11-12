@@ -19,22 +19,23 @@ type ProjectAuthSettings struct {
 	Branding      *ProjectAuthBranding      `json:"branding"`
 	Counts        ProjectAuthCounts         `json:"counts"`
 	Providers     []ProjectAuthProvider     `json:"providers"`
+	Restrictions  *ProjectRestrictions      `json:"restrictions,omitempty"`
 	Configuration *ProjectAuthConfiguration `json:"configuration"`
 }
 
 // ProjectAuthMethods contains required response booleans, including false.
 type ProjectAuthMethods struct {
-	Passcode bool `json:"passcode"`
-	Password bool `json:"password"`
-	SignUp   bool `json:"sign_up"`
+	Passcode   bool   `json:"passcode"`
+	Password   bool   `json:"password"`
+	SignUpMode string `json:"sign_up_mode"`
 }
 
 // ProjectAuthMethodsPatch leaves nil methods unchanged; false applies a change.
 // The server requires at least one of passcode and password to remain available.
 type ProjectAuthMethodsPatch struct {
-	Passcode *bool `json:"passcode,omitempty"`
-	Password *bool `json:"password,omitempty"`
-	SignUp   *bool `json:"sign_up,omitempty"`
+	Passcode   *bool   `json:"passcode,omitempty"`
+	Password   *bool   `json:"password,omitempty"`
+	SignUpMode *string `json:"sign_up_mode,omitempty"`
 }
 
 // ProjectAuthBranding replaces hosted-page and email branding when sent. Nil
@@ -89,6 +90,7 @@ type ProjectAuthProvider struct {
 type ProjectAuthSettingsPatch struct {
 	Methods       *ProjectAuthMethodsPatch  `json:"methods,omitempty"`
 	Branding      *ProjectAuthBranding      `json:"branding,omitempty"`
+	Restrictions  *ProjectRestrictions      `json:"restrictions,omitempty"`
 	Configuration *ProjectAuthConfiguration `json:"configuration,omitempty"`
 }
 
@@ -116,7 +118,7 @@ func (s *ProjectAuthSettings) UnmarshalJSON(data []byte) error {
 		return true
 	}
 	if !required(data, "project_id", "issuer", "discovery_url", "sign_in_url", "methods", "counts", "providers") || raw["branding"] == nil ||
-		!required(raw["methods"], "passcode", "password", "sign_up") || !required(raw["counts"], "users", "clients") ||
+		!required(raw["methods"], "passcode", "password", "sign_up_mode") || !required(raw["counts"], "users", "clients") ||
 		entityid.Check(next.ProjectID) != nil || next.Issuer == "" || next.DiscoveryURL == "" || next.SignInURL == "" || next.Counts.Users < 0 || next.Counts.Clients < 0 {
 		return invalid
 	}

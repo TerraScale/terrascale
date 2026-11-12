@@ -2,11 +2,11 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
 
-/// <summary>A project tenant's sign-in methods. At least one of Passcode and Password stays on; SignUp false hides self sign-up.</summary>
+/// <summary>A project tenant's sign-in methods. At least one of Passcode and Password stays on; SignUpMode selects public, restricted or waitlist admission.</summary>
 public sealed record TerraScaleAuthProjectMethods(
     [property: JsonPropertyName("passcode")] bool Passcode,
     [property: JsonPropertyName("password")] bool Password,
-    [property: JsonPropertyName("sign_up")] bool SignUp);
+    [property: JsonPropertyName("sign_up_mode")] string SignUpMode);
 
 /// <summary>A project tenant's hosted-page branding. Null clears a value: LogoUrl is an https URL, ThemeColor is
 /// <c>#rrggbb</c> and Name is 1 to 64 characters. Name, LogoUrl, ThemeColor and EmailMessage also brand verification,
@@ -55,7 +55,8 @@ public sealed record TerraScaleAuthProjectSettings(
     [property: JsonPropertyName("branding")] TerraScaleAuthProjectBranding Branding,
     [property: JsonPropertyName("counts")] TerraScaleAuthProjectCounts Counts,
     [property: JsonPropertyName("providers")] IReadOnlyList<TerraScaleAuthProjectProvider> Providers,
-    [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectConfiguration? Configuration = null);
+    [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectConfiguration? Configuration = null,
+        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthRestrictions? Restrictions = null);
 
 /// <summary>A social sign-in provider of a project tenant: <c>google</c>, <c>github</c>, <c>apple</c> or <c>oidc</c>.
 /// Unconfigured providers have null ClientId, Issuer, TeamId and KeyId. CallbackUrl is the redirect URL to register at
@@ -86,7 +87,8 @@ public sealed record TerraScaleAuthProjectProviderUpdate(
 public sealed record TerraScaleAuthProjectSettingsUpdate(
     [property: JsonPropertyName("methods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectMethods? Methods = null,
     [property: JsonPropertyName("branding"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectBranding? Branding = null,
-    [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectConfiguration? Configuration = null);
+    [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectConfiguration? Configuration = null,
+        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthRestrictions? Restrictions = null);
 
 /// <summary>A project tenant end user. A disabled user cannot sign in.</summary>
 public sealed record TerraScaleAuthProjectUser(

@@ -40,10 +40,16 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
             throw Invalid("configuration requires session_lifetime_seconds 300 to 2592000 and at most 100 exact https redirect URLs (http only on loopback), without userinfo or fragments.");
         }
 
+        if (request.Methods?.SignUpMode is not (null or "public" or "restricted" or "waitlist"))
+        {
+            throw Invalid("sign_up_mode must be public, restricted or waitlist.");
+        }
+
+        var restrictions = request.Restrictions is { } sentRestrictions ? SignUpRestrictions.Normalize(sentRestrictions) : null;
         var methods = request.Methods;
         var updated = await settings.UpdateAsync(projectId, current =>
         {
-            var next = current with { Passcode = methods?.Passcode ?? current.Passcode, Password = methods?.Password ?? current.Password, SignUp = methods?.SignUp ?? current.SignUp };
+            var next = current with { Passcode = methods?.Passcode ?? current.Passcode, Password = methods?.Password ?? current.Password, SignUpMode = methods?.SignUpMode ?? current.SignUpMode };
             next = request.Branding is { } sent ? next with
             {
                 Name = sent.Name,
@@ -57,6 +63,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
                 EmailMessage = sent.EmailMessage,
             } : next;
             next = request.Configuration is { } policy ? next with { Configuration = policy } : next;
+            next = restrictions is not null ? next with { Restrictions = restrictions } : next;
             return next.Passcode || next.Password ? next : throw Invalid("At least one of passcode and password must stay on.");
         }, cancellationToken);
         return Results.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);

@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     public sealed record TsAuthProjectMethods(
         [property: JsonPropertyName("passcode")] bool Passcode,
         [property: JsonPropertyName("password")] bool Password,
-        [property: JsonPropertyName("sign_up")] bool SignUp);
+        [property: JsonPropertyName("sign_up_mode")] string SignUpMode);
 
     public sealed record TsAuthProjectBranding(
         [property: JsonPropertyName("name")] string? Name,
@@ -42,7 +42,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("branding")] TsAuthProjectBranding Branding,
         [property: JsonPropertyName("counts")] TsAuthProjectCounts Counts,
         [property: JsonPropertyName("providers")] IReadOnlyList<TsAuthProjectProvider> Providers,
-        [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectConfiguration? Configuration = null);
+        [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectConfiguration? Configuration = null,
+        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthRestrictions? Restrictions = null);
 
     public sealed record TsAuthProjectProvider(
         [property: JsonPropertyName("provider")] string Provider,
@@ -69,7 +70,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     public sealed record TsAuthProjectSettingsUpdate(
         [property: JsonPropertyName("methods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectMethods? Methods = null,
         [property: JsonPropertyName("branding"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectBranding? Branding = null,
-        [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectConfiguration? Configuration = null);
+        [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectConfiguration? Configuration = null,
+        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthRestrictions? Restrictions = null);
 
     public sealed record TsAuthProjectUser(
         [property: JsonPropertyName("id")] string Id,

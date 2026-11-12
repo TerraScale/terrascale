@@ -88,7 +88,7 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
 
         var user = identity is null ? null : await users.FromProviderAsync(tenant,
             new LinkedProvider(provider.Provider, identity.Issuer, identity.ClientId, identity.Subject),
-            identity.Email, HostedTheme.Of(context).SignUp, cancellationToken);
+            identity.Email, true, cancellationToken);
 
         // An active local factor gets the hosted second step; the provider's own amr/acr never count as one.
         if (user is not null && await SignInFlow.SecondFactorAsync(context, mfa, user, resumed.Next, cancellationToken) is { } factor)

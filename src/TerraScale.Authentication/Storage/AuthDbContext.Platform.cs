@@ -146,6 +146,8 @@ public sealed partial class AuthDbContext
             settings.HasOne<ProjectRecord>().WithOne().HasForeignKey<ProjectAuthSettingsRecord>(row => row.InstanceId).OnDelete(DeleteBehavior.Cascade);
             settings.Property(row => row.Providers).HasJson(ProjectAuthSettingsJson.Default.IReadOnlyListSocialProviderRecord);
             settings.Property(row => row.FooterLinks).HasJson(ProjectAuthSettingsJson.Default.IReadOnlyListFooterLinkBody);
+            settings.Property(row => row.SignUpMode).HasMaxLength(10);
+            settings.Property(row => row.Restrictions).HasJson(ProjectTenantJson.Default.RestrictionsBody);
             settings.Property(row => row.Configuration).HasJson(ProjectAuthSettingsJson.Default.ConfigurationBody);
             settings.Property(row => row.SubscribedWebhookEvents).HasJson(StorageJson.Default.IReadOnlyListString);
             Versioned(settings);

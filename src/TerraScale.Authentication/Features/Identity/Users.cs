@@ -2,13 +2,14 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Identity;
 
-public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock)
+public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock, SignUpRestrictions restrictions)
 {
     public static string? NormalizeEmail(string? email)
     {
@@ -39,9 +40,14 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
     internal async Task<UserRecord?> CreateAccountAsync(string instanceId, string email, string? passwordHash, string userId, CancellationToken cancellationToken)
     {
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));
+        if (await restrictions.AdmissionAsync(instanceId, normalized, true, cancellationToken).ConfigureAwait(false) is not { } admission)
+        {
+            return null;
+        }
+
         var lifecycleEvent = await outbox.CreateAsync(instanceId, "user.signed_up", userId, normalized, null, cancellationToken).ConfigureAwait(false);
         var (user, changes) = this.NewAccount(instanceId, normalized, passwordHash, userId, lifecycleEvent);
-        if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+        if (await data.SaveAsync([.. changes, .. admission], cancellationToken).ConfigureAwait(false))
         {
             return BindAuthenticationState(user);
         }
@@ -89,8 +95,13 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 return null;
             }
 
+            if (await restrictions.AdmissionAsync(tenant, normalized, true, cancellationToken).ConfigureAwait(false) is not { } admission)
+            {
+                return null;
+            }
+
             var user = new UserRecord(AuthIds.New(), tenant, normalized, 0, clock.GetUtcNow()) { AuthStamp = AuthIds.New(), LinkedProviders = [identity] };
-            List<Change> changes = [Change.Insert(user), Change.Insert(Link(user, identity))];
+            List<Change> changes = [Change.Insert(user), Change.Insert(Link(user, identity)), .. admission];
             if (await outbox.CreateAsync(tenant, "user.signed_up", user.Id, normalized, null, cancellationToken).ConfigureAwait(false) is { } lifecycleEvent)
             {
                 changes.Add(lifecycleEvent);
