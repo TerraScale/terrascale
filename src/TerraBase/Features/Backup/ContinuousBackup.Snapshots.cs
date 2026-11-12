@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Runtime.ExceptionServices;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
@@ -18,6 +19,10 @@ internal sealed partial class ContinuousBackup
     {
         if (side.Stored!.Task.Exception?.GetBaseException() is { } error)
         {
+            if (GenerationLost(error))
+            {
+                ExceptionDispatchInfo.Throw(error);
+            }
             _failures.Add(1);
             file.SnapshotFailures++;
             (file.SnapshotRetryAt, file.SnapshotError) = (_time.GetUtcNow() + Backoff(file.SnapshotFailures), error.GetType().Name);

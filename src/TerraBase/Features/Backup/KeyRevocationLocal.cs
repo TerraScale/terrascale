@@ -20,6 +20,7 @@ internal sealed class KeyRevocationLocal(KeyCustody custody, IShreddedDatabases 
         {
             return false;
         }
+        custody.Revocations.Forget(scope);
         return await management.ObserveShreddedAsync(database, record.ShreddedAt, token).ConfigureAwait(false) switch
         {
             true => await EraseAsync(database, token).ConfigureAwait(false),
@@ -30,7 +31,6 @@ internal sealed class KeyRevocationLocal(KeyCustody custody, IShreddedDatabases 
 
     private async Task<bool> EraseAsync(TenantContext database, CancellationToken token)
     {
-        custody.Revocations.Forget(BackupLayout.KeyScope(database));
         await replicas.DeleteShreddedAsync(database, token).ConfigureAwait(false);
         _ = await management.EraseShreddedAsync(database, token).ConfigureAwait(false);
         await backup.RetireDeletedAsync(database, token).ConfigureAwait(false);

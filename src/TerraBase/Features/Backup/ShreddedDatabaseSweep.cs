@@ -48,9 +48,18 @@ internal sealed class ShreddedDatabaseSweep(KeyCustody custody, KeyRevocationLoc
                         _refusals.Add(1);
                         logger.ZLogWarning($"Refused a shred record for organization {organization:@Organization}, project {project:@Project}, database {database:@Database}: custody and local files stay untouched; an operator must inspect and clear the marker");
                     }
-                    else if (!await local.RevokeAsync(tenant, token).ConfigureAwait(false))
+                    else
                     {
-                        return;
+                        var scope = BackupLayout.KeyScope(tenant);
+                        var record = await ShredRecords.ReadAsync(custody.Store, scope, token).ConfigureAwait(false);
+                        if (record is not null)
+                        {
+                            custody.Revocations.Forget(scope);
+                        }
+                        if (record is null || !await local.RevokeAsync(tenant, token).ConfigureAwait(false))
+                        {
+                            return;
+                        }
                     }
                 }
             }

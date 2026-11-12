@@ -43,6 +43,7 @@ internal sealed class DataKeys : IDisposable
     private const int CacheCapacity = 65536;
     private const int MaxWrappedKeyBytes = 16 * 1024;
     internal const int MaxReads = 8;
+    internal const string MissingKeyMessage = "a backup object names a data key the bucket does not hold";
     private readonly SemaphoreSlim _readSlots;
     private readonly bool _waitForReadSlot;
     private readonly TimeSpan _rotation;
@@ -193,24 +194,6 @@ internal sealed class DataKeys : IDisposable
         }
     }
 
-    internal async Task<bool> IsHeldAsync(string scope, string id, CancellationToken cancellationToken)
-    {
-        await _readSlots.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
-            {
-                throw new DatabaseShreddedException(shredded.ShreddedAt);
-            }
-
-            return await _store.ReadAsync(BackupLayout.Key(scope, id), static (_, _) => Task.CompletedTask, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _readSlots.Release();
-        }
-    }
-
     public Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken) =>
         ReadKeyAsync(scope, id, cancellationToken);
 
@@ -272,7 +255,7 @@ internal sealed class DataKeys : IDisposable
                             throw new DatabaseShreddedException(shredded.ShreddedAt);
                         }
 
-                        throw new InvalidDataException("a backup object names a data key the bucket does not hold");
+                        throw new InvalidDataException(MissingKeyMessage);
                     }
 
                     var key = await _master.UnwrapAsync(wrapped, cancellationToken).ConfigureAwait(false);

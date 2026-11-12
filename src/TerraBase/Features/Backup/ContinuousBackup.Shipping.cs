@@ -70,18 +70,6 @@ internal sealed partial class ContinuousBackup
                 }
             }
 
-            if (due && file.Generation is not null)
-            {
-                var generationKey = file.GenerationKey ?? throw new InvalidOperationException("a backup generation has no base snapshot key");
-                if (!await file.Target.Keys.IsHeldAsync(file.Scope, generationKey, cancellationToken).ConfigureAwait(false))
-                {
-                    file.Target.Keys.Forget(file.Scope);
-                    Abandon(file);
-                    file.DrilledAt = DateTimeOffset.MinValue;
-                    _logger.ZLogWarning($"The base snapshot key of {file.Prefix:@File} is missing from custody; its backup starts a fresh generation and leaves destroyed-key history unreadable");
-                }
-            }
-
             if (file.Generation is null)
             {
                 if (_stopped && !switched)
@@ -335,6 +323,10 @@ internal sealed partial class ContinuousBackup
     }
     private async Task<(BackupScratchStream Content, string KeyId)> SealAsync(ShippedFile file, string key, Stream content, CancellationToken cancellationToken)
     {
+        if (file.GenerationKey is { } generationKey)
+        {
+            _ = await file.Target.Keys.GetAsync(file.Scope, generationKey, cancellationToken).ConfigureAwait(false);
+        }
         var (keyId, dataKey) = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
         var bytes = checked(content.Length + (content.Length / (1 << 20) + 1) * 24 + 62);
         var sealedObject = new BackupScratchStream(ScratchFile(".sealed"), null, bytes);

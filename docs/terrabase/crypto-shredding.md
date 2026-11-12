@@ -25,7 +25,9 @@ The shared shred guard refuses `ts-auth` (database `00000000000000000000000003` 
 `00000000000000000000000005`). The purge writer checks it before writing a deletion marker, invalidating cached keys,
 or deleting wrapped keys. Peer revocation and the custody sweep check the same guard before invalidating keys or
 removing local files. A refused shred leaves the live database and its continuous backup readable. Permitted shreds
-still write the durable marker before destroying any wrapped key.
+still write the durable marker before destroying any wrapped key. Seeing a permitted marker drops peer key caches before
+catalog observation or local erasure, even when either cannot complete. A purge job refused by the guard records
+`shred_refused` as a terminal outcome and leaves the pending-erasure gauges.
 
 An already existing marker for a protected database is terminal for the sweep. It logs one warning per protected
 database per process, including organization, project and database ids, and increments `terrabase.keys.sweep_refused`.
@@ -54,12 +56,16 @@ deleted database and back it up under a new key.
    v1/keys/00000000000000000000000001/<project>/<database>/`. A previous faulty shred may have left only `shredded`.
 2. Clear only that protected database's marker: `cf r2 objects delete
    v1/keys/00000000000000000000000001/<project>/<database>/shredded --bucket-name ts-terrabase-shapes-prod`.
-3. On its next eligible backup pass, the writer checks the active generation's base-snapshot key directly in custody,
-   bypassing its key cache. If that key was destroyed, it discards the active generation's pending work, selects fresh
-   keys and writes a new base snapshot and generation proof through the existing generation writer. It checks deletion
-   authority during key selection, so a concurrent permitted shred still fences the new generation. No restart or daily
-   snapshot is needed. Check `GET /v1/backup` for a new generation and `"lastError":null`, and verify a new wrapped key
-   appears under the custody prefix. If the original key is still held, the existing generation continues.
+3. A shipping or sealing pass that encounters the marker abandons its current generation and pending work, increments
+   `terrabase.backup.abandoned` with reason `shredded`, and invalidates its key selection. After marker removal, the next
+   eligible pass selects fresh keys and writes a new base snapshot and generation proof. No restart or daily snapshot
+   is needed. Check `GET /v1/backup` for a new generation and `"lastError":null`, and verify a new wrapped key appears
+   under the custody prefix. A process restart also begins a fresh generation.
+4. If the marker was removed before the writer encountered it, sealing first resolves the active generation's base key
+   through the existing key cache. Healthy cache hits add no custody requests or key-read-slot usage. If custody reports
+   that the key is missing, the writer abandons the generation with reason `missing_key`, invalidates its selection and
+   starts a fresh generation on the next eligible pass. Key selection still checks deletion authority, so a marker
+   fences recovery. A generation whose base key is still held can continue.
 
 ### Earlier refused shreds
 
@@ -67,7 +73,8 @@ In the November 12 incident, custody wrote the marker and destroyed the wrapped 
 refused the platform database's shred. Removing that marker previously resumed the existing generation with a new key,
 but its base snapshot still needed a destroyed key. Restores failed with `a backup object names a data key the bucket
 does not hold` until a new decryptable base was written, normally by a daily snapshot or a process restart. The writer
-now detects the missing base key and creates that fresh generation on its next eligible pass after marker removal.
+now abandons the generation when shipping encounters the marker or sealing discovers the missing base key, then creates
+a fresh generation on its next eligible pass after marker removal.
 
 Destroyed-key history stays unreadable permanently. The fresh generation captures live data under newly generated
 keys; it never recovers or re-wraps a destroyed key. A snapshot requested with
