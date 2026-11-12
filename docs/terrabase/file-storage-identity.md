@@ -13,9 +13,9 @@ OCI Vault delivery supplies these references (the application uses its existing
 
 The identity needs object read/write/delete access only to
 `terrascale-gru-files`, `terrascale-sjc-files` and `terrascale-fra-files`,
-and it lists objects in those three buckets: after a project closure every
-node lists the closed project's prefix, `app-files/<organization>/<project>/`,
-in each of them and deletes what it finds
+and it lists objects in those three buckets: after a project closure each
+node that holds the closure lists the closed project's prefix,
+`app-files/<organization>/<project>/`, in each of them and deletes what it finds
 ([account-project-erasure.md](account-project-erasure.md)). It needs no
 bucket-level permission beyond that list.
 Signing uses region `auto`; bucket names come from the serving region. Tigris
