@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Platform.Identity;
 
@@ -248,11 +249,13 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
                 catch (Exception error) when (error is not (SignInRejectedException or RefreshNotStartedException))
                 {
                     logger.RefreshOfAStoredTsAuth(lookup.Kind,
-                        error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TerraScale.Dashboard.Platform.TsAuth.TsAuthException)?.ErrorCode ?? "none");
+                        error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TsAuthException)?.ErrorCode ?? "none");
                     throw;
                 }
-                catch (RefreshNotStartedException)
+                catch (RefreshNotStartedException error)
                 {
+                    logger.RefreshOfAStoredTsAuth(lookup.Kind, error.InnerException?.GetType().Name, (error.InnerException as HttpRequestException)?.StatusCode,
+                        (error.InnerException as TsAuthException)?.ErrorCode ?? "none");
                     if (await FindAsync(lookup, rotating) is { } unchanged && Open(unchanged, credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
                     {
                         await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, rotating);

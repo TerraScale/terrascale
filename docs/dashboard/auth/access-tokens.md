@@ -35,5 +35,9 @@ A token works until the expiry chosen when it was created:
   its next request: the dashboard reads memberships and grants from ts-auth on
   every call.
 
-When ts-auth refuses a token's grant, the dashboard deletes the token's
-credential, and the token's row leaves Profile → Access tokens with it.
+When ts-auth refuses a token's grant with `invalid_grant`, the dashboard
+deletes the token's credential, and the token's row leaves Profile → Access
+tokens with it. Any other refusal of a refresh, such as `invalid_client` while
+the dashboard's client secret differs from ts-auth's, keeps the credential: that
+request fails, the dashboard logs the error code, and a later request refreshes
+again.
