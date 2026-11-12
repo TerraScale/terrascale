@@ -18,7 +18,8 @@ const hobby: Plan = { label: 'hobby', requestsPerSecond: 50, burst: 100 };
 const pro: Plan = { label: 'pro', requestsPerSecond: 500, burst: 1000 };
 const plans: Record<Group, Plan> = { a: hobby, b: hobby, c: pro };
 const headroom = 20;
-const requestsPerRunner: Record<Group, number> = { a: 37, b: 6, c: 7 };
+const twoRegions = !production && process.env.E2E_REGIONS === '2';
+const requestsPerRunner: Record<Group, number> = { a: 37, b: twoRegions ? 110 : 6, c: 7 };
 const terrabaseMetrics = 'http://127.0.0.1:9091/metrics';
 
 type Lane = { admitted: number; refused: Record<string, number>; body: string };
@@ -83,6 +84,10 @@ async function paced<T>(group: Group, run: () => Promise<T>): Promise<T> {
   return result;
 }
 
+function runnable(op: Operation): boolean {
+  return !op.needs || twoRegions && op.id.startsWith('placement.');
+}
+
 const operationsFile = join(e2eRoot, 'sdk', 'operations.json');
 const operations = (JSON.parse(readFileSync(operationsFile, 'utf8')) as { operations: Operation[] }).operations;
 const built = process.env.E2E_SDK_BUILD ?? join(stateDir, 'sdk');
@@ -113,7 +118,7 @@ export async function runOperations(sdk: Sdk, group: Group): Promise<void> {
   const current = journey<Journey & Partial<Pick<PaidJourney, 'secondDatabaseName'>>>();
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
   const planned = operations.filter((op) => op.group === group);
-  for (const op of planned.filter((candidate) => candidate.needs)) {
+  for (const op of planned.filter((candidate) => !runnable(candidate))) {
     test.info().annotations.push({ type: 'not run', description: `${op.id} (${op.title}): ${op.needs}` });
   }
   const { before, result } = await paced(group, async () => ({
@@ -141,6 +146,7 @@ export async function runOperations(sdk: Sdk, group: Group): Promise<void> {
   for (const file of readdirSync(secretsDir).filter((name) => name.startsWith(`scoped-key-${sdk}`))) mask(readFileSync(join(secretsDir, file), 'utf8'));
   if (production) process.stdout.write(`${sdk} group ${group} runner output:\n${result.stdout}\n${result.stderr}\n`);
   else await test.info().attach(`${sdk} group ${group}`, { body: `${result.stdout}\n${result.stderr}`, contentType: 'text/plain' });
+  if (twoRegions) process.stdout.write(result.stdout.split('\n').filter(line => line.includes('placement:')).join('\n') + '\n');
   const lines = result.stdout.split('\n').filter((line) => line.startsWith('{')).map((line) => JSON.parse(line) as Line);
   for (const line of lines) test.info().annotations.push({ type: line.ok ? 'passed' : 'failed', description: `${line.id} ${line.ms} ms${line.error ? `: ${line.error}` : ''}` });
   if (used) {
@@ -149,7 +155,7 @@ export async function runOperations(sdk: Sdk, group: Group): Promise<void> {
     expect(used.admitted, `${sdk} runner: TerraBase admitted ${used.admitted} of its requests; ${budgetRule}`).toBeLessThanOrEqual(booked);
     expect(used.admitted, `${sdk} runner: TerraBase admitted none of its requests in the journey organization's lane, so support/sdk.ts reads the wrong metric`).toBeGreaterThan(0);
   }
-  const expected = planned.filter((op) => !op.needs).map((op) => op.id);
+  const expected = planned.filter(runnable).map((op) => op.id);
   expect(lines.map((line) => line.id), `${sdk} ran every runnable group ${group} operation once`).toEqual(expected);
   expect(lines.filter((line) => !line.ok).map((line) => `${line.id}: ${line.error}`), `${sdk} group ${group} failures`).toEqual([]);
   expect(result.code, `${sdk} runner exit code (stderr: ${result.stderr.trim().slice(-400)})`).toBe(0);

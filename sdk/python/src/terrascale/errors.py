@@ -214,7 +214,7 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
     raw_state = err.get("sqlstate")
     sqlstate = raw_state if isinstance(raw_state, str) and raw_state else None
     cls = _BY_CODE.get(code) or _BY_STATUS.get(status) or APIError
-    if mutation and status >= 500:
+    if mutation and status >= 500 and (status, code) != (503, "replica_not_ready"):
         cls = CommitUncertainError
     if statement is not None and raw_code and isinstance(raw_state, str):
         cls = SqlError

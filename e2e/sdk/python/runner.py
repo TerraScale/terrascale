@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from terrascale import Statement, TerraScale, is_valid_id, new_id
+from terrascale.errors import ServiceUnavailableError
 
 spec = json.loads(Path(os.environ["E2E_OPERATIONS"]).read_text(encoding="utf-8"))
 run = os.environ["E2E_RUN_ID"]
@@ -230,7 +231,9 @@ def create_ttl(op):
     earliest = before + timedelta(seconds=op["ttlSeconds"])
     latest = after + timedelta(seconds=op["ttlSeconds"] + 5)
     if not earliest <= expiry <= latest:
-        raise AssertionError(f"expiry the server reports, {created.expires_at}, is outside {earliest.isoformat()}..{latest.isoformat()}")
+        raise AssertionError(
+            f"expiry the server reports, {created.expires_at}, is outside {earliest.isoformat()}..{latest.isoformat()}"
+        )
     state["agent"] = created
 
 
@@ -290,6 +293,51 @@ def delete(op):
     )
 
 
+def placement_create(op):
+    created = client.create_database(f"e2e-python-{run}-placed", regions=["gru", "fra"])
+    try:
+        same(created.regions, ["fra", "gru"], "created regions")
+        same(isinstance(created.placement_version, int), True, "integer placement version")
+        repeated = client.set_database_placement(created.id, regions=["fra", "gru"])
+        same(repeated.placement_version, created.placement_version, "unchanged placement version")
+    finally:
+        client.delete_database(created.id)
+
+
+def placement_set(op):
+    created = client.create_database(f"e2e-python-{run}-move", regions=["gru"])
+    placed = client
+    try:
+        client.database(created.id).execute("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)")
+        client.database(created.id).execute("INSERT INTO placement_rows VALUES (1)")
+        added = client.set_database_placement(created.id, regions=["gru", "fra"])
+        same(added.regions, ["fra", "gru"], "added region")
+        same(added.placement_version > created.placement_version, True, "membership raises placement version")
+        progress = client.database(created.id).regions()
+        same([row.region for row in progress.regions], ["fra", "gru"], "status regions")
+        same(next(row.role for row in progress.regions if row.region == "gru"), "writer", "writer role")
+        deadline = time.monotonic() + 90
+        while True:
+            try:
+                updated = client.set_database_placement(created.id, regions=["fra"])
+                break
+            except ServiceUnavailableError as error:
+                if error.code != "replica_not_ready" or time.monotonic() >= deadline:
+                    raise
+                time.sleep(1)
+        placed = TerraScale(base_url="https://fra.api.terrascale.tech", issuer="https://auth.terrascale.tech/terrascale")
+        same(updated.regions, ["fra"], "dropped writer")
+        same(updated.placement_version > added.placement_version, True, "writer change raises placement version")
+        after = placed.database(created.id).regions()
+        same([(row.region, row.role) for row in after.regions], [("fra", "writer")], "moved status")
+        error = refused(lambda: client.database(created.id).regions())
+        same([error.status, error.code], [421, "wrong_region"], "nonmember endpoint")
+        same(cells(placed.database(created.id).query("SELECT value FROM placement_rows")), [[1]], "data survived placement")
+        print("python placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region")
+    finally:
+        placed.delete_database(created.id)
+
+
 operations = {
     "sql.execute.positional": execute_positional,
     "sql.execute.named": execute_named,
@@ -314,11 +362,17 @@ operations = {
     "agent.clear_ttl": clear_ttl,
     "agent.scoped_key": scoped_key,
     "agent.delete": delete,
+    "placement.create": placement_create,
+    "placement.set": placement_set,
     "agent.fork": fork,
     "agent.scoped_key_outside": scoped_key_outside,
 }
 
-group = [op for op in spec["operations"] if op["group"] == os.environ["E2E_GROUP"] and "needs" not in op]
+group = [
+    op for op in spec["operations"]
+    if op["group"] == os.environ["E2E_GROUP"]
+    and ("needs" not in op or os.environ.get("E2E_REGIONS") == "2" and op["id"].startswith("placement."))
+]
 if os.environ["E2E_GROUP"] in ("a", "c"):
     state["db"] = client.database(os.environ["TERRASCALE_DATABASE_NAME"])
 failed = False

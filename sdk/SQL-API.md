@@ -98,7 +98,9 @@ region, including ones that join later. Explicit `regions` turns that mode off.
 On create the first requested region is the initial writer. Response `regions` are sorted by id; their order carries
 no meaning and does not identify the writer. Responses carry integer `placementVersion`: membership or writer changes
 raise it; an unchanged region set retains it. Transitional response fields are accepted and ignored, and their future
-absence is accepted too.
+absence is accepted too. During the transition an old-field PATCH still bumps the version when repeated,
+and returns `409 move_in_progress` while a move is pending so membership cannot consume the move's reserved
+version or diverge from the placement sent to its target.
 
 If an update excludes the current writer, missing requested regions are added and stay added. A call that adds regions
 returns `503 replica_not_ready`, retaining the old writer, existing members and requested additions. Nothing is unstaged

@@ -496,7 +496,6 @@ class AsyncDatabase:
         return await self._c._send(_spec.list_database_logs(*self._p, status))
 
     async def regions(self) -> models.DatabaseRegions:
-        """The database's home region and home-observed replica pull progress; not application acknowledgements."""
         return await self._c._send(_spec.get_database_regions(*self._p))
 
     async def delete(self) -> None:
