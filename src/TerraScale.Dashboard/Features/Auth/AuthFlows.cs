@@ -117,22 +117,23 @@ namespace TerraScale.Dashboard.Features.Auth
             }
         }
 
-        public async Task HoldAlertSecretAsync(HttpContext context, string ruleName, string secret)
+        public async Task HoldAlertSecretAsync(HttpContext context, AccountContext account, string ruleName, string secret)
         {
             await EndAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose);
-            await StoreAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose, new AlertSecretHandoff(ruleName, secret), time.GetUtcNow().AddMinutes(2));
+            await StoreAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose, new AlertSecretHandoff(account.UserId, StepUpFlow.Browser(context), account.Project?.Id, ruleName, secret), time.GetUtcNow().AddMinutes(2));
         }
 
-        public async Task<AlertSecretHandoff?> TakeAlertSecretAsync(HttpContext context)
+        public async Task<AlertSecretHandoff?> TakeAlertSecretAsync(HttpContext context, AccountContext account)
         {
             var stored = await ReadAsync<AlertSecretHandoff>(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose);
             context.Response.Cookies.Delete(AlertSecretCookie, Options(context));
-            if (stored is null || stored.Row.ExpiresAt <= time.GetUtcNow().UtcDateTime || !await TakeAsync(stored.Row, context.RequestAborted))
+            if (stored is null || !await TakeAsync(stored.Row, context.RequestAborted))
             {
                 return null;
             }
 
-            return stored.Value;
+            return stored.Row.ExpiresAt > time.GetUtcNow().UtcDateTime && stored.Value.UserId == account.UserId &&
+                stored.Value.Browser == StepUpFlow.Browser(context) && stored.Value.ProjectId == account.Project?.Id ? stored.Value : null;
         }
 
         private const string AlertSecretCookie = "ts-dashboard-alert-secret";
@@ -199,7 +200,7 @@ namespace TerraScale.Dashboard.Features.Auth
         private sealed record Stored<T>(AuthFlowRow Row, T Value);
     }
 
-    public sealed record AlertSecretHandoff(string RuleName, string Secret)
+    public sealed record AlertSecretHandoff(string UserId, string Browser, string? ProjectId, string RuleName, string Secret)
     {
         public override string ToString()
         {

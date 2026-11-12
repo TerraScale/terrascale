@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return HttpRedirects.SeeOther("/");
             }
 
-            var handoff = await flows.TakeAlertSecretAsync(http);
+            var handoff = await flows.TakeAlertSecretAsync(http, context);
             return await PageAsync(http, context, rules, created: handoff is null ? null : new AlertRule("", handoff.RuleName, "", 0, null, false, null, default), secret: handoff?.Secret);
         }
 
@@ -75,7 +75,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     var (rule, secret) = await rules.CreateAsync(context, form, http.RequestAborted);
                     if (secret is not null)
                     {
-                        await flows.HoldAlertSecretAsync(http, rule.Name, secret);
+                        await flows.HoldAlertSecretAsync(http, context, rule.Name, secret);
                     }
 
                     return HttpRedirects.SeeOther("/notifications/alerts");
