@@ -107,7 +107,7 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
                                              join member in db.ProjectOrganizationMemberships on new { org.ProjectId, OrganizationId = org.Id } equals new { member.ProjectId, member.OrganizationId }
                                              where org.ProjectId == project && member.UserId == userId
                                              orderby org.Slug
-                                             select new OrganizationClaims(org.Id, org.Slug, member.Role)).Take(101).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+                                             select new OrganizationClaims(org.Id, org.Slug, member.Role)).ToListAsync(token), cancellationToken).ConfigureAwait(false);
 
     private async Task<UserRecord> UserAsync(string project, string? id, CancellationToken cancellationToken) =>
         await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == id && !row.Disabled).SingleOrDefaultAsync(token), cancellationToken)
