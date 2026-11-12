@@ -4,6 +4,7 @@ import { test, expect } from '../support/audit';
 import { cloudflareSendCount, newAddress, nextMail } from '../support/inbox';
 import { saveJourney, saveSecret, saveSession } from '../support/state';
 import { shell } from '../support/shell';
+import { hostedReady } from '../support/hosted';
 import { auth, dash, onLocalStack } from '../support/stack';
 import { enterSecret } from '../support/secret';
 
@@ -26,6 +27,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
 
   await page.goto('/register');
   await expect(page).toHaveURL((url) => url.origin === auth && url.pathname === '/ui/terrascale/sign-up');
+  await hostedReady(page);
   await expect(page).toHaveTitle('Create your account · TerraScale');
   await audit.check('sign-up');
 

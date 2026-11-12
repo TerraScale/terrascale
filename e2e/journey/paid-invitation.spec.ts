@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
-import { onboard, onHosted, signInWithPassword } from '../support/hosted';
+import { hostedReady, onboard, onHosted, signInWithPassword } from '../support/hosted';
 import { nextMail } from '../support/inbox';
 import type { PaidJourney } from '../support/paid';
 import { enterSecret } from '../support/secret';
@@ -49,9 +49,11 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await audit.check('invitation signed out');
   await page.getByRole('link', { name: 'Sign in', exact: true }).click();
   await page.waitForURL(onHosted('sign-in'));
+  await hostedReady(page);
   await audit.check('member sign-in from the invitation');
   await page.getByRole('link', { name: 'Create account', exact: true }).click();
   await page.waitForURL(onHosted('sign-up'));
+  await hostedReady(page);
   await audit.check('member sign-up from the invitation');
   await page.locator('#sign-up-email').fill(email);
   await enterSecret(page.locator('#sign-up-password'), password);

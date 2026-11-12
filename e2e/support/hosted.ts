@@ -6,9 +6,15 @@ import { enterSecret } from './secret';
 
 export const onHosted = (path: string) => (url: URL) => url.origin === auth && url.pathname === `/ui/terrascale/${path}`;
 
+export async function hostedReady(page: Page): Promise<void> {
+  await page.locator('script[src="/admin/hosted.js"]').waitFor({ state: 'attached' });
+  await page.waitForFunction(() => document.readyState === 'complete');
+}
+
 export async function openSignUp(page: Page, audit: Audit, label: string): Promise<void> {
   await page.goto(`${dash}/register`);
   await page.waitForURL(onHosted('sign-up'));
+  await hostedReady(page);
   await audit.check(`${label} sign-up`);
 }
 
@@ -52,9 +58,12 @@ export async function onboard(page: Page, audit: Audit, displayName: string, pro
 
 export async function signInWithPassword(page: Page, audit: Audit, email: string, password: string, label: string): Promise<void> {
   await page.waitForURL(onHosted('sign-in'));
+  await hostedReady(page);
   await audit.check(`${label} sign-in`);
   await page.locator('#sign-in-email').fill(email);
   await page.getByRole('button', { name: 'Use a password instead' }).click();
+  await page.waitForURL(onHosted('sign-in/password'));
+  await hostedReady(page);
   await expect(page.locator('#sign-in-password')).toBeVisible();
   await audit.check(`${label} password sign-in`);
   await enterSecret(page.locator('#sign-in-password'), password);
@@ -63,6 +72,7 @@ export async function signInWithPassword(page: Page, audit: Audit, email: string
 
 export async function confirmWithPassword(page: Page, audit: Audit, password: string, label: string): Promise<void> {
   await page.waitForURL((url) => url.origin === auth && url.pathname.startsWith('/ui/terrascale/step-up/'));
+  await hostedReady(page);
   await audit.check(`${label} confirmation`);
   await enterSecret(page.locator('input[type=password]'), password);
   await page.locator('form button[type=submit]').first().click();

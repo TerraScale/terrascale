@@ -347,12 +347,18 @@ func (r *runner) do(op operation) error {
 		return same([]bool{v1.ValidateID(v1.NewID()) == nil, v1.ValidateID(op.Invalid) == nil}, []bool{true, false}, "validation")
 	case "agent.create_ttl":
 		ttl := op.TTLSeconds
+		before := time.Now().UTC()
 		created, err := r.client.CreateDatabase(ctx, r.project, r.fill(op.Name), v1.CreateDatabaseOptions{TTLSeconds: &ttl})
+		after := time.Now().UTC()
 		if err != nil {
 			return err
 		}
 		if created.ExpiresAt == nil {
 			return errors.New("the database has no expiry")
+		}
+		earliest, latest := before.Add(time.Duration(ttl)*time.Second), after.Add(time.Duration(ttl+5)*time.Second)
+		if created.ExpiresAt.Before(earliest) || created.ExpiresAt.After(latest) {
+			return fmt.Errorf("expiry the server reports, %s, is outside %s..%s", created.ExpiresAt.Format(time.RFC3339), earliest.Format(time.RFC3339), latest.Format(time.RFC3339))
 		}
 		r.agent = created
 		return same(created.Name, r.fill(op.Name), "name")

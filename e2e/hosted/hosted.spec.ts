@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
-import { onHosted, openSignUp, signInWithPassword, submitSignUp } from '../support/hosted';
+import { hostedReady, onHosted, openSignUp, signInWithPassword, submitSignUp } from '../support/hosted';
 import { auth, dash, desktop, mobile, onLocalStack } from '../support/stack';
 import { journey, saveCookies, saveSecret } from '../support/state';
 
@@ -26,6 +26,7 @@ for (const size of sizes) {
       });
 
       await page.goto(`${auth}/ui/terrascale/reset`);
+      await hostedReady(page);
       await expect(page.locator('#reset-email')).toBeVisible();
       await audit.check(`${label} password reset request`);
 
@@ -35,12 +36,14 @@ for (const size of sizes) {
 
       await page.goto(`${auth}/ui/terrascale/security`);
       await page.waitForURL(onHosted('security'));
+      await hostedReady(page);
       await audit.check(`${label} account security`);
 
       await page.goto(`${dash}/profile?tab=access-tokens`);
       await page.locator('#accessTokenName').fill(`hosted-${size.label}-${theme}`);
       await page.locator('#profile-access-token-create form').getByRole('button', { name: 'Create token', exact: true }).click();
       await page.waitForURL((url) => url.origin === auth && url.pathname.startsWith('/ui/terrascale/step-up/'));
+      await hostedReady(page);
       await expect(page.locator('input[type=password]')).toBeVisible();
       await audit.check(`${label} confirmation`);
 

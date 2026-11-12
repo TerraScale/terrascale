@@ -132,9 +132,14 @@ const operations = {
     same([isValidId(id), isValidId(op.invalid)], [true, false], 'validation');
   },
   async 'agent.create_ttl'(op) {
+    const before = Date.now();
     const created = await client.createDatabase(project, fill(op.name), { ttlSeconds: op.ttlSeconds });
+    const after = Date.now();
     same(created.name, fill(op.name), 'name');
-    check(created.expiresAt, 'the database has an expiry');
+    const expiry = Date.parse(created.expiresAt);
+    const earliest = before + op.ttlSeconds * 1000;
+    const latest = after + (op.ttlSeconds + 5) * 1000;
+    check(Number.isFinite(expiry) && expiry >= earliest && expiry <= latest, `expiry the server reports, ${created.expiresAt}, is outside the TTL window`);
     state.agent = created;
   },
   async 'agent.set_ttl'(op) {

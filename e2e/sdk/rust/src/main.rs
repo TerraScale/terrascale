@@ -107,6 +107,62 @@ fn last(results: &[SqlStatementResult]) -> Value {
         .unwrap_or(Value::Null)
 }
 
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default()
+}
+
+fn unix_time(text: &str) -> Result<i64, String> {
+    let (date, time) = text
+        .split_once('T')
+        .ok_or_else(|| format!("expiry {text} is not RFC 3339"))?;
+    let mut date = date.split('-');
+    let year: i64 = date
+        .next()
+        .unwrap_or_default()
+        .parse()
+        .map_err(|_| format!("expiry {text}"))?;
+    let month: i64 = date
+        .next()
+        .unwrap_or_default()
+        .parse()
+        .map_err(|_| format!("expiry {text}"))?;
+    let day: i64 = date
+        .next()
+        .unwrap_or_default()
+        .parse()
+        .map_err(|_| format!("expiry {text}"))?;
+    let clock = time.trim_end_matches('Z');
+    let mut clock = clock.split(':');
+    let hour: i64 = clock
+        .next()
+        .unwrap_or_default()
+        .parse()
+        .map_err(|_| format!("expiry {text}"))?;
+    let minute: i64 = clock
+        .next()
+        .unwrap_or_default()
+        .parse()
+        .map_err(|_| format!("expiry {text}"))?;
+    let second: i64 = clock
+        .next()
+        .unwrap_or_default()
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .parse()
+        .map_err(|_| format!("expiry {text}"))?;
+    let shifted = month + if month > 2 { -3 } else { 9 };
+    let year = year - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let doy = (153 * shifted + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Ok((era * 146_097 + doe - 719_468) * 86_400 + hour * 3_600 + minute * 60 + second)
+}
+
 fn utc(offset: i64) -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -238,10 +294,10 @@ impl Runner {
             }
             "sql.batch" => {
                 let sql = self.db().sql();
-                let results = sql
-                    .batch(self.statements(op, "statements"))
-                    .await
-                    .map_err(e)?;
+                let statements = self.statements(op, "statements");
+                let expected = statements.len();
+                let results = sql.batch(statements).await.map_err(e)?;
+                same(json!(results.len()), &json!(expected), "results")?;
                 same(last(&results), &op["lastRows"], "last rows")?;
                 let refused = sql.batch(self.statements(op, "failing")).await;
                 let error = refused.err().ok_or("the batch was accepted")?;
@@ -420,16 +476,26 @@ impl Runner {
                     ttl_seconds: op["ttlSeconds"].as_u64(),
                     ..Default::default()
                 };
+                let before = unix_now();
                 let created = self
                     .client
                     .create_database(&fill("name"), &options)
                     .await
                     .map_err(e)?;
+                let after = unix_now();
                 same(json!(created.name), &json!(fill("name")), "name")?;
-                created
-                    .expires_at
-                    .as_ref()
-                    .ok_or("the database has no expiry")?;
+                let expiry = unix_time(
+                    created
+                        .expires_at
+                        .as_deref()
+                        .ok_or("the database has no expiry")?,
+                )?;
+                let ttl = op["ttlSeconds"].as_i64().unwrap_or_default();
+                if expiry < before + ttl || expiry > after + ttl + 5 {
+                    return Err(format!(
+                        "expiry the server reports, {expiry}, is outside {before}+{ttl}..{after}+{ttl}"
+                    ));
+                }
                 self.agent = Some(created);
                 Ok(())
             }
