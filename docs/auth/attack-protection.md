@@ -21,7 +21,8 @@ Supply `TS_AUTH_TURNSTILE_SITE_KEY` and `TS_AUTH_TURNSTILE_SECRET_KEY`. Producti
 OCI Vault secrets through their `_FILE` companions, using the existing ts-auth secret-file
 loader. Suggested vault names are `ts-auth-turnstile-site-key` and
 `ts-auth-turnstile-secret-key`. The site key is public; the secret must never enter
-HTML or logs. The API refuses activation without both keys and the console explains why.
+HTML or logs. Saving settings without both keys writes `bot_challenge=false`, even when activation was requested; the console explains why.
+Successful verification must match the hosted origin hostname, the form action (`sign_in`, `sign_up` or `reset`) and the project id in `cdata`.
 
 The local journey uses Cloudflare's published always-pass keys:
 site key `1x00000000000000000000AA` and secret key
@@ -48,20 +49,25 @@ requests are excluded from exported HTTP traces.
 Account lockout defaults on. Ten consecutive failed password attempts lock password
 sign-in for 30 minutes. A successful attempt resets the counter. Even a correct password
 is refused during the lock, using the same response as an unknown account. IP limits
-continue to apply; the platform's email password budget remains separate.
+continue to apply. When lockout is off, the per-email password budget still applies.
 
 The existing `lockout` email includes an unlock link. Its ULID token is stored only as a
 SHA-256 digest and expires with the lock. `GET /v1/{project}/attack-protection/unlock`
-redeems the link; its generic response reveals neither account existence nor token validity.
+shows a confirmation page; a same-origin form POST to that route redeems the link.
+Its generic response reveals neither account existence nor token validity.
 The database version check clears the lock and digest atomically, so a reused link cannot
 unlock a later lock. Password attempts use the same concurrency protection and fail closed
-when their conditional write loses a race.
+after three failed optimistic-concurrency attempts.
 
 ## New-device notices
 
-New-device email defaults on and uses the existing `new_device` template. Successful
-hosted sign-ins record the hash of a random HttpOnly Secure device cookie, remote IP and
-user agent, per project and user. A combination absent for 90 days generates a notice
+New-device email defaults off for new and existing projects until the owner enables it.
+It uses the existing `new_device` template. Successful hosted sign-ins record the hash
+of a random HttpOnly Secure device cookie per project and user. A device absent for 90 days generates a notice
 with the browser, IP and sign-in time. Subsequent sign-ins refresh its last-seen time.
 The cookie lasts 90 days and is isolated by project. Passwords, bearer credentials and
 raw device cookies are not stored in device history.
+
+Sign-up records the first device without a notice. The background pruner removes device
+history and password-attempt records older than 90 days. Existing projects explicitly
+retain breach checks and lockout on, with bot challenge and new-device notices off.

@@ -1096,6 +1096,9 @@ namespace TerraScale.Authentication.Storage.Migrations
 
                     b.HasIndex("InstanceId", "Id");
 
+                    b.HasIndex(new[] { "ExpiresAt" }, "IX_sessions_revoked_expires_at")
+                        .HasFilter("revoked");
+
                     b.ToTable("sessions", null, t =>
                         {
                             t.HasCheckConstraint("ck_sessions_token_hash", "length(token_hash) = 64");
@@ -1303,13 +1306,17 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
 
-                    b.Property<string>("UserId")
+                    b.Property<string>("Subject")
                         .HasColumnType("TEXT")
-                        .HasColumnName("user_id");
+                        .HasColumnName("subject");
 
                     b.Property<int>("Failures")
                         .HasColumnType("INTEGER")
                         .HasColumnName("failures");
+
+                    b.Property<DateTime>("LastAttempt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_attempt");
 
                     b.Property<DateTime?>("LockedUntil")
                         .HasColumnType("TEXT")
@@ -1319,6 +1326,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("unlock_hash");
 
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
                         .IsRequired()
@@ -1326,7 +1337,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("version");
 
-                    b.HasKey("InstanceId", "UserId");
+                    b.HasKey("InstanceId", "Subject");
+
+                    b.HasIndex("LastAttempt");
 
                     b.HasIndex("UserId");
 
@@ -2573,8 +2586,7 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("TerraScale.Authentication.Features.AttackProtection.KnownDeviceRecord", b =>

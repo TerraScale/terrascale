@@ -16,22 +16,24 @@ namespace TerraScale.Authentication.Storage.Migrations
                 table: "project_auth_settings",
                 type: "TEXT",
                 nullable: false,
-                defaultValue: "{}");
+                defaultValue: "{\"bot_challenge\":false,\"breached_passwords\":true,\"account_lockout\":true,\"new_device_email\":false}");
 
             migrationBuilder.CreateTable(
                 name: "account_locks",
                 columns: table => new
                 {
                     instance_id = table.Column<string>(type: "TEXT", nullable: false),
-                    user_id = table.Column<string>(type: "TEXT", nullable: false),
+                    subject = table.Column<string>(type: "TEXT", nullable: false),
+                    user_id = table.Column<string>(type: "TEXT", nullable: true),
                     failures = table.Column<int>(type: "INTEGER", nullable: false),
                     locked_until = table.Column<DateTime>(type: "TEXT", nullable: true),
                     unlock_hash = table.Column<string>(type: "TEXT", nullable: true),
+                    last_attempt = table.Column<DateTime>(type: "TEXT", nullable: false),
                     version = table.Column<string>(type: "TEXT", maxLength: 26, nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_account_locks", x => new { x.instance_id, x.user_id });
+                    table.PrimaryKey("PK_account_locks", x => new { x.instance_id, x.subject });
                     table.CheckConstraint("ck_account_locks_failures", "failures BETWEEN 0 AND 10");
                     table.ForeignKey(
                         name: "FK_account_locks_users_user_id",
@@ -61,6 +63,11 @@ namespace TerraScale.Authentication.Storage.Migrations
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_account_locks_last_attempt",
+                table: "account_locks",
+                column: "last_attempt");
 
             migrationBuilder.CreateIndex(
                 name: "IX_account_locks_user_id",

@@ -123,6 +123,32 @@ public static partial class OpenApiSetup
                     }
                 }
 
+                if (operation.OperationId == "confirm_unlock_project_account")
+                {
+                    operation.RequestBody = new OpenApiRequestBody
+                    {
+                        Required = true,
+                        Content = new Dictionary<string, IOpenApiMediaType>
+                        {
+                            ["application/x-www-form-urlencoded"] = new OpenApiMediaType()
+                            {
+                                Schema = new OpenApiSchema
+                                {
+                                    Type = JsonSchemaType.Object,
+                                    Required = new HashSet<string>(UnlockParameters, StringComparer.Ordinal),
+                                    Properties = UnlockParameters.ToDictionary(name => name, IOpenApiSchema (name) => new OpenApiSchema
+                                    {
+                                        Type = JsonSchemaType.String,
+                                        MinLength = 26,
+                                        MaxLength = 26,
+                                        Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                                    }, StringComparer.Ordinal),
+                                },
+                            },
+                        },
+                    };
+                }
+
                 if (operation.OperationId is "delete_account" or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client")
                 {
                     (operation.Parameters ??= []).Add(new OpenApiParameter

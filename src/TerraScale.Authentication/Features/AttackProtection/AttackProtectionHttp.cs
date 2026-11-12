@@ -51,7 +51,7 @@ public sealed partial class AttackProtectionHttp(IHttpClientFactory clients, ILo
         }
     }
 
-    public async Task<bool> ChallengeAsync(TurnstileKeys keys, string? token, string? ip, CancellationToken cancellationToken)
+    public async Task<bool> ChallengeAsync(TurnstileKeys keys, string? token, string? ip, string hostname, string action, string project, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(keys);
         if (!keys.Configured || token is not { Length: > 0 and <= 2048 } || string.IsNullOrWhiteSpace(ip))
@@ -69,8 +69,10 @@ public sealed partial class AttackProtectionHttp(IHttpClientFactory clients, ILo
         {
             using var client = clients.CreateClient(ClientName);
             using var response = await client.PostAsync("https://challenges.cloudflare.com/turnstile/v0/siteverify", body, cancellationToken);
-            return response.IsSuccessStatusCode && await JsonSerializer.DeserializeAsync(
-                await response.Content.ReadAsStreamAsync(cancellationToken), AttackProtectionJson.Default.TurnstileResponse, cancellationToken) is { Success: true };
+            var result = response.IsSuccessStatusCode ? await JsonSerializer.DeserializeAsync(
+                await response.Content.ReadAsStreamAsync(cancellationToken), AttackProtectionJson.Default.TurnstileResponse, cancellationToken) : null;
+            return result is { Success: true } && string.Equals(result.Hostname, hostname, StringComparison.OrdinalIgnoreCase)
+                && result.Action == action && result.Cdata == project;
         }
         catch (HttpRequestException)
         {

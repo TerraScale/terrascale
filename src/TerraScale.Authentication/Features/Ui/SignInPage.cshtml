@@ -91,7 +91,7 @@ break;
 case SignInStep.Email:
 <form method="post" action="@Model.Link(Model.Theme.Passcode ? "sign-in" : "sign-in/password", form: true)">
 @if (Model.Theme.BotChallenge) {
-<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey"></div>
+<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey" data-action="sign_in" data-cdata="@Model.Slug"></div>
 }
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
@@ -133,7 +133,7 @@ break;
 case SignInStep.Password:
 <form method="post" action="@Model.Link("sign-in/password", form: true)">
 @if (Model.Theme.BotChallenge) {
-<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey"></div>
+<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey" data-action="sign_in" data-cdata="@Model.Slug"></div>
 }
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
@@ -148,7 +148,7 @@ case SignInStep.Password:
 {
 <form method="post" action="@Model.Link("sign-in", form: true)">
 @if (Model.Theme.BotChallenge) {
-<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey"></div>
+<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey" data-action="sign_in" data-cdata="@Model.Slug"></div>
 }
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
@@ -236,7 +236,7 @@ break;
 case SignInStep.SignUp:
 <form method="post" action="@Model.Link("sign-up", form: true)">
 @if (Model.Theme.BotChallenge) {
-<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey"></div>
+<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey" data-action="sign_up" data-cdata="@Model.Slug"></div>
 }
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
@@ -273,7 +273,7 @@ case SignInStep.SignUpCode:
 </form>
 <form method="post" action="@Model.Link("sign-up/resend", form: true)">
 @if (Model.Theme.BotChallenge) {
-<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey"></div>
+<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey" data-action="sign_up" data-cdata="@Model.Slug"></div>
 }
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
@@ -292,7 +292,7 @@ break;
 case SignInStep.Reset:
 <form method="post" action="@Model.Link("reset", form: true)">
 @if (Model.Theme.BotChallenge) {
-<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey"></div>
+<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey" data-action="reset" data-cdata="@Model.Slug"></div>
 }
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
@@ -306,7 +306,7 @@ break;
 case SignInStep.ResetCode:
 <form method="post" action="@Model.Link("reset/complete", form: true)">
 @if (Model.Theme.BotChallenge) {
-<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey"></div>
+<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey" data-action="reset" data-cdata="@Model.Slug"></div>
 }
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
@@ -323,7 +323,7 @@ case SignInStep.ResetCode:
 </form>
 <form method="post" action="@Model.Link("reset/resend", form: true)">
 @if (Model.Theme.BotChallenge) {
-<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey"></div>
+<div class="cf-turnstile" data-sitekey="@Turnstile.SiteKey" data-action="reset" data-cdata="@Model.Slug"></div>
 }
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">

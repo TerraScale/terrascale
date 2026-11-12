@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.Authentication.Features.AttackProtection;
 
-public sealed record AttackProtectionSettings(bool BotChallenge = false, bool BreachedPasswords = true, bool AccountLockout = true, bool NewDeviceEmail = true);
+public sealed record AttackProtectionSettings(bool BotChallenge = false, bool BreachedPasswords = true, bool AccountLockout = true, bool NewDeviceEmail = false);
 
 public sealed record AttackProtectionStatus(bool BotChallenge, bool BreachedPasswords, bool AccountLockout, bool NewDeviceEmail, bool ChallengeConfigured);
 
@@ -11,4 +11,4 @@ public sealed record AttackProtectionStatus(bool BotChallenge, bool BreachedPass
 [JsonSerializable(typeof(TurnstileResponse))]
 internal sealed partial class AttackProtectionJson : JsonSerializerContext;
 
-internal sealed record TurnstileResponse(bool Success);
+internal sealed record TurnstileResponse(bool Success, string? Hostname, string? Action, string? Cdata);

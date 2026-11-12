@@ -2,11 +2,13 @@ openapi: 3.1.0
 info:
   title: Project account unlock
   version: v1
+servers:
+  - url: https://auth.terrascale.tech
 paths:
   /v1/{project}/attack-protection/unlock:
     get:
       operationId: unlock_project_account
-      summary: Redeem a single-use account unlock link
+      summary: Confirm a single-use account unlock link
       security: []
       parameters:
         - name: project
@@ -25,12 +27,45 @@ paths:
         '429':
           description: Shared IP request budget exhausted
         '200':
-          description: Generic acknowledgement for valid and invalid links
+          description: Confirmation form; GET never consumes a token
           headers:
             Cache-Control:
               schema: { type: string, const: no-store }
             Referrer-Policy:
               schema: { type: string, const: no-referrer }
           content:
+            text/html:
+              schema: { type: string }
+    post:
+      operationId: confirm_unlock_project_account
+      summary: Redeem a single-use account unlock link
+      security: []
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: Origin
+          in: header
+          required: true
+          schema: { type: string, format: uri }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [user, token]
+              properties:
+                user: { type: string }
+                token: { type: string }
+      responses:
+        '200':
+          description: Generic acknowledgement for valid and invalid links
+          content:
             text/plain:
               schema: { type: string }
+        '403':
+          description: Missing or invalid origin or form
+        '429':
+          description: Shared IP request budget exhausted

@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Features.ProjectTenants;
 using System.Globalization;
 using TerraScale.Authentication.Features.AttackProtection;
 using System.Net;
@@ -169,7 +170,9 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// </summary>
     public async Task<(UserRecord? User, TimeSpan? Wait)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
-        if (!Tenancy.IsProject(this.Tenant) && await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken, locale) is { } wait)
+        var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
+        if ((!Tenancy.IsProject(this.Tenant) || !(await context.RequestServices.GetRequiredService<ProjectAuthSettings>()
+            .GetAsync(this.Tenant, cancellationToken)).AttackProtection.AccountLockout) && await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken, locale) is { } wait)
         {
             return (null, wait);
         }
@@ -182,8 +185,8 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         var user = await users.FindByEmailAsync(this.Tenant, email, cancellationToken);
         var valid = PasswordPolicy.Verifiable(password) && await passwords.VerifyAsync(password, user?.PasswordHash, cancellationToken);
         var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
-        return user is not null && await context.RequestServices.GetRequiredService<AccountProtection>()
-            .PasswordAttemptAsync(user, valid, AuthEmails.Locale(context.Request), cancellationToken) ? user : null;
+        return await context.RequestServices.GetRequiredService<AccountProtection>()
+            .PasswordAttemptAsync(this.Tenant, email, user, valid, AuthEmails.Locale(context.Request), cancellationToken) ? user : null;
     }
 
     // The first bytes of an IPv6 address, the rest zeroed.

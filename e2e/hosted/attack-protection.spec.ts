@@ -5,7 +5,7 @@ import { test, expect, Audit, auditedContext } from '../support/audit';
 import { hostedReady, signUp, verify, onboard } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
-import { auth, dash, production, stateDir } from '../support/stack';
+import { auth, dash, mailpit, production, stateDir } from '../support/stack';
 import { saveCookies, saveSecret } from '../support/state';
 
 test('project attack protection refuses breaches, locks passwords, unlocks by email and challenges bots', async ({ browser }, info) => {
@@ -26,6 +26,10 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
     await page.goto(`${dash}/auth/attack-protection`);
     await expect(page.locator('input[name=breached_passwords]')).toBeChecked();
     await expect(page.locator('input[name=bot_challenge]')).not.toBeChecked();
+    await expect(page.locator('input[name=new_device_email]')).not.toBeChecked();
+    await page.locator('input[name=new_device_email]').check();
+    await page.getByRole('button', { name: 'Save attack protection', exact: true }).click();
+    await expect(page.locator('input[name=new_device_email]')).toBeChecked();
     await audit.check('attack protection defaults');
     await page.goto(`${dash}/auth/overview`);
     const signInUrl = await page.locator('#auth-sign-in-url').textContent();
@@ -53,10 +57,9 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
     await enterSecret(page.locator('#sign-up-code-digit'), verificationCode);
     await page.getByRole('button', { name: 'Verify email', exact: true }).click();
     await expect(page.locator('h1')).toHaveText('Signed in');
-    const deviceMail = await nextMail(email, 1);
-    expect(deviceMail.subject).toContain('New sign-in');
-    expect(deviceMail.text).toContain('Device:');
-    expect(deviceMail.text).toContain('Location:');
+    const signUpMail = await (await page.request.get(
+      `${mailpit}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`)).json();
+    expect(signUpMail.messages).toHaveLength(1);
 
     await page.goto(`${auth}/ui/${tenant}/reset`);
     await hostedReady(page);
@@ -73,23 +76,39 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
     for (let index = 0; index < 10; index++) expect((await attempt('wrong-password-' + index)).status()).toBe(401);
     const locked = await attempt(password);
     expect(locked.status()).toBe(401);
-    const lockMail = await nextMail(email, 2);
+    const unknown = await page.request.post(`${auth}/ui/${tenant}/sign-in/password`, {
+      headers, form: { email: `unknown-${suffix}@example.com`, password },
+    });
+    expect(unknown.status()).toBe(locked.status());
+    const cleanResponse = (body: string) => body.replace(/nonce="[^"]*"/g, 'nonce=""')
+      .replace(/<span>[^<]*@example.com<\/span>/g, '<span>email</span>')
+      .replace(/name="email" value="[^"]*"/g, 'name="email" value=""')
+      .replace(/<p class="hint">Request ID:[^<]*<\/p>/g, '');
+    expect(cleanResponse(await unknown.text())).toBe(cleanResponse(await locked.text()));
+    const lockMail = await nextMail(email, 1);
     expect(lockMail.subject).toContain('Temporary authentication pause');
     const link = /https:\/\/[^\s]+\/attack-protection\/unlock\?[^\s]+/.exec(lockMail.text)?.[0];
     expect(link).toBeTruthy();
     const unlock = new URL(link!);
     saveSecret('account-unlock-token', unlock.searchParams.get('token')!);
     expect(unlock.searchParams.get('token')).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    expect((await page.request.get(unlock.href)).status()).toBe(200);
+    const unlockPage = await page.request.get(unlock.href);
+    expect(unlockPage.status()).toBe(200);
+    expect(await unlockPage.text()).toContain('button type="submit">Unlock account');
+    expect((await attempt(password)).status()).toBe(401);
+    const redeem = (url: URL) => page.request.post(`${url.origin}${url.pathname}`, {
+      headers, form: { user: url.searchParams.get('user')!, token: url.searchParams.get('token')! },
+    });
+    expect((await redeem(unlock)).status()).toBe(200);
     expect((await attempt(password)).status()).toBe(200);
     for (let index = 0; index < 10; index++) expect((await attempt('wrong-again-' + index)).status()).toBe(401);
-    expect((await page.request.get(unlock.href)).status()).toBe(200);
+    expect((await redeem(unlock)).status()).toBe(200);
     expect((await attempt(password)).status()).toBe(401);
-    const secondLock = await nextMail(email, 3);
+    const secondLock = await nextMail(email, 2);
     const secondLink = /https:\/\/[^\s]+\/attack-protection\/unlock\?[^\s]+/.exec(secondLock.text)?.[0];
     expect(secondLink).toBeTruthy();
     saveSecret('second-unlock-token', new URL(secondLink!).searchParams.get('token')!);
-    await page.request.get(secondLink!);
+    await redeem(new URL(secondLink!));
 
     await page.goto(`${dash}/auth/attack-protection`);
     await page.locator('input[name=bot_challenge]').check();
@@ -98,11 +117,49 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
     await audit.check('bot challenge saved');
     expect((await attempt(password)).status()).toBe(403);
     expect((await attempt(password, 'invalid')).status()).toBe(403);
-    expect((await attempt(password, 'XXXX.DUMMY.TOKEN.XXXX')).status()).toBe(200);
+    expect((await attempt(password, 'unreachable')).status()).toBe(403);
+    for (const route of ['Sign-In/Password', 'SIGN-UP', 'Reset']) {
+      const variant = await page.request.post(`${auth}/ui/${tenant}/${route}`, { headers, form: { email, password } });
+      expect(variant.status()).toBe(403);
+    }
+    const challenge = (host = new URL(auth).hostname, action = 'sign_in', project = tenant) =>
+      ['XXXX.DUMMY.TOKEN.XXXX', host, action, project].join('|');
+    expect((await attempt(password, challenge('other.example'))).status()).toBe(403);
+    expect((await attempt(password, challenge(undefined, 'reset'))).status()).toBe(403);
+    expect((await attempt(password, challenge(undefined, undefined, '00000000000000000000000000'))).status()).toBe(403);
+    expect((await attempt(password, challenge())).status()).toBe(200);
     await page.goto(`${auth}/ui/${tenant}/sign-in`);
     await hostedReady(page);
-    await expect(page.locator('input[name=cf-turnstile-response]')).toHaveValue('XXXX.DUMMY.TOKEN.XXXX');
+    await expect(page.locator('input[name=cf-turnstile-response]')).toHaveValue(challenge());
+    await expect(page.locator('.cf-turnstile')).toHaveAttribute('data-action', 'sign_in');
+    await expect(page.locator('.cf-turnstile')).toHaveAttribute('data-cdata', tenant!);
     await audit.check('Turnstile widget rendered with the published test site key');
+    const freshDevice = await auditedContext(browser, {});
+    try {
+      expect((await freshDevice.request.post(`${auth}/ui/${tenant}/sign-in/password`, {
+        headers, form: { email, password, 'cf-turnstile-response': challenge() },
+      })).status()).toBe(200);
+      const deviceMail = await nextMail(email, 3);
+      expect(deviceMail.subject).toContain('New sign-in');
+      expect(deviceMail.text).toContain('Device:');
+      expect(deviceMail.text).toContain('Location:');
+      expect((await freshDevice.request.post(`${auth}/ui/${tenant}/sign-in/password`, {
+        headers: { ...headers, 'user-agent': 'A changed browser agent' },
+        form: { email, password, 'cf-turnstile-response': challenge() },
+      })).status()).toBe(200);
+      const deviceMessages = await (await page.request.get(
+        `${mailpit}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`)).json();
+      expect(deviceMessages.messages).toHaveLength(4);
+    } finally {
+      await saveCookies(freshDevice);
+      await freshDevice.close();
+    }
+    await page.goto(`${dash}/auth/attack-protection`);
+    await page.locator('input[name=account_lockout]').uncheck();
+    await page.getByRole('button', { name: 'Save attack protection', exact: true }).click();
+    await expect(page.locator('input[name=account_lockout]')).not.toBeChecked();
+    for (let index = 0; index < 10; index++) expect((await attempt('wrong-unlocked-' + index, challenge())).status()).toBe(401);
+    expect((await attempt(password, challenge())).status()).toBe(429);
     await audit.finish();
     await context.storageState({ path: join(stateDir, 'attack-protection.session.json') });
     writeFileSync(join(stateDir, 'attack-protection.json'), JSON.stringify({ tenant, email, ownerEmail }), { mode: 0o600 });

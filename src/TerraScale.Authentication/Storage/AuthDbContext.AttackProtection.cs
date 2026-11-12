@@ -15,8 +15,9 @@ public sealed partial class AuthDbContext
         model.Entity<AccountLockRecord>(row =>
         {
             row.ToTable("account_locks", table => table.HasCheckConstraint("ck_account_locks_failures", "failures BETWEEN 0 AND 10"));
-            row.HasKey(value => new { value.InstanceId, value.UserId });
+            row.HasKey(value => new { value.InstanceId, value.Subject });
             row.HasOne<UserRecord>().WithMany().HasForeignKey(value => value.UserId).OnDelete(DeleteBehavior.Cascade);
+            row.HasIndex(value => value.LastAttempt);
             Versioned(row);
         });
         model.Entity<KnownDeviceRecord>(row =>

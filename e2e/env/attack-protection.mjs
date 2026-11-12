@@ -7,7 +7,7 @@ const script = `for (const widget of document.querySelectorAll('.cf-turnstile'))
   const input = document.createElement('input');
   input.type = 'hidden';
   input.name = 'cf-turnstile-response';
-  input.value = 'XXXX.DUMMY.TOKEN.XXXX';
+  input.value = ['XXXX.DUMMY.TOKEN.XXXX', location.hostname, widget.dataset.action, widget.dataset.cdata].join('|');
   widget.closest('form').append(input);
 }`;
 createServer(async (request, response) => {
@@ -29,8 +29,10 @@ createServer(async (request, response) => {
     let body = '';
     for await (const chunk of request) body += chunk;
     const form = new URLSearchParams(body);
-    return send(200, JSON.stringify({ success: form.get('secret') === '1x0000000000000000000000000000000AA'
-      && form.get('response') === 'XXXX.DUMMY.TOKEN.XXXX' && !!form.get('remoteip') }));
+    if (form.get('response') === 'unreachable') return request.socket.destroy();
+    const [token, hostname, action, cdata] = (form.get('response') ?? '').split('|');
+    return send(200, JSON.stringify({ hostname, action, cdata, success: form.get('secret') === '1x0000000000000000000000000000000AA'
+      && token === 'XXXX.DUMMY.TOKEN.XXXX' && !!form.get('remoteip') }));
   }
   return send(400, '{"error":"unexpected_attack_protection_request"}');
 }).listen(8029, '127.0.0.1');
