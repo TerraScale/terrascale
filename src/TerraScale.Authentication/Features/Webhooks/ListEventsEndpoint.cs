@@ -10,12 +10,12 @@ public sealed class ListEventsEndpoint(TenantDirectory tenants, PlatformAuthenti
     public override void Configure()
     {
         Get(Root + "/events");
-        this.Describe("list_events", "List retained project events", "Events in ascending ULID order, retained 30 days. after is the previous page next cursor; limit is 1 to 100, default 50. Needs the admin project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookEventPage), paged: true);
+        this.Describe("list_events", "List retained project events", "Events in ascending ULID order, retained 30 days. after is the previous page next cursor; limit is 1 to 100, default 50. Only events at least five seconds old are visible. Needs the member project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookEventPage), paged: true);
     }
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
+        var projectId = await this.AccessAsync(caller, Roles.Member, cancellationToken);
         var (limit, after) = this.Paging(50);
         return Results.Json(await history.EventsAsync(projectId, after, limit, cancellationToken), WebhooksJson.Default.WebhookEventPage);
     }

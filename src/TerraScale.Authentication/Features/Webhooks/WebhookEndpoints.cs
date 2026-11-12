@@ -49,11 +49,10 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
         var secret = NewSecret();
         var endpoint = new WebhookEndpointRecord(projectId, id, projectId, url, eventTypes,
             SecretBox.Seal(options.MasterKey, Encoding.UTF8.GetBytes(secret), Context(projectId, id)), CreatedAt: clock.GetUtcNow());
-        HashSet<string> subscribed = [.. current.SubscribedWebhookEvents ?? (IEnumerable<string>)[], .. eventTypes];
         if (!await data.SaveAsync(
             [
                 Change.Insert(endpoint),
-                ProjectAuthSettings.Write(current with { InstanceId = projectId, SubscribedWebhookEvents = [.. subscribed.Order()] }, settingsVersion),
+                ProjectAuthSettings.Write(current with { InstanceId = projectId }, settingsVersion),
             ], cancellationToken).ConfigureAwait(false))
         {
             throw new ApiException(409, "version_conflict", "The project's webhook endpoints changed concurrently; read them again and retry.");
@@ -73,20 +72,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
             return false;
         }
 
-        var (current, settingsVersion) = await settings.ReadVersionedAsync(projectId, cancellationToken).ConfigureAwait(false);
-        var endpoints = await this.ListAsync(projectId, cancellationToken).ConfigureAwait(false);
-        HashSet<string> subscribed = [.. endpoints.Where(other => other.Id != id).SelectMany(other => other.EventTypes)];
-        List<Change> changes = [Change.Delete(row)];
-        if (!subscribed.SetEquals(current.SubscribedWebhookEvents ?? (IEnumerable<string>)[]))
-        {
-            changes.Add(ProjectAuthSettings.Write(current with
-            {
-                InstanceId = projectId,
-                SubscribedWebhookEvents = subscribed.Count == 0 ? null : [.. subscribed.Order()],
-            }, settingsVersion));
-        }
-
-        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
+        return await data.SaveAsync(Change.Delete(row), cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<(WebhookEndpointRecord Endpoint, string Secret)> RotateAsync(string projectId, string id,

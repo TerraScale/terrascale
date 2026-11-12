@@ -35,8 +35,9 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
         }
 
         var cutoff = clock.GetUtcNow().AddDays(-30);
+        var settledAt = clock.GetUtcNow().AddSeconds(-5);
         var rows = await data.ReadAsync((db, token) => db.WebhookOutbox
-            .Where(row => row.ProjectId == projectId && row.OccurredAt > cutoff && (after == null || after == "" || string.Compare(row.EventId, after) > 0))
+            .Where(row => row.ProjectId == projectId && row.OccurredAt > cutoff && row.OccurredAt <= settledAt && (after == null || after == "" || string.Compare(row.EventId, after) > 0))
             .OrderBy(row => row.EventId).Take(limit + 1).ToListAsync(token), cancellationToken).ConfigureAwait(false);
         return new([.. rows.Take(limit).Select(Body)], rows.Count > limit ? rows[limit - 1].EventId : null);
     }
@@ -44,15 +45,18 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
     public async Task<WebhookDeliveryPage> DeliveriesAsync(string projectId, string endpointId, CancellationToken cancellationToken)
     {
         await this.EndpointAsync(projectId, endpointId, cancellationToken).ConfigureAwait(false);
-        var rows = await data.ReadAsync((db, token) => db.WebhookDeliveries.Where(row => row.ProjectId == projectId && row.EndpointId == endpointId)
-            .OrderByDescending(row => row.Id).Take(20).ToListAsync(token), cancellationToken).ConfigureAwait(false);
-        List<WebhookDeliveryBody> items = [];
-        foreach (var row in rows)
+        var rows = await data.ReadAsync((db, token) =>
+            (from delivery in db.WebhookDeliveries.Where(row => row.ProjectId == projectId && row.EndpointId == endpointId)
+                .OrderByDescending(row => row.Id).Take(20)
+             join attempt in db.WebhookAttempts.Where(row => row.ProjectId == projectId) on delivery.Id equals attempt.DeliveryId into attempts
+             from attempt in attempts.DefaultIfEmpty()
+             select new { Delivery = delivery, Attempt = attempt }).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var items = rows.GroupBy(row => row.Delivery.Id).OrderByDescending(group => group.Key).Select(group =>
         {
-            var attempts = await data.ReadAsync((db, token) => db.WebhookAttempts.Where(attempt => attempt.DeliveryId == row.Id && attempt.ProjectId == projectId)
-                .OrderByDescending(attempt => attempt.Id).Take(10).ToListAsync(token), cancellationToken).ConfigureAwait(false);
-            items.Add(new(row.Id, row.EventId, row.Status, row.Attempts, row.NextAttemptAt, attempts));
-        }
+            var row = group.First().Delivery;
+            return new WebhookDeliveryBody(row.Id, row.EventId, row.Status, row.Attempts, row.NextAttemptAt,
+                [.. group.Select(item => item.Attempt).OfType<WebhookAttemptRecord>().OrderByDescending(attempt => attempt.Id).Take(10)]);
+        }).ToList();
 
         return new(items, null);
     }
@@ -88,7 +92,7 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
             throw new ApiException(409, "webhook_endpoint_disabled", "Register a working endpoint before sending more events.");
         }
 
-        var row = outbox.NewEvent(projectId, "webhook.test", endpointId, endpointId: endpointId) with { Status = "expanded" };
+        var row = outbox.NewEvent(projectId, "webhook.test", "", endpointId: endpointId) with { Status = "expanded" };
         if (!await data.SaveAsync([Change.Assert(endpoint), Change.Insert(row), Change.Insert(NewDelivery(row, endpointId))], cancellationToken).ConfigureAwait(false))
         {
             throw new ApiException(409, "version_conflict", "The endpoint changed concurrently.");

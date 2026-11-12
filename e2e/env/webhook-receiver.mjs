@@ -4,6 +4,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 let secret;
 let failures = 0;
 const deliveries = [];
+const endpoints = new Map();
+const held = new Map();
 const waiters = new Set();
 
 function respond(response, status, body) {
@@ -18,9 +20,17 @@ createServer(async (request, response) => {
   const body = Buffer.concat(chunks);
   if (url.pathname === '/configure' && request.method === 'POST') {
     const config = JSON.parse(body);
-    secret = config.secret;
+    if (config.path) {
+      endpoints.set(config.path, { secret: config.secret, hold: config.hold ?? false });
+    } else secret = config.secret;
     failures = config.failures;
-    deliveries.length = 0;
+    if (!config.path) deliveries.length = 0;
+    respond(response, 200, {});
+  } else if (url.pathname === '/release' && request.method === 'POST') {
+    const path = JSON.parse(body).path;
+    endpoints.get(path).hold = false;
+    for (const pending of held.get(path) ?? []) pending();
+    held.delete(path);
     respond(response, 200, {});
   } else if (url.pathname === '/deliveries') {
     respond(response, 200, deliveries);
@@ -39,17 +49,26 @@ createServer(async (request, response) => {
   } else if (url.pathname === '/forbidden') {
     deliveries.push({ redirectFollowed: true });
     respond(response, 500, {});
-  } else if (url.pathname === '/receive' && secret) {
+  } else if ((url.pathname === '/receive' && secret) || endpoints.has(url.pathname)) {
+    const signingSecret = endpoints.get(url.pathname)?.secret ?? secret;
     const id = request.headers['webhook-id'];
     const timestamp = request.headers['webhook-timestamp'];
-    const expected = createHmac('sha256', Buffer.from(secret.slice(6), 'base64')).update(`${id}.${timestamp}.`).update(body).digest();
+    const expected = createHmac('sha256', Buffer.from(signingSecret.slice(6), 'base64')).update(`${id}.${timestamp}.`).update(body).digest();
     const valid = Math.abs(Date.now() / 1000 - Number(timestamp)) <= 300 && String(request.headers['webhook-signature']).split(' ').some(signature => {
       if (!signature.startsWith('v1,')) return false;
       const value = Buffer.from(signature.slice(3), 'base64');
       return value.length === expected.length && timingSafeEqual(value, expected);
     });
     const code = valid ? failures-- > 0 ? 500 : 200 : 401;
-    deliveries.push({ id, valid, code, receivedAt: performance.now(), event: JSON.parse(body) });
+    deliveries.push({ path: url.pathname, id, valid, code, receivedAt: performance.now(), event: JSON.parse(body) });
+    if (endpoints.get(url.pathname)?.hold) {
+      await new Promise(resolve => {
+        const pending = held.get(url.pathname) ?? [];
+        pending.push(resolve);
+        held.set(url.pathname, pending);
+        for (const notify of waiters) notify();
+      });
+    }
     respond(response, code, { received: valid, body: 'x'.repeat(2048) });
     for (const notify of waiters) notify();
   } else respond(response, 404, {});

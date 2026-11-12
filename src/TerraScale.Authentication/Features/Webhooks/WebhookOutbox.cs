@@ -11,11 +11,7 @@ public sealed class WebhookOutbox(TimeProvider clock)
 {
     public const string PendingStatus = "pending";
 
-    public Task<Change?> CreateAsync(string projectId, string eventType, string userId, string? email, string? provider, CancellationToken cancellationToken) =>
-        this.CreateAsync(projectId, eventType, userId, email, provider, null, cancellationToken);
-
-    public Task<Change?> CreateAsync(string projectId, string eventType, string userId, string? email, string? provider,
-        IReadOnlyList<string>? subscribed, CancellationToken cancellationToken)
+    public Task<Change?> CreateAsync(string projectId, string eventType, string userId, string? email, string? provider, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(Tenancy.IsProject(projectId) ? Change.Insert(this.NewEvent(projectId, eventType, userId, email, provider)) : null);

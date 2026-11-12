@@ -9,6 +9,7 @@ deletes them and their delivery history.
 ## Routes
 
 All routes below require a signed-in platform user with the project admin role.
+The events route instead requires the member role.
 Paths are relative to `/v1/{project}`.
 
 | Method and path | Result |
@@ -25,6 +26,10 @@ Paths are relative to `/v1/{project}`.
 The dashboard exposes endpoint deliveries, replay and test actions under
 **Authentication → Webhooks**, and the retained event stream under **Logs**.
 `next` is the last returned event id when more records exist; pass it as `after`.
+Events become visible after a five-second settle window to allow commits from
+other nodes to arrive before advancing an ULID cursor. This assumes commits and
+clock skew stay within that window. Endpoint events have their own `webhook.*`
+type, an empty `user_id`, and an `endpoint_id`.
 Replay keeps the original event body and `webhook-id`, and refreshes the signature
 timestamp. A replay while the endpoint is delivering answers `409`.
 
@@ -84,14 +89,23 @@ including after a crash between receiving a response and committing completion.
 Any non-2xx response, connection failure or 20-second deadline causes a retry.
 Backoff starts at five seconds, doubles per failed attempt, and caps at six
 hours before jitter. Each delay is multiplied by a random factor from 0.5 to 1.5.
-The worker checks due work every two seconds; retries stop within 24 hours of the
-initial delivery cycle. The nominal sequence is 5s, 10s, 20s, 40s, 80s, 160s,
+Four independent delivery lanes claim the oldest due delivery per unleased
+endpoint, ordered by the endpoint’s last lease release, so a project’s backlog
+cannot fill a batch. Each lane sends up to ten events per endpoint in event-id
+order before selecting endpoints again. Busy lanes continue immediately; idle
+lanes check due work every two seconds. Expansion and retention run separately; retries stop within 24 hours of the
+first actual attempt of the current delivery cycle, including a replay. Queued
+deliveries with no attempts never expire because of backlog. The nominal sequence is 5s, 10s, 20s, 40s, 80s, 160s,
 320s, 640s, 1280s, 2560s, 5120s, 10240s, 20480s, then 21600s.
 
 A successful delivery resets the endpoint failure streak. After five continuous
 days since its first failure without a success, the worker disables the endpoint
-and emits `webhook.endpoint_disabled`, even if its last delivery already exhausted
-retries. Register a working replacement; disabled endpoints reject test/replay.
+and emits `webhook.endpoint_disabled` when another failed attempt completes.
+A gap of more than ten hours between attempts starts a fresh streak, exceeding
+the maximum nine-hour retry interval with jitter. Inactivity alone never disables
+an endpoint. The disable transaction also reserves one notification email per
+project owner or admin in the existing email ledger; accepted or uncertain sends
+are never sent again. Register a working replacement; disabled endpoints reject test/replay.
 
 Delivery never follows redirects or uses proxies. DNS resolution happens inside
 the socket `ConnectCallback`, which requires every resolved address to be public

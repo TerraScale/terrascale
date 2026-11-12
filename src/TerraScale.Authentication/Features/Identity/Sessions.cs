@@ -35,7 +35,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
         var lifetime = project is null ? Lifetime
             : TimeSpan.FromSeconds(project.Configuration?.SessionLifetimeSeconds ?? ConfigurationBody.Default.SessionLifetimeSeconds);
         var createdAt = clock.GetUtcNow();
-        var signedIn = await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, project?.SubscribedWebhookEvents, cancellationToken).ConfigureAwait(false);
+        var signedIn = await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, cancellationToken).ConfigureAwait(false);
         return await this.IssueAsync(user, createdAt, createdAt + lifetime, cancellationToken, signedIn).ConfigureAwait(false)
             ?? throw new ApiException(401, "invalid_credentials", "Authentication could not be completed.");
     }
@@ -222,14 +222,15 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
         throw ApiException.Unavailable();
     }
 
-    private Task<bool> TryRevokeAsync(SessionRecord session, string version, CredentialBinding binding, CancellationToken cancellationToken)
+    private async Task<bool> TryRevokeAsync(SessionRecord session, string version, CredentialBinding binding, CancellationToken cancellationToken)
     {
         List<Change> changes = [Credentials.Claim(session.InstanceId, binding), Change.Update(session with { Revoked = true }, version)];
         if (Tenancy.IsProject(session.InstanceId))
         {
-            changes.Add(Change.Insert(outbox.NewEvent(session.InstanceId, "session.revoked", session.UserId, sessionId: session.Id)));
+            var user = await users.GetAsync(session.InstanceId, session.UserId, cancellationToken).ConfigureAwait(false);
+            changes.Add(Change.Insert(outbox.NewEvent(session.InstanceId, "session.revoked", session.UserId, user?.Email, sessionId: session.Id)));
         }
 
-        return data.SaveAsync(changes, cancellationToken);
+        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
     }
 }
