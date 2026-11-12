@@ -327,8 +327,10 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
 - No retries, no fixed sleeps, no `waitForTimeout`: every wait ends on a condition. The SDK stage's pacing waits are
   computed from the request budget; the SDKs' own resends of a refused request are caught by the lane check.
 - Step-ups: ts-auth issues at most 10 per user in 15 minutes (`StepUpProofs.cs:60-62,94`); a run spends 1 for the
-  desktop owner (account deletion), 8 for the phone-and-flows owner (the access token and 2 API-key rotations in `interactions`, 4 in
-  `hosted`, account deletion), 1 for the paid owner (account deletion) and none for any other user; API-key creation and revocation need none.
+  desktop owner (account deletion), 9 for the phone-and-flows owner (2 access tokens and 2 API-key rotations in `interactions`, 4 in
+  `hosted`, account deletion), and 1 for the paid owner (account deletion). API-key creation and revocation need none.
+  Webhook delivery flows use separate owners for both failing and healthy projects, including their cleanup, so
+  they spend none of the shared owner's proofs.
 - Secrets: every value the run generates is registered through `saveSecret` in `support/state.ts` or in
   `$E2E_STATE/secrets` (the service keys of `env/up.sh`) and masked in the job log: passwords before their first use,
   API keys and the access token right after the test reads them, the owner's cookies when `setup` saves its session,
