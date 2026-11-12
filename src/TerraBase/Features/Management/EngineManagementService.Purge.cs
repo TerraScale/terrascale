@@ -23,6 +23,7 @@ internal sealed partial class EngineManagementService
     private long _purgePassOldestTicks;
     private readonly Counter<long> _purgeErrors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.purge.errors");
     private readonly ConcurrentDictionary<(string Database, DateTimeOffset DeletedAt), byte> _refusedShreds = new();
+    private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), byte> _skippedPurges = new();
 
     private void RegisterPurgeMetrics()
     {
@@ -57,7 +58,7 @@ internal sealed partial class EngineManagementService
 
     public async ValueTask<ObserveShreddedResult> ObserveShreddedAsync(TenantContext database, DateTimeOffset deletedAt, CancellationToken token)
     {
-        if (PlatformDatabases.IsPlatform(database.OrganizationId))
+        if (PlatformDatabases.IsPlatformDatabase(database.DatabaseId))
         {
             if (_refusedShreds.TryAdd((database.DatabaseId!, deletedAt), 0))
             {
@@ -118,6 +119,16 @@ internal sealed partial class EngineManagementService
                 if (record.FormatVersion != 1 || record.Database.DatabaseId != stored.Id || record.ExpectedHolders.Length is 0 or > 1024)
                 {
                     throw new InvalidOperationException("a database purge record has unsupported identity or format");
+                }
+
+                if (PlatformDatabases.IsPlatformDatabase(record.Database.DatabaseId))
+                {
+                    if (_skippedPurges.TryAdd((stored.Id, record.RequestedAt), 0))
+                    {
+                        logger.ZLogWarning($"Skipped a purge record for platform database {stored.Id:@Database} of project {record.Database.ProjectId:@Project}, requested at {record.RequestedAt:@RequestedAt}: a platform database is never purged");
+                    }
+
+                    continue;
                 }
 
                 var localAbsent = await ReadAsync<bool>(async transaction =>
