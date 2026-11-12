@@ -8,22 +8,75 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--ts-s2);
-  margin-bottom: calc(var(--ts-s6) * -1 + var(--ts-s2));
 }
 
 .ts-idp-actions:empty {
   display: none;
 }
 
-.ts-idp-tabs {
-  flex-wrap: nowrap;
-  gap: 0 var(--ts-s4);
-  overflow-x: auto;
-  scrollbar-width: none;
+.ts-idp-layout {
+  display: grid;
+  grid-template-columns: calc(var(--ts-s16) * 3) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s6);
+  min-width: 0;
 }
 
-.ts-idp-tabs .ts-tab::after {
-  bottom: 0;
+.ts-idp-nav {
+  --ts-nav-inset: var(--ts-s2);
+  --ts-nav-row: var(--ts-control-h-sm);
+  --ts-nav-icon: var(--ts-s4);
+  position: sticky;
+  top: var(--ts-s6);
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s4);
+  max-height: calc(100dvh - var(--ts-s6) * 2);
+  padding: var(--ts-s1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.ts-idp-nav .ts-nav-link {
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-idp-nav .ts-nav-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.ts-idp-content {
+  container: page / inline-size;
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s6);
+  min-width: 0;
+}
+
+.ts-idp-mobile-nav {
+  display: none;
+}
+
+@container page (width < 960px) {
+  .ts-idp-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-idp-nav {
+    display: none;
+  }
+
+  .ts-idp-mobile-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-s2);
+  }
+
+  .ts-idp-mobile-nav .ts-select {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 .ts-idp-nowrap {
