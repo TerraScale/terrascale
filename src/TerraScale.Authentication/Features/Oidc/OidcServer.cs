@@ -204,6 +204,9 @@ public static class OidcIssuer
                     .AddEventHandler<ProcessSignInContext>(handler => handler.UseScopedHandler<ProjectSessionPolicy>()
                         .SetOrder(OpenIddictServerHandlers.PrepareRefreshTokenPrincipal.Descriptor.Order + 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ProcessSignInContext>(handler => handler.UseSingletonHandler<KeepFixedRefreshToken>()
+                        .SetOrder(OpenIddictServerHandlers.EvaluateGeneratedTokens.Descriptor.Order + 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ProcessSignInContext>(handler => handler.UseSingletonHandler<ExpireFixedRefreshToken>()
                         .SetOrder(OpenIddictServerHandlers.PrepareRefreshTokenPrincipal.Descriptor.Order + 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
@@ -440,6 +443,16 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
 
         var tenant = context.Transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) ?? throw new InvalidOperationException("The request has no tenant.");
         var inherited = token.Bindings.Concat(CredentialLineage.Read(context.Principal!)).Distinct().ToArray();
+        if (FixedRefreshTokens.Presented(context))
+        {
+            if (!await credentials.AreCurrentAsync(tenant, inherited, context.CancellationToken).ConfigureAwait(false))
+            {
+                context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+            }
+
+            return;
+        }
+
         var addsBinding = context.EndpointType is not OpenIddictServerEndpointType.EndUserVerification;
         var binding = Credentials.New("oidc", identifier);
         List<Change> operations =

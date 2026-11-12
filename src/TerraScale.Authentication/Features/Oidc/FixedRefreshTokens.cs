@@ -38,6 +38,25 @@ internal static class FixedRefreshTokens
     internal static DateTimeOffset? ExpiresAt(ClaimsPrincipal? principal) =>
         long.TryParse(principal?.GetClaim(Claim), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
             ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
+
+    internal static bool Presented(ProcessSignInContext context) =>
+        context.EndpointType is OpenIddictServerEndpointType.Token && context.Request.IsRefreshTokenGrantType()
+        && ExpiresAt(context.Transaction.GetProperty<ProcessAuthenticationContext>(typeof(ProcessAuthenticationContext).FullName!)?.RefreshTokenPrincipal) is not null;
+}
+
+public sealed class KeepFixedRefreshToken : IOpenIddictServerHandler<ProcessSignInContext>
+{
+    public ValueTask HandleAsync(ProcessSignInContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (FixedRefreshTokens.Presented(context))
+        {
+            context.GenerateRefreshToken = false;
+            context.IncludeRefreshToken = false;
+        }
+
+        return ValueTask.CompletedTask;
+    }
 }
 
 public sealed class ExpireFixedRefreshToken : IOpenIddictServerHandler<ProcessSignInContext>
