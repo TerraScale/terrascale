@@ -136,10 +136,13 @@ The .NET SDK verifier implements timestamp validation and constant-time signatur
 comparison, including multiple v1 entries:
 
 ```csharp
+using System.Text.Json;
 using TerraScale.DotNet;
 
+using var reader = new StreamReader(request.Body);
+var rawBody = await reader.ReadToEndAsync();
 JsonElement evt = TerraScaleWebhooks.VerifyWebhook(
     secret,
-    request.Headers.ToDictionary(header => header.Key, header => header.Value.First()),
+    request.Headers.ToDictionary(header => header.Key, header => header.Value.ToString()),
     rawBody);
 ```
