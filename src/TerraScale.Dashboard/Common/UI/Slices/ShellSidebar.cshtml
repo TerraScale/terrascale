@@ -83,7 +83,7 @@
     private bool IsCollaborator => !IsMember && Model.Context.Organization is { } organization && TerraScale.Dashboard.Common.Accounts.ProjectCollaborator.Allows(organization, Model.Context.Project);
     private sealed record Item(string Label, string Url, string Icon);
     private sealed record Group(string Label, Item[] Items);
-    private static readonly Group[] Navigation = [new("", [new("Overview", "/", "layout-dashboard")]), new("Build", [new("Databases", "/databases", "database"), new("Files", "/storage", "database")]), new("Secure", [new("API keys", "/api-keys", "key-round"), new("Authentication", "/auth", "fingerprint")]), new("Manage", [new("Analytics", "/analytics", "line-chart"), new("Usage", "/usage", "chart-column-big"), new("Organization", "/organization", "building2")])];
+    private static readonly Group[] Navigation = [new("", [new("Overview", "/", "layout-dashboard")]), new("Build", [new("Databases", "/databases", "database"), new("Files", "/storage", "folder-open")]), new("Secure", [new("API keys", "/api-keys", "key-round"), new("Authentication", "/auth", "fingerprint")]), new("Manage", [new("Analytics", "/analytics", "line-chart"), new("Usage", "/usage", "chart-column-big"), new("Organization", "/organization", "building2")])];
     private sealed record SearchPage(string Label, string Url, string Icon, string Context)
     {
         public string SearchLabel => Label + " " + Context;
