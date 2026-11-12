@@ -393,7 +393,8 @@ internal sealed class TerraBaseConnection
             var target = new UriBuilder(new Uri(origin, path)) { Scheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" }.Uri;
             try
             {
-                await socket.ConnectAsync(target, http, deadline.Token).ConfigureAwait(false);
+                using var invoker = new HttpMessageInvoker(new SentFromOrigin(http, target));
+                await socket.ConnectAsync(target, invoker, deadline.Token).ConfigureAwait(false);
             }
             catch (WebSocketException upgrade) when (socket.HttpStatusCode is not (0 or HttpStatusCode.SwitchingProtocols))
             {
@@ -512,6 +513,12 @@ internal sealed class TerraBaseConnection
             opened.Dispose();
             await base.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private sealed class SentFromOrigin(HttpClient http, Uri origin) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            TerraScaleOrigin.Sent(await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), origin);
     }
 
     private static void ValidateSecret(string? secret, string secretName)
