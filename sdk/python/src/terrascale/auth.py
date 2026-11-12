@@ -249,6 +249,12 @@ def revoke_session_call(issuer: str | None, project: str, session_id: str) -> _s
                       _spec._none, success=(204,), base_url=_origin(issuer))
 
 
+
+def sign_out_user_call(issuer: str | None, project: str, user_id: str) -> _spec.Call:
+    return _spec.Call("POST", _tenant_path(project, "users", validate_id(user_id, "user id"), "sign-out"),
+                      _spec._none, success=(204,), base_url=_origin(issuer))
+
+
 def _transport_error(attempts: int, exc: Exception) -> TokenError:
     detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
     return TokenError(0, "token_transport_error", f"token exchange failed after {attempts} attempt{'s' if attempts != 1 else ''}"

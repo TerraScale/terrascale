@@ -82,6 +82,8 @@ public enum SignInStep
 
     /// <summary>A credential change needs a recent sign-in.</summary>
     Reauthenticate,
+
+    MfaEnroll,
 }
 
 /// <summary>Model for <c>SignInPage.cshtml</c>. Razor encodes every value.</summary>
@@ -160,6 +162,10 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The sealed second-factor challenge the second sign-in step posts back.</summary>
     public string? Challenge { get; init; }
 
+    public bool AllowTotp { get; init; } = true;
+
+    public bool AllowPasskey { get; init; } = true;
+
     /// <summary>The pending authenticator's QR code, as a PNG data URI.</summary>
     public string? QrCode { get; init; }
 
@@ -206,6 +212,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.NotFound => this.Copy.TitleNotFound,
         SignInStep.Sso => this.Copy.TitleSso,
         SignInStep.Mfa => this.Copy.TitleMfa,
+        SignInStep.MfaEnroll => this.Copy.TitleSecurity,
         SignInStep.Security => this.Copy.TitleSecurity,
         SignInStep.TotpSetup => this.Copy.TitleTotpSetup,
         SignInStep.RecoveryCodes => this.Copy.TitleRecoveryCodes,

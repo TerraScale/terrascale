@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
@@ -98,7 +99,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         return [.. (await this.ReadAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false)).Select(entry => entry.Value)];
     }
 
-    public async Task<PasskeyCredentialEntry?> VerifyAsync(UserRecord caller, string? sealedChallenge, AuthenticatorAttestationRawResponse response, string? name, CancellationToken cancellationToken = default)
+    public async Task<PasskeyCredentialEntry?> VerifyAsync(UserRecord caller, string? sealedChallenge, AuthenticatorAttestationRawResponse response, string? name, ChallengedSignIn? signIn = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(response);
@@ -110,7 +111,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         if (this.OpenChallenge(caller.InstanceId, sealedChallenge) is not { } challenge
             || await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || user.AuthEpoch != challenge.AuthEpoch || user.AuthStamp != challenge.AuthStamp
-            || await credentials.RequireAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false) is not { } lineage)
+            || await credentials.RequireAsync(caller.InstanceId, [.. caller.AuthenticationBindings.Where(binding => binding != signIn?.Completion)], cancellationToken).ConfigureAwait(false) is not { } lineage)
         {
             return null;
         }
@@ -145,7 +146,18 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             InstanceId = user.InstanceId,
             UserId = user.Id,
         };
-        return await data.SaveAsync([.. lineage, Change.Assert(user), Change.Insert(entry), Credentials.Claim(user.InstanceId, completion)], cancellationToken).ConfigureAwait(false)
+        List<Change> changes = [.. lineage, Change.Assert(user), Change.Insert(entry), Credentials.Claim(user.InstanceId, completion)];
+        if (signIn is not null)
+        {
+            if (signIn.ExpiresAt <= clock.GetUtcNow())
+            {
+                return null;
+            }
+
+            changes.Add(Credentials.Claim(user.InstanceId, signIn.Completion));
+        }
+
+        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false)
             ? entry
             : null;
     }

@@ -19,6 +19,8 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     /// <summary>Identity of the last authentication-state change; equal numeric epochs can race across regions.</summary>
     public string? AuthStamp { get; init; }
 
+    public string? SessionStamp { get; init; }
+
     /// <summary>A disabled user cannot sign in; disabling advances the epoch, which ends its sessions and tokens.</summary>
     public bool Disabled { get; init; }
 
@@ -42,6 +44,9 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     public string? MfaMethod { get; init; }
 
     [JsonIgnore]
+    public string? SessionId { get; init; }
+
+    [JsonIgnore]
     public string? Version { get; init; }
 }
 
@@ -56,6 +61,12 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
 public sealed record SessionRecord(string InstanceId, string UserId, string TokenHash, long AuthEpoch, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, bool Revoked = false)
 {
     public string Id { get; init; } = string.Empty;
+
+    public DateTimeOffset? LastActivityAt { get; init; }
+
+    public DateTimeOffset? VerifiedAt { get; init; }
+
+    public string? SessionStamp { get; init; }
 
     /// <summary>The user's authentication-state identity when this session was opened.</summary>
     public string? AuthStamp { get; init; }

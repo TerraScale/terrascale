@@ -24,7 +24,7 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
     private const int MaxTokenLength = 8 * 1024;
 
     /// <summary>The signed-in user, or null when the request carries no valid sign-in token.</summary>
-    public async Task<UserRecord?> AuthenticateAsync(HttpRequest request, CancellationToken cancellationToken)
+    public async Task<UserRecord?> AuthenticateAsync(HttpRequest request, CancellationToken cancellationToken, string instanceId = OidcIssuer.InstanceId, string? audience = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!AuthenticationHeaderValue.TryParse(request.Headers.Authorization, out var header)
@@ -34,12 +34,12 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
             return null;
         }
 
-        var issuer = OidcIssuer.Issuer(options).AbsoluteUri;
+        var issuer = OidcIssuer.Issuer(options, instanceId).AbsoluteUri;
         IDictionary<string, object>? claims;
-        var keys = await ring.GetPublicAsync(OidcIssuer.InstanceId, Jwt.KeyId(token), cancellationToken).ConfigureAwait(false);
+        var keys = await ring.GetPublicAsync(instanceId, Jwt.KeyId(token), cancellationToken).ConfigureAwait(false);
         try
         {
-            claims = await Jwt.ValidateAsync(token, keys, "at+jwt", issuer, issuer).ConfigureAwait(false);
+            claims = await Jwt.ValidateAsync(token, keys, "at+jwt", issuer, audience ?? issuer).ConfigureAwait(false);
         }
         finally
         {
@@ -56,12 +56,12 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
 
         // The sign-in and token entry reads run alongside the factor read and the user read that follows it: two storage
         // round trips instead of five.
-        var userRead = mfa.PrimaryUserAsync(OidcIssuer.InstanceId, userId, Claim(claims, OidcIssuer.EpochClaim), Claim(claims, OidcIssuer.StateClaim),
+        var userRead = mfa.PrimaryUserAsync(instanceId, userId, Claim(claims, OidcIssuer.EpochClaim), Claim(claims, OidcIssuer.StateClaim),
             Claim(claims, OidcIssuer.MfaClaim), cancellationToken);
         var liveRead = this.LiveAsync(claims, userId, cancellationToken);
         await Task.WhenAll(userRead, liveRead).ConfigureAwait(false);
         return await liveRead.ConfigureAwait(false) is { } entry && await userRead.ConfigureAwait(false) is { } user
-            ? user with { AuthenticationBindings = entry.Bindings }
+            ? user with { AuthenticationBindings = entry.Bindings, SessionId = Claim(claims, "ts_auth_session") }
             : null;
     }
 

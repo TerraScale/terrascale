@@ -27,10 +27,10 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
             var known = parts switch
             {
-                ["settings" or "branding" or "configuration" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
+                ["settings" or "branding" or "configuration" or "mfa-sessions" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
-                ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
+                ["users", _, "disable" or "enable" or "delete" or "sign-out"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
                 _ => false
             };
             if (!known)
@@ -66,8 +66,14 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case ["branding"]:
                         await projects.UpdateSettingsAsync(session, project, new(Branding: HostedBranding(form)), cancel);
                         break;
+                    case ["mfa-sessions"]:
+                        await SaveSecurityAsync(projects, session, project, form, cancel);
+                        break;
                     case ["configuration"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Configuration: Configuration(form["redirect_urls"], form["session_lifetime_seconds"])), cancel);
+                        var currentConfiguration = (await projects.GetSettingsAsync(session, project, cancel)).Configuration ?? new([]);
+                        var updatedConfiguration = Configuration(form["redirect_urls"], form["session_lifetime_seconds"]);
+                        await projects.UpdateSettingsAsync(session, project, new(Configuration: currentConfiguration with
+                        { RedirectUrls = updatedConfiguration.RedirectUrls, SessionLifetimeSeconds = updatedConfiguration.SessionLifetimeSeconds }), cancel);
                         break;
                     case ["danger", var family]:
                         if (form["confirmation"] != context.Project.Name)
@@ -152,6 +158,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case ["webhooks", var id, "deliveries", var delivery, "replay"]: await projects.ReplayWebhookDeliveryAsync(session, project, id, delivery, cancel); break;
                     case ["webhooks", var id, "delete"]: await projects.DeleteWebhookEndpointAsync(session, project, id, cancel); break;
                     case ["sessions", var id, _]: await projects.RevokeSessionAsync(session, project, id, cancel); break;
+                    case ["users", var id, "sign-out"]: await projects.SignOutUserAsync(session, project, id, cancel); break;
                     case ["users", var id, "delete"]: await projects.DeleteUserAsync(session, project, id, cancel); break;
                     case ["users", var id, var action]: await projects.SetUserDisabledAsync(session, project, id, action == "disable", cancel); break;
                 }
@@ -426,6 +433,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             new("sign-in", "Sign-in methods", "LockKeyhole", "Sign-in"),
             new("social", "Social sign-in", "Fingerprint", "Sign-in"),
             new("configuration", "Configuration", "Settings", "Sign-in"),
+            new("mfa-sessions", "MFA and sessions", "Shield", "Security"),
             new("clients", "OAuth applications", "Boxes", "Developers"),
             new("webhooks", "Webhooks", "Zap", "Developers"),
             new("logs", "Logs", "ScrollText", "Developers"),

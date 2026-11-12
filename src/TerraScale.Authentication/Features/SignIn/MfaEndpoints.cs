@@ -89,7 +89,7 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         }
 
         // The challenge is spent; a session that loses to a newer sign-out or a competing completion starts over.
-        if (await SignInFlow.OpenSessionAsync(sessions, user with { MultiFactor = true }, cancellationToken) is not { } session)
+        if (await SignInFlow.OpenSessionAsync(sessions, user with { MultiFactor = true, MfaMethod = code.Length == 6 ? "totp" : "recovery" }, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_mfa", "expired");
             return Expired(tenant, next);

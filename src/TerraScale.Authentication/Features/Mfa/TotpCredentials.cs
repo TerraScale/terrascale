@@ -5,8 +5,10 @@ using System.Text.Json.Serialization;
 using OtpNet;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.RateLimiting;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Security;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
@@ -14,7 +16,7 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Mfa;
 
-public sealed class TotpCredentials(AuthData data, Credentials credentials, Users users, AttemptLimiter limiter, AuthOptions options, TimeProvider clock)
+public sealed class TotpCredentials(AuthData data, Credentials credentials, Users users, AttemptLimiter limiter, AuthOptions options, TimeProvider clock, ProjectAuthSettings settings)
 {
     private static readonly TimeSpan EnrollmentLifetime = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan RecoveryLifetime = TimeSpan.FromDays(365);
@@ -25,7 +27,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
     public async Task<bool> AllowsPrimaryAuthenticationAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        return await this.PrimaryUserAsync(caller.InstanceId, caller.Id, caller.AuthEpoch.ToString(CultureInfo.InvariantCulture), caller.AuthStamp, null, cancellationToken)
+        return await this.PrimaryUserAsync(caller.InstanceId, caller.Id, caller.AuthEpoch.ToString(CultureInfo.InvariantCulture), caller.AuthStamp, caller.MultiFactor ? caller.MfaMethod ?? "totp" : null, cancellationToken)
             .ConfigureAwait(false) is not null;
     }
 
@@ -102,10 +104,16 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         try
         {
             var enabled = (await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.Record.Enabled == true;
-            return (!enabled || multiFactorMethod is not null)
+            var policy = Tenancy.IsProject(instanceId) ? (await settings.GetAsync(instanceId, cancellationToken).ConfigureAwait(false)).Configuration ?? ConfigurationBody.Default : null;
+            var passkey = policy?.RequireMfa == true && policy.AllowPasskey
+                && await data.ReadAsync((db, token) => db.Passkeys.AnyAsync(key => key.InstanceId == instanceId && key.UserId == userId, token), cancellationToken).ConfigureAwait(false);
+            var enrolled = policy is null || !policy.RequireMfa || policy.AllowTotp && enabled || passkey;
+            var allowed = policy is null || multiFactorMethod is null || multiFactorMethod == "totp" && policy.AllowTotp
+                || multiFactorMethod == "passkey" && policy.AllowPasskey || multiFactorMethod == "recovery" && enabled && (policy.AllowTotp || passkey);
+            return enrolled && allowed && (!(policy?.RequireMfa == true || enabled && policy?.AllowTotp != false) || multiFactorMethod is not null)
                 && await users.GetAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is { Disabled: false } user
                 && user.AuthEpoch.ToString(CultureInfo.InvariantCulture) == authEpoch && user.AuthStamp == authStamp
-                    ? user with { MultiFactor = enabled || multiFactorMethod is not null, MfaMethod = multiFactorMethod }
+                    ? user with { MultiFactor = multiFactorMethod is not null, MfaMethod = multiFactorMethod }
                     : null;
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)

@@ -88,6 +88,12 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
         string accessToken, string projectId, string userId, CancellationToken cancellationToken = default) =>
         DeleteAsync(accessToken, projectId, "/users/" + Id(userId), cancellationToken);
 
+    /// <summary>POST /v1/{project}/users/{user}/sign-out (admin). Ends every session and refresh token.</summary>
+    public Task SignOutUserAsync(
+        string accessToken, string projectId, string userId, CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedForStatusAsync(HttpMethod.Post, Route(projectId, "/users/" + Id(userId) + "/sign-out"), null, Json.TerraScaleAuthPlatformName,
+            TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.NoContent, MaxRequestBytes, cancellationToken);
+
     /// <summary>GET /v1/{project}/sessions (viewer). Live sessions only, optionally of one user.</summary>
     public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> ListSessionsAsync(
         string accessToken, string projectId, string? userId = null, int? limit = null, string? after = null,

@@ -62,8 +62,13 @@ type ProjectAuthFooterLink struct {
 // A zero SessionLifetimeSeconds omits the field for the server default (1209600);
 // explicit values must be 300..2592000.
 type ProjectAuthConfiguration struct {
-	RedirectURLs           []string `json:"redirect_urls"`
-	SessionLifetimeSeconds int      `json:"session_lifetime_seconds,omitempty"`
+	RedirectURLs             []string `json:"redirect_urls"`
+	SessionLifetimeSeconds   int      `json:"session_lifetime_seconds,omitempty"`
+	RequireMFA               bool     `json:"require_mfa"`
+	AllowTOTP                *bool    `json:"allow_totp,omitempty"`
+	AllowPasskey             *bool    `json:"allow_passkey,omitempty"`
+	InactivityTimeoutMinutes *int     `json:"inactivity_timeout_minutes"`
+	SingleSession            bool     `json:"single_session"`
 }
 
 // ProjectAuthCounts counts tenant users and OAuth clients.

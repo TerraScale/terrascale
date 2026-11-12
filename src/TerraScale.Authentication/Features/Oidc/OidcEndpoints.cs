@@ -339,6 +339,14 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
 
         if (Tenancy.IsProject(tenant))
         {
+            if (await sessions.ResolveIdAsync(tenant, user.Id, principal.GetClaim("ts_auth_session"), cancellationToken) is not { } live)
+            {
+                await ProjectSessionPolicy.RevokeAsync(tokens, principal, cancellationToken);
+                return OidcResults.Forbid(Errors.InvalidGrant, "The project session is no longer active.");
+            }
+
+            user = live.User;
+            authenticationTime = live.Session.VerifiedAt ?? authenticationTime;
             var lifetime = await sessions.GetLifetimeAsync(tenant, cancellationToken);
             if (authenticationTime > DateTimeOffset.MaxValue - lifetime || authenticationTime + lifetime <= clock.GetUtcNow())
             {
@@ -645,6 +653,7 @@ internal static class OidcResults
             .SetClaim(Claims.AuthenticationTime, authenticatedAt.ToUnixTimeSeconds())
             .SetClaim(OidcIssuer.EpochClaim, user.AuthEpoch)
             .SetClaim(OidcIssuer.StateClaim, user.AuthStamp)
+            .SetClaim("ts_auth_session", user.SessionId)
             .SetClaim(OidcIssuer.MfaClaim, user.MultiFactor ? user.MfaMethod ?? "totp" : null)
             .SetClaim(FixedRefreshTokens.Claim, refreshExpiresAt?.ToUnixTimeSeconds())
             .SetScopes(scopes)
@@ -663,7 +672,7 @@ internal static class OidcResults
             Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
-            OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
+            "ts_auth_session" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             _ => [],
         });
         var principal = new ClaimsPrincipal(identity);

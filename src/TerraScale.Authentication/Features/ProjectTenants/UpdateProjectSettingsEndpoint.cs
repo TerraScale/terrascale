@@ -34,10 +34,12 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
         }
 
         if (request.Configuration is { } configuration
-            && (configuration.SessionLifetimeSeconds is < 300 or > 2592000 || configuration.RedirectUrls is null
+            && (configuration.SessionLifetimeSeconds is < 300 or > 2592000
+                || configuration.InactivityTimeoutMinutes is < 15 or > 43200
+                || configuration.RequireMfa && !configuration.AllowTotp && !configuration.AllowPasskey || configuration.RedirectUrls is null
                 || configuration.RedirectUrls.Count > 100 || configuration.RedirectUrls.Any(value => !Redirect(value))))
         {
-            throw Invalid("configuration requires session_lifetime_seconds 300 to 2592000 and at most 100 exact https redirect URLs (http only on loopback), without userinfo or fragments.");
+            throw Invalid("configuration requires at least one allowed factor when MFA is required, inactivity_timeout_minutes null or 15 to 43200, session_lifetime_seconds 300 to 2592000 and at most 100 exact https redirect URLs (http only on loopback), without userinfo or fragments.");
         }
 
         var methods = request.Methods;

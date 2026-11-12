@@ -448,10 +448,28 @@ else
 <button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@Model.Copy.AddPasskey</button>
 </form>
 break;
+case SignInStep.MfaEnroll:
+@if (Model.AllowTotp)
+{
+<form method="post" action="/ui/@Model.Slug/sign-in/enroll/totp">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="challenge" value="@Model.Challenge">
+<button type="submit">@Model.Copy.SetUpAuthenticator</button>
+</form>
+}
+@if (Model.AllowPasskey)
+{
+<form id="passkey-add" data-i18n="@Model.Copy.PasskeyI18n" data-enrollment="@Model.Challenge" data-complete="@(Model.Next ?? $"/ui/{Model.Slug}/security")" data-options="/ui/@Model.Slug/security/passkeys/options" data-verify="/ui/@Model.Slug/security/passkeys/verify">
+<button type="submit" class="secondary">@Model.Copy.AddPasskey</button>
+</form>
+<a class="btn secondary" href="@Model.Link("sign-in")">@Model.Copy.SignIn</a>
+}
+break;
 case SignInStep.TotpSetup:
 <img src="@Model.QrCode" alt="@WriteHtml(Model.SubBrand(Model.Copy.QrAlt))" width="240" height="240">
-<dl class="facts"><div><dt>@Model.Copy.SetupKey</dt><dd><code>@Model.Secret</code></dd></div></dl>
-<form method="post" action="/ui/@Model.Slug/security/totp/confirm">
+<dl class="facts"><div><dt>@Model.Copy.SetupKey</dt><dd><code data-mfa-secret>@Model.Secret</code></dd></div></dl>
+<form method="post" action="@(Model.Challenge is null ? $"/ui/{Model.Slug}/security/totp/confirm" : $"/ui/{Model.Slug}/sign-in/enroll/totp/confirm")">
+<input type="hidden" name="challenge" value="@Model.Challenge">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="totp-code">@Model.Copy.CodeFromApp</label>
@@ -466,10 +484,10 @@ case SignInStep.RecoveryCodes:
 <ul class="facts" aria-label="@Model.Copy.RecoveryCodesAria">
 @foreach (var recovery in Model.RecoveryCodes)
 {
-<li><code>@recovery</code></li>
+<li><code data-mfa-secret>@recovery</code></li>
 }
 </ul>
-<a class="btn" href="/ui/@Model.Slug/security">@Model.Copy.ISavedThem<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn" href="@(Model.Next ?? $"/ui/{Model.Slug}/security")">@Model.Copy.ISavedThem<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 @if (Model.AccountUrl is { } savedUrl)
 {
 <a class="btn secondary" href="@savedUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.BackToAccount</a>

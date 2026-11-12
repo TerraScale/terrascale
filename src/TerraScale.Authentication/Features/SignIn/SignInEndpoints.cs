@@ -742,15 +742,22 @@ internal static class SignInFlow
     /// </summary>
     public static async Task<IResult?> SecondFactorAsync(HttpContext context, TotpCredentials mfa, UserRecord user, string? next, CancellationToken cancellationToken)
     {
-        // The user is read after the factor, so an activation or sign-out everywhere meanwhile yields no challenge.
-        if (!(await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled
-            || await mfa.ChallengeAsync(user, cancellationToken) is not { } challenge)
+        var policy = Tenancy.IsProject(user.InstanceId)
+            ? (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(user.InstanceId, cancellationToken)).Configuration ?? ConfigurationBody.Default
+            : ConfigurationBody.Default;
+        var enrolled = (await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled && policy.AllowTotp;
+        if (!enrolled && !policy.RequireMfa || await mfa.ChallengeAsync(user, cancellationToken) is not { } challenge)
         {
             return null;
         }
 
         AuthMetrics.SignIn("hosted_mfa", "challenged");
-        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Mfa, user.InstanceId, user.Email, next) { Challenge = challenge });
+        return SignInPageModel.Render(context, new SignInPageModel(enrolled ? SignInStep.Mfa : SignInStep.MfaEnroll, user.InstanceId, user.Email, next)
+        {
+            Challenge = challenge,
+            AllowTotp = policy.AllowTotp,
+            AllowPasskey = policy.AllowPasskey,
+        });
     }
 
     /// <summary>A primary-only session for <paramref name="user"/>, or null when MFA or a newer epoch refuses one.</summary>

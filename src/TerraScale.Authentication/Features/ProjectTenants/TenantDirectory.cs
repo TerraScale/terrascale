@@ -14,7 +14,7 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 
 public sealed record ProjectSession(string Id, SessionRecord Session, string Email);
 
-public sealed class TenantDirectory(AuthData data, Users users, Sessions sessions, PlatformDirectory platform, TimeProvider clock)
+public sealed class TenantDirectory(AuthData data, Users users, Sessions sessions, PlatformDirectory platform, TimeProvider clock, ProjectAuthSettings settings)
 {
     internal const string ClientIssuanceCaller = "ts-auth:client-issuance-caller";
 
@@ -87,7 +87,8 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
 
     public async Task<Page<ProjectSession>> SessionsAsync(string projectId, string? userId, int limit, string? after, CancellationToken cancellationToken)
     {
-        var lifetime = await sessions.GetLifetimeAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var configuration = (await settings.GetAsync(projectId, cancellationToken).ConfigureAwait(false)).Configuration ?? ConfigurationBody.Default;
+        var lifetime = TimeSpan.FromSeconds(configuration.SessionLifetimeSeconds);
         var now = clock.GetUtcNow();
         var from = PlatformDirectory.Cursor(after);
         var rows = await data.ReadAsync((db, token) => db.Sessions
@@ -102,7 +103,9 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         {
             var policyExpiry = row.Session.CreatedAt + lifetime;
             var session = row.Session with { ExpiresAt = policyExpiry < row.Session.ExpiresAt ? policyExpiry : row.Session.ExpiresAt };
-            if (session.ExpiresAt > clock.GetUtcNow() && row.User is { Disabled: false } user && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp)
+            if (session.ExpiresAt > clock.GetUtcNow() && row.User is { Disabled: false } user && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp
+                && user.SessionStamp == session.SessionStamp
+                && (configuration.InactivityTimeoutMinutes is not { } idle || (session.LastActivityAt ?? session.CreatedAt).AddMinutes(idle) > clock.GetUtcNow()))
             {
                 items.Add(new ProjectSession(session.Id, session, user.Email));
             }

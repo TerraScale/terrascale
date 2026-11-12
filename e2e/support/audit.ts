@@ -6,7 +6,7 @@ import { saveCookies } from './state';
 
 const wcag = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
 const reportedConsole: ReadonlySet<string> = new Set(['error', 'warning', 'assert']);
-const secrets = 'input[type=password], .ts-apikeys-secret-value, #access-token-secret, #alert-secret';
+const secrets = '[data-mfa-secret], input[type=password], .ts-apikeys-secret-value, #access-token-secret, #alert-secret';
 
 type Expected = { url: RegExp; status: number; seen: number; logged: number };
 

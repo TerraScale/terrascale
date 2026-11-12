@@ -16,6 +16,7 @@ namespace TerraScale.Dashboard.Features.Auth
         Task<TsAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken);
         Task DeleteUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken);
         Task<TsAuthPlatformPage<TsAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken);
+        Task SignOutUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken);
         Task RevokeSessionAsync(SessionRecord session, string projectId, string sessionId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
         // A confidential client's secret is in this answer only; never log or store it.
@@ -82,6 +83,11 @@ namespace TerraScale.Dashboard.Features.Auth
         public Task<TsAuthPlatformPage<TsAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken)
         {
             return ProjectAsync(() => Client().Projects.ListSessionsAsync(Bearer(session), Id(projectId), Blank(userId) is { } user ? Id(user) : null, ProjectPageSize, Blank(after), cancellationToken));
+        }
+
+        public Task SignOutUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(async () => { await Client().Projects.SignOutUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken); return true; });
         }
 
         public Task RevokeSessionAsync(SessionRecord session, string projectId, string sessionId, CancellationToken cancellationToken)

@@ -33,6 +33,7 @@ from .auth import (
     list_users_call,
     revoke_api_key_call,
     revoke_session_call,
+    sign_out_user_call,
     rotate_api_key_call,
     rotate_project_client_secret_call,
     set_provider_call,
@@ -420,6 +421,10 @@ class AsyncTerraScale:
         return await self._send(list_sessions_call(self._issuer, project if project is not None else self.project,
                                                    user_id, limit, after))
 
+    async def sign_out_user(self, user_id: str, *, project: str | None = None) -> None:
+        """End all of a project user's sessions and refresh tokens (admin)."""
+        await self._send(sign_out_user_call(self._issuer, project if project is not None else self.project, user_id))
+
     async def revoke_session(self, session_id: str, *, project: str | None = None) -> None:
         """Revoke one session; the session is signed out at once."""
         await self._send(revoke_session_call(self._issuer, project if project is not None else self.project,
@@ -437,6 +442,7 @@ class AsyncDatabase:
     @property
     def _p(self) -> tuple[str, str]:
         return self._c.project, self.name
+
 
     async def info(self) -> models.Database:
         return await self._c._send(_spec.get_database(*self._p))

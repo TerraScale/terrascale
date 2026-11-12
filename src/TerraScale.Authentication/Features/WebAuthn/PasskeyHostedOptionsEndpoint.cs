@@ -29,10 +29,12 @@ public sealed class PasskeyHostedOptionsEndpoint(Sessions sessions, PasskeyCrede
             return Results.NotFound();
         }
 
+        var pending = this.HttpContext.Request.Headers[RequiredMfaEnrollment.Header] is [{ } challenge]
+            ? await RequiredMfaEnrollment.ReadAsync(this.HttpContext, challenge, "passkey", cancellationToken) : null;
+        var live = pending is null ? await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) : null;
         if (!PasskeyHostedVerifyEndpoint.SameOrigin(this.HttpContext, options)
-            || await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is not { } live
-            || !SecurityFlow.Recent(this.HttpContext, live.Session, SecurityFlow.FactorEnrollmentWindow)
-            || await passkeys.OptionsAsync(live.User, cancellationToken).ConfigureAwait(false) is not { } created)
+            || pending is null && (live is null || !SecurityFlow.Recent(this.HttpContext, live.Value.Session, SecurityFlow.FactorEnrollmentWindow))
+            || await passkeys.OptionsAsync(pending?.User ?? live!.Value.User, cancellationToken).ConfigureAwait(false) is not { } created)
         {
             throw new ApiException(403, "passkey_denied", "Sign in again before enrolling a passkey.");
         }

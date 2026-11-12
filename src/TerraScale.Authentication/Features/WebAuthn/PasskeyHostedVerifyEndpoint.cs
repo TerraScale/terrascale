@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Endpoints;
@@ -31,12 +32,16 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
             return Results.NotFound();
         }
 
+        var pending = this.HttpContext.Request.Headers[RequiredMfaEnrollment.Header] is [{ } challenge]
+            ? await RequiredMfaEnrollment.ReadAsync(this.HttpContext, challenge, "passkey", cancellationToken) : null;
+        var live = pending is null ? await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) : null;
         if (!SameOrigin(this.HttpContext, options)
-            || await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is not { } live
-            || !SecurityFlow.Recent(this.HttpContext, live.Session, SecurityFlow.FactorEnrollmentWindow))
+            || pending is null && (live is null || !SecurityFlow.Recent(this.HttpContext, live.Value.Session, SecurityFlow.FactorEnrollmentWindow)))
         {
             throw new ApiException(403, "passkey_denied", "Sign in again before enrolling a passkey.");
         }
+
+        var caller = pending?.User ?? live!.Value.User;
 
         PasskeyVerifyRequest body;
         try
@@ -50,10 +55,16 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
 
         var raw = PasskeyVerifyEndpoint.Map(body.Response);
         var entry = raw is null ? null
-            : await passkeys.VerifyAsync(live.User, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken).ConfigureAwait(false);
+            : await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken).ConfigureAwait(false);
         if (entry is null)
         {
             throw new ApiException(403, "passkey_denied", "The passkey registration failed verification; start again.");
+        }
+
+        if (pending is not null)
+        {
+            var session = await sessions.CreateAsync(caller with { MultiFactor = true, MfaMethod = "passkey" }, cancellationToken);
+            BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token, caller.InstanceId);
         }
 
         return Results.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),

@@ -1053,6 +1053,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
 
+                    b.Property<DateTime?>("LastActivityAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_activity_at");
+
                     b.Property<bool>("Mfa")
                         .HasColumnType("INTEGER")
                         .HasColumnName("mfa");
@@ -1065,6 +1069,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("revoked");
 
+                    b.Property<string>("SessionStamp")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_stamp");
+
                     b.Property<string>("TokenHash")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -1074,6 +1082,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("user_id");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("verified_at");
 
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
@@ -1274,6 +1286,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<string>("PlatformRole")
                         .HasColumnType("TEXT")
                         .HasColumnName("platform_role");
+
+                    b.Property<string>("SessionStamp")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_stamp");
 
                     b.Property<string>("Version")
                         .IsConcurrencyToken()

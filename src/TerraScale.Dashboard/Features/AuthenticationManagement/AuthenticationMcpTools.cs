@@ -35,6 +35,15 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return await projects.SetUserDisabledAsync(context.Session, context.Project!.Id, userId, disabled, Cancellation);
         }
 
+        [McpServerTool(Name = "auth_sign_out_user", Title = "Sign a project user out everywhere", UseStructuredContent = false, Destructive = true, OpenWorld = false),
+         Description("Ends every hosted session, authorization code and refresh token of a project end user. Requires the admin project role.")]
+        public async Task<string> SignOutUser(string userId, string? organizationId = null, string? projectId = null)
+        {
+            var context = await Fresh(organizationId, projectId, true);
+            await projects.SignOutUserAsync(context.Session, context.Project!.Id, userId, Cancellation);
+            return "Signed user " + userId + " out everywhere.";
+        }
+
         [McpServerTool(Name = "auth_delete_user", Title = "Delete a project user", UseStructuredContent = false, Destructive = true, OpenWorld = false),
          Description("Delete an end user of the project. Requires the admin project role.")]
         public async Task<string> DeleteUser(string userId, string? organizationId = null, string? projectId = null)

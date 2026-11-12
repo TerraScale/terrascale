@@ -24,7 +24,7 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
         caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "add_passkey", null, cancellationToken);
         var raw = Map(body.Response);
         var entry = raw is null ? null
-            : await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken).ConfigureAwait(false);
+            : await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (entry is null)
         {
             throw new ApiException(403, "passkey_denied", "The passkey registration failed verification; start again.");

@@ -72,6 +72,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             return DeleteAsync(accessToken, projectId, "/users/" + Id(userId), cancellationToken);
         }
 
+        public Task SignOutUserAsync(string accessToken, string projectId, string userId, CancellationToken cancellationToken)
+        {
+            return client.SendAuthenticatedForStatusAsync(HttpMethod.Post, Route(projectId, "/users/" + Id(userId) + "/sign-out"), null, Json.TsAuthPlatformName,
+                TsAuthCredentials.Bearer(accessToken), HttpStatusCode.NoContent, MaxRequestBytes, cancellationToken);
+        }
+
         public Task<TsAuthPlatformPage<TsAuthProjectSession>> ListSessionsAsync(
             string accessToken, string projectId, string? userId = null, int? limit = null, string? after = null,
             CancellationToken cancellationToken = default)
