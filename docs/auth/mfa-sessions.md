@@ -56,7 +56,7 @@ authentication-state revocation still apply, including sign out everywhere.
 ## Sign out everywhere
 
 `POST /v1/{project}/users/{user}/sign-out` requires a platform sign-in bearer
-token and the project admin role. It returns 204, or 404 for an unknown user.
+token with the project admin role or a project secret API key with `auth:write`. It returns 204, or 404 for an unknown user.
 The operation changes the user's authentication epoch and stamp, invalidating
 every hosted session, authorization code, refresh token and pending enrollment
 challenge. The user stays active and can sign in again.

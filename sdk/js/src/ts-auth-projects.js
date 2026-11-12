@@ -615,7 +615,7 @@ export class TsAuthProjectsClient {
       method: "POST",
       path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/sign-out`,
       routeName: "tsauth.projects.sign_out_user",
-      projectAccessToken: signInToken(signIn),
+      projectAccessToken: managementCredential(signIn),
     });
   }
 

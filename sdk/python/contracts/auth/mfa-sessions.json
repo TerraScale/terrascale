@@ -6,7 +6,7 @@
     "status": 204,
     "request": null,
     "response": null,
-    "authorization": "platform sign-in bearer, project admin",
+    "authorization": "platform sign-in bearer with project admin, or project secret API key with auth:write",
     "retry": "none"
   },
   "configuration": {

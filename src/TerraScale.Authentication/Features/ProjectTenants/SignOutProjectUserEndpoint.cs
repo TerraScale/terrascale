@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 
@@ -10,11 +9,11 @@ public sealed class SignOutProjectUserEndpoint(TenantDirectory tenants, Sessions
     {
         Post(Root + "/users/{user}/sign-out");
         this.Describe("sign_out_project_user", "Sign a user out everywhere",
-            "Needs the admin project role. Advances the user's authentication epoch and stamp, invalidating every hosted session, authorization code and refresh token. Existing offline access tokens remain valid until expiry.",
+            "Needs the admin project role or an auth:write project secret API key. Advances the user's authentication epoch and stamp, invalidating every hosted session, authorization code and refresh token. Existing offline access tokens remain valid until expiry.",
             "Project tenants", null, StatusCodes.Status204NoContent, null);
     }
 
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return await sessions.RevokeAllAsync(project, this.RouteId("user"), cancellationToken)
