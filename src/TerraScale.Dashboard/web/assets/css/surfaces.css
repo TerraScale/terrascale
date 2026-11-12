@@ -8,6 +8,10 @@
   min-width: 0;
 }
 
+.ts-card[popover]:not(:popover-open) {
+  display: none;
+}
+
 /* Consecutive sections are divided by a hairline. */
 .ts-page > .ts-card + .ts-card,
 .ts-page > .ts-card + .ts-split,

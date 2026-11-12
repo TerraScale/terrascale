@@ -152,8 +152,9 @@ function passkeyDecode(text) {
     });
   }
   function follow(html) {
-    var page = new DOMParser().parseFromString(html, 'text/html');
-    var link = page.querySelector('a.delayed-continue');
+    var page = document.createElement('template');
+    page.innerHTML = html;
+    var link = page.content.querySelector('a.delayed-continue');
     if (link) window.location.replace(link.href);
     else window.location.reload();
   }

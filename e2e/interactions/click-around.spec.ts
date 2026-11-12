@@ -191,7 +191,10 @@ test('an alert webhook secret is shown once, including two parallel reads, and i
   await page.getByRole('button', { name: 'Continue to alerts', exact: true }).click();
   await expect(page.locator('#alert-secret-panel')).toBeHidden();
   await expect(revealed).toBeEmpty();
-  await page.reload();
+  expect((await page.content()).includes(secret), 'dismissing the panel clears the secret from the DOM').toBe(false);
+  await audit.check('alert webhook secret dismissed');
+  const reloaded = await page.reload();
+  expect(reloaded?.headers()['set-cookie'] ?? '').not.toContain('ts-dashboard-alert-secret=');
   await expect(revealed).toHaveCount(0);
   expect((await page.content()).includes(secret), 'the webhook secret is never shown again').toBe(false);
 

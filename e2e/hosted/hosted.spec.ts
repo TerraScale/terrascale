@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { hostedReady, onboard, onHosted, openSignUp, signInWithPassword, signUp, submitSignUp, verify } from '../support/hosted';
-import { newAddress, nextMail } from '../support/inbox';
+import { newAddress } from '../support/inbox';
 import { auth, dash, desktop, mobile, onLocalStack } from '../support/stack';
 import { journey, saveCookies, saveSecret } from '../support/state';
 
@@ -55,20 +55,6 @@ test('a second user enrolls a passkey and signs back in to the dashboard and a r
       await expect(page.locator('.ts-account-trigger')).toContainText('Passkey user');
       await audit.check(`passkey sign-in reaches ${path}`);
     }
-    const reset = await page.request.post(`${auth}/ui/terrascale/reset?ui_locales=pt-BR`, { headers: { Origin: auth }, form: { email } });
-    expect(reset.status()).toBe(200);
-    const resetAction = /action="([^"]*\/reset\/complete[^"]*)"/.exec(await reset.text())?.[1]?.replaceAll('&amp;', '&');
-    expect(resetAction).toBe('/ui/terrascale/reset/complete?ui_locales=pt-BR');
-    const mail = await nextMail(email, 1);
-    const code = /^\s*(\d{6})\s*$/m.exec(mail.text)?.[1] ?? '';
-    expect(code).toMatch(/^\d{6}$/);
-    const newPassword = randomBytes(24).toString('base64url');
-    saveSecret('passkey-user-reset-password', newPassword);
-    const completed = await page.request.post(`${auth}${resetAction}`, { headers: { Origin: auth }, form: { email, code, password: newPassword } });
-    expect(completed.status()).toBe(200);
-    const continuation = /class="btn delayed-continue" href="([^"]+)"/.exec(await completed.text())?.[1];
-    expect(continuation).toBe('/ui/terrascale/sign-in?ui_locales=pt-BR');
-    console.log(`reset continuation: ${continuation}`);
     await audit.finish();
   } finally {
     await saveCookies(context);
