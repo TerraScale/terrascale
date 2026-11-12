@@ -28,6 +28,9 @@ other name or address fails to connect, so nothing reaches production. Everythin
 through `local.sh exec`. `local.sh stop` asks the namespace's first process to stop the stack in order and exit, kills
 it if it is still there after 30 s, and returns once no process is left inside: the kernel kills them all when that
 first process ends (`stop` fails if one is still there 10 s after the kill). CI enters through the same `local.sh`.
+The egress guard checks that `status.terrascale.tech` answers 404 from `127.0.0.1`, that
+`fra.api.terrascale.tech` answers from `127.0.0.1` in two-region mode regardless of its HTTP status, and that
+`sjc.api.terrascale.tech` and `1.1.1.1` cannot connect in either mode.
 To iterate: `bash e2e/env/local.sh prepare`, `bash e2e/env/local.sh start`,
 `bash e2e/env/local.sh exec bash e2e/env/up.sh`, then from `e2e/`
 `bash env/local.sh exec npx playwright test --project pages-desktop`, and `bash e2e/env/local.sh stop`.
