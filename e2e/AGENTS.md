@@ -64,6 +64,7 @@ object namespaces. Production also requires backup and shape credentials: the sa
 `journey-backups` and `ts-terrabase-shapes-prod` buckets, using generated run credentials and HTTPS through the
 edge. Its extra platform-bucket operations are accepted only in two-region mode. It implements the single-object
 S3 operations, listings and unversioned deletion needed here, without multipart uploads or bucket snapshots.
+The throwaway S3 credential is shared across these buckets; production uses separate file and backup identities.
 
 Placement has its own setup account and project key, using the normal journey setup. Its API fixture deletes that
 account's seed database to free the Free plan's one database slot. Each scenario deletes its temporary database or
