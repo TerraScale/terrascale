@@ -1,6 +1,7 @@
 import { columns, rows, rowHeight, land, regions as pins } from './region-map-data.js';
 
 const still = matchMedia('(prefers-reduced-motion: reduce)');
+const scheme = matchMedia('(prefers-color-scheme: dark)');
 const count = rows * columns;
 const height = (rows - 1) * rowHeight;
 const bits = Uint8Array.from(atob(land), char => char.charCodeAt(0));
@@ -46,16 +47,22 @@ const mount = root => {
   const status = root.querySelector('[data-region-status]');
   const orderInput = root.querySelector('[data-region-order]');
   const form = root.closest('form');
-  const link = tone(root, '--ts-link');
-  const bright = tone(root, '--ts-ink');
-  const base = tone(root, '--ts-ink-3');
+  let link;
+  let bright;
+  let base;
+  const recolor = () => {
+    link = tone(root, '--ts-link');
+    bright = tone(root, '--ts-ink');
+    base = tone(root, '--ts-ink-3');
+  };
+  recolor();
   const entries = [...root.querySelectorAll('.ts-region-callout')].map(callout => {
     const code = callout.dataset.region;
     const input = callout.querySelector('input');
     return {
       code, callout, input,
       node: root.querySelector(`.ts-region-node[data-region="${CSS.escape(code)}"]`),
-      pin: pins[code],
+      pin: Object.hasOwn(pins, code) ? pins[code] : undefined,
       on: input ? input.checked : callout.dataset.selected === 'true',
       glow: { level: 0, target: 0, radius: 4.5, wanted: 4.5 },
       x: 0, y: 0,
@@ -137,7 +144,7 @@ const mount = root => {
 
   const wake = () => { if (!frame) frame = requestAnimationFrame(step); };
   const wave = (code, max, ms, amp, width = 3.6) => {
-    if (still.matches || !pins[code]) return;
+    if (still.matches || !Object.hasOwn(pins, code)) return;
     waves.push({ code, max, ms, amp, width, age: 0 });
     wake();
   };
@@ -455,9 +462,17 @@ const mount = root => {
   const resized = new ResizeObserver(layout);
   resized.observe(surface);
   resized.observe(stage);
+  const repaint = () => {
+    recolor();
+    layout();
+  };
+  scheme.addEventListener('change', repaint, { signal });
+  const themed = new MutationObserver(repaint);
+  themed.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   document.fonts.ready.then(() => { if (!signal.aborted) layout(); });
   signal.addEventListener('abort', () => {
     resized.disconnect();
+    themed.disconnect();
     cancelAnimationFrame(frame);
     clearInterval(pulse);
     clearTimeout(notice);
@@ -465,8 +480,13 @@ const mount = root => {
   return live;
 };
 
-const mounted = new WeakMap();
+const mounted = new Map();
 const scan = () => {
+  for (const [root, live] of mounted) {
+    if (root.isConnected) continue;
+    live.abort();
+    mounted.delete(root);
+  }
   for (const root of document.querySelectorAll('[data-region-map]:not([data-mounted])')) {
     mounted.get(root)?.abort();
     root.dataset.mounted = '';
@@ -474,4 +494,4 @@ const scan = () => {
   }
 };
 scan();
-new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
+new MutationObserver(scan).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-mounted'] });
