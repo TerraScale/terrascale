@@ -9,7 +9,8 @@ Private anonymous cleartext requests retain HTTP/2 prior knowledge. Authenticate
 cleartext requests retain HTTP/1.1. The SDK preserves caller ownership, TLS
 validation, credential handling, request deadlines and existing retry rules.
 
-Negotiation and reuse are covered against isolated TLS HTTP fakes. Performance
+The journey's .NET runner (`e2e/sdk/dotnet`) sends its TerraBase requests through
+`TerraBaseHttp.CreateHandler()` over TLS. Performance
 evidence belongs in the TerraScale monorepo under `benchmark/bench/`.
 
 The [three-pair transport control](https://github.com/TerraScale/terrascale/blob/fix/api-request-overhead/benchmark/bench/2026-10-27-perf-api-https.md)

@@ -280,13 +280,12 @@ rows.
 Ouroboros means TerraScale services store their data in the same production
 TerraBase that customers use. Qualification requires an authorized, isolated
 real-service allocation, independently verified producer release provenance,
-and current generated-contract and route-manifest parity. HTTP fakes, local
-SQLite and typed builds cannot establish deployed
-producer compatibility.
+and current generated-contract and route-manifest parity. Local SQLite and
+typed builds cannot establish deployed producer compatibility.
 
-This SDK repository does not download or launch a TerraBase binary. Keep real
-HTTP tests environment-gated; missing live configuration is skipped, never
-successful integration evidence.
+The package downloads and launches no TerraBase binary. The journey in the
+monorepo's `e2e/` drives this SDK against the TerraBase, ts-auth and dashboard
+built from the same commit.
 
 Existing live tests consume `TB_V1_URL`, `TB_V1_PROJECT`, `TB_V1_DATA_KEY` and
 optionally `TB_V1_DATABASE` (default `app`) from an independently provisioned

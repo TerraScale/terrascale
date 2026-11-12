@@ -12,7 +12,7 @@ returns 404 or resolves to a database that later claims it.
 
 Invalid names or mixed placement fields return 400 `invalid_request`; a known
 same-region duplicate returns 409 `name_taken`; a platform database returns 409
-`platform_placement_locked`; an unknown database returns 404 `unknown_database`.
+`platform_database_protected`; an unknown database returns 404 `unknown_database`.
 Only the region that writes accepts rename; other regions return 421 `wrong_region`
 with `X-TerraBase-Database-Home`. Reconcile uncertain mutations by ULID before an
 explicit retry. The SDK does not automatically replay uncertain renames.
