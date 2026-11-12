@@ -211,11 +211,13 @@ was selected; the discarded historical backup choice cannot be recovered.
 with them their access tokens and codes; their ts-auth grant expires with them), expired `mcp_codes`, and MCP clients
 that never finished a first sign-in within 24 hours.
 
-An expired browser session's grant outlives it at ts-auth, so each pass revokes the grants of at most 500 expired
-browser sessions, oldest first (RFC 7009), and deletes the row of each one ts-auth accepted; ts-auth then prunes that
-sign-in's refresh tokens, and the rest follow in the next passes. A revocation that fails is logged and leaves its row
-for the next pass, and the pass goes on with the next session. The pass ends early only when the failure concerns the
-dashboard's client or ts-auth as a whole: no answer within the deadline or no connection, `invalid_client` (`401`),
+An expired browser session's grant outlives it at ts-auth, so each pass revokes expired browser grants (RFC 7009)
+in batches of 500 ordered by session ID and deletes each row ts-auth accepted. The `(kind, id, expires_at)` index
+supports the browser filter and ID cursor, with expiry checked in the index. Each batch starts after the previous
+batch's last ID, including when every revocation in that batch failed; the cursor resets at the next pass.
+ts-auth then prunes that sign-in's refresh tokens. A revocation that fails is logged with the session ID and reason
+and leaves its row for the next pass, and the pass goes on with the next session. The pass ends early only when the
+failure concerns the dashboard's client or ts-auth as a whole: no answer within the deadline or no connection, `invalid_client` (`401`),
 `429`, or a gateway's `502` or `504`; any other answer from ts-auth, such as `503 temporarily_unavailable` after a lost
 write, concerns that session only. A request that finds its browser session expired answers as signed out at once
 without calling ts-auth and leaves the row to the sweeper. Sign-out revokes a live session's grant itself and leaves an

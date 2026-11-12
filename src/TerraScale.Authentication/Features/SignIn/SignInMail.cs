@@ -366,7 +366,8 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     private async Task PruneAsync()
     {
         var cutoff = clock.GetUtcNow() - Retention;
-        await data.ReadAsync((db, token) => db.MailOutbox.Where(row => row.CreatedAt <= cutoff).ExecuteDeleteAsync(token), CancellationToken.None).ConfigureAwait(false);
+        await data.InBatchesAsync(SessionPruner.BatchSize, (db, token) => db.MailOutbox.Where(row => row.CreatedAt <= cutoff)
+            .OrderBy(row => row.CreatedAt).Take(SessionPruner.BatchSize).ExecuteDeleteAsync(token), CancellationToken.None).ConfigureAwait(false);
     }
 
     private async Task<(MailRow Row, string Version)?> SaveAsync(MailRow row, string version)

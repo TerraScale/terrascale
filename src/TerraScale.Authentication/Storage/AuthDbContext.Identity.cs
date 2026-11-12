@@ -71,6 +71,7 @@ public sealed partial class AuthDbContext
             session.HasOne<UserRecord>().WithMany().HasForeignKey(row => row.UserId).OnDelete(DeleteBehavior.Cascade);
             session.HasIndex(row => row.UserId);
             session.HasIndex(row => row.ExpiresAt);
+            session.HasIndex(row => row.ExpiresAt, "IX_sessions_revoked_expires_at").HasFilter("revoked");
             session.Property(row => row.Bindings).HasJson(StorageJson.Default.IReadOnlyListCredentialBinding);
             Versioned(session);
         });

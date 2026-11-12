@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.15");
 
             modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.AccountRow", b =>
                 {
@@ -1879,6 +1879,8 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 
                     b.HasIndex("TokenHash")
                         .IsUnique();
+
+                    b.HasIndex("Kind", "Id", "ExpiresAt");
 
                     b.HasIndex("UserId", "Kind", "ExpiresAt");
 

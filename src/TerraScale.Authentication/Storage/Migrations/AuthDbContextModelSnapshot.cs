@@ -15,7 +15,7 @@ namespace TerraScale.Authentication.Storage.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.15");
 
             modelBuilder.Entity("TerraScale.Authentication.Contracts.ApiKeyRecord", b =>
                 {
@@ -1092,6 +1092,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasIndex("UserId");
 
                     b.HasIndex("InstanceId", "Id");
+
+                    b.HasIndex(new[] { "ExpiresAt" }, "IX_sessions_revoked_expires_at")
+                        .HasFilter("revoked");
 
                     b.ToTable("sessions", null, t =>
                         {

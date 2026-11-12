@@ -360,38 +360,55 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 
     public async Task ExpireBrowserSessionsAsync(int batchSize, CancellationToken cancellationToken)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
         var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
         var now = time.GetUtcNow().UtcDateTime;
-        List<SessionRow> expired;
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        string? after = null;
+        while (true)
         {
-            expired = await db.Sessions.AsNoTracking().Where(row => row.Kind == SessionRow.Browser && row.ExpiresAt <= now).OrderBy(row => row.Id).Take(batchSize)
-                .ToListAsync(cancellationToken);
-        }
-
-        foreach (var row in expired)
-        {
-            SessionRecord record;
-            try { record = Open(row, key); }
-            catch (IOException)
+            List<SessionRow> expired;
+            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
             {
-                await RemoveAsync(row, "unreadable", cancellationToken);
-                continue;
-            }
-
-            try { await auth.RevokeAsync(record, cancellationToken); }
-            catch (Exception error) when (error is HttpRequestException or TimeoutException)
-            {
-                logger.RevokingAnExpiredSessionFailed(error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TsAuthException)?.ErrorCode ?? "none");
-                if (ConcernsTheClient(error))
+                var query = db.Sessions.AsNoTracking().Where(row => row.Kind == SessionRow.Browser && row.ExpiresAt <= now);
+                if (after is not null)
                 {
-                    throw;
+                    query = query.Where(row => row.Id.CompareTo(after) > 0);
                 }
 
-                continue;
+                expired = await query.OrderBy(row => row.Id).Take(batchSize).ToListAsync(cancellationToken);
             }
 
-            await RemoveAsync(row, "expired", cancellationToken);
+            foreach (var row in expired)
+            {
+                SessionRecord record;
+                try { record = Open(row, key); }
+                catch (IOException)
+                {
+                    await RemoveAsync(row, "unreadable", cancellationToken);
+                    continue;
+                }
+
+                try { await auth.RevokeAsync(record, cancellationToken); }
+                catch (Exception error) when (error is HttpRequestException or TimeoutException)
+                {
+                    logger.RevokingAnExpiredSessionFailed(row.Id, error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TsAuthException)?.ErrorCode ?? "none");
+                    if (ConcernsTheClient(error))
+                    {
+                        throw;
+                    }
+
+                    continue;
+                }
+
+                await RemoveAsync(row, "expired", cancellationToken);
+            }
+
+            if (expired.Count < batchSize)
+            {
+                return;
+            }
+
+            after = expired[^1].Id;
         }
     }
 
