@@ -428,5 +428,56 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public IReadOnlyList<TsAuthProjectSession>? Sessions { get; init; }
         public IReadOnlyList<TsAuthProjectOAuthClient>? Clients { get; init; }
         public IReadOnlyList<TsAuthWebhookEndpoint>? Webhooks { get; init; }
+        public IReadOnlyList<TsAuthWebhookEvent>? Events { get; init; }
+        public IReadOnlyDictionary<string, IReadOnlyList<TsAuthWebhookDelivery>> Deliveries { get; init; } = new Dictionary<string, IReadOnlyList<TsAuthWebhookDelivery>>();
         public IReadOnlyList<TsAuthProjectInvitation>? Invitations { get; init; }
         public IReadOnlyList<TsAuthWaitlistEntry>? Waitlist { get; init; }
+        public string? Next { get; init; }
+        public IFormCollection? Draft { get; init; }
+        public bool Saved { get; init; }
+        public string Heading => Section.Key == "overview" ? "Authentication" : "Authentication: " + Section.Title;
+    }
+
+    public sealed record AuthenticationSection(string Key, string Title, string Icon, string Group)
+    {
+        public static AuthenticationSection? Find(string key)
+        {
+            return All.FirstOrDefault(section => section.Key == key);
+        }
+
+        public static readonly AuthenticationSection[] All =
+        [
+            new("overview", "Overview", "LayoutDashboard", ""),
+            new("users", "Users", "Users", "Users"),
+            new("invitations", "Invitations", "Mail", "Users"),
+            new("waitlist", "Waitlist", "Users", "Users"),
+            new("restrictions", "Restrictions", "Shield", "Security"),
+            new("sessions", "Sessions", "Monitor", "Users"),
+            new("sign-in", "Sign-in methods", "LockKeyhole", "Sign-in"),
+            new("social", "Social sign-in", "Fingerprint", "Sign-in"),
+            new("configuration", "Configuration", "Settings", "Sign-in"),
+            new("clients", "OAuth applications", "Boxes", "Developers"),
+            new("webhooks", "Webhooks", "Zap", "Developers"),
+            new("logs", "Logs", "ScrollText", "Developers"),
+            new("branding", "Branding", "Wand2", "Customize"),
+            new("danger", "Danger zone", "TriangleAlert", "Danger")
+        ];
+    }
+
+    // The social sign-in providers ts-auth supports, in its order, with where the customer creates the OAuth client.
+    public sealed record AuthenticationProvider(string Key, string Name, string ClientIdLabel, string ConsoleName, string ConsoleUrl)
+    {
+        public static AuthenticationProvider? Find(string key)
+        {
+            return All.FirstOrDefault(provider => provider.Key == key);
+        }
+
+        public static readonly AuthenticationProvider[] All =
+        [
+            new("google", "Google", "Client ID", "Google Cloud console credentials", "https://console.cloud.google.com/apis/credentials"),
+            new("github", "GitHub", "Client ID", "GitHub Developer settings, OAuth Apps", "https://github.com/settings/developers"),
+            new("apple", "Apple", "Services ID", "Apple Developer Certificates, IDs & Profiles", "https://developer.apple.com/account/resources/identifiers/list/serviceId"),
+            new("oidc", "OpenID Connect", "Client ID", "", "")
+        ];
+    }
+}

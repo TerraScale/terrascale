@@ -109,6 +109,77 @@ async function checkMemberAuthority(page: Page, adminKey: string, ownerToken: st
   }
 }
 
+async function checkSignupManagement(page: Page, management: AuthManagement): Promise<void> {
+  const current = journey();
+  const root = auth + '/v1/' + current.projectId;
+  const read = { Authorization: 'Bearer ' + management.readKey };
+  const write = { Authorization: 'Bearer ' + management.writeKey };
+  const settings = await page.request.get(root + '/settings', { headers: read });
+  expect(settings.status()).toBe(200);
+  const originalMode = (await settings.json()).methods.sign_up_mode as string;
+  for (const path of ['/invitations', '/waitlist', '/settings']) {
+    expect((await page.request.get(root + path, { headers: read })).status()).toBe(200);
+    const refused = await page.request.get(root + path, { headers: write });
+    expect(refused.status()).toBe(403);
+    expect((await refused.json()).error.code).toBe('insufficient_scope');
+  }
+  const invitedEmail = await newAddress('key-invitation-' + current.runId);
+  const refused = await page.request.post(root + '/invitations', { headers: read, data: { email: invitedEmail } });
+  expect(refused.status()).toBe(403);
+  expect((await refused.json()).error.code).toBe('insufficient_scope');
+  const invitation = await page.request.post(root + '/invitations', { headers: write, data: { email: invitedEmail } });
+  expect(invitation.status()).toBe(201);
+  const created = await invitation.json();
+  expect(created).toMatchObject({ email: invitedEmail, status: 'pending' });
+  expect(created).not.toHaveProperty('token');
+  const listed = await page.request.get(root + '/invitations', { headers: read });
+  expect((await listed.json()).items).toContainEqual(created);
+  const revoke = root + '/invitations/' + created.id;
+  expect((await page.request.delete(revoke, { headers: read })).status()).toBe(403);
+  expect((await page.request.delete(revoke, { headers: write })).status()).toBe(204);
+  expect((await page.request.put(root + '/settings', {
+    headers: read, data: { methods: { sign_up_mode: 'waitlist' } },
+  })).status()).toBe(403);
+  try {
+    expect((await page.request.put(root + '/settings', {
+      headers: write, data: { methods: { sign_up_mode: 'waitlist' } },
+    })).status()).toBe(200);
+    for (const [action, status] of [['approve', 'approved'], ['reject', 'rejected']] as const) {
+      const email = await newAddress('key-waitlist-' + action + '-' + current.runId);
+      expect((await page.request.post(auth + '/ui/' + current.projectId + '/waitlist', {
+        headers: { Origin: auth }, form: { email },
+      })).status()).toBe(200);
+      const waitlist = await page.request.get(root + '/waitlist', { headers: read });
+      expect(waitlist.status()).toBe(200);
+      const entry = (await waitlist.json()).items.find((item: { email: string }) => item.email === email);
+      expect(entry).toMatchObject({ email, status: 'pending' });
+      const url = root + '/waitlist/' + entry.id + '/' + action;
+      const denied = await page.request.post(url, { headers: read });
+      expect(denied.status()).toBe(403);
+      expect((await denied.json()).error.code).toBe('insufficient_scope');
+      expect((await page.request.post(url, { headers: write })).status()).toBe(204);
+      const decided = await page.request.get(root + '/waitlist', { headers: read });
+      expect((await decided.json()).items).toContainEqual({ ...entry, status });
+    }
+    const audit = await page.request.get(auth + '/v1/terrascale/organizations/' + current.organizationId + '/audit-events', {
+      headers: { Authorization: 'Bearer ' + management.ownerToken }, params: { limit: 100 },
+    });
+    expect(audit.status()).toBe(200);
+    const events = (await audit.json()).items as { actor: string; action: string; detail: string }[];
+    for (const operation of ['create_project_invitation', 'revoke_project_invitation', 'approve_project_waitlist',
+      'reject_project_waitlist', 'update_project_settings']) {
+      expect(events.some(event => event.actor === management.writeKey.slice(0, 26)
+        && event.action === operation + '.succeeded')).toBe(true);
+      expect(events.some(event => event.actor === management.readKey.slice(0, 26)
+        && event.action === operation + '.failed' && event.detail.includes('status=403'))).toBe(true);
+    }
+  } finally {
+    expect((await page.request.put(root + '/settings', {
+      headers: write, data: { methods: { sign_up_mode: originalMode } },
+    })).status()).toBe(200);
+  }
+}
+
 export async function prepareAuthManagement(page: Page, sdk: string): Promise<AuthManagement> {
   const current = journey();
   const root = `${auth}/v1/${current.projectId}`;
@@ -182,7 +253,9 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
     headers: { Authorization: 'Bearer ' + writeKey }, data: { methods: { passcode: false, password: false } },
   });
   expect(invalid.status()).toBe(400);
-  return { user, readKey, writeKey, csrf, ownerToken };
+  const management = { user, readKey, writeKey, csrf, ownerToken };
+  if (sdk === 'dotnet') await checkSignupManagement(page, management);
+  return management;
 }
 
 export async function closeAuthManagement(page: Page, management: AuthManagement): Promise<void> {

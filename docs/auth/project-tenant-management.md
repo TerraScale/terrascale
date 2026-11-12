@@ -70,7 +70,7 @@ effective project role (`platform-contract.md` section 3) on every request:
 | Method and path | Role | Key scope | Response |
 | --- | --- | --- | --- |
 | `GET /settings` | viewer | `auth:read` | `Settings` |
-| `PUT /settings` | admin | `auth:write` | `Settings`; body `{methods?, branding?}`, omitted parts unchanged |
+| `PUT /settings` | admin | `auth:write` | `Settings`; body `{methods?, branding?, configuration?, restrictions?}`, omitted parts unchanged |
 | `GET /users?q=&limit=&after=` | viewer | `auth:read` | `{items: [User], next}`; `q` matches an email substring, `limit` 1 to 100 (default 50) |
 | `GET /users/{user}` | viewer | `auth:read` | `User` |
 | `POST /users/{user}/disable` | admin | `auth:write` | `User`; ends every session and token of the user |
@@ -86,6 +86,12 @@ effective project role (`platform-contract.md` section 3) on every request:
 | `DELETE /providers/{provider}` | admin | `auth:write` | `Settings` |
 | `PUT /clients/{client_id}` | admin | Person only (step-up) | `Client` |
 | `POST /clients/{client_id}/secret/rotate` | admin | Person only (step-up) | `ClientSecret` |
+| `GET /invitations?limit=&after=` | viewer | `auth:read` | `{items: [ProjectInvitation], next}`; no invitation tokens |
+| `POST /invitations` | admin | `auth:write` | `201 ProjectInvitation`; body `{email, redirect_url?}`, sends invitation email |
+| `DELETE /invitations/{invitation}` | admin | `auth:write` | `204` |
+| `GET /waitlist?limit=&after=` | viewer | `auth:read` | `{items: [WaitlistEntry], next}` |
+| `POST /waitlist/{entry}/approve` | admin | `auth:write` | `204`; sends invitation email |
+| `POST /waitlist/{entry}/reject` | admin | `auth:write` | `204` |
 | `GET /webhook-endpoints` | admin | `auth:write` | `{items: [WebhookEndpoint], next: null}` without secrets |
 | `POST /webhook-endpoints` | admin | Person only (step-up) | `201 WebhookEndpoint` with `secret` once; needs a `create_webhook_endpoint` step-up proof |
 | `DELETE /webhook-endpoints/{id}` | admin | `auth:write` | `204` |
@@ -118,5 +124,6 @@ Webhook endpoints are described in [webhooks.md](webhooks.md).
   project's name and the default theme.
 - Redirect URIs are absolute `https` URLs, or `http` on `localhost` and loopback
   addresses, without fragments; 1 to 10 per client.
+- Errors use the platform API's error body `{error: {code, message}}`.
 
 See [Sign-up restrictions](signup-restrictions.md) for modes, email restrictions, invitations and the waitlist.

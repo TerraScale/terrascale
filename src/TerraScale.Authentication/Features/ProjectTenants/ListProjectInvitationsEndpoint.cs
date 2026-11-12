@@ -11,7 +11,7 @@ public sealed class ListProjectInvitationsEndpoint(TenantDirectory tenants, Plat
         this.Describe("list_project_invitations", "List project invitations", "Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectInvitationPageBody), paged: true);
     }
 
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var (limit, after) = this.Paging(50);

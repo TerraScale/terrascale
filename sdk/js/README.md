@@ -468,5 +468,8 @@ for (;;) { try { await client.setDatabasePlacement(project, database, { regions:
   catch (e) { if (e.code !== "replica_not_ready") throw e; await new Promise(resolve => setTimeout(resolve, 1000)); } }
 ```
 
+## Project Authentication management
+
+Pass the project secret API key as the first credential argument to `client.projects.disableUser(secretKey, projectId, userId)`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
 
 Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.

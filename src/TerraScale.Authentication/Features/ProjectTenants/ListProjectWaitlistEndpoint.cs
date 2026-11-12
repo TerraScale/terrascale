@@ -11,7 +11,7 @@ public sealed class ListProjectWaitlistEndpoint(TenantDirectory tenants, Platfor
         this.Describe("list_project_waitlist", "List the project waitlist", "Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WaitlistPageBody), paged: true);
     }
 
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var (limit, after) = this.Paging(50);
