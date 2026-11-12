@@ -97,7 +97,7 @@ internal sealed partial class RegionReplication
             {
                 try
                 {
-                    await RecordAsync(entry, cancellationToken).ConfigureAwait(false);
+                    await RecordAsync(entry, listed, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
@@ -206,9 +206,9 @@ internal sealed partial class RegionReplication
         return listed;
     }
 
-    private async Task RecordAsync(ReplicaCatalogEntry entry, CancellationToken cancellationToken)
+    private async Task RecordAsync(ReplicaCatalogEntry entry, IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry> listed, CancellationToken cancellationToken)
     {
-        if (!await catalog.RecordAsync(entry, cancellationToken).ConfigureAwait(false))
+        if (!await catalog.RecordAsync(entry, cancellationToken, listed).ConfigureAwait(false))
         {
             CatalogFailed(entry.HomeRegion, null);
         }

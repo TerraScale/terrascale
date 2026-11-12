@@ -11,14 +11,15 @@ internal interface IReplicaCatalog
 
     ValueTask<ReadDatabaseRecordsResult> ListHomedAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken);
 
-    ValueTask<bool> RecordAsync(ReplicaCatalogEntry entry, CancellationToken cancellationToken);
+    ValueTask<bool> RecordAsync(ReplicaCatalogEntry entry, CancellationToken cancellationToken,
+        IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry>? listed = null);
 
     ValueTask UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken);
 
     ValueTask<ForgetDatabaseResult> ForgetAsync(TenantContext database, CancellationToken cancellationToken);
 }
 
-internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCatalog projects) : IReplicaCatalog
+internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCatalog projects, ReplicaNames names) : IReplicaCatalog
 {
     internal const string Actor = "terrabase-replica";
 
@@ -28,7 +29,8 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
     public ValueTask<ReadDatabaseRecordsResult> ListHomedAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
         tenants.ReadDatabaseRecordsAsync(homeRegion, after, cancellationToken);
 
-    public async ValueTask<bool> RecordAsync(ReplicaCatalogEntry entry, CancellationToken cancellationToken)
+    public async ValueTask<bool> RecordAsync(ReplicaCatalogEntry entry, CancellationToken cancellationToken,
+        IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry>? listed = null)
     {
         ArgumentNullException.ThrowIfNull(entry);
         if (!TerraBaseOptions.IsRegion(entry.HomeRegion)
@@ -39,7 +41,13 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
 
         var database = new TenantContext(entry.OrganizationId, PlanTier.Hobby, entry.ProjectId, entry.DatabaseId);
         var placement = new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions);
-        return await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) switch
+        var stored = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
+        if (stored is NotFound || stored is TenantDatabaseRecord existing && existing.Placement.Version <= placement.Version && existing.Placement.Home == entry.HomeRegion)
+        {
+            _ = await names.ApplyAsync(entry, listed, cancellationToken).ConfigureAwait(false);
+        }
+
+        return stored switch
         {
             NotFound => await tenants.AdoptDatabaseAsync(database, entry.Name, placement, entry.Identity, cancellationToken).ConfigureAwait(false) is Done,
             TenantDatabaseRecord record when record.Placement.Version <= placement.Version =>

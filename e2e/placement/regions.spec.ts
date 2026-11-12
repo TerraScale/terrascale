@@ -388,6 +388,17 @@ async function recordedName(cells: Cells, id: string, projectId: string): Promis
   return (await json<{ name: string }>(await cells.get(`${replica}${database(id, projectId)}`))).name;
 }
 
+async function convergedNames(cells: Cells, ids: string[], real: string[], expected: string[], projectId: string): Promise<void> {
+  let samples = 0;
+  await expect.poll(async () => {
+    const names = await Promise.all(ids.map(id => recordedName(cells, id, projectId)));
+    for (const value of names) expect(real, 'management GET never exposes a placeholder').toContain(value);
+    samples++;
+    return names;
+  }, { message: 'fra applies the chain within two 30-second sweeps', timeout: 65_000, intervals: [200] }).toEqual(expected);
+  console.log('management GET every 200 ms: ' + samples + ' samples per database, only real names');
+}
+
 multiple('R9 a taken follower name does not stop later catalog entries or pulls', async ({ owner: { cells, projectId } }) => {
   const original = name('original');
   const occupied = name('occupied');
@@ -425,12 +436,14 @@ multiple('R10 a home name swap converges on the follower within two sweeps', asy
     await observed(cells, y.id, projectId);
     expect(await recordedName(cells, x.id, projectId)).toBe(a);
     expect(await recordedName(cells, y.id, projectId)).toBe(b);
+    const started = performance.now();
     await rename(cells, home, x.id, name('swap-tmp'), projectId);
     await rename(cells, home, y.id, a, projectId);
     await rename(cells, home, x.id, b, projectId);
-    await expect.poll(async () => [await recordedName(cells, x.id, projectId), await recordedName(cells, y.id, projectId)],
-      { message: 'fra applies both swapped names within two 30-second sweeps', timeout: 65_000, intervals: [250, 500, 1000] })
-      .toEqual([b, a]);
+    expect(performance.now() - started, 'all three renames complete in less than one sweep').toBeLessThan(30_000);
+    expect(await Promise.all([x.id, y.id].map(id => recordedName(cells, id, projectId))),
+      'fra still has the original names after every home rename completed, so it missed the intermediate name').toEqual([a, b]);
+    await convergedNames(cells, [x.id, y.id], [a, b], [b, a], projectId);
     console.log('R10 fra converged to both swapped names within two catalog sweeps');
   } finally {
     await removeDatabase(cells, x.id, projectId);
@@ -459,6 +472,60 @@ multiple('R11 a conflicting promotion is refused before takeover and succeeds af
     expect((await sql(cells, replica, x.id, 'SELECT value FROM placement_rows ORDER BY value', projectId)).results[0].rows).toEqual([[1], [2], [3], [4]]);
     expect(await recordedName(cells, x.id, projectId)).toBe(occupied);
     console.log('R11 replica_not_ready left gru writing; renaming the conflicting database allowed the move');
+  } finally {
+    await removeDatabase(cells, x.id, projectId);
+    await removeDatabase(cells, y.id, projectId);
+  }
+});
+
+
+multiple('R12 a missed three-way home rotation converges without exposing placeholders', async ({ owner: { cells, projectId } }) => {
+  const a = name('rotate-a');
+  const b = name('rotate-b');
+  const c = name('rotate-c');
+  const x = await named(cells, home, a, ['gru', 'fra'], projectId);
+  const y = await named(cells, home, b, ['gru', 'fra'], projectId);
+  const z = await named(cells, home, c, ['gru', 'fra'], projectId);
+  try {
+    for (const row of [x, y, z]) {
+      await seed(cells, row.id, projectId);
+      await observed(cells, row.id, projectId);
+    }
+    expect(await Promise.all([x.id, y.id, z.id].map(id => recordedName(cells, id, projectId)))).toEqual([a, b, c]);
+    const started = performance.now();
+    await rename(cells, home, x.id, name('rotate-tmp'), projectId);
+    await rename(cells, home, z.id, a, projectId);
+    await rename(cells, home, y.id, c, projectId);
+    await rename(cells, home, x.id, b, projectId);
+    expect(performance.now() - started, 'the rotation finishes in less than one sweep').toBeLessThan(30_000);
+    expect(await Promise.all([x.id, y.id, z.id].map(id => recordedName(cells, id, projectId))),
+      'fra still has all original names and missed the intermediate name').toEqual([a, b, c]);
+    await convergedNames(cells, [x.id, y.id, z.id], [a, b, c], [b, c, a], projectId);
+    console.log('R12 fra converged to the three-way rotation within two sweeps; no GET exposed a placeholder');
+  } finally {
+    for (const row of [x, y, z]) await removeDatabase(cells, row.id, projectId);
+  }
+});
+
+multiple('R13 promotion resolves a same-home name swap through placement before takeover', async ({ owner: { cells, projectId } }) => {
+  const a = name('promote-a');
+  const b = name('promote-b');
+  const x = await named(cells, home, a, ['gru', 'fra'], projectId);
+  const y = await named(cells, home, b, ['gru', 'fra'], projectId);
+  try {
+    for (const row of [x, y]) {
+      await seed(cells, row.id, projectId);
+      await observed(cells, row.id, projectId);
+    }
+    await rename(cells, home, x.id, name('promote-tmp'), projectId);
+    await rename(cells, home, y.id, a, projectId);
+    await rename(cells, home, x.id, b, projectId);
+    expect(await Promise.all([x.id, y.id].map(id => recordedName(cells, id, projectId))),
+      'target has not swept the swap before promotion').toEqual([a, b]);
+    await answer(await patch(cells, x.id, ['fra'], projectId), 200, '200 promotion resolves the stale same-home holder');
+    expect(await Promise.all([x.id, y.id].map(id => recordedName(cells, id, projectId)))).toEqual([b, a]);
+    expect((await progress(cells, x.id, replica, projectId)).regions.filter(row => row.role === 'writer').map(row => row.region)).toEqual(['fra']);
+    console.log('R13 same-home promotion resolved both names through the existing placement request before takeover');
   } finally {
     await removeDatabase(cells, x.id, projectId);
     await removeDatabase(cells, y.id, projectId);

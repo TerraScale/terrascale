@@ -27,7 +27,7 @@ internal readonly union MoveHomeResult(ManagedDatabase, NotFound, Validation, Co
 internal readonly union PromoteResult(HomePromoteAnswer, Conflict, Unavailable);
 
 internal sealed class HomeMoves(
-    TerraBaseOptions options, IHomeMoveCatalog moves, IReplicaCatalog catalog, IReplicaPeers peers, ITenantDirectory tenants, IDatabaseReplicas replicas, RegionReplication replication,
+    TerraBaseOptions options, IHomeMoveCatalog moves, IReplicaCatalog catalog, IReplicaPeers peers, ITenantDirectory tenants, ReplicaNames names, IDatabaseReplicas replicas, RegionReplication replication,
     IStorageEngine engine, IDatabaseRevisions revisions, IWalBackup imports, DatabaseFences fences, Regions.IRegionCatalog regions, HomeApply.IHomeApply apply, HomeLeases leases, HomeLeaseGate leaseGate, HomePush.HomePush pushes,
     InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<HomeMoves> logger)
     : BackgroundService
@@ -343,6 +343,8 @@ internal sealed class HomeMoves(
     {
         if (name is not null)
         {
+            _ = await names.ApplyAsync(new ReplicaCatalogEntry(database.OrganizationId, database.ProjectId!, database.DatabaseId!, name,
+                fromRegion, placement.Replicas, placement.Version, placement.AllRegions, identity), listed: null, CancellationToken.None).ConfigureAwait(false);
             var named = await tenants.FindDatabaseAsync(database.OrganizationId, database.ProjectId!, name, CancellationToken.None).ConfigureAwait(false);
             if (named is TenantContext taken && taken.DatabaseId != database.DatabaseId)
             {

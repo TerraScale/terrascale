@@ -170,6 +170,9 @@ internal static class CatalogTables
         (await RowsAsync(transaction, Sql($"SELECT id FROM catalog_databases d WHERE project_id = ? AND name = ? AND {Live}", projectId, name), cancellationToken).ConfigureAwait(false))
             .Select(row => (string)row[0]!).FirstOrDefault();
 
+    public static async ValueTask RenameDatabaseAsync(IStorageTransaction transaction, string id, string name, CancellationToken cancellationToken) =>
+        _ = await RowsAsync(transaction, Sql("UPDATE catalog_databases SET name = ? WHERE id = ?", name, id), cancellationToken).ConfigureAwait(false);
+
     public static async ValueTask<ManagementPage<ManagedDatabase>> DatabasesAsync(
         IStorageTransaction transaction, string projectId, string? after, int limit, CancellationToken cancellationToken)
     {

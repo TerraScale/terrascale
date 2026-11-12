@@ -58,16 +58,17 @@ creation time is later. The home never takes identity facts from a follower. Its
 moves back to a region that retained the earlier facts; promotion preserves those facts by the same rule.
 An identity with a missing or default creation time is treated as absent.
 
-Names are unique within each region's project catalog. Different databases in one project can have the same name
-in disjoint regions. A follower keeps its stored name when the incoming name belongs to another database, applies
-the remaining facts and placement, and tries the name again on the next sweep. A two-database name swap converges
-in at most two successful sweeps if the follower already observed the temporary name. If it missed that name,
-both final names conflict with the other stored row and keeping the stored names cannot resolve the cycle.
-A promotion checks for a taken name before
-detaching, importing or taking the lease and refuses with the existing peer `409 move_aborted`; placement callers
-receive `503 replica_not_ready`. Rename one of the databases and repeat the move. The regions API does not expose
-the name-conflict reason. Catalog sync also runs from handoff paths; a follower can show the old name for up to
-one sweep.
+Names are unique within each region's project catalog. Renames reach followers through the home's catalog sweep,
+or through the paused home's name carried during promotion. When another database homed at that same source holds
+the name, the follower resolves up to eight names from the listing or the existing single-database placement request.
+It applies the entire chain or cycle in one write transaction, and promotion uses the same rule before detaching,
+importing or taking the lease. Unavailable or non-home answers, missing identity and longer chains keep the stored
+name for the next sweep, counted and logged once per database and requested name.
+Different databases with different homes can still have the same name in disjoint regions: a follower keeps its
+stored name on that conflict while applying other facts, and a move refuses with peer `409 move_aborted`
+(`503 replica_not_ready` to placement callers). Rename one of those databases and repeat placement; the regions API
+does not expose the name conflict. Older placement responders omit identity, so their answers cannot authorize a
+chain. Catalog sync also runs from handoff paths; a follower can show the old name for up to one sweep.
 
 ## Moving the home
 
