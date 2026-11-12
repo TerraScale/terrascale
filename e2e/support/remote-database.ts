@@ -128,9 +128,12 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
     await healthy('remote database creation dialog');
     cleanup(async () => {
       if (deleted) return;
+      if (!id) {
+        await removeThroughApi();
+        return;
+      }
       try {
-        if (id) await removeInDashboard();
-        if (!deleted) await removeThroughApi();
+        await removeInDashboard();
       } catch {
         await removeThroughApi();
       }
