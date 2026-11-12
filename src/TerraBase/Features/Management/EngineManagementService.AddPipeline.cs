@@ -26,7 +26,7 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask<AddDatabaseResult> AddDatabaseAsync(
         string organizationId, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
-        string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null, long? ttlSeconds = null)
+        string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null, long? ttlSeconds = null, DatabaseIdentity? identity = null)
     {
         var allowance = !PlatformDatabases.IsPlatform(organizationId) && (sourceId is not null || (placement?.Home ?? options.Region) == options.Region)
             ? await AllowanceAsync(organizationId, cancellationToken).ConfigureAwait(false)
@@ -59,8 +59,8 @@ internal sealed partial class EngineManagementService
         placement ??= new DatabasePlacement(options.Region, [], 1);
 
         var database = new ManagedDatabase(
-            id ?? NewId(), tenant.ProjectId!, name, branchedFrom, createdAt ?? time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
-            placement.AllRegions, ExpiresAt: DatabaseTtl.ExpiresAt(time.GetUtcNow(), ttlSeconds));
+            id ?? NewId(), tenant.ProjectId!, name, identity is null ? branchedFrom : identity.BranchedFrom, identity?.CreatedAt ?? createdAt ?? time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
+            placement.AllRegions, ExpiresAt: identity is null ? DatabaseTtl.ExpiresAt(time.GetUtcNow(), ttlSeconds) : identity.ExpiresAt);
         var storage = tenant with { DatabaseId = database.Id };
         var preparation = await PrepareDatabaseAsync(storage, sourceId is null ? null : tenant with { DatabaseId = sourceId }, cancellationToken).ConfigureAwait(false);
         if (preparation is not bool created || !created)

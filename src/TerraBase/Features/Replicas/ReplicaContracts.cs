@@ -1,8 +1,10 @@
+using TerraBase.Tenancy;
+
 namespace TerraBase.Features.Replicas;
 
 public sealed record ReplicaCatalogEntry(
     string OrganizationId, string ProjectId, string DatabaseId, string Name, string HomeRegion, IReadOnlyList<string> ReplicaRegions, long PlacementVersion,
-    bool AllRegions = false);
+    bool AllRegions = false, DatabaseIdentity? Identity = null);
 
 public sealed record ReplicaCatalogPage(IReadOnlyList<ReplicaCatalogEntry> Databases, string? Next);
 

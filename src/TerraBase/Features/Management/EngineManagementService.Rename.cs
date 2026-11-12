@@ -34,6 +34,11 @@ internal sealed partial class EngineManagementService
                 return ManagementErrors.WrongRegion;
             }
 
+            if (await HomeMovePendingAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false))
+            {
+                return MoveInProgress;
+            }
+
             if (database.Name == name)
             {
                 return database;
@@ -46,6 +51,7 @@ internal sealed partial class EngineManagementService
 
             var renamed = database with { Name = name };
             await CatalogTables.PutDatabaseAsync(transaction, renamed, cancellationToken).ConfigureAwait(false);
+            ClearKeptNames(databaseId);
             return renamed;
         }, static error => error, cancellationToken).ConfigureAwait(false);
 }

@@ -72,6 +72,7 @@ only that database. Server contract: `docs/terrabase/agent-databases.md`; record
 - `ttlSeconds` is 60 to 31,536,000 (365 days). The database, its backups and its data keys are deleted (crypto-shredded)
   within seconds after `expiresAt`; deletion is the same as `deleteDatabase`. A TTL database counts against the plan's
   database limit and is billed like any other until it is deleted. A fork does not inherit the source's TTL.
+- `setDatabaseTtl` and `clearDatabaseTtl` return `409 move_in_progress` while the database's writer is moving; send the request again after it settles.
 - `pointInTime` is an RFC 3339 instant inside the source's restore window; the fork holds every transaction committed
   before it. Without it the fork is a consistent copy taken now. `source` and `database` are a name or ULID.
 - `createScopedKey` mints a new API key from the client's own key. `database` is the database ULID (never a name).

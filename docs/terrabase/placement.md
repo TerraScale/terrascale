@@ -36,9 +36,52 @@ Until then, requests using `homeRegion`, `replicaRegions` or `allRegions`, and r
 |---|---|
 | `400 invalid_request` | bad or unserved regions; `homeRegion` is not a replica region |
 | `409 move_in_progress` | another move of this database is running |
+| `409 name_taken` | another database of the project has this name in the target region; rename one and repeat |
 | `421 wrong_region` | the request reached a region other than the home |
 | `503 replica_not_ready` | no requested replica can take over yet; added regions remain members (move-home itself changes nothing on this refusal) |
 | `503 move_unresolved` | the move outcome is being settled with the target; writes stay paused until it is; retry |
+
+## Database identity across regions
+
+Catalog entries carry an optional `identity` containing the original `createdAt`, `branchedFrom` and absolute
+`expiresAt`. The home supplies these facts on catalog pages and placement lookups. Followers reconcile the
+name and identity even at an unchanged placement version, so the next successful catalog sweep repairs records
+adopted before this change while an upgraded home still has the original facts. A rename changes only `name`;
+`previousName` and `conflictOf` are currently always null and have no stored catalog columns.
+
+Promotion also carries the paused home's name and identity, so an unswept TTL or rename reaches the new writer.
+Renames and TTL changes answer `409 move_in_progress` while a move marker is held. Expiry retains the absolute
+deadline; moving never restarts or shortens its TTL. These additions change JSON peer messages, not storage.
+Older senders omit identity and retain the former adoption behavior until a later sync supplies the facts;
+older receivers ignore the extra JSON members. If a database already moved and its current home has lost the
+original facts, a follower keeps its earlier creation time and branch origin (or fills a missing origin from the home)
+when the home's creation time is later. Expiry is mutable: it always comes from the current home, including a cleared
+or extended TTL, regardless of which creation time wins. The home never takes identity facts from a follower. Its listing stays lossy until the writer
+moves back to a region that retained the earlier facts; promotion preserves those facts by the same rule.
+An identity with a missing or default creation time is treated as absent.
+
+Names are unique within each region's project catalog. Renames reach followers through the home's catalog sweep,
+or through the paused home's name carried during promotion. When another database homed at that same source holds
+the name, the follower resolves up to eight names from the listing or the existing single-database placement request.
+Preparation captures each discovered member's id, name, home and placement version in short read transactions,
+releasing each before resolving the next holder from the listing or network. One write transaction rechecks every
+captured member and every destination, then applies the placeholder and final renames atomically. A changed snapshot
+applies no names and returns retry: the next sweep or repeated promotion prepares again. There is no network I/O in
+the write transaction. An unchanged listed entry opens zero write transactions: N unchanged entries cost zero writes.
+Missing-listing lookups share a three-second budget across the entire home sweep (all pages), starting at the first
+network lookup. After it expires, entries needing a lookup keep their names for this sweep; listing-only chains and
+other catalog facts still proceed. Promotion uses the same rule before detaching, importing or taking the lease.
+Its name preparation stays after the source pause because it checks the final paused name; its network lookups add
+at most three seconds to that pause, outside catalog transactions and within the existing 60-second peer timeout.
+Unavailable or non-home answers, missing identity and longer chains keep the stored name for the next sweep, counted
+and logged once for the current kept name per database, cleared when a name is applied or the database is forgotten.
+A missed rotation of nine or more names cannot converge by itself: rename one database to a free temporary name,
+let a sweep apply it, then rename it to the intended name and let another sweep run.
+Different databases with different homes can still have the same name in disjoint regions: a follower keeps its
+stored name on that conflict while applying other facts. A regions change that would move the writer into a region
+where another database of the project already has this name answers `409 name_taken`, from the promotion peer and
+the regions API. Rename one of them and repeat. Older placement responders omit identity, so their answers cannot authorize a
+chain. Catalog sync also runs from handoff paths; a follower can show the old name for up to one sweep.
 
 ## Moving the home
 
