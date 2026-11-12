@@ -77,7 +77,7 @@
 }
 
 .ts-apikeys-actions {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
 }

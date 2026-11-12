@@ -7,11 +7,11 @@
     var current = Model.Page.Shell.Context.Project?.Id == project.Id;
     <tr>
         <td><div class="ts-stack-sm ts-org-project-name"><span class="ts-table-strong">@project.Name</span><span class="ts-meta ts-mono">@project.Id</span></div></td>
-        <td class="ts-muted">@(project.Slug.Length > 0 ? project.Slug : "—")</td>
-        <td>@if (project.Regions.Count == 0) { <span class="ts-meta">None</span> } else { foreach (var code in project.Regions.Select(item => item.ToLowerInvariant())) { var country = Regions.Country(code); <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@code</span></span> } }</td>
-        <td class="ts-table-num">@project.Databases.Count</td>
-        <td><span class="ts-badge @(current ? "ts-badge-info" : "ts-badge-neutral")">@(current ? "Current" : "Available")</span></td>
-        <td class="ts-muted">@(project.CreatedAt == DateTimeOffset.MinValue ? "" : ValueFormat.UtcDate(project.CreatedAt))</td>
+        <td class="ts-muted" data-label="Slug">@(project.Slug.Length > 0 ? project.Slug : "—")</td>
+        <td data-label="Regions">@if (project.Regions.Count == 0) { <span class="ts-meta">None</span> } else { foreach (var code in project.Regions.Select(item => item.ToLowerInvariant())) { var country = Regions.Country(code); <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@code</span></span> } }</td>
+        <td class="ts-table-num" data-label="Databases">@project.Databases.Count</td>
+        <td data-label="Status"><span class="ts-badge @(current ? "ts-badge-info" : "ts-badge-neutral")">@(current ? "Current" : "Available")</span></td>
+        <td class="ts-muted" data-label="Created">@(project.CreatedAt == DateTimeOffset.MinValue ? "" : ValueFormat.UtcDate(project.CreatedAt))</td>
         <td class="ts-table-actions"><div class="ts-row ts-row-end">
             @if (!current)
             {
