@@ -183,7 +183,7 @@ namespace TerraScale.Dashboard.Features.Backups
         private static async Task<T> SafeAsync<T>(Func<Task<T>> action)
         {
             try { return await action(); }
-            catch (TerraBaseWrongRegionException error) { throw new DatabaseWrongRegionException(error); }
+            catch (TerraBaseWrongRegionException error) { throw new DatabaseWrongRegionException(error.Region, error.HomeRegion, error.Regions); }
             catch (TerraBaseException error)
             {
                 // Only known codes select fixed text. Provider messages can contain object paths or secrets.

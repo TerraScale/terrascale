@@ -245,9 +245,9 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new HttpRequestException("The provider returned an invalid restored database.");
             }
 
-            if (restored.Route != home.Id)
+            if (restored.HomeRegion != home.Id)
             {
-                throw new HttpRequestException("The restored database is in different regions than its source.");
+                throw new HttpRequestException("The restored database has a different home region.");
             }
 
             var placement = await databases.RemotePlacementAsync(restored, ct);

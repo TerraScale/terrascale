@@ -15,7 +15,7 @@ the nearest second. Invalid values fail before a producer mutation. Setting TTL
 retains management authorization and CSRF checks. Expiry scheduling and deletion
 are owned by TerraBase.
 
-MCP exposes `create_database(name, regions?, ttlHours?)`,
+MCP exposes `create_database(name, ttlHours?)`,
 `fork_database(databaseId, name, pointInTime?, ttlHours?)`,
 `set_database_ttl(databaseId, ttlHours)` or
 `set_database_ttl(databaseId, clear: true)`, `run_sql(databaseId, sql)` and

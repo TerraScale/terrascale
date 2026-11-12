@@ -3,7 +3,7 @@
 @{
     var regions = Model.Shown;
 }
-<div class="ts-region-map" id="@Model.Id" role="group" aria-labelledby="@(Model.LabelledBy.Length > 0 ? Model.LabelledBy : Model.Id + "-label")" data-region-map data-mode="@(Model.Selects ? "select" : "read-only")" data-bleed="@(Model.Bleed ? "true" : "false")" data-fit="@Model.FitName">
+<div class="ts-region-map" id="@Model.Id" role="group" aria-labelledby="@(Model.LabelledBy.Length > 0 ? Model.LabelledBy : Model.Id + "-label")" data-region-map data-mode="@(Model.Selects ? "select" : "read-only")" data-bleed="@(Model.Bleed ? "true" : "false")">
     @if (Model.LabelledBy.Length == 0) { <span class="ts-sr-only" id="@(Model.Id)-label">@Model.Label</span> }
     <canvas class="ts-region-map-sea" aria-hidden="true"></canvas>
     <div class="ts-region-map-stage" aria-hidden="true"><div class="ts-region-map-room"><img class="ts-region-map-art" src="@Assets.Url("brand/region-map.svg")" alt="" width="136" height="80" loading="lazy" decoding="async" /></div></div>

@@ -26,7 +26,6 @@ namespace TerraScale.Dashboard.Features.Databases
             ?? ((Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase)) ?? (Choices is [var first, ..] ? first : null))?.Code is { } code ? [code] : []);
         public RegionMapModel RegionMap => new("create-database-regions", RegionMapMode.Select, RegionMapModel.Rows(Choices.Select(region => new RegionMapRegion(region.Code, region.Name, region.Country))), Selected)
         {
-            Fit = RegionMapFit.Form,
             Bleed = true,
             OrderField = "regionOrder",
             Minimum = DatabasePlacementEndpoints.Minimum
@@ -180,16 +179,12 @@ namespace TerraScale.Dashboard.Features.Databases
         public IReadOnlyList<DatabaseRecord> Branches => [.. Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal)];
         public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database);
         public bool CanPlace => Context.CanManage && Database.Status == "ready" && !PlatformDatabases.IsPlatform(Context.Organization?.Id);
-        public DatabaseRegionsForm? RegionsForm { get; init; }
-        private IReadOnlyList<string> Asked => [.. (RegionsForm?.Asked ?? []).Where(code => Serving.Contains(code, StringComparer.OrdinalIgnoreCase) ||
-            Choices.Any(region => region.Code.Equals(code, StringComparison.OrdinalIgnoreCase)))];
         public RegionMapModel RegionMap => CanPlace
             ? new("database-regions", RegionMapMode.Select, RegionMapModel.Rows(Choices.Select(region => new RegionMapRegion(region.Code, region.Name, region.Country))),
-                Asked.Count > 0 ? Asked : Database.AllRegions ? [.. Serving.Concat(Choices.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)] : Serving)
+                Database.AllRegions ? [.. Serving.Concat(Choices.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)] : Serving)
             {
                 LabelledBy = "regions-title",
-                Minimum = DatabasePlacementEndpoints.Minimum,
-                Fit = RegionMapFit.Page
+                Minimum = DatabasePlacementEndpoints.Minimum
             }
             : RegionMapModel.ReadOnly("database-regions", Serving) with { LabelledBy = "regions-title" };
         public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
