@@ -8,6 +8,8 @@ Every dashboard record is a row of a relational table, read and written through 
 other storage path: MagicOnion reaches only TerraBase's product APIs (database management, customer SQL, backups,
 usage), never the dashboard's own data.
 
+See [organization checkout](organization-checkout.md) for the payment-before-creation state machine.
+
 ## Tables
 
 ### Access
@@ -52,6 +54,7 @@ pending.
 | `project_databases` | A project's database: name, placement, endpoint, status, limits, backup retention, branch source, expiry | `id` is the TerraBase ULID; foreign keys to `organizations` and `organization_projects`, both cascade; unique `(project_id, name)` |
 | `audit_events` | An organization's dashboard audit event | `id` ULID; foreign key to `organizations` with cascade delete; index on `(organization_id, occurred_at)` |
 | `invitation_reservations` | A plan member slot taken while ts-auth creates an invitation | `id` ULID (the operation id); foreign key to `organizations` with cascade delete; unique `(organization_id, invitation_id)` once ts-auth answered |
+| `pending_organization_checkouts` | A user's organization draft after Stripe creates its Checkout Session | Key user ID; unique draft ULID and required nonempty session ID; plan is 1–128 characters and validated against the published catalog in code; interval is monthly or annual; version concurrency token; no organization exists yet |
 | `billing` | An organization's billing binding: its Stripe checkout reservation and subscription projection, or its internal billing reservation, or an erasure marker | Key `organization_id`, foreign key to `organizations` with cascade delete, so one row per organization; `kind` is `stripe` or `internal`, `state` is `reserved`, `active` or `deleting`; `internal_reservation` (JSON policy snapshot and cap) exactly when `kind = 'internal'`; unique `customer_id` when set (`cus_…`); `erasure_id` ULID marks an erased organization and clears the rest; `revision >= 0`; `version` ULID concurrency token |
 | `stripe_customers` | The Stripe customer that belongs to an organization | `id` ULID; unique `customer_id` (`cus_…`); unique `organization_id`, foreign key to `billing` with cascade delete |
 | `stripe_checkouts` | A Checkout Session the dashboard created, bound to its reservation | `id` ULID; unique `checkout_id` (`cs_…`); foreign keys to `billing` and to `stripe_customers.customer_id`, both cascade; project ID empty or a ULID |

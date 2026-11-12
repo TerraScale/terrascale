@@ -10,6 +10,11 @@ public sealed record TerraScaleAuthPlatformPage<T>(
 /// <summary>Wire DTO for the producer NameRequest. See contracts/auth/dtos.json.</summary>
 public sealed record TerraScaleAuthPlatformName([property: JsonPropertyName("name")] string? Name);
 
+/// <summary>Creates an organization, replaying the same caller's idempotency key without duplicating it.</summary>
+public sealed record TerraScaleAuthPlatformCreateOrganization(
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("idempotency_key")] string? IdempotencyKey = null);
+
 /// <summary>Wire DTO for the producer RoleRequest. See contracts/auth/dtos.json.</summary>
 public sealed record TerraScaleAuthPlatformRole([property: JsonPropertyName("role")] string? Role);
 

@@ -8,6 +8,10 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
     public sealed record TsAuthPlatformName([property: JsonPropertyName("name")] string? Name);
 
+    public sealed record TsAuthPlatformCreateOrganization(
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("idempotency_key")] string? IdempotencyKey = null);
+
     public sealed record TsAuthPlatformRole([property: JsonPropertyName("role")] string? Role);
 
     public sealed record TsAuthPlatformOrganization(

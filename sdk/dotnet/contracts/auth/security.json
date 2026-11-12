@@ -86,6 +86,7 @@
     ]
   },
   "required_request_values": {
+    "CreateOrganizationRequest": ["name"],
     "NameRequest": [
       "name"
     ],

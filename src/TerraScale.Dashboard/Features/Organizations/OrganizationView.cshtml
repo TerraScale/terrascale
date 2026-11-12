@@ -10,6 +10,10 @@ else
 {
 <main class="ts-page ts-org-page @(Model.Tab == "audit" ? "ts-audit-page" : "")">
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationHeader, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
+    @if (Model.CheckoutNotice.Length > 0)
+    {
+        <section class="ts-alert ts-alert-warning" role="status" id="organization-checkout-notice"><span>@Model.CheckoutNotice</span> @if (Model.CheckoutRetry) { <a class="ts-link" href="@Model.Shell.ReturnUrl">Retry</a> }</section>
+    }
     @if (Model.Notice.Length > 0)
     {
         <section class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">@(Model.NoticeStatus == 403 ? "Access required" : Model.Tab == "billing" ? "Billing unavailable" : "Could not open organization")</p><p class="ts-alert-body">@Model.Notice</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p>

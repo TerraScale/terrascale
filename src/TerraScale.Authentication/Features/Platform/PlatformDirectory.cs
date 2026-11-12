@@ -62,19 +62,40 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
     public static bool IsId(string? value) =>
         TerraScaleIds.IsValid(value);
 
-    public async Task<OrganizationRecord> CreateOrganizationAsync(UserRecord user, string name, CancellationToken cancellationToken)
+    public async Task<OrganizationRecord> CreateOrganizationAsync(UserRecord user, string name, string? idempotencyKey, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(user);
+        var id = idempotencyKey is null ? AuthIds.New() : AuthIds.Derived(Instance, "organization-create/" + user.Id, "key:" + idempotencyKey);
+        await this.RefuseOrganizationCreationAsync(id, cancellationToken).ConfigureAwait(false);
+        await this.FenceAsync(id, null, user.Id, cancellationToken).ConfigureAwait(false);
+        if (idempotencyKey is not null && await this.OrganizationAsync(id, cancellationToken).ConfigureAwait(false) is { } existing)
+        {
+            return existing.Value.CreatedBy == user.Id ? existing.Value : throw ApiException.Unavailable();
+        }
+
         var now = clock.GetUtcNow();
-        var organization = new OrganizationRecord(AuthIds.New(), Instance, name, user.Id, now, Owners: 1, Projects: 0);
+        var organization = new OrganizationRecord(id, Instance, name, user.Id, now, Owners: 1, Projects: 0);
         var membership = new MembershipRecord(Instance, organization.Id, user.Id, Roles.Owner, now);
-        await this.FenceAsync(null, null, user.Id, cancellationToken).ConfigureAwait(false);
-        return await data.SaveAsync(
+        await this.RefuseOrganizationCreationAsync(id, cancellationToken).ConfigureAwait(false);
+        await this.FenceAsync(id, null, user.Id, cancellationToken).ConfigureAwait(false);
+        if (await data.SaveAsync(
         [
             Change.Insert(organization),
             Change.Insert(membership),
             this.Audit(organization.Id, user.Id, "organization.created", null, name),
-        ], cancellationToken).ConfigureAwait(false) ? organization : throw ApiException.Unavailable();
+        ], cancellationToken).ConfigureAwait(false))
+        {
+            return organization;
+        }
+
+        await this.RefuseOrganizationCreationAsync(id, cancellationToken).ConfigureAwait(false);
+        await this.FenceAsync(id, null, user.Id, cancellationToken).ConfigureAwait(false);
+        if (idempotencyKey is not null && await this.OrganizationAsync(id, cancellationToken).ConfigureAwait(false) is { } winner && winner.Value.CreatedBy == user.Id)
+        {
+            return winner.Value;
+        }
+
+        throw ApiException.Unavailable();
     }
 
     public async Task<Page<(OrganizationRecord Organization, string? Role)>> OrganizationsAsync(string userId, int limit, string? after, CancellationToken cancellationToken)
@@ -984,6 +1005,16 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         }
 
         throw ApiException.Unavailable();
+    }
+
+    private async Task RefuseOrganizationCreationAsync(string organizationId, CancellationToken cancellationToken)
+    {
+        if (await data.ReadAsync(async (db, token) =>
+            await db.DeletionJobs.AnyAsync(job => job.InstanceId == Instance && job.Scope == "organization" && job.SubjectId == organizationId, token).ConfigureAwait(false)
+            || await db.ClosureJobs.AnyAsync(job => job.InstanceId == Instance && job.Scope == "organization" && job.SubjectId == organizationId, token).ConfigureAwait(false), cancellationToken).ConfigureAwait(false))
+        {
+            throw Conflict("organization_deleted", "This organization was deleted or is closing. Start a new organization checkout.");
+        }
     }
 
     internal async Task FenceAsync(string? organizationId, string? projectId, string? userId, CancellationToken cancellationToken)

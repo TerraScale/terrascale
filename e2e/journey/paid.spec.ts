@@ -1,10 +1,12 @@
 import { createHmac, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { onboard, signUp, verify } from '../support/hosted';
 import { createApiKey, createDatabase, databaseNames, stripeLog } from '../support/paid';
 import { shell } from '../support/shell';
-import { dash } from '../support/stack';
+import { dash, stateDir, stripeStandIn } from '../support/stack';
 import { saveJourney, saveSecret, saveSession } from '../support/state';
 
 const checkout = 'https://checkout.stripe.com';
@@ -104,4 +106,223 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
     runId, email, password, displayName, organizationId, organizationName, projectId, projectName,
     databaseId, databaseName, databaseRegion: region, apiKeyName, apiKey, secondDatabaseId, secondDatabaseName,
   });
+});
+
+async function organizationOwner(page: Page, audit: import('../support/audit').Audit) {
+  const run = randomBytes(4).toString('hex');
+  const email = `organization-${run}@example.com`;
+  const password = randomBytes(24).toString('base64url');
+  saveSecret('organization-password', password);
+  await signUp(page, audit, email, password, 'organization owner');
+  await verify(page, email);
+  await onboard(page, audit, `Owner ${run}`, `Personal ${run}`, 'organization owner');
+  const deviceResponse = await page.request.post('https://auth.terrascale.tech/terrascale/oauth/device', {
+    form: { client_id: '00000000000000000000000007', scope: 'openid email profile' },
+  });
+  expect(deviceResponse.status()).toBe(200);
+  const device = await deviceResponse.json();
+  saveSecret('organization-device', device.device_code);
+  await page.goto(device.verification_uri_complete);
+  await audit.check('organization owner approves CLI access');
+  await page.locator('button[name=decision][value=approve]').click();
+  await expect(page.locator('[data-state=success]')).toBeVisible();
+  const tokenResponse = await page.request.post('https://auth.terrascale.tech/terrascale/oauth/token', {
+    form: { client_id: '00000000000000000000000007', grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: device.device_code },
+  });
+  expect(tokenResponse.status()).toBe(200);
+  const token = (await tokenResponse.json()).access_token as string;
+  saveSecret('organization-sign-in-token', token);
+  const headers = { authorization: `Bearer ${token}` };
+  const organizations = async () => {
+    const response = await page.request.get('https://auth.terrascale.tech/v1/terrascale/organizations', { headers });
+    expect(response.status()).toBe(200);
+    return (await response.json()).items as { id: string; name: string }[];
+  };
+  return { run, headers, organizations };
+}
+
+test('organization checkout creates nothing before payment and completes exactly once on authenticated return', async ({ page, audit }) => {
+  const owner = await organizationOwner(page, audit);
+  const before = await owner.organizations();
+  const name = `Confirmed ${owner.run}`;
+  await page.goto('/organization?newOrganization=organization');
+  const wizard = page.locator('#create-organization[open]');
+  const input = wizard.locator('input[name=name]');
+  await expect(input).toHaveAttribute('required', '');
+  await expect(input).toHaveAttribute('minlength', '1');
+  await expect(input).toHaveAttribute('maxlength', '128');
+  await expect(input).toHaveAttribute('pattern', /p\{L\}/);
+  await input.fill('!!!');
+  await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).evaluate((button) => { (button as HTMLButtonElement).formNoValidate = true; });
+  audit.expectStatus(/\/api\/v1\/dashboard\/organization\/new-organization(?:\?|$)/, 422);
+  await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await expect(wizard.getByRole('alert')).toContainText('Names need');
+  await expect(wizard.locator('input[name=name]')).toHaveValue('!!!');
+  await input.fill(name);
+  await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await expect(wizard.getByRole('heading', { name: 'Set up billing' })).toBeVisible();
+  expect(await owner.organizations()).toEqual(before);
+  await wizard.locator('input[name=plan][value=pro]').check();
+  await wizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  const checkoutId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+  expect(await owner.organizations()).toEqual(before);
+  const checkoutUrl = page.url();
+  await page.goto('/organization?newOrganization=organization');
+  const cancelForm = await wizard.locator('form').evaluate((form) => Object.fromEntries(new FormData(form as HTMLFormElement).entries()) as Record<string, string>);
+  const paid = await page.request.post(checkoutUrl, { maxRedirects: 0 });
+  expect(paid.status()).toBe(303);
+  const stripeKey = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n').find((line) => line.startsWith('sk_test_'));
+  if (!stripeKey) throw new Error('The local stack has no Stripe credential');
+  const stripeHeaders = { authorization: 'Bearer ' + stripeKey, 'stripe-version': '2026-09-30.endive' };
+  const paidResponse = await page.request.get('https://api.stripe.com/v1/checkout/sessions/' + checkoutId, { headers: stripeHeaders });
+  expect(paidResponse.status()).toBe(200);
+  const paidSession = await paidResponse.json();
+  const failure = await fetch(stripeStandIn + '/failure', {
+    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + paidSession.subscription, status: 404, remaining: 2 }),
+  });
+  expect(failure.status).toBe(200);
+  const authFailure = await fetch(stripeStandIn + '/auth-failure', {
+    method: 'POST', body: JSON.stringify({ checkout: checkoutId }),
+  });
+  expect(authFailure.status).toBe(200);
+  const interrupted = await page.request.get(paid.headers().location, { maxRedirects: 0 });
+  expect(interrupted.status()).toBe(303);
+  expect(interrupted.headers().location).toBe('/organization');
+  const unfinished = (await owner.organizations()).filter((org) => org.name === name);
+  expect(unfinished).toHaveLength(1);
+  const ordinary = await page.request.get('/organization', {
+    headers: { 'Datastar-Request': 'true', accept: 'text/html' },
+  });
+  expect(ordinary.status()).toBe(200);
+  const ordinaryHtml = await ordinary.text();
+  expect(ordinaryHtml).toContain('data-organization-option="' + before[0].id + '"');
+  expect(ordinaryHtml).not.toContain('data-organization-option="' + unfinished[0].id + '"');
+  await page.goto(paid.headers().location);
+  await page.waitForURL((url) => url.origin === dash && url.pathname === '/organization' && url.searchParams.get('newOrganization') === 'project');
+  const afterFailure = await stripeLog();
+  expect(afterFailure.calls.filter((call) => call.path === '/v1/subscriptions/' + paidSession.subscription && call.status === 404)).toHaveLength(2);
+  const staleCancel = await page.request.post('/api/v1/dashboard/organization/new-organization', { form: cancelForm, maxRedirects: 0 });
+  expect(staleCancel.status()).toBe(303);
+  await page.goto(staleCancel.headers().location);
+  await expect(page.locator('#organization-checkout-notice')).toContainText('Checkout cannot be canceled.');
+  await page.goto('/organization?tab=billing');
+  await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
+  await expect(page.locator('#billing-summary .ts-billing-plan .ts-badge')).toHaveText('Active');
+  const afterResume = await stripeLog();
+  expect(afterResume.cancels.filter((entry) => entry.subscription === paidSession.subscription)).toHaveLength(0);
+  expect(afterResume.refunds.filter((entry) => entry.subscription === paidSession.subscription)).toHaveLength(0);
+  console.log('organization checkout after mark: Stripe metadata 404 twice; stale wizard cancel refused; no cancel or refund; next navigation has Pro with its binding');
+  const created = (await owner.organizations()).filter((org) => org.name === name);
+  expect(created).toHaveLength(1);
+  const organization = created[0];
+  const again = await page.request.post('https://auth.terrascale.tech/v1/terrascale/organizations', {
+    headers: owner.headers, data: { name, idempotency_key: checkoutId },
+  });
+  expect(again.status()).toBe(201);
+  expect((await again.json()).id).toBe(organization.id);
+  await page.goto(`/billing/checkout/return?session_id=${checkoutId}`);
+  await page.goto(`/billing/checkout/return?session_id=${checkoutId}`);
+  expect((await owner.organizations()).filter((org) => org.name === name)).toEqual([organization]);
+  const members = await page.request.get(`https://auth.terrascale.tech/v1/terrascale/organizations/${organization.id}/members`, { headers: owner.headers });
+  expect(members.status()).toBe(200);
+  expect((await members.json()).items).toHaveLength(1);
+  const events = await page.request.get(`https://auth.terrascale.tech/v1/terrascale/organizations/${organization.id}/audit-events`, { headers: owner.headers });
+  expect(events.status()).toBe(200);
+  expect((await events.json()).items.filter((event: { action: string }) => event.action === 'organization.created')).toHaveLength(1);
+  await expect(page.locator('#create-organization[open]')).toBeVisible();
+  await audit.check('confirmed organization project step after repeated completion');
+  await expect(wizard.getByRole('button', { name: 'Cancel pending checkout', exact: true })).toHaveCount(0);
+  console.log('organization checkout: response lost after real ts-auth create; ordinary signed-in request hides creating organization; resumed Pro with billing binding; exactly one organization, one owner membership, one creation audit and no pending checkout');
+  const canceledName = 'Canceled payment ' + owner.run;
+  await page.goto('/organization?newOrganization=organization');
+  const canceledWizard = page.locator('#create-organization[open]');
+  await canceledWizard.locator('input[name=name]').fill(canceledName);
+  await canceledWizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await canceledWizard.locator('input[name=plan][value=pro]').check();
+  await canceledWizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  const canceledId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+  const refusedPayment = await page.request.post(page.url(), { maxRedirects: 0 });
+  expect(refusedPayment.status()).toBe(303);
+  const sessionResponse = await page.request.get('https://api.stripe.com/v1/checkout/sessions/' + canceledId, { headers: stripeHeaders });
+  expect(sessionResponse.status()).toBe(200);
+  const refusedSession = await sessionResponse.json();
+  const canceled = await page.request.delete('https://api.stripe.com/v1/subscriptions/' + refusedSession.subscription, { headers: stripeHeaders });
+  expect(canceled.status()).toBe(200);
+  const invoices = await page.request.get('https://api.stripe.com/v1/invoices', {
+    headers: stripeHeaders, params: { customer: refusedSession.customer, subscription: refusedSession.subscription, status: 'paid' },
+  });
+  expect(invoices.status()).toBe(200);
+  const payments = await page.request.get('https://api.stripe.com/v1/invoice_payments', {
+    headers: stripeHeaders, params: { invoice: (await invoices.json()).data[0].id, status: 'paid' },
+  });
+  expect(payments.status()).toBe(200);
+  const paymentId = (await payments.json()).data[0].payment.payment_intent;
+  const pendingRefund = await fetch(stripeStandIn + '/refund-status', { method: 'POST', body: JSON.stringify({ payment: paymentId, status: 'requires_action' }) });
+  expect(pendingRefund.status).toBe(200);
+  await page.goto(refusedPayment.headers().location);
+  await expect(page.locator('#organization-checkout-notice')).toContainText('Your refund is requires_action.');
+  await expect(page.locator('#organization-checkout-notice')).toContainText('You can start a new checkout.');
+  await page.reload();
+  await expect(page.locator('#organization-checkout-notice')).toHaveCount(0);
+  await page.goto('/organization?newOrganization=organization');
+  await canceledWizard.locator('input[name=name]').fill(canceledName);
+  await canceledWizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await canceledWizard.locator('input[name=plan][value=pro]').check();
+  await canceledWizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  const unsettled = await page.request.get('https://api.stripe.com/v1/refunds', { headers: stripeHeaders, params: { payment_intent: paymentId } });
+  expect(unsettled.status()).toBe(200);
+  expect((await unsettled.json()).data[0].status).toBe('requires_action');
+  await page.getByRole('link', { name: 'Cancel', exact: true }).click();
+  await page.waitForURL((url) => url.origin === dash);
+  const settledRefund = await fetch(stripeStandIn + '/refund-status', { method: 'POST', body: JSON.stringify({ payment: paymentId, status: 'succeeded' }) });
+  expect(settledRefund.status).toBe(200);
+  await page.goto('/organization');
+  await expect(page.locator('#organization-checkout-notice')).toContainText("The payment didn't go through.");
+  await expect(page.locator('#organization-checkout-notice')).toHaveAttribute('role', 'status');
+  await expect(page.locator('#organization-checkout-notice')).toContainText('Your payment was refunded.');
+  const refusedLog = await stripeLog();
+  expect(refusedLog.cancels.filter((entry) => entry.subscription === refusedSession.subscription)).toHaveLength(1);
+  const refunds = refusedLog.refunds.filter((entry) => entry.subscription === refusedSession.subscription);
+  expect(refunds).toHaveLength(1);
+  expect(refunds[0].amount).toBe(2000);
+  expect((await owner.organizations()).filter((org) => org.name === canceledName)).toHaveLength(0);
+  await audit.check('payment canceled before return creates no organization');
+  await page.reload();
+  await expect(page.locator('#organization-checkout-notice')).toHaveCount(0);
+  console.log('organization checkout: requires_action refund retained beside a fresh draft; new draft canceled; settled refund keeps original refusal reason once; no organization; one full refund');
+
+});
+
+test('canceling organization checkout leaves no organization and preserves the wizard draft', async ({ page, audit }) => {
+  const owner = await organizationOwner(page, audit);
+  const before = await owner.organizations();
+  const name = `Canceled ${owner.run}`;
+  await page.goto('/organization?newOrganization=organization');
+  const wizard = page.locator('#create-organization[open]');
+  await wizard.locator('input[name=name]').fill(name);
+  await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await wizard.locator('input[name=plan][value=pro]').check();
+  await wizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  expect(await owner.organizations()).toEqual(before);
+  await page.getByRole('link', { name: 'Cancel', exact: true }).click();
+  await page.waitForURL((url) => url.origin === dash && url.searchParams.get('payment') === 'canceled');
+  await expect(wizard).toBeVisible();
+  await expect(wizard.locator('input[name=name]')).toHaveValue(name);
+  await expect(wizard.locator('input[name=plan][value=pro]')).toBeChecked();
+  expect(await owner.organizations()).toEqual(before);
+  await audit.check('canceled organization checkout keeps its draft and creates nothing');
+  await wizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  await page.goto('/organization?newOrganization=organization');
+  await expect(wizard.getByRole('button', { name: 'Cancel pending checkout', exact: true })).toBeVisible();
+  await wizard.getByRole('button', { name: 'Cancel pending checkout', exact: true }).click();
+  await expect(wizard.locator('input[name=name]')).toHaveValue(name);
+  await expect(wizard.locator('input[name=plan][value=pro]')).toBeChecked();
+  expect(await owner.organizations()).toEqual(before);
+  await audit.check('pending checkout canceled from organization wizard');
+  console.log('organization checkout canceled: organization list unchanged; name and plan preserved in wizard; own pending checkout canceled from wizard');
 });

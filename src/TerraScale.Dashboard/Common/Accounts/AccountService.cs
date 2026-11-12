@@ -9,6 +9,7 @@ using TerraScale.TerraBase.Contracts;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Billing;
 namespace TerraScale.Dashboard.Common.Accounts
 {
     // ts-auth decides which organizations and projects exist and the caller's role
@@ -239,10 +240,13 @@ namespace TerraScale.Dashboard.Common.Accounts
                 }
 
                 var collaborator = live.Role is null;
+                var org = await OrganizationStateAsync(session, live, snapshot, cancellationToken, create: !collaborator);
+                if (org is null)
+                {
+                    return null;
+                }
                 var access = !collaborator && live.Id == accessFor ? FetchAccessAsync(session, live.Id, cancellationToken) : null;
-                var stored = OrganizationStateAsync(live, snapshot, cancellationToken, create: !collaborator);
                 var projects = live.Id == accessFor && early is not null ? early : platform.ListProjectsAsync(session, live.Id, cancellationToken);
-                var org = await stored;
                 // ts-auth refuses an organization that requires two-factor to a caller without it; the
                 // organization stays listed, keeps its stored projects and is blocked when selected.
                 IReadOnlyList<TsAuthPlatformProject>? listed = null;
@@ -341,10 +345,21 @@ namespace TerraScale.Dashboard.Common.Accounts
             return context with { Loaded = loadedAt };
         }
 
-        // An organization created outside the dashboard starts as a business workspace that needs billing.
-        private async Task<OrganizationRecord> OrganizationStateAsync(TsAuthPlatformOrganization live, Task<IReadOnlyDictionary<string, OrganizationRecord?>> snapshot,
+        private async Task<OrganizationRecord?> OrganizationStateAsync(SessionRecord session, TsAuthPlatformOrganization live, Task<IReadOnlyDictionary<string, OrganizationRecord?>> snapshot,
             CancellationToken cancellationToken, bool create = true)
         {
+            if (live.CreatedBy == session.UserId)
+            {
+                await using var db = await storage.CreateDbContextAsync(cancellationToken);
+                var draft = await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(
+                    row => row.UserId == session.UserId && row.State == OrganizationCheckoutStates.Creating, cancellationToken);
+                if (draft is not null && (draft.OrganizationId.Length > 0 ? draft.OrganizationId :
+                    (await CreatingOrganizationAsync(session, draft, cancellationToken)).Id) == live.Id)
+                {
+                    return null;
+                }
+            }
+
             if ((await snapshot).TryGetValue(live.Id, out var read))
             {
                 return read ?? throw new AccountAccessException("Organization is unavailable.", 404);
@@ -636,47 +651,83 @@ namespace TerraScale.Dashboard.Common.Accounts
             return context with { Account = selected, Loaded = null };
         }
 
-        public async Task<OrganizationRecord> CreateBusinessAsync(SessionRecord session, string name, CancellationToken cancellationToken)
+        internal async Task<OrganizationRecord> CompleteBusinessAsync(SessionRecord session, PendingOrganizationCheckout draft, CancellationToken cancellationToken)
         {
-            name = ValidName(name);
-            var context = await GetContextAsync(session, cancellationToken);
-            var duplicate = context.Organizations.FirstOrDefault(org => org.OwnerUserId == session.UserId && org.Slug == Slug(name));
-            if (duplicate is not null)
-            {
-                if (duplicate.Kind == "business" && duplicate.BillingStatus == "billing_required")
-                {
-                    await plans.EnsurePublishedAsync(duplicate, cancellationToken);
-                    await SwitchOrganizationAsync(session, duplicate.Id, cancellationToken);
-                    return duplicate;
-                }
-                throw new AccountAccessException("You already own an organization with this name.", 409);
-            }
-            var live = await platform.CreateOrganizationAsync(session, name, cancellationToken);
+            var live = await CreatingOrganizationAsync(session, draft, cancellationToken);
             var org = new OrganizationRecord
             {
                 Id = live.Id,
                 Name = live.Name,
                 Slug = Slug(live.Name),
                 Kind = "business",
-                PlanId = OrganizationRecord.StarterPlanId,
-                BillingStatus = "billing_required",
+                PlanId = draft.PlanId,
+                BillingStatus = "active",
+                PaymentMethodValidated = true,
                 OwnerUserId = session.UserId,
                 CreatedAt = live.CreatedAt,
                 Members = new() { [session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = live.CreatedAt } }
             };
-            // A context read between creation and this write stores the default business state; keep it.
-            try { await organizationStore.CreateAsync(org, cancellationToken); }
-            catch (DbUpdateConcurrencyException)
+            org = await organizationStore.CompleteCheckoutAsync(org, draft, cancellationToken);
+
+            await UpdateAccountAsync(session, account =>
             {
-                var current = await organizationStore.FindAsync(org.Id, cancellationToken);
-                if (current is not { Erased: false })
+                if (!account.OrganizationIds.Contains(org.Id))
                 {
-                    throw new AccountAccessException("Organization is unavailable.", 404);
+                    account.OrganizationIds.Add(org.Id);
+                }
+                account.ActiveOrganizationId = org.Id;
+                account.ActiveProjectId = "";
+            }, cancellationToken);
+            return org;
+        }
+
+        private async Task<TsAuthPlatformOrganization> CreatingOrganizationAsync(SessionRecord session, PendingOrganizationCheckout draft, CancellationToken cancellationToken)
+        {
+            var live = await platform.CreateOrganizationAsync(session, draft.Name, draft.CheckoutId, cancellationToken);
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                await using var db = await storage.CreateDbContextAsync(cancellationToken);
+                var current = await db.PendingOrganizationCheckouts.SingleOrDefaultAsync(row => row.DraftId == draft.DraftId, cancellationToken);
+                if (current is null)
+                {
+                    return live;
+                }
+                if (current.State != OrganizationCheckoutStates.Creating || current.UserId != session.UserId
+                    || current.OrganizationId.Length > 0 && current.OrganizationId != live.Id)
+                {
+                    throw new IOException("Organization creation claim changed concurrently.");
+                }
+                if (current.OrganizationId == live.Id)
+                {
+                    return live;
+                }
+                current.OrganizationId = live.Id;
+                current.Version = NewId();
+                try
+                {
+                    await db.SaveChangesAsync(cancellationToken);
+                    return live;
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    if (attempt == 2)
+                    {
+                        throw new IOException("Organization creation identity changed concurrently. Retry organization setup.");
+                    }
                 }
             }
-            await plans.EnsurePublishedAsync(org, cancellationToken);
-            await UpdateAccountAsync(session, account => { account.OrganizationIds.Add(org.Id); account.ActiveOrganizationId = org.Id; account.ActiveProjectId = ""; }, cancellationToken);
-            return org;
+            throw new IOException("Organization creation identity changed concurrently. Retry organization setup.");
+        }
+
+        internal static string BusinessName(AccountContext context, string name)
+        {
+            name = ValidName(name);
+            if (context.Organizations.Any(org => org.OwnerUserId == context.UserId && org.Slug == Slug(name)))
+            {
+                throw new AccountAccessException("You already own an organization with this name.", 409);
+            }
+
+            return name;
         }
 
         public static string ValidName(string name)

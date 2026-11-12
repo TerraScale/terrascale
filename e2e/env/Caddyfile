@@ -18,6 +18,11 @@ https://dash.terrascale.tech, https://mcp.terrascale.tech, https://platform.terr
 
 https://auth.terrascale.tech {
 	import edge
+	@organizationCreate {
+		method POST
+		path /v1/terrascale/organizations
+	}
+	reverse_proxy @organizationCreate 127.0.0.1:8027
 	reverse_proxy 127.0.0.1:8090 {
 		flush_interval -1
 	}

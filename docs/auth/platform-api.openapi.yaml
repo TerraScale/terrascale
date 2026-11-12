@@ -41,12 +41,12 @@ paths:
       operationId: create_organization
       tags: [Organizations]
       summary: Create an organization
-      description: The caller becomes its first member, with the owner role.
+      description: The caller becomes its first member, with the owner role. An optional idempotency_key returns the same organization for that caller without repeating membership or audit creation. A deleted or closing organization ID is refused with 409 organization_deleted.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/NameRequest' }
+            schema: { $ref: '#/components/schemas/CreateOrganizationRequest' }
             example: { name: Acme }
       responses:
         '201':
@@ -58,6 +58,7 @@ paths:
               schema: { $ref: '#/components/schemas/Organization' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/Unavailable' }
     get:
       operationId: list_organizations
@@ -1667,6 +1668,13 @@ components:
       properties:
         error: { type: string }
         error_description: { type: string }
+    CreateOrganizationRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { $ref: '#/components/schemas/Name' }
+        idempotency_key: { type: [string, 'null'], maxLength: 128 }
     NameRequest:
       type: object
       required: [name]

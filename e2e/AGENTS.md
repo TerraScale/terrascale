@@ -203,6 +203,11 @@ SHA-256 to its archive's.
   line of its call log holds the method, the path, the query keys and the expand paths, and no other query or form
   value.
 
+The Stripe journey process also forwards organization-create POSTs to real ts-auth. Its loopback-only
+/auth-failure control drops one successful response for a specific checkout key after ts-auth commits, so the
+checkout journey exercises a lost create response without replacing ts-auth or adding a production test seam.
+Paid Checkout session creation must carry allowed_payment_method_types of card and link.
+
 ## Rules
 
 - Real services only: never fake our own code; only third parties are stood in for (Mailpit for SMTP, a sink for

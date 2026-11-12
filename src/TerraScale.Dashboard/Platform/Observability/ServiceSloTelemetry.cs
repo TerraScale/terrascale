@@ -20,6 +20,18 @@ namespace TerraScale.Dashboard.Platform.Observability
         private long good;
         private long bad;
         private long failingDeletionEntries;
+        private long organizationCreationFailures;
+        private long organizationMetadataFailures;
+
+        public void ReportOrganizationCreationFailure()
+        {
+            Interlocked.Increment(ref organizationCreationFailures);
+        }
+
+        public void ReportOrganizationMetadataFailure()
+        {
+            Interlocked.Increment(ref organizationMetadataFailures);
+        }
 
         public void ReportDeletionCleanupFailures(int entries)
         {
@@ -103,6 +115,9 @@ namespace TerraScale.Dashboard.Platform.Observability
             return http.Response.WriteAsync("# TYPE terrascale_slo_requests_total counter\n" +
                 "terrascale_slo_requests_total{service=\"ts-dashboard\",outcome=\"good\"} " + Interlocked.Read(ref good).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "terrascale_slo_requests_total{service=\"ts-dashboard\",outcome=\"bad\"} " + Interlocked.Read(ref bad).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_organization_checkout_failures_total counter\n" +
+                "terrascale_organization_checkout_failures_total{phase=\"creating\"} " + Interlocked.Read(ref organizationCreationFailures).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "terrascale_organization_checkout_failures_total{phase=\"metadata\"} " + Interlocked.Read(ref organizationMetadataFailures).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "# TYPE terrascale_deletion_cleanup_failing_entries gauge\n" +
                 "terrascale_deletion_cleanup_failing_entries{service=\"ts-dashboard\"} " + Interlocked.Read(ref failingDeletionEntries).ToString(CultureInfo.InvariantCulture) + "\n");
         }

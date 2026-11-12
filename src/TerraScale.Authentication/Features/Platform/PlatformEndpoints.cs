@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
@@ -118,6 +119,10 @@ public sealed record ProjectMemberPageBody(
     [property: JsonPropertyName("items")] IReadOnlyList<ProjectMemberBody> Items,
     [property: JsonPropertyName("next")] string? Next);
 
+public sealed record CreateOrganizationRequest(
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("idempotency_key"), StringLength(128)] string? IdempotencyKey = null);
+
 /// <summary><c>POST /v1/terrascale/organizations</c>.</summary>
 public sealed class CreateOrganizationEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
@@ -125,15 +130,22 @@ public sealed class CreateOrganizationEndpoint(PlatformDirectory platform, Platf
     public override void Configure()
     {
         Post(Organizations);
-        this.Describe("create_organization", "Create an organization", "The caller becomes its first member, with the owner role.", "Organizations", typeof(NameRequest), StatusCodes.Status201Created, typeof(OrganizationBody), roleChecked: false, scoped: false);
+        this.Describe("create_organization", "Create an organization", "The caller becomes its first member, with the owner role.", "Organizations", typeof(CreateOrganizationRequest), StatusCodes.Status201Created, typeof(OrganizationBody), roleChecked: false, scoped: false, conflict: true);
     }
 
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var organization = await platform.CreateOrganizationAsync(caller, name, cancellationToken);
-        return Results.Json(Map(organization, Roles.Owner), PlatformApiJson.Default.OrganizationBody, statusCode: StatusCodes.Status201Created)
+        var request = await this.BodyAsync(PlatformApiJson.Default.CreateOrganizationRequest, cancellationToken);
+        if (request.IdempotencyKey is { Length: > 128 })
+        {
+            throw Invalid("idempotency_key must be at most 128 characters.");
+        }
+
+        var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        var organization = await platform.CreateOrganizationAsync(caller, name, request.IdempotencyKey, cancellationToken);
+        var access = await platform.OrganizationAccessAsync(caller.Id, organization.Id, cancellationToken);
+        return Results.Json(Map(organization, access.Role), PlatformApiJson.Default.OrganizationBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"{Organizations}/{organization.Id}");
     }
 }
@@ -738,6 +750,7 @@ internal static class LocationResults
 
 [JsonSourceGenerationOptions(UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(NameRequest))]
+[JsonSerializable(typeof(CreateOrganizationRequest))]
 [JsonSerializable(typeof(RoleRequest))]
 [JsonSerializable(typeof(MfaPolicyRequest))]
 [JsonSerializable(typeof(AccountMfaBody))]

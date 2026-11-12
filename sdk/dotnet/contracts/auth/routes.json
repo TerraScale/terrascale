@@ -30,19 +30,20 @@
       "operation_id": "create_organization",
       "method": "POST",
       "path": "/v1/terrascale/organizations",
-      "request_dto": "NameRequest",
+      "request_dto": "CreateOrganizationRequest",
       "response_dto": "OrganizationBody",
       "success_status": 201,
       "errors": [
         400,
         401,
+        409,
         503
       ],
       "security": "platform_user_sign_in_bearer",
       "request_media_type": "application/json",
       "response_media_type": "application/json",
       "pagination": null,
-      "retry": "none; no idempotency contract",
+      "retry": "caller-scoped idempotency_key; never automatically replayed",
       "sdk_method": "Platform.CreateOrganizationAsync"
     },
     {

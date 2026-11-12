@@ -2,6 +2,10 @@
 @using TerraScale.Dashboard.Features.Organizations
 <main id="access-page" class="ts-page ts-org-page">
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationHeader, OrganizationPage>(Model))
+    @if (Model.CheckoutNotice.Length > 0)
+    {
+        <section class="ts-alert ts-alert-warning" role="status" id="organization-checkout-notice"><span>@Model.CheckoutNotice</span> @if (Model.CheckoutRetry) { <a class="ts-link" href="@Model.Shell.ReturnUrl">Retry</a> }</section>
+    }
     <p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/guides/organization-access" @(ExternalLink.Attributes)>Organization roles, invitations and access@(ExternalLink.Hint)</a></p>
     <div class="ts-toolbar ts-access-toolbar">
         <form id="access-filter-form" method="get" action="/organization" class="ts-filters ts-access-filters" role="search" aria-label="Filter members" data-on:submit="@@get('/organization', {contentType:'form'})">

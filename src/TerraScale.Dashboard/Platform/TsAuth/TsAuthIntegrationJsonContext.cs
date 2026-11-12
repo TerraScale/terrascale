@@ -4,6 +4,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 {
     [JsonSourceGenerationOptions(RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true)]
     [JsonSerializable(typeof(TsAuthPlatformName))]
+    [JsonSerializable(typeof(TsAuthPlatformCreateOrganization))]
     [JsonSerializable(typeof(TsAuthPlatformRole))]
     [JsonSerializable(typeof(TsAuthPlatformOrganization))]
     [JsonSerializable(typeof(TsAuthPlatformPage<TsAuthPlatformOrganization>))]

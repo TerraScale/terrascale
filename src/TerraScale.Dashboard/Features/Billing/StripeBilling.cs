@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Stripe;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.TerraBase.Contracts;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 using TerraScale.Dashboard.Common.Validation;
@@ -12,7 +13,7 @@ namespace TerraScale.Dashboard.Features.Billing
     // Every entitlement is derived from a bound checkout and Stripe's current
     // subscription. Browser return parameters and webhook snapshots grant nothing.
     public sealed partial class StripeBilling(IDashboardIdentity identity, IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, AccountService accounts,
-        IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger)
+        IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger, ServiceSloTelemetry telemetry)
     {
         internal const string Origin = "https://dash.terrascale.tech";
         internal static readonly TimeSpan CheckoutLifetime = TimeSpan.FromHours(1);
@@ -134,26 +135,17 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 throw new OnboardingValidationException("This checkout expired. Start a new checkout.");
             }
-            var options = new Stripe.Checkout.SessionCreateOptions
-            {
-                Customer = binding.CustomerId,
-                ClientReferenceId = org.Id,
-                Metadata = metadata,
-                SuccessUrl = Origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}",
-                CancelUrl = Origin + returnPath + (returnPath.Contains('?') ? "&" : "?") + "payment=canceled&plan=" + Uri.EscapeDataString(plan.Key),
-                Mode = plan.PriceCents == 0 ? "setup" : "subscription",
-                BillingAddressCollection = "required",
-                ExpiresAt = (binding.StartedAt + CheckoutLifetime).UtcDateTime
-            };
+            var options = CheckoutOptions(plan);
+            options.Customer = binding.CustomerId;
+            options.ClientReferenceId = org.Id;
+            options.Metadata = metadata;
+            options.SuccessUrl = Origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}";
+            options.CancelUrl = Origin + returnPath + (returnPath.Contains('?') ? "&" : "?") + "payment=canceled&plan=" + Uri.EscapeDataString(plan.Key);
+            options.ExpiresAt = (binding.StartedAt + CheckoutLifetime).UtcDateTime;
             if (plan.PriceCents > 0)
             {
                 var price = await PriceAsync(client, plan, interval, cancellationToken);
                 options.LineItems = [new() { Price = price.Id, Quantity = 1 }];
-                options.PaymentMethodCollection = "always";
-                // Invoices carry the customer's name, address and tax IDs. Stripe Tax (automatic_tax) stays off: the account's
-                // country is not eligible yet, and Stripe refuses every Checkout Session that asks for it (docs/billing/stripe-tax-handoff.md).
-                options.TaxIdCollection = new() { Enabled = true };
-                options.CustomerUpdate = new() { Address = "auto", Name = "auto" };
                 options.SubscriptionData = new() { Metadata = metadata, TrialPeriodDays = binding.TrialUsed || plan.TrialDays == 0 ? null : plan.TrialDays };
             }
             var checkout = await client.V1.Checkout.Sessions.CreateAsync(options,
@@ -753,10 +745,28 @@ namespace TerraScale.Dashboard.Features.Billing
             return new() { IdempotencyKey = "TerraScale.Dashboard/" + key };
         }
 
+        private static Stripe.Checkout.SessionCreateOptions CheckoutOptions(BillingPlan plan)
+        {
+            var options = new Stripe.Checkout.SessionCreateOptions
+            {
+                Mode = plan.PriceCents == 0 ? "setup" : "subscription",
+                BillingAddressCollection = "required"
+            };
+            if (plan.PriceCents > 0)
+            {
+                options.AllowedPaymentMethodTypes = ["card", "link"];
+                options.PaymentMethodCollection = "always";
+                options.TaxIdCollection = new() { Enabled = true };
+                options.CustomerUpdate = new() { Address = "auto", Name = "auto" };
+            }
+
+            return options;
+        }
+
         private static void ValidateCheckout(BillingBinding binding, Stripe.Checkout.Session checkout)
         {
-            if (binding.CheckoutId.Length > 0 && checkout.Id != binding.CheckoutId || checkout.CustomerId != binding.CustomerId || checkout.ClientReferenceId != binding.OrganizationId ||
-                checkout.Metadata.GetValueOrDefault("organization_id") != binding.OrganizationId ||
+            if (binding.CheckoutId.Length > 0 && checkout.Id != binding.CheckoutId || checkout.CustomerId != binding.CustomerId || !(checkout.ClientReferenceId == binding.OrganizationId && checkout.Metadata.GetValueOrDefault("organization_id") == binding.OrganizationId ||
+                  checkout.ClientReferenceId == binding.RequestId && checkout.Metadata.GetValueOrDefault("draft_id") == binding.RequestId) ||
                 checkout.Metadata.GetValueOrDefault("plan") != binding.Plan || checkout.Metadata.GetValueOrDefault("interval") != binding.Interval ||
                 checkout.Metadata.GetValueOrDefault("request_id") != binding.RequestId)
             {

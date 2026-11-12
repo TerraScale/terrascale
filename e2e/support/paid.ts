@@ -10,6 +10,7 @@ export type StripeLog = {
   calls: StripeCall[];
   events: { type: string; object: string; status: number }[];
   cancels: { subscription: string; customer: string; organization: string }[];
+  refunds: { payment: string; subscription: string; amount: number }[];
   unexpected: { method: string; host: string; path: string; query: string[]; reason: string }[];
 };
 

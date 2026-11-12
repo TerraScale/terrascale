@@ -1,3 +1,5 @@
+using TerraScale.Dashboard.Features.Billing;
+
 namespace TerraScale.Dashboard.Common.Accounts
 {
     public static class AccountRequest
@@ -9,13 +11,23 @@ namespace TerraScale.Dashboard.Common.Accounts
             // The account context loads while ts-auth confirms the session; it is returned only for an active session.
             var read = await sessions.ReadWithAsync(http, async session =>
                 await accounts.GetContextAsync(session, http.RequestAborted, Scope(http, "organizationId"), Scope(http, "projectId")));
-            if (organizationScoped && read?.Value is { Organization: { MfaRequired: true } blocked } context)
+            var account = read?.Value;
+            if (account is not null && OrganizationCheckoutNavigation.IsNavigation(http))
+            {
+                var completed = await http.RequestServices.GetRequiredService<StripeBilling>().ResumeOrganizationAsync(account.Session, http);
+                if (completed.OrganizationId is not null)
+                {
+                    account = await accounts.GetContextAsync(account.Session, http.RequestAborted, Scope(http, "organizationId"), Scope(http, "projectId"));
+                }
+            }
+
+            if (organizationScoped && account is { Organization: { MfaRequired: true } blocked } context)
             {
                 throw new TerraScale.Dashboard.Features.Auth.OrganizationMfaRequiredException(blocked.Name,
                     [.. context.Organizations.Where(org => !org.MfaRequired).Select(org => (org.Id, org.Name))]);
             }
 
-            return read?.Value;
+            return account;
         }
 
         private static string? Scope(HttpContext http, string name)

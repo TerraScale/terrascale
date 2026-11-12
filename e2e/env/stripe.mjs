@@ -7,7 +7,10 @@ const endpoint = 'https://dash.terrascale.tech/api/v1/billing/stripe/webhook';
 const objects = new Map();
 const checkouts = new Map();
 const replays = new Map();
-const log = { calls: [], events: [], cancels: [], unexpected: [] };
+const failures = new Map();
+const authFailures = new Set();
+const refundStatuses = new Map();
+const log = { calls: [], events: [], cancels: [], refunds: [], unexpected: [] };
 
 const now = () => Math.floor(Date.now() / 1000);
 const hour = 3600;
@@ -54,6 +57,10 @@ const api = [
     return { data: customers, has_more: false, next_page: null };
   }],
   ['GET', /^\/v1\/customers\/(cus_\w+)$/, (query, [customer]) => find('cus', customer)],
+  ['POST', /^\/v1\/customers\/(cus_\w+)$/, (form, [customer]) => {
+    const found = find('cus', customer);
+    return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
+  }],
   ['POST', /^\/v1\/checkout\/sessions$/, (form) => {
     const price = find('price', form.get('line_items[0][price]'));
     if (form.get('mode') !== 'subscription' || !price || form.get('line_items[0][quantity]') !== '1' || !find('cus', form.get('customer'))) return undefined;
@@ -62,13 +69,26 @@ const api = [
       metadata: fields(form, 'metadata'), mode: 'subscription', status: 'open', url: null,
     });
     session.url = `https://checkout.stripe.com/c/pay/${session.id}`;
-    checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url') });
+    checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url'), cancel: form.get('cancel_url') });
     return session;
-  }, {}, { expires_at: within(hour / 2, 24 * hour) }],
+  }, {}, {
+    expires_at: within(hour / 2, 24 * hour),
+    'allowed_payment_method_types[0]': (value) => value === 'card',
+    'allowed_payment_method_types[1]': (value) => value === 'link',
+    'allowed_payment_method_types[2]': (value) => value === null,
+  }],
   ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }],
   ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session)],
+  ['POST', /^\/v1\/checkout\/sessions\/(cs_test_\w+)\/expire$/, (form, [session]) => {
+    const found = find('cs', session);
+    return found?.status === 'open' ? Object.assign(found, { status: 'expired', url: null }) : found;
+  }],
   ['GET', /^\/v1\/subscriptions$/, (query) => list(owned('sub', query.get('customer'))), { customer: customerId, status: /^all$/ }],
   ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription)],
+  ['POST', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [subscription]) => {
+    const found = find('sub', subscription);
+    return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
+  }],
   ['DELETE', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [key]) => {
     const subscription = find('sub', key);
     if (subscription?.status === 'canceled') return { refused: 'A canceled subscription can only update its metadata and cancellation_details.' };
@@ -76,7 +96,16 @@ const api = [
     log.cancels.push({ subscription: subscription.id, customer: subscription.customer, organization: subscription.metadata.organization_id });
     return Object.assign(subscription, { status: 'canceled' });
   }],
-  ['GET', /^\/v1\/invoices$/, (query) => list(owned('in', query.get('customer'))), { customer: customerId }],
+  ['GET', /^\/v1\/invoices$/, (query) => list(owned('in', query.get('customer')).filter((invoice) => (!query.has('subscription') || invoice.parent.subscription_details.subscription === query.get('subscription')) && (!query.has('status') || invoice.status === query.get('status')))), { customer: customerId }],
+  ['GET', /^\/v1\/invoice_payments$/, (query) => list([...objects.values()].filter((payment) => payment.id.startsWith('inpay_') && payment.invoice === query.get('invoice') && payment.status === query.get('status'))), { invoice: /^in_\w+$/, status: /^paid$/ }],
+  ['GET', /^\/v1\/refunds$/, (query) => list([...objects.values()].filter((refund) => refund.id.startsWith('re_') && refund.payment_intent === query.get('payment_intent'))), { payment_intent: /^pi_\w+$/ }],
+  ['POST', /^\/v1\/refunds$/, (form) => {
+    const payment = find('pi', form.get('payment_intent'));
+    if (!payment || Number(form.get('amount')) !== payment.amount) return undefined;
+    const refund = store({ id: id('re'), amount: payment.amount, payment_intent: payment.id, status: refundStatuses.get(payment.id) ?? 'succeeded' });
+    log.refunds.push({ payment: payment.id, subscription: payment.subscription, amount: refund.amount });
+    return refund;
+  }, { payment_intent: /^pi_\w+$/ }],
   ['GET', /^\/v1\/invoiceitems$/, () => list([]), { customer: customerId }],
 ];
 
@@ -88,17 +117,20 @@ function complete(session) {
   const end = Math.floor(renewal.getTime() / 1000);
   const method = store({ id: id('pm'), card: { brand: 'visa', exp_month: 12, exp_year: 2034, last4: '4242' }, customer: session.customer, type: 'card' });
   const invoice = id('in');
+  const subscriptionId = id('sub');
+  const payment = store({ id: id('pi'), amount: price.unit_amount, subscription: subscriptionId });
+  store({ id: id('inpay'), invoice, status: 'paid', amount_paid: price.unit_amount, payment: { type: 'payment_intent', payment_intent: payment.id } });
   store({
-    id: invoice, amount_due: price.unit_amount, amount_remaining: 0, created: start, currency: 'usd', customer: session.customer,
+    id: invoice, amount_paid: price.unit_amount, parent: { type: 'subscription_details', subscription_details: { subscription: subscriptionId } }, amount_due: price.unit_amount, amount_remaining: 0, created: start, currency: 'usd', customer: session.customer,
     hosted_invoice_url: `https://invoice.stripe.com/i/${invoice}`, invoice_pdf: `https://pay.stripe.com/invoice/${invoice}/pdf`,
     lines: list([{ period: { end, start } }]), number: `${randomBytes(4).toString('hex').toUpperCase()}-0001`, period_end: start, period_start: start, status: 'paid',
   });
   const subscription = store({
-    id: id('sub'), customer: session.customer, default_payment_method: method.id, metadata, status: 'active',
+    id: subscriptionId, customer: session.customer, default_payment_method: method.id, metadata, status: 'active',
     items: list([{ current_period_end: end, current_period_start: start, price: structuredClone(price), quantity: 1 }]),
   });
   objects.get(session.customer).address = { city: 'Sao Paulo', country: 'BR', line1: 'Avenida Paulista 1000', line2: null, postal_code: '01310-100', state: 'SP' };
-  return Object.assign(session, { status: 'complete', subscription: subscription.id, url: null });
+  return Object.assign(session, { status: 'complete', payment_status: 'paid', subscription: subscription.id, url: null });
 }
 
 async function deliver(type, object) {
@@ -112,7 +144,7 @@ async function deliver(type, object) {
 function page(session) {
   const { price } = checkouts.get(session.id);
   const product = objects.get(price.product);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checkout · Stripe</title><link rel="icon" href="data:,"></head><body><main><h1>Subscribe to ${product.name}</h1><p>US$${(price.unit_amount / 100).toFixed(2)} per ${price.recurring.interval}, Visa ending in 4242</p><form method="post"><button type="submit">Subscribe</button></form></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checkout · Stripe</title><link rel="icon" href="data:,"></head><body><main><h1>Subscribe to ${product.name}</h1><p>US$${(price.unit_amount / 100).toFixed(2)} per ${price.recurring.interval}, Visa ending in 4242</p><form method="post"><button type="submit">Subscribe</button></form><a href="${checkouts.get(session.id).cancel}">Cancel</a></main></body></html>`;
 }
 
 function reply(response, status, body, headers = {}) {
@@ -131,7 +163,34 @@ function unexpected(response, request, url, reason, status = 404, error = { type
 
 async function handle(request, response, body) {
   const url = new URL(request.url, `https://${request.headers.host}`);
+  if (url.hostname === 'auth.terrascale.tech' && request.method === 'POST' && url.pathname === '/v1/terrascale/organizations') {
+    const result = await fetch('http://127.0.0.1:8090' + url.pathname, {
+      method: 'POST', headers: { authorization: request.headers.authorization, 'content-type': 'application/json' }, body,
+    });
+    const answer = await result.json();
+    if (result.ok && authFailures.delete(JSON.parse(body).idempotency_key)) {
+      return reply(response, 503, { error: 'Journey dropped the response after organization creation.' });
+    }
+    return reply(response, result.status, answer);
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/auth-failure') {
+    authFailures.add(JSON.parse(body).checkout);
+    return reply(response, 200, {});
+  }
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/log') return reply(response, 200, log);
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/failure') {
+    const failure = JSON.parse(body);
+    failures.set(failure.method + ' ' + failure.path, failure);
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/refund-status') {
+    const { payment, status } = JSON.parse(body);
+    refundStatuses.set(payment, status);
+    for (const refund of objects.values()) {
+      if (refund.id.startsWith('re_') && refund.payment_intent === payment) refund.status = status;
+    }
+    return reply(response, 200, {});
+  }
   if (url.hostname === 'checkout.stripe.com') {
     const session = find('cs', /^\/c\/pay\/(cs_test_\w+)$/.exec(url.pathname)?.[1]);
     if (session?.status !== 'open' || !['GET', 'POST'].includes(request.method)) return unexpected(response, request, url, 'no open checkout session');
@@ -147,6 +206,12 @@ async function handle(request, response, body) {
   const route = api.find(([method, path]) => method === request.method && path.test(url.pathname));
   const unfiltered = Object.entries(route?.[3] ?? {}).find(([key, value]) => !value.test(parameters.get(key) ?? ''))?.[0];
   if (unfiltered) return unexpected(response, request, url, `filter ${unfiltered}`);
+  const failure = failures.get(request.method + ' ' + url.pathname);
+  if (failure?.remaining > 0) {
+    failure.remaining -= 1;
+    log.calls.push({ method: request.method, path: url.pathname, status: failure.status });
+    return reply(response, failure.status, { error: { type: 'invalid_request_error', code: failure.status === 404 ? 'resource_missing' : undefined, message: 'Journey Stripe failure.' } });
+  }
   const replay = request.method === 'POST' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';
   if (replays.has(replay)) return reply(response, 200, replays.get(replay));
   const invalid = Object.entries(route?.[4] ?? {}).find(([key, valid]) => !valid(parameters.get(key)))?.[0];
