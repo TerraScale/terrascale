@@ -173,7 +173,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
             LastActivityAt = clock.GetUtcNow(),
             SessionStamp = singleSession ? AuthIds.New() : user.SessionStamp,
         };
-        List<Change> changes = [.. lineage, Change.Assert(user), Change.Insert(session)];
+        List<Change> changes = [.. lineage, singleSession ? Change.Update(user with { SessionStamp = session.SessionStamp }) : Change.Assert(user), Change.Insert(session)];
         if (Tenancy.IsProject(user.InstanceId))
         {
             changes.Add(Change.Insert(outbox.NewEvent(user.InstanceId, "session.created", user.Id, user.Email, sessionId: session.Id)));
