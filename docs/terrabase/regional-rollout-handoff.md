@@ -147,12 +147,11 @@ writer's ingress hold starts, it closes every SQL socket it serves with 1012
 (service restart) once the frame in flight is answered, and refuses frames that
 arrive later, so no statement runs on the old writer after the fence and clients
 reconnect to the new writer. A closed socket still sends every answer queued
-before its 1012 and ends when the client answers the close, or 2 seconds after
-the close once the client sends a frame instead of answering it. A client still
+before its 1012 and ends when the client answers the close. A client that keeps sending after the 1012 instead of answering it gets no answer to those frames and stays connected until the node stops; close the socket when you read a 1012. A client still
 receiving an answer when the rollout stops the source sees the connection drop
 (1006) without the 1012 and cannot tell whether that frame committed. While the
-hold lasts, and after it on the drained source until it stops or becomes the
-writer again, a SQL socket upgrade is answered 503 with `Retry-After: 1` at
+hold lasts, and on a node that was drained for a handoff (the old writer after
+the hold, or a follower drained for retirement) until that node stops, a SQL socket upgrade is answered 503 with `Retry-After: 1` at
 once, instead of waiting for the hold to end and being relayed through the
 source, which the rollout stops next; REST requests still wait for the hold and
 are then relayed to the new writer. A serving peer that was not drained keeps
