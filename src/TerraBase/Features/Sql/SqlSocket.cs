@@ -65,6 +65,7 @@ internal sealed class SqlSocket(
     private bool _canWrite;
     private bool _failed;
     private bool _closing;
+    private long _closedAt;
 
     private ISqlSession Session => _session!;
 
@@ -106,6 +107,8 @@ internal sealed class SqlSocket(
             {
                 if (_closing)
                 {
+                    var left = Shutdown.DrainBudget - time.GetElapsedTime(_closedAt);
+                    _closed.CancelAfter(left > TimeSpan.Zero ? left : TimeSpan.Zero);
                     continue;
                 }
 
@@ -514,6 +517,7 @@ internal sealed class SqlSocket(
                 return;
             }
 
+            _closedAt = time.GetTimestamp();
             _closing = true;
             await socket.CloseOutputAsync(status, reason, CancellationToken.None).ConfigureAwait(false);
         }

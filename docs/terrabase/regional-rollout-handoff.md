@@ -147,7 +147,8 @@ writer's ingress hold starts, it closes every SQL socket it serves with 1012
 (service restart) once the frame in flight is answered, and refuses frames that
 arrive later, so no statement runs on the old writer after the fence and clients
 reconnect to the new writer. A closed socket still sends every answer queued
-before its 1012 and ends when the client answers the close. A client still
+before its 1012 and ends when the client answers the close, or 2 seconds after
+the close once the client sends a frame instead of answering it. A client still
 receiving an answer when the rollout stops the source sees the connection drop
 (1006) without the 1012 and cannot tell whether that frame committed. While the
 hold lasts, and after it on the drained source until it stops or becomes the

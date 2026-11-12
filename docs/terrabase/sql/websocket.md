@@ -75,8 +75,9 @@ After a failed statement inside a transaction, every `execute` answers `transact
 
 The server pings every 20 seconds and drops a peer that does not answer within 20 seconds. After a close for a client
 fault (1003, 1008, 1009, 1011) it drops a peer that does not answer the close within 2 seconds. After a 1001 or 1012 it
-still sends every answer queued before the close, runs no frame that arrives later and waits for the peer's answer until
-the ping timeout drops it, 40 to 50 seconds after the peer's last frame. Every frame counts as one request in usage and
+still sends every answer queued before the close and runs no frame that arrives later. It drops a peer that sends a frame
+after the close instead of answering it 2 seconds after the close, and waits for a peer that sends nothing until the ping
+timeout drops it, 40 to 50 seconds after the peer's last frame. Every frame counts as one request in usage and
 request logs, with its received and sent bytes.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
