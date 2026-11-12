@@ -240,7 +240,7 @@
     {
       "id": "origin.rule",
       "group": "a",
-      "title": "a client built with each base URL of the case file takes its expected origin or refuses it",
+      "title": "a TerraBase client and a ts-auth client built with each base URL of the case file take its expected origins or refuse it",
       "cases": "origins.json"
     },
     {

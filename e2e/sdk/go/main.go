@@ -476,30 +476,36 @@ func originRule(ctx context.Context, project, file string) error {
 		return err
 	}
 	var spec struct {
-		Cases [][2]*string `json:"cases"`
+		Cases [][3]*string `json:"cases"`
 	}
 	if err := json.Unmarshal(raw, &spec); err != nil {
 		return err
 	}
 	var wrong []string
-	for _, c := range spec.Cases {
-		api := &recorder{}
+	for i, c := range spec.Cases {
+		api, auth := &recorder{}, &recorder{}
 		if client, err := v1.New(v1.Config{BaseURL: *c[0], Token: "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln", HTTPClient: &http.Client{Transport: api}}); err == nil {
 			_, _ = client.Database(project, "probe").Create(ctx)
 		}
-		if !sameOrigin(api.sent, c[1]) {
-			expected, got := "refused", "refused"
-			if c[1] != nil {
-				expected = *c[1]
+		key := "01JA0000000000000000000000_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
+		if client, err := v1.New(v1.Config{APIKey: key, TSAuthBaseURL: *c[0], HTTPClient: &http.Client{Transport: auth}}); err == nil {
+			_, _ = client.CreateScopedKey(ctx, v1.ScopedKeyRequest{Database: v1.NewID(), Access: v1.ScopedKeyRead})
+		}
+		for column, sent := range []*url.URL{api.sent, auth.sent} {
+			if !sameOrigin(sent, c[column+1]) {
+				expected, got := "refused", "refused"
+				if c[column+1] != nil {
+					expected = *c[column+1]
+				}
+				if sent != nil {
+					got = sent.Scheme + "://" + sent.Host
+				}
+				wrong = append(wrong, fmt.Sprintf("#%d %q %s: expected %s, got %s", i, (*c[0])[:min(len(*c[0]), 60)], []string{"api", "auth"}[column], expected, got))
 			}
-			if api.sent != nil {
-				got = api.sent.Scheme + "://" + api.sent.Host
-			}
-			wrong = append(wrong, fmt.Sprintf("%q: expected %s, got %s", (*c[0])[:min(len(*c[0]), 60)], expected, got))
 		}
 	}
 	if len(wrong) > 0 {
-		return fmt.Errorf("origin rule: %d of %d cases differ: %s", len(wrong), len(spec.Cases), strings.Join(wrong, "; "))
+		return fmt.Errorf("origin rule: %d of %d checks differ: %s", len(wrong), 2*len(spec.Cases), strings.Join(wrong, "; "))
 	}
 	return nil
 }

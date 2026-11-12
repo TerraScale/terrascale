@@ -223,6 +223,10 @@ def ids(op):
     same([is_valid_id(new_id()), is_valid_id(op["invalid"])], [True, False], "validation")
 
 
+TOKEN = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"
+KEY = "01JA0000000000000000000000_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
+
+
 def address(origin):
     url = urlsplit(origin)
     try:
@@ -231,20 +235,40 @@ def address(origin):
         return url.scheme, url.hostname, url.port
 
 
+def api_origin(raw, http):
+    try:
+        return TerraScale(token=TOKEN, project=project, base_url=raw, http_client=http).base_url
+    except ValueError:
+        return None
+
+
+def auth_origin(raw):
+    sent = []
+
+    def record(request):
+        sent.append(request.url)
+        raise httpx.ConnectError("recorded, not sent", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(record)) as http:
+        try:
+            scoped = TerraScale(api_key=KEY, project=project, issuer=raw.removesuffix("/") + "/terrascale", http_client=http,
+                                max_attempts=1)
+        except ValueError:
+            return None
+        refused(lambda: scoped.create_scoped_key(new_id(), "read"))
+    return f"{sent[0].scheme}://{sent[0].netloc.decode()}" if sent else None
+
+
 def origin_rule(op):
     cases = json.loads(Path(os.environ["E2E_OPERATIONS"]).with_name(op["cases"]).read_text(encoding="utf-8"))["cases"]
     wrong = []
     with httpx.Client() as http:
-        for raw, expected in cases:
-            try:
-                got = TerraScale(token="eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln", project=project, base_url=raw,
-                                 http_client=http).base_url
-            except ValueError:
-                got = None
-            if (got is None) != (expected is None) or got is not None and address(got) != address(expected):
-                wrong.append(f"{raw[:60]!r}: expected {expected or 'refused'}, got {got or 'refused'}")
+        for index, (raw, api, auth) in enumerate(cases):
+            for column, expected, got in (("api", api, api_origin(raw, http)), ("auth", auth, auth_origin(raw))):
+                if (got is None) != (expected is None) or got is not None and address(got) != address(expected):
+                    wrong.append(f"#{index} {raw[:60]!r} {column}: expected {expected or 'refused'}, got {got or 'refused'}")
     if wrong:
-        raise AssertionError(f"origin rule: {len(wrong)} of {len(cases)} cases differ: {'; '.join(wrong)}")
+        raise AssertionError(f"origin rule: {len(wrong)} of {2 * len(cases)} checks differ: {'; '.join(wrong)}")
 
 
 def create_ttl(op):

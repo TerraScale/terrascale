@@ -258,36 +258,38 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         using var file = JsonDocument.Parse(await File.ReadAllBytesAsync(Path.Join(Path.GetDirectoryName(Required("E2E_OPERATIONS")), Text(op, "cases")), cancellationToken));
         var cases = file.RootElement.GetProperty("cases");
         List<string> wrong = [];
+        var index = 0;
         foreach (var item in cases.EnumerateArray())
         {
             var raw = item[0].GetString() ?? throw new InvalidOperationException("A case has no base URL.");
-            var expected = item[1].GetString();
-            var got = await OriginAsync(raw, cancellationToken);
-            var same = (got, expected) switch
-            {
-                (null, null) => true,
-                ({ } origin, { } want) => Uri.Compare(origin, new Uri(want), UriComponents.SchemeAndServer, UriFormat.UriEscaped, StringComparison.Ordinal) == 0,
-                _ => false,
-            };
-            if (!same)
-            {
-                wrong.Add($"\"{raw[..Math.Min(raw.Length, 60)]}\": expected {expected ?? "refused"}, got {got?.GetLeftPart(UriPartial.Authority) ?? "refused"}");
-            }
+            var address = Uri.TryCreate(raw, UriKind.Absolute, out var parsed) ? parsed : null;
+            Compare(wrong, index, raw, "api", item[1].GetString(), address is null ? null : await ApiOriginAsync(address, cancellationToken));
+            Compare(wrong, index, raw, "auth", item[2].GetString(), address is null ? null : AuthOrigin(address));
+            index++;
         }
 
         if (wrong.Count > 0)
         {
-            throw new InvalidOperationException($"origin rule: {wrong.Count} of {cases.GetArrayLength()} cases differ: {string.Join("; ", wrong)}");
+            throw new InvalidOperationException($"origin rule: {wrong.Count} of {2 * cases.GetArrayLength()} checks differ: {string.Join("; ", wrong)}");
         }
     }
 
-    private static async Task<Uri?> OriginAsync(string raw, CancellationToken cancellationToken)
+    private static void Compare(List<string> wrong, int index, string raw, string column, string? expected, Uri? got)
     {
-        if (!Uri.TryCreate(raw, UriKind.Absolute, out var address))
+        var same = (got, expected) switch
         {
-            return null;
+            (null, null) => true,
+            ({ } origin, { } want) => Uri.Compare(origin, new Uri(want), UriComponents.SchemeAndServer, UriFormat.UriEscaped, StringComparison.Ordinal) == 0,
+            _ => false,
+        };
+        if (!same)
+        {
+            wrong.Add($"#{index} \"{raw[..Math.Min(raw.Length, 60)]}\" {column}: expected {expected ?? "refused"}, got {got?.GetLeftPart(UriPartial.Authority) ?? "refused"}");
         }
+    }
 
+    private static async Task<Uri?> ApiOriginAsync(Uri address, CancellationToken cancellationToken)
+    {
         try
         {
             return await new TerraBaseStaticEndpointResolver(address).ResolveAsync(cancellationToken);
@@ -296,6 +298,21 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         {
             return null;
         }
+    }
+
+    private static Uri? AuthOrigin(Uri address)
+    {
+        using var http = new HttpClient(TerraBaseHttp.CreateHandler());
+        try
+        {
+            _ = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = address, InstanceSlug = "terrascale" });
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+
+        return http.BaseAddress;
     }
 
     private async Task CreateWithTtlAsync(JsonElement op, CancellationToken cancellationToken)
