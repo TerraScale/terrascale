@@ -30,8 +30,9 @@ after a lost response, a restart or a repeated request presents the same identit
 - The fence is `project_closures/<project>` in `_system`, outside `projects/<project>/` so project-state prefix deletes
   never tombstone it. Closure records are never collected, so it is permanent.
 - Version 1 is refused before any fence is written while another region holds something of the project. A region
-  that has no fence for the project first reads its own state, then asks every other serving region with the header
-  `X-TerraBase-Closure-Scope: check`. A region answers that request from one read transaction and writes nothing:
+  that has no fence for the project first reads its own state, then asks every other serving region with
+  `GET /admin/projects/{project}/closure?version=1&closureId=…&authorityOrganizationId=…` on its internal listener.
+  That route has no handler but this read: a region answers it from one read transaction and writes nothing:
   `200 {"status": "empty"}` when it has no fence and holds no database, project key, backup destination or bucket of
   the project, its own status when it already has this fence, and otherwise the same 409 as above. One `not_empty`
   refuses the closure with `not_empty`; one `closure_conflict` or `binding_conflict` refuses it with that code; a region
@@ -39,6 +40,10 @@ after a lost response, a restart or a repeated request presents the same identit
   these cases. ts-auth cancels its intent and shows "Delete the project's databases, TerraBase API keys and backup
   destination first." on `not_empty`, and keeps the intent and tries again by itself on 503. A request for a project
   that already has the fence skips the check.
+- A node of an earlier release has no handler for that GET: its internal listener answers `404 unknown_route` before
+  any handler runs and writes nothing, which is "anything else" above. So while a region still runs the earlier
+  release, a version 1 closure answers 503 and ts-auth's project deletion stays pending; it goes through by itself
+  once every region runs this release. No region is fenced by a check.
 - The request's transaction resolves TerraBase's own mapping and binding, checks local emptiness and writes the fence
   plus this machine's receipt atomically. Expected holders are this machine plus one holder `region:<name>` for every
   other serving region of the peers file. The region that takes the request sends the same closure to each of those
