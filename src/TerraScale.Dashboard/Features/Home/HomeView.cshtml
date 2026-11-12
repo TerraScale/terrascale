@@ -1,7 +1,5 @@
 @inject AssetUrls Assets
 @using System.Globalization
-@using System.Text.Encodings.Web
-@using System.Text.Json
 @using TerraScale.Dashboard.Common.Charts
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.HomePage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
@@ -30,7 +28,7 @@
                 <div class="ts-empty" role="status"><p class="ts-empty-title">Create your first database to get connection snippets.</p><a class="ts-btn ts-btn-primary" href="/databases?create=1">Create a database</a></div>
             }
         </div></section>
-        <section class="ts-card" id="mcp-config" aria-labelledby="mcp-config-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="mcp-config-title">MCP client configuration</h2></div><div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="https://docs.terrascale.tech/guides/mcp" @(ExternalLink.Attributes)>MCP guide@(ExternalLink.Hint)</a></div></header><div class="ts-card-body">@if (Model.Measurement.CredentialsError.Length > 0) { <p class="ts-meta" role="status">@Model.Measurement.CredentialsError</p> }<ol class="ts-home-steps"><li class="ts-home-step"><span class="ts-icon-tile" aria-hidden="true">01</span><div class="ts-stack-sm"><span class="ts-strong">Create a personal access token</span><a class="ts-link" href="/profile?tab=access-tokens">Open access tokens →</a></div></li><li class="ts-home-step"><span class="ts-icon-tile" aria-hidden="true">02</span><div class="ts-stack-sm"><span class="ts-strong">Add the server with the token as a bearer credential</span><pre class="ts-code"><code>@McpConfig</code></pre></div></li></ol></div></section>
+        <section class="ts-card" id="mcp-config" aria-labelledby="mcp-config-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="mcp-config-title">MCP client configuration</h2></div><div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="https://docs.terrascale.tech/guides/mcp" @(ExternalLink.Attributes)>MCP guide@(ExternalLink.Hint)</a></div></header><div class="ts-card-body">@if (Model.Measurement.CredentialsError.Length > 0) { <p class="ts-meta" role="status">@Model.Measurement.CredentialsError</p> }<ol class="ts-home-steps"><li class="ts-home-step"><span class="ts-icon-tile" aria-hidden="true">01</span><div class="ts-stack-sm"><span class="ts-strong">Create a personal access token</span><a class="ts-link" href="/profile?tab=access-tokens">Open access tokens →</a></div></li><li class="ts-home-step"><span class="ts-icon-tile" aria-hidden="true">02</span><div class="ts-stack-sm"><span class="ts-strong">Add the server with the token as a bearer credential</span>@(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.McpClientConfig, TerraScale.Dashboard.Common.UI.McpClientConfig>(new("home")))</div></li></ol></div></section>
     }
     else
     {
@@ -69,5 +67,4 @@
         var signal = "$_" + key + "Copy";
         <div class="ts-snippet" data-signals="@("{_" + key + "Copy: ''}")"><div class="ts-snippet-header ts-row-between"><span>@label</span><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" aria-label="@("Copy " + label)" aria-describedby="@("connect-" + id + "-status")" data-on:click="@("Promise.resolve().then(() => navigator.clipboard.writeText(document.getElementById('connect-" + id + "').textContent)).then(() => { " + signal + " = 'Copied'; setTimeout(() => " + signal + " = '', 2000) }, () => { const snippet = document.getElementById('connect-" + id + "'); snippet.focus(); const range = document.createRange(); range.selectNodeContents(snippet); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); " + signal + " = 'Copy failed — text selected, press Ctrl+C'; })")">@Icons.Render("Copy", 14)<span data-text="@(signal + " === 'Copied' ? 'Copied' : 'Copy'")">Copy</span></button></div><pre class="ts-snippet-body" id="@("connect-" + id)" tabindex="0"><code>@code</code></pre><span class="ts-sr-only" id="@("connect-" + id + "-status")" role="status" aria-live="polite" aria-atomic="true" data-text="@signal"></span></div>
     }
-    private string McpConfig => JsonSerializer.Serialize(new { mcpServers = new { terrascale = new { type = "http", url = "https://mcp.terrascale.tech/", headers = new { Authorization = "Bearer <your-access-token>" } } } }, new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 }
