@@ -99,6 +99,7 @@ public interface IPlatformCatalog
 internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, PlatformSeedProgress progress, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
 {
     private const string CatalogUnverified = "catalog_unverified";
+    private const string Seeding = "seeding";
     private const string Failed = "internal_error";
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
 
@@ -107,6 +108,7 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
         if (!gate.IsOpen)
         {
             progress.Wait(CatalogUnverified);
+            logger.ZLogWarning($"Platform databases not seeded yet: this machine's catalog has not passed the restore gate; waiting for it");
             await gate.Opened.WaitAsync(stoppingToken).ConfigureAwait(false);
         }
 
@@ -114,6 +116,11 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
         string? failure = null;
         while (!stoppingToken.IsCancellationRequested)
         {
+            if (!progress.Ready)
+            {
+                progress.Wait(Seeding);
+            }
+
             try
             {
                 switch (await catalog.EnsurePlatformAsync(stoppingToken).ConfigureAwait(false))

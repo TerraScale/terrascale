@@ -142,10 +142,10 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
             .ConfigureAwait(false) switch
         {
             AddedDatabase => new Done(),
-            Conflict error when error == ManagementErrors.NameTaken => new Unavailable("a platform database was created while it was seeded"),
+            Conflict error when error == ManagementErrors.NameTaken => new Unavailable("a platform database was created while it was seeded", "platform_database_raced"),
             Conflict error => error,
             Unavailable error => error,
-            NotFound or Forbidden or QuotaExceeded => new Unavailable("the platform project is not ready"),
+            NotFound or Forbidden or QuotaExceeded => new Unavailable("the platform project is not ready", "platform_project_unready"),
         };
 
     private readonly union PlatformState(Done, Conflict, NotFound, Unavailable);
