@@ -25,7 +25,7 @@ internal static class RegionalForwarding
             var ingress = services.GetRequiredService<RegionalIngress>();
             var parkWhileHeld = !context.WebSockets.IsWebSocketRequest || context.GetEndpoint()?.Metadata.GetMetadata<RegionalIngress.RefusedWhileHeld>() is null;
             using var request = await ingress.EnterAsync(parkWhileHeld, context.RequestAborted).ConfigureAwait(false);
-            if (request is null)
+            if (request is null || (!parkWhileHeld && owners.Drained))
             {
                 context.Response.Headers.RetryAfter = "1";
                 context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;

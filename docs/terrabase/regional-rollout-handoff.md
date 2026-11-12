@@ -150,10 +150,12 @@ reconnect to the new writer. A closed socket still sends every answer queued
 before its 1012 and ends when the client answers the close. A client still
 receiving an answer when the rollout stops the source sees the connection drop
 (1006) without the 1012 and cannot tell whether that frame committed. While the
-hold lasts, a SQL socket
-upgrade is answered 503 with `Retry-After: 1` at once, instead of waiting for
-the hold to end and being relayed through the source, which the rollout stops
-next; REST requests still wait for the hold.
+hold lasts, and after it on the drained source until it stops or becomes the
+writer again, a SQL socket upgrade is answered 503 with `Retry-After: 1` at
+once, instead of waiting for the hold to end and being relayed through the
+source, which the rollout stops next; REST requests still wait for the hold and
+are then relayed to the new writer. A serving peer that was not drained keeps
+relaying upgrades to the writer.
 
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
