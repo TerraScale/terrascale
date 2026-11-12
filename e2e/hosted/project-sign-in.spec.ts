@@ -334,6 +334,11 @@ test('unverified social email creates and links an account only after the code, 
       await page.goto(base + '/security');
       await expect(page.locator('main')).toContainText(existingEmail);
       await audit.check('existing account connects after proof and its next sign-in needs no code');
+      await admin.goto('/auth/logs');
+      await expect(admin.locator('main')).toContainText('user.signed_up');
+      await expect(admin.locator('main')).toContainText('user.provider_linked');
+      await expect(admin.locator('main')).toContainText('user.updated');
+      await adminAudit.check('social creation and linking emit lifecycle events');
 
       await admin.goto('/profile?tab=danger');
       await admin.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();

@@ -5,7 +5,9 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Contracts;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
+using TerraScale.Authentication.Features.Email;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Configuration;
@@ -78,12 +80,31 @@ internal static class Program
         Require(pendingOpen.Invoke(null, [options, "project", pendingToken, new FixedClock(issuedAt.AddMinutes(10).AddSeconds(-1))]) is not null, "pending link before expiry");
         Require(pendingOpen.Invoke(null, [options, "project", pendingToken, new FixedClock(issuedAt.AddMinutes(10))]) is null, "pending link ten-minute expiry");
         Require(pendingOpen.Invoke(null, [options, "other-project", pendingToken, new FixedClock(issuedAt)]) is null, "pending link tenant binding");
+        var pendingWrite = pendingLinks.GetMethod("Write", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var atLimit = new DefaultHttpContext();
+        Require(pendingWrite.Invoke(null, [atLimit, "project", new string('a', 16384)]) is true, "pending cookie at size limit");
+        var overLimit = new DefaultHttpContext();
+        Require(pendingWrite.Invoke(null, [overLimit, "project", new string('a', 16385)]) is false, "pending cookie over size limit");
+        Require(overLimit.Response.Headers.SetCookie.Count == 0, "oversized pending cookie is not written");
+        var emails = new AuthEmails(options);
+        foreach (var (locale, body, warning) in new[]
+        {
+            (AuthEmails.English, "Enter this code to connect Facebook to your TerraScale account.", "If you didn't try to sign in with Facebook, ignore this email."),
+            (AuthEmails.Portuguese, "Digite este código para conectar Facebook à sua conta em TerraScale.", "Se você não tentou entrar com Facebook, ignore este e-mail."),
+        })
+        {
+            var message = await emails.RenderAsync(AuthEmailKind.SocialLinkCode, locale,
+                new AuthEmailValues("user@example.invalid") { Code = "123456", Provider = "Facebook", ExpiresIn = TimeSpan.FromMinutes(10) });
+            Require(message.Text.Contains(body, StringComparison.Ordinal), "social link localized body");
+            Require(message.Text.Contains(warning, StringComparison.Ordinal), "social link localized warning");
+        }
+
         foreach (var reserved in new[] { "admin", "administrator", "root", "support", "security", "help", "terrascale", "system", "owner", "staff" })
         {
             Require(Users.NormalizeUsername(reserved.ToUpperInvariant()) is null, "reserved username");
         }
 
-        Console.WriteLine("Pending social links: ten-minute expiry and tenant binding passed; reserved usernames refused.");
+        Console.WriteLine("Pending social links: expiry, tenant binding, cookie size cap and en/pt-BR provider copy passed; reserved usernames refused.");
         Console.WriteLine("Magic links: ten-minute expiry and tenant binding passed.");
         Console.WriteLine("8 providers: token/userinfo, verification, PKCE, state and configuration binding passed.");
     }

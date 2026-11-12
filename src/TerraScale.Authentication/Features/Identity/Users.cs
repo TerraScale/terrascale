@@ -144,6 +144,11 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 changes.Add(lifecycleEvent);
             }
 
+            if (await outbox.CreateAsync(caller.InstanceId, "user.updated", caller.Id, current.Email, identity.Provider, cancellationToken).ConfigureAwait(false) is { } updatedEvent)
+            {
+                changes.Add(updatedEvent);
+            }
+
             if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
             {
                 return true;

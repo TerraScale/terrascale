@@ -8,6 +8,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
 

@@ -269,6 +269,12 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             linkChanges.Add(linked);
         }
 
+        if (user is not null && await outbox.CreateAsync(tenant, "user.updated", user.Id, user.Email,
+            pending.Identity.Provider, cancellationToken).ConfigureAwait(false) is { } updatedEvent)
+        {
+            linkChanges.Add(updatedEvent);
+        }
+
         var consumed = await this.ConsumeAsync(tenant, "social:" + pending.Id, code.Trim(), PasscodePurpose.Social,
             passcode => passcode.Email == pending.Email && passcode.PendingTokenHash == Tokens.Sha256Hex(token)
                 && (user is null ? passcode.AuthStamp is null : passcode.UserId == user.Id && passcode.AuthEpoch == user.AuthEpoch && passcode.AuthStamp == user.AuthStamp),
