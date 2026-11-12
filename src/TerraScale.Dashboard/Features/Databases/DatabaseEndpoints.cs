@@ -118,13 +118,13 @@ namespace TerraScale.Dashboard.Features.Databases
 
         private static IReadOnlyList<string> Regions(IFormCollection form, AccountContext context)
         {
-            return Picked(form) ? DatabasePlacementEndpoints.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"))
+            return Picked(form) ? DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"))
                 : context.Project?.Region is { Length: > 0 } region ? [region] : throw new AccountAccessException(DatabasePlacementEndpoints.Minimum, 422);
         }
 
         private static IReadOnlyList<string> Chosen(IFormCollection form)
         {
-            try { return DatabasePlacementEndpoints.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder")); }
+            try { return DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder")); }
             catch (AccountAccessException) { return []; }
         }
 
@@ -205,21 +205,27 @@ namespace TerraScale.Dashboard.Features.Databases
             var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
             var metricsRead = OptionalPanel.LoadAsync(http, "database-metrics",
                 () => DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, range, http.RequestAborted), DatabaseListMetrics.Failed);
-            var regionsRead = backend.RegionsAsync(http.RequestAborted);
+            var regionsRead = backend.DiscoveryAsync(http.RequestAborted);
             IReadOnlyList<DatabaseRegion> choices = [];
             var regionsError = "";
-            try { choices = await regionsRead; }
+            IReadOnlyList<DatabaseRegion> catalog = [];
+            try
+            {
+                var discovery = await regionsRead;
+                choices = discovery.Regions;
+                catalog = discovery.Catalog;
+            }
             catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
             var search = http.Request.Query["q"].ToString().Trim();
             var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
             var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
             var metrics = await metricsRead;
-            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, Selection = selection, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." });
+            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Catalog = catalog, Metrics = metrics, Range = range, Selection = selection, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." });
             result.StatusCode = status;
             return result;
         }
 
-        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseGrantForm? grantForm = null)
+        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseGrantForm? grantForm = null, DatabaseRegionsForm? regions = null)
         {
             DatabaseRecord database;
             try
@@ -291,7 +297,7 @@ namespace TerraScale.Dashboard.Features.Databases
             // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
             if (tab == "replication" || tab == "overview" && database.AllRegions)
             {
-                try { choices = await backend.RegionsAsync(http.RequestAborted); }
+                try { choices = (await backend.DiscoveryAsync(http.RequestAborted)).Catalog; }
                 catch (HttpRequestException) { }
             }
 
@@ -338,7 +344,8 @@ namespace TerraScale.Dashboard.Features.Databases
                 Preview = preview,
                 StorageBytes = storage,
                 Grants = grants,
-                GrantForm = grantForm
+                GrantForm = grantForm,
+                RegionsForm = regions
             };
             if (tab == "replication" && http.Request.Headers["Datastar-Request"] == "true")
             {

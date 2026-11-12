@@ -6,29 +6,22 @@ dialog and the **Regions** card on the database's **Replication** tab render the
 last selected region cannot be unselected. Only organization members with management access can change the regions;
 everyone else sees the map read-only. Platform databases keep their placement.
 
-TerraBase's placement API still takes a home region and replica regions, so `DatabasePlacementEndpoints` derives them
-from the selected set:
+Region discovery determines the engine contract. When it returns a catalog, the create dialog and placement editor
+use the shared map. Creates send the selected `regions` set, and placement changes send the complete set in one
+management call. An all-regions database retains that mode while every offered region remains selected.
 
-- **Create.** The home is the first region the user selected: the dialog posts the selection order as `regionOrder`,
-  and without it the first checked region in the page's order is used. Every other selected region is a replica.
-- **Save.** Every selected code is checked against the region catalog before the first call: a code the catalog does
-  not list answers `422` and nothing is called. The selected regions are then handled in region id order, so a retry
-  takes the same steps as the first attempt.
-- **Save, home still selected.** One `updateDatabase` with the other selected regions as replicas. An all-regions
-  database keeps that mode while every catalog region stays selected, however many regions the catalog has; unselecting
-  one sends the explicit list, which turns the mode off. The dashboard has no control that turns all-regions mode on.
-- **Save, home unselected.** Three calls in order: `updateDatabase` so that every selected region is a replica (skipped
-  when the replicas already are exactly the selected regions); `moveDatabaseHome` to the first selected region, in
-  region id order, that already was a replica, or to the first selected region in that order when none was;
-  `updateDatabase` with the selected regions other than the new home, which removes the old one. A call that fails
-  leaves the earlier ones applied: the page shows the stored regions with the error, and saving again continues.
-  Replacing a database's only region takes two saves: the first adds the new region and answers that it is still
-  syncing while the old one keeps serving, and the next one finishes once the new region has caught up.
-- **No region selected** answers `422`, and so do more than 9 regions outside all-regions mode.
+When discovery is unavailable, the create dialog shows the region verified through TerraBase health. Creates retain
+`homeRegion`, optional `replicaRegions` and `allRegions`, and never send `regions`. A successful response with a home
+and replicas is canonical placement even when it has no `regions` array. The placement editor stays read-only until
+a catalog is available. Existing recorded regions keep their identities.
 
-The dashboard calls TerraBase's placement API through the management RPC contract using the current user's
-`databases:write` authority. A move waits for TerraBase to complete it, then saves the returned placement and endpoint.
-A failed or unresolved move displays an error; the dashboard does not assume that a failed response changed anything.
+At least one region and at most nine explicit regions must be selected. Only catalog entries can be newly selected.
+If a region is still copying, the editor keeps the requested selection, records the engine's current placement and
+shows a status message. Saving again completes the change after copying finishes. A stale regional route refreshes
+the database placement before resubmitting; a concurrent change to the region set requires reviewing it first.
+
+The dashboard calls TerraBase through the current user's management RPC authority. Rename and delete also refresh a
+stale route, preserving regional database management after a placement change.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 

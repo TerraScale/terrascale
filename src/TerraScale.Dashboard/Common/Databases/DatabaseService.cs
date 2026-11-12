@@ -69,7 +69,8 @@ namespace TerraScale.Dashboard.Common.Databases
             DemandProvision(context.Organization!, context.UserId);
             DemandName(context.Project!, name);
             DemandRoom(context.Organization!);
-            var catalog = await backend.RegionsAsync(cancellationToken);
+            var discovery = await backend.DiscoveryAsync(cancellationToken);
+            var catalog = discovery.Regions;
             var home = ResolveRegion(catalog, homeRegion);
             var replicas = ReplicaIds(catalog, home, replicaRegions ?? []);
             ManagedDatabase remote;
@@ -88,7 +89,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new HttpRequestException("Database provisioning returned an invalid identity.");
             }
 
-            if (recovered && remote.HomeRegion != home.Id)
+            if (recovered && discovery.Catalog.Count == 0 && remote.HomeRegion != home.Id)
             {
                 throw new AccountAccessException("A database with this name already exists in another region.", 409);
             }
@@ -96,7 +97,14 @@ namespace TerraScale.Dashboard.Common.Databases
             if (ttlSeconds is not null && remote.ExpiresAt is null)
                 throw new HttpRequestException("Database provisioning did not confirm the requested TTL.");
             var placement = await RemotePlacementAsync(remote, cancellationToken);
-            if (!recovered && placement[0].Id != home.Id)
+            var expected = allRegions ? discovery.Catalog.Select(region => region.Id) : replicas.Prepend(home.Id);
+            if (discovery.Catalog.Count > 0 && !placement.Select(region => region.Id).ToHashSet(StringComparer.Ordinal).SetEquals(expected))
+            {
+                throw recovered ? new AccountAccessException("A database with this name already exists in other regions.", 409)
+                    : new HttpRequestException("Database provisioning returned a different placement.");
+            }
+
+            if (discovery.Catalog.Count == 0 && !recovered && placement[0].Id != home.Id)
             {
                 throw new HttpRequestException("Database provisioning returned a different placement.");
             }
@@ -245,8 +253,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
 
             var scope = Scope(context);
-            var home = await HomeAsync(context, database, cancellationToken);
-            var remote = await backend.RenameAsync(scope, home, id, name, cancellationToken);
+            (var remote, database, var home) = await RoutedAsync(context, database, async (current, route) => (await backend.RenameAsync(scope, route, id, name, cancellationToken), current, route), cancellationToken);
             var placement = await RemotePlacementAsync(remote, cancellationToken);
             if (remote.Id != id || remote.ProjectId != scope.ProjectId || remote.Name != name || remote.HomeRegion != home.Id ||
                 remote.CreatedAt != database.CreatedAt || remote.BranchedFrom != database.BranchedFrom || remote.AllRegions != database.AllRegions ||
@@ -344,7 +351,7 @@ namespace TerraScale.Dashboard.Common.Databases
             return ids.Length > 8 ? throw new AccountAccessException("Choose at most 9 regions.", 422) : ids;
         }
 
-        private async Task<DatabaseRecord> SavePlacementAsync(AccountContext context, DatabaseRecord database, ManagedDatabase remote, string audit, CancellationToken cancellationToken)
+        private async Task<DatabaseRecord> SavePlacementAsync(AccountContext context, DatabaseRecord database, ManagedDatabase remote, string? audit, CancellationToken cancellationToken)
         {
             var scope = Scope(context);
             if (remote.Id != database.Id || remote.ProjectId != scope.ProjectId)
@@ -367,7 +374,10 @@ namespace TerraScale.Dashboard.Common.Databases
                 current.AllRegions = record.AllRegions;
                 current.Endpoint = record.Endpoint;
                 current.PlacementRevision = checked(current.PlacementRevision + 1);
-                org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, audit, current.Name, "database", accounts.Now));
+                if (audit is not null)
+                {
+                    org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, audit, current.Name, "database", accounts.Now));
+                }
             }, cancellationToken);
             database.Region = record.Region;
             database.Regions = [.. record.Regions];
@@ -391,7 +401,11 @@ namespace TerraScale.Dashboard.Common.Databases
             }
 
             var scope = Scope(context);
-            await backend.DeleteAsync(scope, await HomeAsync(context, database, cancellationToken), id, cancellationToken);
+            database = await RoutedAsync(context, database, async (current, route) =>
+            {
+                await backend.DeleteAsync(scope, route, id, cancellationToken);
+                return current;
+            }, cancellationToken);
             await accounts.UpdateOrganizationAsync(context, org =>
             {
                 if (!org.CanManage(context.UserId))
@@ -632,7 +646,12 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new HttpRequestException("The database service did not return its canonical placement.");
             }
 
-            var ids = remote.ReplicaRegions.Prepend(remote.HomeRegion).ToArray();
+            string[] ids = remote.Regions is { } regions ? [remote.HomeRegion, .. regions.Where(region => region != remote.HomeRegion)]
+                : [remote.HomeRegion, .. remote.ReplicaRegions];
+            if (remote.Regions is { } canonical && (canonical.Count != ids.Length || !canonical.Contains(remote.HomeRegion, StringComparer.Ordinal)))
+            {
+                throw new HttpRequestException("The database service returned ambiguous placement.");
+            }
             if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length)
             {
                 throw new HttpRequestException("The database service returned ambiguous placement.");

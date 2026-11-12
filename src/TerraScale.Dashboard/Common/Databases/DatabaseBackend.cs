@@ -41,6 +41,7 @@ namespace TerraScale.Dashboard.Common.Databases
     }
     public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null, bool AllRegions = false)
     {
+        public IReadOnlyList<string>? Regions { get; init; }
         public DateTimeOffset? ExpiresAt { get; init; }
         public string? PreviousName { get; init; }
         public string? ConflictOf { get; init; }
@@ -76,11 +77,14 @@ namespace TerraScale.Dashboard.Common.Databases
 
     public interface IDatabaseBackend
     {
+        Task<DatabaseDiscovery> DiscoveryAsync(CancellationToken cancellationToken);
         Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken);
         Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken cancellationToken);
         Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
         Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken, long? ttlSeconds = null);
         Task<ManagedDatabase> PlaceAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken);
+        Task<ManagedDatabase> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
+        Task<ManagedDatabase> PlaceRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> regions, bool allRegions, CancellationToken cancellationToken);
         Task<ManagedDatabase> MoveHomeAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string homeRegion, CancellationToken cancellationToken);
         Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null);
         Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
@@ -96,18 +100,27 @@ namespace TerraScale.Dashboard.Common.Databases
     // Canonical data operations use TerraBase RPC with current action-scoped authority.
     public sealed class DatabaseBackend(TerraBaseRpcClient rpc, IProjectAccessTokens tokens) : IDatabaseBackend
     {
-        // TerraBase's anonymous GET /v1/regions answers {"regions":[...]}: the id of every region it serves now, from any region,
-        // so a new region appears without a change here. gru, fra and sjc keep their display order; others follow by id. While
-        // that route is not deployed, or answers anything but a valid list, the one verified region is the healthz region.
-        public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken)
+        public async Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken)
         {
-            return ServerTiming.ReadAsync((this, "regions"), () => ReadRegionsAsync(cancellationToken));
+            return (await DiscoveryAsync(cancellationToken)).Regions;
         }
 
-        private async Task<IReadOnlyList<DatabaseRegion>> ReadRegionsAsync(CancellationToken cancellationToken)
+        public Task<DatabaseDiscovery> DiscoveryAsync(CancellationToken cancellationToken)
         {
-            try { return await CatalogAsync(cancellationToken); }
-            catch (Exception error) when (error is TerraBaseException or HttpRequestException or JsonException) { return await AnsweringRegionAsync(cancellationToken); }
+            return ServerTiming.ReadAsync((this, "region-discovery"), () => ReadDiscoveryAsync(cancellationToken));
+        }
+
+        private async Task<DatabaseDiscovery> ReadDiscoveryAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                var catalog = await CatalogAsync(cancellationToken);
+                return new(catalog, catalog);
+            }
+            catch (Exception error) when (error is TerraBaseException or HttpRequestException or JsonException)
+            {
+                return new(await AnsweringRegionAsync(cancellationToken), []);
+            }
         }
 
         // Absence requires a complete catalog: a health-only fallback cannot discover an unknown home.
@@ -188,9 +201,30 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
+            var discovery = await DiscoveryAsync(cancellationToken);
             var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            if (discovery.Catalog.Count > 0)
+            {
+                var selected = allRegions ? discovery.Catalog.Select(region => region.Id) : replicaRegions.Prepend(home.Id);
+                return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId,
+                    new(Name: name, Regions: [.. selected], TtlSeconds: ttlSeconds)).ResponseAsync));
+            }
+
             return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId, new(Name: name, HomeRegion: home.Id,
                 ReplicaRegions: allRegions || replicaRegions.Count == 0 ? null : replicaRegions, AllRegions: allRegions ? true : null, TtlSeconds: ttlSeconds)).ResponseAsync));
+        }
+
+        public async Task<ManagedDatabase> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+        {
+            var client = await ClientAsync(scope, home, "databases:read", cancellationToken);
+            return Map(await RunAsync(() => client.GetDatabaseAsync(scope.ProjectId, databaseId).ResponseAsync));
+        }
+
+        public async Task<ManagedDatabase> PlaceRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> regions, bool allRegions, CancellationToken cancellationToken)
+        {
+            var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            return Map(await RunAsync(() => client.SetDatabaseAsync(scope.ProjectId, databaseId,
+                allRegions ? new(AllRegions: true) : new(Regions: regions)).ResponseAsync));
         }
 
         public async Task<ManagedDatabase> PlaceAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken)
@@ -408,8 +442,8 @@ namespace TerraScale.Dashboard.Common.Databases
         private static ManagedDatabase Map(TerraBaseManagedDatabase item)
         {
             return new(item.Id, item.ProjectId, item.Name, item.CreatedAt,
-            item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions)
-            { PreviousName = item.PreviousName, ConflictOf = item.ConflictOf, ExpiresAt = item.ExpiresAt };
+            item.BranchedFrom, item.HomeRegion, item.Regions is { } regions ? [.. regions.Where(region => region != item.HomeRegion)] : item.ReplicaRegions, item.AllRegions)
+            { Regions = item.Regions, PreviousName = item.PreviousName, ConflictOf = item.ConflictOf, ExpiresAt = item.ExpiresAt };
         }
 
         private static DatabaseReadGrant Map(TerraBaseReadGrant item)
@@ -476,5 +510,21 @@ namespace TerraScale.Dashboard.Common.Databases
         public string? HomeRegion { get; } = homeRegion;
         public IReadOnlyList<string> Regions { get; } = regions;
 
+    }
+    public sealed class DatabaseRegionsCopyingException(IReadOnlyList<string> added, IReadOnlyList<string> copying, IReadOnlyList<string> serving)
+        : DatabaseProviderException(HttpStatusCode.ServiceUnavailable,
+            (added.Count > 0 ? $"{RegionNames.List(added)} added. {(added.Count == 1 ? "It is" : "They are")}" : $"{RegionNames.List(copying)} {(copying.Count == 1 ? "is" : "are")}") +
+            $" still copying this database, which usually takes about half a minute. Save again to finish; until then {RegionNames.List(serving)} {(serving.Count == 1 ? "keeps" : "keep")} serving.")
+    {
+        public const string Code = "replica_not_ready";
+    }
+
+    public static class RegionNames
+    {
+        public static string List(IReadOnlyList<string> codes)
+        {
+            string[] names = [.. codes.Select(code => UI.Regions.Name(code) is { Length: > 0 } name ? name : code.ToLowerInvariant())];
+            return names.Length < 2 ? string.Join("", names) : string.Join(", ", names[..^1]) + " and " + names[^1];
+        }
     }
 }
