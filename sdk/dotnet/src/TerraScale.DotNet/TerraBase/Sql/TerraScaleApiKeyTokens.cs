@@ -57,7 +57,7 @@ internal sealed partial class TerraScaleApiKeyTokens
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         try
         {
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            using var response = TerraScaleOrigin.Sent(await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false), scopedKeysEndpoint);
             if (!response.IsSuccessStatusCode)
                 throw await TerraBaseException.FromResponseAsync(response, null, deadline.Token).ConfigureAwait(false);
             using var answer = new BoundedHttpBodyStream(MaxResponseBytes, () => new InvalidDataException("ts-auth's scoped key answer exceeds 64 KiB."), deadline.Token);
@@ -86,7 +86,7 @@ internal sealed partial class TerraScaleApiKeyTokens
             Content = new FormUrlEncodedContent([new("grant_type", "client_credentials"), new("project", project)]),
         };
         request.Headers.Authorization = basic;
-        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+        using var response = TerraScaleOrigin.Sent(await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false), tokenEndpoint);
         using var body = new BoundedHttpBodyStream(MaxResponseBytes, () => new InvalidDataException("ts-auth's token answer exceeds 64 KiB."), deadline.Token);
         await response.Content.CopyToAsync(body, deadline.Token).ConfigureAwait(false);
         using var json = JsonDocument.Parse(body.Length == 0 ? "{}"u8.ToArray() : body.ToArray());

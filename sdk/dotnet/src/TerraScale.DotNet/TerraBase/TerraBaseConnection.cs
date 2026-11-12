@@ -297,7 +297,7 @@ internal sealed class TerraBaseConnection
                 ExceptionDispatchInfo? lost = null;
                 try
                 {
-                    response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+                    response = TerraScaleOrigin.Sent(await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false), origin);
                 }
                 catch (HttpRequestException error) when (read && attempt < MaxRetries && !deadline.IsCancellationRequested)
                 {

@@ -457,7 +457,7 @@ public sealed partial class TerraScaleAuthClient
         {
             request.Content = content;
         }
-        return await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        return TerraScaleOrigin.Sent(await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), options.BaseAddress!);
     }
 
     private void ApplyAuthentication(HttpRequestMessage request, RequestAuthentication authentication)

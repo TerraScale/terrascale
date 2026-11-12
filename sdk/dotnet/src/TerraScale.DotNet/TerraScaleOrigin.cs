@@ -58,6 +58,19 @@ internal static class TerraScaleOrigin
         return origin;
     }
 
+    internal static HttpResponseMessage Sent(HttpResponseMessage response, Uri origin)
+    {
+        if (response.RequestMessage?.RequestUri is not { } sent
+            || Uri.Compare(sent, origin, UriComponents.SchemeAndServer, UriFormat.UriEscaped, StringComparison.Ordinal) == 0)
+        {
+            return response;
+        }
+
+        response.Dispose();
+        throw new InvalidOperationException(
+            $"The HttpClient followed a redirect away from {origin.GetLeftPart(UriPartial.Authority)}: disable automatic redirects on its handler, as TerraBaseHttp.CreateHandler() does.");
+    }
+
     private static (string Scheme, string Host, string Port)? Strict(string? raw)
     {
         if (raw is null || raw.AsSpan().ContainsAnyExcept(OriginCharacters))
