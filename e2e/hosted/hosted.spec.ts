@@ -103,7 +103,9 @@ for (const size of sizes) {
 
       await page.goto(`${dash}/login`);
       await signInWithPassword(page, audit, owner.email, owner.password, label);
-      await page.waitForURL((url) => url.origin === dash);
+      await page.waitForURL((url) => url.origin === dash && url.pathname === '/');
+      await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible();
+      await expect(page.locator('.ts-account-trigger')).toContainText(owner.displayName);
 
       await page.goto(`${auth}/ui/terrascale/security`);
       await page.waitForURL(onHosted('security'));
