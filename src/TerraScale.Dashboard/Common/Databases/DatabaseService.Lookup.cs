@@ -78,16 +78,16 @@ namespace TerraScale.Dashboard.Common.Databases
                     // Producer names allow underscores/trailing hyphens; creation-form policy must not hide valid databases.
                     if (remote.ProjectId != project.Id || remote.CreatedAt == default || remote.Name is null || !ProducerName().IsMatch(remote.Name) ||
                         ReservedProducerName().IsMatch(remote.Name) || remote.BranchedFrom is { } source && (!TerraScaleIds.IsValid(source) || source == id) ||
-                        remote.AllRegions && remote.Regions is not [_])
+                        remote.AllRegions && remote.ReplicaRegions is not { Count: 0 })
                     {
                         throw Unavailable(id);
                     }
 
                     var placement = await RemotePlacementAsync(remote, ct);
-                    if (!listings.Any(listing => listing.Region == remote.Route && listing.Items?.Any(item => item.Id == id) == true) ||
+                    if (!listings.Any(listing => listing.Region == remote.HomeRegion && listing.Items?.Any(item => item.Id == id) == true) ||
                         matches.Any(item => item.ProjectId != remote.ProjectId || item.Name != remote.Name || item.CreatedAt != remote.CreatedAt ||
-                            item.BranchedFrom != remote.BranchedFrom || item.Route != remote.Route || item.AllRegions != remote.AllRegions ||
-                            item.Regions is null || !item.Regions.Order(StringComparer.Ordinal).SequenceEqual(remote.Regions!.Order(StringComparer.Ordinal))))
+                            item.BranchedFrom != remote.BranchedFrom || item.HomeRegion != remote.HomeRegion || item.AllRegions != remote.AllRegions ||
+                            item.ReplicaRegions is null || !item.ReplicaRegions.Order(StringComparer.Ordinal).SequenceEqual(remote.ReplicaRegions!.Order(StringComparer.Ordinal))))
                     {
                         throw Unavailable(id);
                     }

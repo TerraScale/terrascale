@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using TerraScale.Dashboard.Platform.TsAuth;
 
@@ -141,7 +140,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public Task<bool> DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
         {
-            return PlatformAsync(() => Client().Platform.DeleteProjectAsync(Bearer(session), Id(organizationId), Id(projectId), cancellationToken), Holder.Project);
+            return PlatformAsync(() => Client().Platform.DeleteProjectAsync(Bearer(session), Id(organizationId), Id(projectId), cancellationToken));
         }
 
         public Task<IReadOnlyList<TsAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
@@ -271,30 +270,24 @@ namespace TerraScale.Dashboard.Features.Auth
             throw new IOException("ts-auth returned too many pages.");
         }
 
-        private enum Holder
+        private static async Task PlatformAsync(Func<Task> call)
         {
-            Organization,
-            Project,
-        }
-
-        private static async Task PlatformAsync(Func<Task> call, Holder holder = Holder.Organization)
-        {
-            await PlatformAsync(async () => { await call(); return true; }, holder);
+            await PlatformAsync(async () => { await call(); return true; });
         }
 
         // ts-auth refusals become account errors with its fixed code and a dashboard message; the SDK
         // keeps no producer text. Server and transport failures stay HttpRequestException (503 page).
-        private static async Task<T> PlatformAsync<T>(Func<Task<T>> call, Holder holder = Holder.Organization)
+        private static async Task<T> PlatformAsync<T>(Func<Task<T>> call)
         {
             try { return await call(); }
             catch (TsAuthException error) when ((int?)error.StatusCode is >= 400 and < 500)
             {
                 var status = (int)error.StatusCode!;
-                throw new AccountAccessException(Message(error.ErrorCode, error.StatusCode!.Value, holder), status == 400 ? StatusCodes.Status422UnprocessableEntity : status, error.ErrorCode ?? "");
+                throw new AccountAccessException(Message(error.ErrorCode, error.StatusCode!.Value), status == 400 ? StatusCodes.Status422UnprocessableEntity : status, error.ErrorCode ?? "");
             }
         }
 
-        private static string Message(string? code, HttpStatusCode status, Holder holder = Holder.Organization)
+        private static string Message(string? code, HttpStatusCode status)
         {
             return code switch
             {
@@ -304,12 +297,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 "closure_conflict" => "Deletion is paused because a project closure could not be confirmed. Resolve the project conflict and try again.",
                 "binding_conflict" => "Deletion is paused because a project ownership binding could not be verified. Resolve the project conflict and try again.",
                 "deletion_refused" => "Deletion could not finish. Resolve the organization or project conflict before requesting deletion again.",
-                "not_empty" => holder switch
-                {
-                    Holder.Organization => "Delete the organization's projects first.",
-                    Holder.Project => "Delete the project's databases, file buckets, API keys and backup destination first.",
-                    _ => throw new UnreachableException(),
-                },
+                "not_empty" => "Delete the organization's projects first.",
                 "invitation_pending" => "This email already has a pending invitation.",
                 "already_member" => "This email is already an active member.",
                 "email_mismatch" => "Sign in with the invited email to answer this invitation.",

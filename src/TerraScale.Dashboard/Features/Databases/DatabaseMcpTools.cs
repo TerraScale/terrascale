@@ -61,14 +61,12 @@ namespace TerraScale.Dashboard.Features.Databases
                 unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId), db.ExpiresAt);
         }
 
-        [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a database in a set of regions with an optional TTL in hours (one minute to 365 days). All of its regions serve it equally.")]
-        public async Task<McpDatabase> CreateDatabase(string name,
-            [Description("Region codes the database runs in, such as [\"gru\", \"fra\"]: one to nine regions TerraScale discovery lists. Omit for the project's region.")] string[]? regions = null,
-            string? organizationId = null, string? projectId = null, decimal? ttlHours = null)
+        [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a database in its home region with an optional TTL in hours (one minute to 365 days).")]
+        public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string? organizationId = null, string? projectId = null, decimal? ttlHours = null)
         {
             var context = Scope(organizationId, projectId);
             DatabaseService.Scope(context);
-            return await DatabaseOutput(await databases.CreateAsync(context, name, regions is { Length: > 0 } ? regions : [context.Project!.Region], Cancellation, ttlHours));
+            return await DatabaseOutput(await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation, ttlHours));
         }
 
         [McpServerTool(Name = "fork_database", Title = "Fork database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Fork a database now into a ready copy, or at an ISO 8601 pointInTime to start a restore and return the running operation at once instead of waiting for the copy; poll get_restore_status for the new database. Optional TTL in hours. A point-in-time fork requires management access and consumes one database slot.")]
@@ -109,16 +107,13 @@ namespace TerraScale.Dashboard.Features.Databases
 
         private static Task<McpDatabase> DatabaseOutput(DatabaseRecord db)
         {
-            return Task.FromResult(new McpDatabase(db.Id, db.Name, db.Status, db.Region, [.. DatabaseService.ServingRegions(db).Order(StringComparer.OrdinalIgnoreCase)], db.CreatedAt, db.AllRegions, db.ExpiresAt));
+            return Task.FromResult(new McpDatabase(db.Id, db.Name, db.Status, db.Region, DatabaseService.ServingRegions(db), db.CreatedAt, db.AllRegions, db.ExpiresAt));
         }
     }
 
-    public record McpDatabase(string Id, string Name, string Status, [property: Description(McpDatabase.RegionDescription)] string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? ExpiresAt)
-    {
-        public const string RegionDescription = "The region the dashboard routes this database's requests through; see placement for every region the database runs in.";
-    }
+    public record McpDatabase(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? ExpiresAt);
     public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
-    public sealed record McpDatabaseDetail(string Id, string Name, string Status, [property: Description(McpDatabase.RegionDescription)] string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions,
+    public sealed record McpDatabaseDetail(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions,
         string Endpoint, IReadOnlyList<string> Regions,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Unavailable, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? BackupsEnabled, bool CanManage, bool CanBranch, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? ExpiresAt);
 }

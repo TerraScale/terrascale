@@ -6,7 +6,7 @@ paid plans of sole-member organizations immediately, without a refund, and hands
 the account deletion to ts-auth using the existing durable deletion receipt.
 
 The consent covers every sole-member organization, including Personal, and
-automatic erasure of its projects, databases and data from every region.
+automatic erasure of its projects, databases and data from all replicas.
 Shared organizations retain their data and plans; a sole owner must transfer
 ownership before leaving. Retained backups may outlive account deletion until
 their retention period expires; completion does not promise immediate backup purge.

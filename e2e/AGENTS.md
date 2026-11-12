@@ -59,7 +59,7 @@ authenticated HTTP/2 peer calls, with the run's shared peer credential. Namespac
 peer the other's source address, which the pull endpoint uses to identify the replica. The client, metrics and
 PostgreSQL ports are 8080/9091/6432 for gru and 8180/9191/6532 for fra; the data directories are
 `$E2E_STATE/terrabase` and `$E2E_STATE/terrabase-fra`. The edge and run CA cover
-`gru.api.terrascale.tech` and `fra.api.terrascale.tech`. In two-region mode the journey gives the dashboard the cells' peers file so it can call each region's TerraBase: a call for a database in fra goes to fra's internal listener; ts-auth keeps using gru's. Production's dashboard needs the equivalent before customers place databases outside its own region; whether it has it is being checked separately.
+`gru.api.terrascale.tech` and `fra.api.terrascale.tech`. The dashboard and ts-auth keep using gru's internal listener.
 Discovery returns gru and fra, both known to the dashboard map; the default cell still identifies as local.
 
 Both regions use the same signed R2 stand-in, with separate `terrascale-gru-files` and `terrascale-fra-files`
@@ -70,8 +70,8 @@ S3 operations, listings and unversioned deletion needed here, without multipart 
 The throwaway S3 credential is shared across these buckets; production uses separate file and backup identities.
 
 Placement has its own setup account and project key, using the normal journey setup. Its API fixture deletes that
-account's seed database to free the Free plan's one database slot, so the project runs one scenario at a time
-(`workers: 1`). Each scenario deletes its temporary database or bucket, and `placement-close` deletes the account. Specs added under `placement/` use the placement project's
+account's seed database to free the Free plan's one database slot. Each scenario deletes its temporary database or
+bucket, and `placement-close` deletes the account. Specs added under `placement/` use the placement project's
 `metadata.setup` and registered secrets, as the interactions specs do. Run one such spec with:
 
 ```sh
