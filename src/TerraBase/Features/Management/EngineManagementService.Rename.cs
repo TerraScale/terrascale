@@ -51,6 +51,7 @@ internal sealed partial class EngineManagementService
 
             var renamed = database with { Name = name };
             await CatalogTables.PutDatabaseAsync(transaction, renamed, cancellationToken).ConfigureAwait(false);
+            ClearKeptNames(databaseId);
             return renamed;
         }, static error => error, cancellationToken).ConfigureAwait(false);
 }

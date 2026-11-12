@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { expect, type APIResponse } from '@playwright/test';
+import { expect, type APIResponse, type Page } from '@playwright/test';
 import { test, authenticatedCells, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
 import { dash, production } from '../support/stack';
 import { Audit, auditedContext } from '../support/audit';
@@ -338,7 +338,7 @@ test('R8 a TTL branch keeps its identity through catalog sync, a move and a rena
   }
 });
 
-const multiple = test.extend<{ owner: { cells: Cells; projectId: string } }>({
+const multiple = test.extend<{ owner: { cells: Cells; projectId: string; page: Page; audit: Audit } }>({
   owner: async ({ browser, playwright, request }, use, info) => {
     const context = await auditedContext(browser, {});
     try {
@@ -362,7 +362,7 @@ const multiple = test.extend<{ owner: { cells: Cells; projectId: string } }>({
       const key = await createApiKey(page, audit, name('catalog-key'), 'catalog owner');
       const cells = await authenticatedCells(playwright.request, request, key, projectId);
       try {
-        await use({ cells, projectId });
+        await use({ cells, projectId, page, audit });
       } finally {
         await cells.dispose();
       }
@@ -458,7 +458,7 @@ multiple('R10 a home name swap converges on the follower within two sweeps', asy
   }
 });
 
-multiple('R11 a conflicting promotion is refused before takeover and succeeds after a rename', async ({ owner: { cells, projectId } }) => {
+multiple('R11 a conflicting promotion is refused before takeover and succeeds after a rename', async ({ owner: { cells, projectId, page, audit } }, info) => {
   const occupied = name('move-name');
   const original = name('move-original');
   const x = await named(cells, home, original, ['gru', 'fra'], projectId);
@@ -469,6 +469,16 @@ multiple('R11 a conflicting promotion is refused before takeover and succeeds af
     await rename(cells, home, x.id, occupied, projectId);
     const before = await json<Record<string, unknown>>(await cells.get(`${home}${database(x.id, projectId)}`));
     await answer(await patch(cells, x.id, ['fra'], projectId), 409, 'name_taken');
+    await page.goto(`${dash}/databases/${x.id}/replication`);
+    await page.locator('#database-regions input[name="regions"][value="gru" i]').uncheck();
+    audit.expectStatus(/\/api\/v1\/dashboard\/databases\/placement$/, 409);
+    const refused = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/v1/dashboard/databases/placement');
+    await page.getByRole('button', { name: 'Save regions', exact: true }).click();
+    expect((await refused).status()).toBe(409);
+    await expect(page.locator('main .ts-alert-danger .ts-alert-body')).toHaveText('Another database in fra already uses this name. Rename one of them, then save again.');
+    await audit.check('name conflict explains how to save regions');
+    await page.screenshot({ path: info.outputPath('regions-name-taken-dark.png'), fullPage: true });
     const after = await json<Record<string, unknown>>(await cells.get(`${home}${database(x.id, projectId)}`));
     expect(after).toEqual(before);
     expect(await recordedName(cells, x.id, projectId)).toBe(original);
