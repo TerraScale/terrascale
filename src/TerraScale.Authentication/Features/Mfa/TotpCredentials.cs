@@ -60,6 +60,19 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         return SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, MfaJson.Default.MfaChallenge), "mfa-challenge:" + user.InstanceId);
     }
 
+    internal async Task<string?> InboxChallengeAsync(UserRecord user, CancellationToken cancellationToken)
+    {
+        if (await this.CurrentUserAsync(user, cancellationToken).ConfigureAwait(false) is null
+            || await this.HasAllowedFactorAsync(user, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        var challenge = new MfaChallenge(AuthIds.New(), user.Id, user.AuthEpoch, user.AuthStamp, clock.GetUtcNow() + ChallengeLifetime,
+            user.AuthenticationBindings, "enrollment-inbox", false);
+        return SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, MfaJson.Default.MfaChallenge), "mfa-challenge:" + user.InstanceId);
+    }
+
     public async Task<ChallengedSignIn?> ChallengedAsync(string instanceId, string? sealedChallenge, string purpose, CancellationToken cancellationToken = default)
     {
         MfaChallenge? challenge;

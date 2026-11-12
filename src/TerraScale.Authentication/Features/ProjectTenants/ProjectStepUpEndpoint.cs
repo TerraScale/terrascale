@@ -31,6 +31,9 @@ public sealed record ProjectStepUpBody(string Proof, DateTimeOffset ExpiresAt)
 public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication, Sessions sessions, HostedAuth hosted, TotpCredentials mfa,
     StepUpProofs proofs, PasskeyCredentials passkeys, ProjectAuthSettings settings, AuthData data, KeyRing ring, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
+    private static readonly string[] VerifiedPasskey = ["swk", "user", "mfa"];
+    private static readonly string[] PasswordVerifiedPasskey = ["pwd", "swk", "user", "mfa"];
+
     public override void Configure()
     {
         Post("/v1/{project}/step-up");
@@ -152,7 +155,8 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
                     ["jti"] = AuthIds.New(),
                     ["auth_time"] = now.ToUnixTimeSeconds(),
                     ["sid"] = live.Session.Id,
-                    ["amr"] = passwordVerified && method != "pwd" ? new[] { "pwd", method, "mfa" } : new[] { method },
+                    ["amr"] = method == "swk" ? passwordVerified ? PasswordVerifiedPasskey : VerifiedPasskey
+                        : passwordVerified && method != "pwd" ? new[] { "pwd", method, "mfa" } : new[] { method },
                 },
             });
             return Results.Json(new ProjectStepUpBody(proof, expires), ProjectTenantJson.Default.ProjectStepUpBody);

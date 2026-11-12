@@ -806,7 +806,7 @@ namespace TerraScale.Authentication.Storage.Migrations
                         {
                             t.HasCheckConstraint("ck_passcodes_failed_attempts", "failed_attempts >= 0");
 
-                            t.HasCheckConstraint("ck_passcodes_purpose", "purpose IS NULL OR purpose IN ('password-reset', 'sign-up', 'step-up')");
+                            t.HasCheckConstraint("ck_passcodes_purpose", "purpose IS NULL OR purpose IN ('password-reset', 'sign-up', 'step-up', 'enrollment-inbox')");
                         });
                 });
 

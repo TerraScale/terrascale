@@ -647,7 +647,7 @@ internal static class SignInFlow
     /// leaves no resend control to press. The wait, copy and structure are the same for every refused address, so
     /// nothing tells an address with an account from one without.
     /// </summary>
-    public static IResult BudgetExhausted(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null)
+    public static IResult BudgetExhausted(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null, string? challenge = null)
     {
         var seconds = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds));
         var copy = Copy(context);
@@ -660,6 +660,7 @@ internal static class SignInFlow
                 CodeBudgetExhausted = true,
                 WaitSeconds = seconds,
                 PendingToken = pendingToken,
+                Challenge = challenge,
             },
             StatusCodes.Status429TooManyRequests);
     }
@@ -753,17 +754,7 @@ internal static class SignInFlow
 
         if (!enrolled && !user.InboxProven)
         {
-            var hosted = context.RequestServices.GetRequiredService<HostedAuth>();
-            using var reservation = context.RequestServices.GetRequiredService<SignInMail>().Reserve();
-            if (await hosted.LimitMailAsync(user.Email, Ip(context), cancellationToken) is { } refusal)
-            {
-                return refusal.BudgetExhausted
-                    ? BudgetExhausted(context, SignInStep.Code, refusal.Wait, user.Email, next)
-                    : Limited(context, SignInStep.Code, refusal.Wait, user.Email, next);
-            }
-
-            await reservation.EnqueueCodeAsync(user.InstanceId, user.Email, PasscodePurpose.SignIn, AuthEmails.Locale(context.Request));
-            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, user.InstanceId, user.Email, next));
+            return await VerifyEnrollmentInboxEndpoint.SendAsync(context, user, next, cancellationToken);
         }
 
         if (await mfa.ChallengeAsync(user, !enrolled, cancellationToken) is not { } challenge)

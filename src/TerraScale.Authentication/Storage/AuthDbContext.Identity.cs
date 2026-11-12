@@ -83,7 +83,7 @@ public sealed partial class AuthDbContext
             passcode.ToTable("passcodes", table =>
             {
                 table.HasCheckConstraint("ck_passcodes_failed_attempts", "failed_attempts >= 0");
-                table.HasCheckConstraint("ck_passcodes_purpose", "purpose IS NULL OR purpose IN ('password-reset', 'sign-up', 'step-up')");
+                table.HasCheckConstraint("ck_passcodes_purpose", "purpose IS NULL OR purpose IN ('password-reset', 'sign-up', 'step-up', 'enrollment-inbox')");
             });
             passcode.HasKey(row => new { row.InstanceId, row.Key });
             passcode.HasIndex(row => new { row.InstanceId, row.UserId });

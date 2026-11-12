@@ -18,7 +18,13 @@ At least one factor must be allowed when MFA is required. A password, email code
 or social login first establishes a primary proof. Enrollment uses a separate
 five-minute sealed purpose, issued only to users without an allowed factor.
 First enrollment requires a fresh inbox code; the password route sends that
-code before offering enrollment, including for imported accounts. A user
+code before offering enrollment, including for imported accounts. Its form posts
+to /ui/{project}/mfa/enroll/verify-email independently of passcode sign-in.
+The five-minute sealed enrollment-inbox challenge binds the user, tenant and
+authentication state; only its purpose-specific, single-use code advances to
+factor enrollment, without creating a session. Resending uses the same pending
+primary proof at /ui/{project}/mfa/enroll/email and preserves the hosted email
+cooldown and hourly budgets. A user
 without a factor receives no session or OAuth tokens until they enroll and
 confirm an allowed factor on the hosted page. Enrollment reuses the same TOTP
 and WebAuthn verifiers as account security. Recovery codes are issued after TOTP
@@ -52,6 +58,9 @@ revocation still ends tokens bound to that session. Tokens issued before this
 binding existed (without the claim) remain valid until their normal expiry;
 they cannot be idle-checked or checked against a session stamp. User epoch and
 authentication-state revocation still apply, including sign out everywhere.
+Refreshing one of these tokens reissues it without the session claim; the
+transition ends at the original absolute lifetime at the latest. Idle timeout
+and single-session enforcement begin after a new sign-in creates a bound token.
 
 ## Sign out everywhere
 
@@ -103,7 +112,8 @@ authorization for a particular customer operation. The next refresh includes the
 fresh `auth_time`; its absolute session limit remains unchanged.
 
 Authentication methods use RFC 8176: pwd, otp for TOTP/recovery, and
-swk for passkeys (hardware protection is not asserted). Fresh password plus
-a second factor also includes mfa.
+swk, user and mfa for user-verified passkeys (hardware protection is not
+asserted): user verification plus possession proves multiple factors. Fresh
+password plus a second factor also includes mfa.
 
 The local journey builds the actual pre-binding auth revision f0fa77892f4260f0da5240dbd9172b0c3185c9c4 in isolation and runs it on a separate loopback port against the throwaway stack. It mints an authentic refresh token without the session claim and redeems it at the current service; no token-signing seam is added to production.

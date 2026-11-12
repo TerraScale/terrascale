@@ -84,6 +84,8 @@ public enum SignInStep
     Reauthenticate,
 
     MfaEnroll,
+
+    EnrollmentInbox,
 }
 
 /// <summary>Model for <c>SignInPage.cshtml</c>. Razor encodes every value.</summary>
@@ -195,7 +197,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     public string Title => this.Step switch
     {
         SignInStep.Password => this.Copy.TitlePassword,
-        SignInStep.Code => this.Copy.TitleCode,
+        SignInStep.Code or SignInStep.EnrollmentInbox => this.Copy.TitleCode,
         SignInStep.SignUp => this.Copy.TitleSignUp,
         SignInStep.SignUpCode => this.Copy.TitleSignUpCode,
         SignInStep.Reset => this.Copy.TitleReset,

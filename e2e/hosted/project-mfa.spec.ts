@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { once } from 'node:events';
-import type { BrowserContext } from '@playwright/test';
+import type { BrowserContext, Page } from '@playwright/test';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { confirmWithPassword, hostedReady, onboard, signUp, verify } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
@@ -312,7 +312,7 @@ test('projects require MFA enrollment, replace sessions and sign users out every
       expect(passkeyStepUp.status()).toBe(200);
       const passkeyProof = (await passkeyStepUp.json()).proof as string;
       saveSecret('passkey-step-up-proof', passkeyProof);
-      expect(JSON.parse(Buffer.from(passkeyProof.split('.')[1], 'base64url').toString()).amr).toEqual(['swk']);
+      expect(JSON.parse(Buffer.from(passkeyProof.split('.')[1], 'base64url').toString()).amr).toEqual(['swk', 'user', 'mfa']);
       const replay = await passkeyContext.request.post(auth + '/v1/' + project + '/step-up', {
         headers: { Authorization: 'Bearer ' + passkeyTokens.access_token }, data: { client_id: client, ...assertion },
       });
@@ -332,4 +332,118 @@ test('projects require MFA enrollment, replace sessions and sign users out every
       await context.close();
     }
   }
+});
+
+test.describe('password-only MFA enrollment', () => {
+  let owner: BrowserContext;
+  let user: BrowserContext;
+  let admin: Page;
+  let page: Page;
+  let adminAudit: Audit;
+  let endUser: string;
+  let password: string;
+  let project: string;
+  let cookie: string;
+
+  test.beforeAll(async ({ browser }, info) => {
+    const runId = journey().runId + '-' + randomBytes(4).toString('hex');
+    const email = await newAddress('password-mfa-owner-' + runId);
+    endUser = await newAddress('password-mfa-user-' + runId);
+    password = randomBytes(24).toString('base64url');
+    saveSecret('password-only-mfa-password', password);
+    owner = await auditedContext(browser, { viewport: desktop });
+    user = await auditedContext(browser, { viewport: desktop });
+    admin = await owner.newPage();
+    page = await user.newPage();
+    adminAudit = new Audit(admin, info);
+    await signUp(admin, adminAudit, email, password, 'Password MFA owner');
+    await verify(admin, email);
+    await onboard(admin, adminAudit, 'Password MFA owner', 'Password MFA policy', 'Password MFA owner');
+    await admin.goto(dash + '/auth/overview');
+    const issuer = (await admin.locator('#auth-issuer').textContent())!;
+    project = new URL(issuer).pathname.split('/').filter(Boolean)[0];
+    cookie = 'tsauth_session_' + project;
+
+    await admin.goto(dash + '/auth/sign-in');
+    await admin.locator('#auth-method-passcode').uncheck();
+    await admin.getByRole('button', { name: 'Save sign-in methods', exact: true }).click();
+    await expect(admin.locator('#auth-method-passcode')).not.toBeChecked();
+    await admin.goto(dash + '/auth/mfa-sessions');
+    await admin.locator('input[name=require_mfa]').check();
+    await admin.getByRole('button', { name: 'Save MFA and sessions', exact: true }).click();
+    await expect(admin.locator('input[name=require_mfa]')).toBeChecked();
+  });
+
+  test.afterAll(async () => {
+    await saveCookies(owner);
+    await saveCookies(user);
+    await owner.close();
+    await user.close();
+  });
+
+  test('an existing password user proves the inbox and enrolls TOTP with passcode sign-in off', async ({}, info) => {
+    const audit = new Audit(page, info);
+    await page.goto(auth + '/ui/' + project + '/sign-up');
+    await page.locator('#sign-up-email').fill(endUser);
+    await enterSecret(page.locator('#sign-up-password'), password);
+    await page.locator('form:has(#sign-up-email) button[type=submit]').click();
+    const signup = await nextMail(endUser, 0);
+    await page.locator('#sign-up-code-digit').fill(/^\s*(\d{6})\s*$/m.exec(signup.text)![1]);
+    await page.getByRole('button', { name: 'Verify email', exact: true }).click();
+    await hostedReady(page);
+    await expect(page.getByRole('button', { name: 'Set up an authenticator app', exact: true })).toBeVisible();
+    expect((await user.cookies()).some((item) => item.name === cookie)).toBe(false);
+    await user.clearCookies();
+
+    await page.goto(auth + '/ui/' + project + '/sign-in');
+    await page.locator('#sign-in-email').fill(endUser);
+    await page.getByRole('button', { name: 'Continue with a password', exact: true }).click();
+    await enterSecret(page.locator('#sign-in-password'), password);
+    audit.expectStatus(new RegExp('/ui/' + project + '/sign-in/password'), 429);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    const resend = page.locator('form[action*="/mfa/enroll/email"] button');
+    await expect(resend).toBeDisabled();
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('form[action*="/mfa/enroll/email"] button')!.disabled);
+    await resend.click();
+    const form = page.locator('form:has(#sign-in-code)');
+    await expect(form).toHaveAttribute('action', /\/mfa\/enroll\/verify-email/);
+    const challenge = await form.locator('input[name=challenge]').inputValue();
+    saveSecret('password-only-inbox-challenge', challenge);
+    expect((await user.cookies()).some((item) => item.name === cookie)).toBe(false);
+    await audit.check('password-only sign-in requires inbox proof without a session');
+
+    const mail = await nextMail(endUser, 1);
+    const code = /^\s*(\d{6})\s*$/m.exec(mail.text)![1];
+    const missing = await user.request.post(auth + '/ui/' + project + '/mfa/enroll/verify-email', {
+      headers: { Origin: auth }, form: { email: endUser, code },
+    });
+    expect(missing.status()).toBe(403);
+    const bypass = await user.request.post(auth + '/ui/' + project + '/sign-in/enroll/totp', {
+      headers: { Origin: auth }, form: { challenge },
+    });
+    expect(bypass.status()).toBe(403);
+    await page.locator('#sign-in-code-digit').fill(code);
+    await form.getByRole('button', { name: 'Verify and sign in', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Set up an authenticator app', exact: true })).toBeVisible();
+    expect((await user.cookies()).some((item) => item.name === cookie)).toBe(false);
+    const replay = await user.request.post(auth + '/ui/' + project + '/mfa/enroll/verify-email', {
+      headers: { Origin: auth }, form: { challenge, code },
+    });
+    expect(replay.status()).toBe(401);
+    await audit.check('inbox proof offers enrollment without signing in');
+
+    await page.getByRole('button', { name: 'Set up an authenticator app', exact: true }).click();
+    const secret = (await page.locator('[data-mfa-secret]').textContent())!;
+    saveSecret('password-only-totp-secret', secret);
+    await page.locator('#totp-code-digit').fill(totp(secret));
+    await page.getByRole('button', { name: 'Turn on two-factor authentication', exact: true }).click();
+    await expect(page.locator('[data-mfa-secret]')).toHaveCount(8);
+    for (const [index, value] of (await page.locator('[data-mfa-secret]').allTextContents()).entries()) {
+      saveSecret('password-only-recovery-' + index, value);
+    }
+    expect((await user.cookies()).some((item) => item.name === cookie)).toBe(true);
+    await audit.check('existing password user completes required MFA sign-in with passcodes off');
+    await audit.finish();
+    await adminAudit.finish();
+  });
 });

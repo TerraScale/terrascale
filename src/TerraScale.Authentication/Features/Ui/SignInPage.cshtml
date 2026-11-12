@@ -5,6 +5,7 @@
 @switch (Model.Step)
 {
 case SignInStep.Code:
+case SignInStep.EnrollmentInbox:
 @if (Model.CodeBudgetExhausted)
 {
 <p class="sub">@WriteHtml(Model.Sub(Model.Copy.SubNoNewCode))</p>
@@ -17,7 +18,10 @@ else
 {
 <p class="sub">@WriteHtml(Model.Sub(Model.Copy.SubCodeSent))</p>
 }
+@if (Model.Step == SignInStep.Code)
+{
 <p class="sub">@Model.Copy.SubRecoverySignsOut</p>
+}
 break;
 case SignInStep.SignOutConfirm:
 <p class="sub">@WriteHtml(Model.SubBrand(Model.Copy.SubSignOutAsked))</p>
@@ -142,7 +146,9 @@ case SignInStep.Password:
 }
 break;
 case SignInStep.Code:
-<form method="post" action="@Model.Link("sign-in/verify", form: true)">
+case SignInStep.EnrollmentInbox:
+<form method="post" action="@Model.Link(Model.Step == SignInStep.EnrollmentInbox ? "mfa/enroll/verify-email" : "sign-in/verify", form: true)">
+<input type="hidden" name="challenge" value="@Model.Challenge">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <div class="field">
@@ -151,7 +157,8 @@ case SignInStep.Code:
 </div>
 <button type="submit">@Model.Copy.VerifySignIn</button>
 </form>
-<form method="post" action="@Model.Link("sign-in", form: true)">
+<form method="post" action="@Model.Link(Model.Step == SignInStep.EnrollmentInbox ? "mfa/enroll/email" : "sign-in", form: true)">
+<input type="hidden" name="challenge" value="@Model.Challenge">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 @if (Model.CodeBudgetExhausted)
