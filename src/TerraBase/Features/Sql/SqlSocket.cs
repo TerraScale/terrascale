@@ -11,6 +11,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.Sql.Routing;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
@@ -32,10 +33,13 @@ internal sealed class SqlSocket(
     TimeProvider time,
     IQosAdmission admission,
     IUsageMeter usage,
-    IRequestLogs logs) : IDisposable
+    IRequestLogs logs,
+    RegionalIngress ingress) : IDisposable
 {
     private const int FirstBufferBytes = 16 * 1024;
     private const int MaxTokenLength = 8 * 1024;
+    private const WebSocketCloseStatus ServiceRestart = (WebSocketCloseStatus)1012;
+    private const string WriterMoving = "the region's writer is moving; reconnect";
 
     public static readonly TimeSpan AuthDeadline = TimeSpan.FromSeconds(5);
 
@@ -47,12 +51,16 @@ internal sealed class SqlSocket(
     private static readonly SqlError AlreadyOpen = new(SqlErrors.TransactionState, "there is already a transaction in progress");
     private static readonly SqlError NoneOpen = new(SqlErrors.TransactionState, "there is no transaction in progress");
     private static readonly SqlError UnknownType = new(SqlErrors.InvalidRequest, "type is execute, begin, commit or rollback");
+    private static readonly SqlError NodeFull = new(SqlErrors.Unavailable, "the node is at its request limit; retry");
 
     private readonly SemaphoreSlim _send = new(1, 1);
+    private readonly SemaphoreSlim _frame = new(1, 1);
     private readonly CancellationTokenSource _revoked = new();
     private readonly List<IDisposable> _watches = [];
     private ISqlSession? _session;
     private TenantContext? _database;
+    private CancellationToken _fence;
+    private CancellationToken _admitting;
     private bool _canWrite;
     private bool _failed;
     private bool _closing;
@@ -61,12 +69,14 @@ internal sealed class SqlSocket(
 
     private TenantContext Database => _database!;
 
-    public async Task RunAsync(TenantContext? database, bool canWrite, CancellationToken cancellationToken)
+    public async Task RunAsync(TenantContext? database, bool canWrite, CancellationToken fence, CancellationToken cancellationToken)
     {
         var stopping = lifetime.ApplicationStopping;
         await using var leaving = stopping.Register(() => _ = CloseAsync(WebSocketCloseStatus.EndpointUnavailable, "the server is restarting")).ConfigureAwait(false);
+        await using var moving = fence.Register(() => _ = CloseAfterFrameAsync()).ConfigureAwait(false);
         await using var cutOff = _revoked.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the credential was revoked")).ConfigureAwait(false);
-        (_database, _canWrite) = (database, canWrite);
+        using var admitting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, fence);
+        (_database, _canWrite, _fence, _admitting) = (database, canWrite, fence, admitting.Token);
         if (_database is null && !await AuthenticateAsync(cancellationToken).ConfigureAwait(false))
         {
             return;
@@ -92,9 +102,17 @@ internal sealed class SqlSocket(
 
             try
             {
-                if (!await AnswerAsync(frame.Value.Bytes.AsMemory(0, frame.Value.Length), cancellationToken).ConfigureAwait(false))
+                await _frame.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
                 {
-                    return;
+                    if (!await AnswerAsync(frame.Value.Bytes.AsMemory(0, frame.Value.Length), cancellationToken).ConfigureAwait(false))
+                    {
+                        return;
+                    }
+                }
+                finally
+                {
+                    _frame.Release();
                 }
             }
             finally
@@ -280,6 +298,18 @@ internal sealed class SqlSocket(
             return true;
         }
 
+        using var running = await AdmitAsync(request.Id, cancellationToken).ConfigureAwait(false);
+        if (_fence.IsCancellationRequested)
+        {
+            await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
+            return false;
+        }
+
+        if (running is null)
+        {
+            return true;
+        }
+
         var started = time.GetTimestamp();
         switch (await AuthorizeAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -326,6 +356,23 @@ internal sealed class SqlSocket(
         finally
         {
             RequestLogOperations.Current.Value = previous;
+        }
+    }
+
+    private async ValueTask<RegionalIngress.Lease?> AdmitAsync(long? id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ingress.EnterAsync(_admitting).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_fence.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (QosMemoryException)
+        {
+            await SendErrorAsync(id, new SqlBatchFailure(NodeFull, 0), cancellationToken).ConfigureAwait(false);
+            return null;
         }
     }
 
@@ -465,10 +512,24 @@ internal sealed class SqlSocket(
         }
     }
 
+    private async Task CloseAfterFrameAsync()
+    {
+        await _frame.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
+        }
+        finally
+        {
+            _frame.Release();
+        }
+    }
+
     public void Dispose()
     {
         _watches.ForEach(watch => watch.Dispose());
         _revoked.Dispose();
+        _frame.Dispose();
         _send.Dispose();
     }
 }

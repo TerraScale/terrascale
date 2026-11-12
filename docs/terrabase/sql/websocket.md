@@ -70,6 +70,7 @@ After a failed statement inside a transaction, every `execute` answers `transact
 | Organization memory budget exhausted while reading a frame | close 1011 |
 | No auth frame within 5 seconds of a headerless upgrade | close 1008 |
 | Server restarting | close 1001 |
+| The region's writer starts handing off to another node | close 1012 after the answer to the frame in flight; frames that arrive later do not run. Reconnect |
 
 The server pings every 20 seconds and drops a peer that does not answer within 20 seconds. Every frame counts as one
 request in usage and request logs, with its received and sent bytes.

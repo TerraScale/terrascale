@@ -24,6 +24,7 @@ internal static class RegionalForwarding
 
             var ingress = services.GetRequiredService<RegionalIngress>();
             using var request = await ingress.EnterAsync(context.RequestAborted).ConfigureAwait(false);
+            context.Features.Set(request);
             if (owners.Writer)
             {
                 await next(context).ConfigureAwait(false);

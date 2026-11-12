@@ -12,11 +12,12 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
     private TaskCompletionSource _open = Completed();
     private TaskCompletionSource _empty = Completed();
     private TaskCompletionSource _idle = Completed();
+    private CancellationTokenSource _fence = new();
     private int _active;
     private int _outstanding;
     private bool _held;
 
-    internal async Task<IDisposable> EnterAsync(CancellationToken token)
+    internal async Task<Lease> EnterAsync(CancellationToken token)
     {
         if (!await _slots.WaitAsync(0, token).ConfigureAwait(false))
         {
@@ -42,7 +43,7 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
                         {
                             _empty = new(TaskCreationOptions.RunContinuationsAsynchronously);
                         }
-                        return new Lease(this, drain: false);
+                        return new Lease(this, drain: false, _fence.Token);
                     }
                     opened = _open.Task;
                 }
@@ -67,15 +68,22 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
     internal async Task<IDisposable> HoldAsync(CancellationToken token)
     {
         Task emptied;
+        CancellationTokenSource fenced;
         lock (_gate)
         {
             _held = true;
             _open = new(TaskCreationOptions.RunContinuationsAsynchronously);
             emptied = _empty.Task;
+            fenced = _fence;
+            _fence = new();
         }
-        var lease = new Lease(this, drain: true);
+        var lease = new Lease(this, drain: true, CancellationToken.None);
         try
         {
+            using (fenced)
+            {
+                await fenced.CancelAsync().ConfigureAwait(false);
+            }
             await emptied.WaitAsync(token).ConfigureAwait(false);
             return lease;
         }
@@ -168,9 +176,12 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
         return result;
     }
 
-    private sealed class Lease(RegionalIngress ingress, bool drain) : IDisposable
+    internal sealed class Lease(RegionalIngress ingress, bool drain, CancellationToken fence) : IDisposable
     {
         private int _disposed;
+
+        internal CancellationToken Fence => fence;
+
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
@@ -184,5 +195,6 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
     {
         _http.Dispose();
         _slots.Dispose();
+        _fence.Dispose();
     }
 }

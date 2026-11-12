@@ -137,5 +137,15 @@ with the peer credential, and answers 503 while no writer is known.
   so the 5-second transaction limit and single-writer semantics hold. A writer
   that cannot be reached answers `421 wrong_region`.
 
+A SQL socket holds the regional ingress lease only while it is accepted and
+while one of its frames runs; a relaying peer releases its lease once the
+relayed socket is accepted. An open socket therefore does not hold up a drain,
+though a write transaction it keeps open still delays the drain's replica pulls
+by up to the 5-second transaction limit. When the source writer's ingress hold
+starts, it closes every SQL socket it serves with 1012 (service restart) once
+the frame in flight is answered, and refuses frames that arrive later, so no
+statement runs on the old writer after the fence and clients reconnect to the
+new writer.
+
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
