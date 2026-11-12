@@ -148,6 +148,29 @@ const organizationData: Record<string, PageState['data']> = {
     await expect(row).toHaveCount(1);
     await expect(row).toContainText('Owner');
   },
+  invitations: async (page) => {
+    await expect(page.getByText('No invitations yet.', { exact: true })).toBeVisible();
+  },
+  projects: async (page, journey) => {
+    const row = page.locator('#projects tr').filter({ hasText: journey.projectName });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText(journey.projectId);
+  },
+  billing: async (page) => {
+    await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Free');
+    await expect(page.getByText('No invoices yet.', { exact: true })).toBeVisible();
+  },
+  audit: async (page, journey) => {
+    const rows = auditRows(page).filter({ hasText: journey.databaseName });
+    await expect(rows.first()).toBeVisible();
+    await expect(rows.filter({ hasText: 'Database created' })).toHaveCount(1);
+  },
+  sso: async (page) => {
+    await expect(page.getByText('No connection', { exact: true })).toBeVisible();
+  },
+  danger: async (page, journey) => {
+    await expect(page.locator('#organization-danger')).toContainText('Invite another member before transferring ownership.');
+  },
 };
 
 export const dashboardStates: readonly PageState[] = [
@@ -160,8 +183,24 @@ export const dashboardStates: readonly PageState[] = [
       await expect(stat(page, 'Databases')).toHaveText('1');
     },
   },
-  { name: 'overview over 7 days', url: () => '/?range=7d', covers: { path: /^\/$/ }, heading: title('Overview') },
-  { name: 'overview connect', url: () => '/?tab=connect', covers: { path: /^\/$/, query: { tab: /^connect$/ } }, heading: title('Connect') },
+  {
+    name: 'overview over 7 days',
+    url: () => '/?range=7d',
+    covers: { path: /^\/$/ },
+    heading: title('Overview'),
+    data: async (page) => {
+      await expect(stat(page, 'Databases')).toHaveText('1');
+    },
+  },
+  {
+    name: 'overview connect',
+    url: () => '/?tab=connect',
+    covers: { path: /^\/$/, query: { tab: /^connect$/ } },
+    heading: title('Connect'),
+    data: async (page, journey) => {
+      await expect(page.locator('#connect-database')).toHaveValue(journey.databaseName);
+    },
+  },
   {
     name: 'databases',
     url: () => '/databases',
@@ -174,12 +213,23 @@ export const dashboardStates: readonly PageState[] = [
       await expect(row).toContainText(journey.databaseRegion, { ignoreCase: true });
     },
   },
-  { name: 'databases over 7 days', url: () => '/databases?range=7d', covers: { path: /^\/databases$/ }, heading: title('Databases') },
+  {
+    name: 'databases over 7 days',
+    url: () => '/databases?range=7d',
+    covers: { path: /^\/databases$/ },
+    heading: title('Databases'),
+    data: async (page, journey) => {
+      await expect(page.locator('main tr').filter({ hasText: journey.databaseName })).toHaveCount(1);
+    },
+  },
   {
     name: 'new database dialog',
     url: () => '/databases?create=1',
     covers: { path: /^\/databases$/, query: { create: /^1$/ } },
     heading: inDialog('create-database', 'New database'),
+    data: async (page, journey) => {
+      await expect(page.locator('#create-database input[name="homeRegion"]')).toHaveValue(journey.databaseRegion);
+    },
   },
   {
     name: 'database overview',
@@ -196,6 +246,9 @@ export const dashboardStates: readonly PageState[] = [
     url: (journey) => `${database(journey)}?reads=7d&writes=7d&storage=7d&latency=7d`,
     covers: { path: databasePath('') },
     heading: title('Connect', 2),
+    data: async (page, journey) => {
+      await databaseHeader(page, journey);
+    },
   },
   ...databaseTabs.map(
     ([tab, label, heading]): PageState => ({
@@ -214,8 +267,20 @@ export const dashboardStates: readonly PageState[] = [
     url: (journey) => `${database(journey)}/branches?fork=1`,
     covers: { path: databasePath('branches'), query: { fork: /^1$/ } },
     heading: inDialog('name-branch', 'Fork database'),
+    data: async (page, journey) => {
+      await expect(page.locator('#name-branch input[name="databaseId"]')).toHaveValue(journey.databaseId);
+    },
   },
-  { name: 'file storage', url: () => '/storage', covers: { path: /^\/storage$/ }, heading: title('Files') },
+  {
+    name: 'file storage',
+    url: () => '/storage',
+    covers: { path: /^\/storage$/ },
+    heading: title('Files'),
+    data: async (page, journey) => {
+      await expect(page.locator('main.ts-files')).toHaveAttribute('data-project-id', journey.projectId);
+      await expect(page.getByText('No buckets yet.', { exact: true })).toBeVisible();
+    },
+  },
   {
     name: 'api keys',
     url: () => '/api-keys',
@@ -250,13 +315,29 @@ export const dashboardStates: readonly PageState[] = [
       await expect(page.locator('#create-key input[name="scopes"][value="sql:write"]')).toBeChecked();
     },
   },
-  { name: 'authentication', url: () => '/auth', covers: { path: /^\/auth$/ }, heading: title('Project authentication', 2) },
+  {
+    name: 'authentication',
+    url: () => '/auth',
+    covers: { path: /^\/auth$/ },
+    heading: title('Project authentication', 2),
+    data: async (page, journey) => {
+      await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
+    },
+  },
   ...authSections.map(
     ([section, label]): PageState => ({
       name: `authentication ${label.toLowerCase()}`,
       url: () => `/auth/${section}`,
       covers: { path: new RegExp(`^/auth/${section}$`) },
       heading: section === 'overview' ? title('Project authentication', 2) : title(`Authentication: ${label}`),
+      data: async (page, journey) => {
+        if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
+        else if (section === 'users') await expect(page.getByText('No users yet.', { exact: true })).toBeVisible();
+        else if (section === 'danger') {
+          await expect(page.getByText('No records.', { exact: true })).toHaveCount(3);
+          await expect(page.locator('main')).toHaveAttribute('data-auth-section', 'danger');
+        }
+      },
     }),
   ),
   {
@@ -264,29 +345,77 @@ export const dashboardStates: readonly PageState[] = [
     url: () => '/authentication',
     covers: { path: /^\/authentication$/ },
     heading: title('Project authentication', 2),
+    data: async (page, journey) => {
+      await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
+    },
   },
   {
     name: 'authentication users under its alias',
     url: () => '/authentication/users',
     covers: { path: new RegExp(`^/authentication/(${authSections.map(([section]) => section).join('|')})$`) },
     heading: title('Authentication: Users'),
+    data: async (page) => {
+      await expect(page.getByText('No users yet.', { exact: true })).toBeVisible();
+    },
   },
-  { name: 'analytics', url: () => '/analytics', covers: { path: /^\/analytics$/ }, heading: title('Analytics') },
-  { name: 'analytics over 7 days', url: () => '/analytics?range=7d', covers: { path: /^\/analytics$/ }, heading: title('Analytics') },
+  {
+    name: 'analytics',
+    url: () => '/analytics',
+    covers: { path: /^\/analytics$/ },
+    heading: title('Analytics'),
+    data: async (page, journey) => {
+      await expect(page.locator('#analytics-database, select[name="database"], main')).toContainText(journey.databaseName);
+    },
+  },
+  {
+    name: 'analytics over 7 days',
+    url: () => '/analytics?range=7d',
+    covers: { path: /^\/analytics$/ },
+    heading: title('Analytics'),
+    data: async (page, journey) => {
+      await expect(page.locator('main')).toContainText(journey.databaseName);
+    },
+  },
   {
     name: 'analytics of the database',
     url: (journey) => `/analytics?project=${journey.projectId}&database=${journey.databaseId}&region=${journey.databaseRegion}`,
     covers: { path: /^\/analytics$/, query: { project: optionalId, database: optionalId, region: /^[A-Za-z0-9-]*$/ } },
     heading: title('Analytics'),
+    data: async (page, journey) => {
+      await expect(page.locator('main')).toContainText(journey.databaseName);
+    },
   },
-  { name: 'usage', url: () => '/usage', covers: { path: /^\/usage$/ }, heading: title('By project', 2) },
+  {
+    name: 'usage',
+    url: () => '/usage',
+    covers: { path: /^\/usage$/ },
+    heading: title('By project', 2),
+    data: async (page, journey) => {
+      await expect(page.locator('#usage-allowance-title')).toHaveText('Free plan allowance');
+      await expect(page.locator('main')).toContainText(journey.projectName);
+    },
+  },
   {
     name: 'usage of the project',
     url: (journey) => `/usage?tab=overview&project=${journey.projectId}&database=`,
     covers: { path: /^\/usage$/, query: { tab: /^overview$/, project: id, database: optionalId } },
     heading: title('By database', 2),
+    data: async (page, journey) => {
+      await expect(page.locator('#usage-allowance-title')).toHaveText('Free plan allowance');
+      await expect(page.locator('main')).toContainText(journey.databaseName);
+    },
   },
-  { name: 'organization', url: () => '/organization', covers: { path: /^\/organization$/ }, heading: title('Details', 2) },
+  {
+    name: 'organization',
+    url: () => '/organization',
+    covers: { path: /^\/organization$/ },
+    heading: title('Details', 2),
+    data: async (page, journey) => {
+      await expect(page.locator('#organization-details')).toContainText(journey.organizationName);
+      await expect(page.locator('#organization-details')).toContainText(journey.email);
+      await expect(page.locator('.ts-org-plan-row strong')).toHaveText('Free');
+    },
+  },
   ...organizationTabs.map(
     ([tab, heading]): PageState => ({
       name: `organization ${tab}`,
@@ -312,6 +441,11 @@ export const dashboardStates: readonly PageState[] = [
     url: () => '/organization?tab=audit&range=7d&severity=all&action=all&search=&page=2',
     covers: { path: /^\/organization$/, query: { tab: /^audit$/, severity: /^all$/, action: /^all$/, search: /^$/, page: /^2$/ } },
     heading: title('Recent activity', 2),
+    data: async (page, journey) => {
+      const rows = auditRows(page);
+      await expect(rows.first()).toBeVisible();
+      await expect(rows.filter({ hasText: journey.email }).first()).toBeVisible();
+    },
   },
   {
     name: 'organization audit of database creations',
@@ -339,6 +473,7 @@ export const dashboardStates: readonly PageState[] = [
     covers: { path: /^\/organization$/, query: { newProject: /^1$/ } },
     heading: inDialog('create-project', 'Create project'),
     data: async (page) => {
+      await expect(page.locator('#create-project input[name="name"]')).toHaveValue('');
       const regions = page.locator('#create-project input[name="regions"]');
       await expect(regions.first()).toBeVisible();
       expect(await regions.count()).toBeGreaterThan(0);
@@ -351,6 +486,9 @@ export const dashboardStates: readonly PageState[] = [
     url: () => '/organization?newOrganization=organization',
     covers: { path: /^\/organization$/, query: { newOrganization: /^organization$/ } },
     heading: inDialog('create-organization', 'Create organization'),
+    data: async (page) => {
+      await expect(page.locator('#create-organization input[name="name"]')).toHaveValue('');
+    },
   },
   {
     name: 'organization choice',
@@ -358,43 +496,127 @@ export const dashboardStates: readonly PageState[] = [
     covers: { path: /^\/organizations\/choose$/ },
     heading: title('Choose an organization'),
     shell: false,
+    data: async (page, journey) => {
+      await expect(page.locator('.ts-org-picker-name').filter({ hasText: journey.organizationName })).toHaveCount(1);
+    },
   },
   {
     name: 'project settings',
     url: () => '/project',
     covers: { path: /^\/project$/ },
     heading: title('Project settings'),
-    data: async (page) => {
+    data: async (page, journey) => {
+      await expect(page.locator('#project-name')).toHaveValue(journey.projectName);
+      await expect(page.locator('main')).toContainText(journey.projectId);
       await expect(page.locator('main').getByText('Regions', { exact: true })).toBeVisible();
       await expect(page.locator('main').getByText('Primary region')).toHaveCount(0);
       await expect(page.locator('main').getByText('Backup region')).toHaveCount(0);
     },
   },
-  { name: 'project members', url: () => '/project/members', covers: { path: /^\/project\/members$/ }, heading: region('Explicit project grants') },
-  { name: 'project invitations', url: () => '/project/invitations', covers: { path: /^\/project\/invitations$/ }, heading: title('Project invitations') },
-  { name: 'profile', url: () => '/profile', covers: { path: /^\/profile$/ }, heading: title('Profile details', 2) },
+  {
+    name: 'project members',
+    url: () => '/project/members',
+    covers: { path: /^\/project\/members$/ },
+    heading: region('Explicit project grants'),
+    data: async (page, journey) => {
+      await expect(page.locator('main p').first()).toContainText(`${journey.projectName} · your role: admin`);
+      const grant = page.locator('main tr[data-project-grant-user]');
+      await expect(grant).toHaveCount(1);
+      await expect(grant).toContainText(journey.email);
+    },
+  },
+  {
+    name: 'project invitations',
+    url: () => '/project/invitations',
+    covers: { path: /^\/project\/invitations$/ },
+    heading: title('Project invitations'),
+    data: async (page, journey) => {
+      await expect(page.locator('main')).toContainText(journey.projectName);
+      await expect(page.getByText('No project invitations on this page.', { exact: true })).toBeVisible();
+    },
+  },
+  {
+    name: 'profile',
+    url: () => '/profile',
+    covers: { path: /^\/profile$/ },
+    heading: title('Profile details', 2),
+    data: async (page, journey) => {
+      await expect(page.locator('h1.ts-profile-name')).toHaveText(journey.displayName);
+      await expect(page.locator('#displayName')).toHaveValue(journey.displayName);
+      await expect(page.locator('main')).toContainText(journey.email);
+    },
+  },
   ...profileTabs.map(
     ([tab, heading]): PageState => ({
       name: `profile ${tab}`,
       url: () => `/profile?tab=${tab}`,
       covers: { path: /^\/profile$/, query: { tab: new RegExp(`^${tab}$`) } },
       heading,
+      data: async (page, journey) => {
+        await expect(page.locator('h1.ts-profile-name')).toHaveText(journey.displayName);
+        if (tab === 'profile') {
+          await expect(page.locator('#displayName')).toHaveValue(journey.displayName);
+          await expect(page.getByText('Sign in with email only.', { exact: true })).toBeVisible();
+        } else if (tab === 'sessions') {
+          const row = page.locator('#profile-sessions tr').filter({ hasText: 'This device' });
+          await expect(row).toHaveCount(1);
+          await expect(row.locator('td').nth(1)).not.toHaveText('');
+        } else if (tab === 'access-tokens') {
+          await expect(page.getByText('No access tokens', { exact: true })).toBeVisible();
+        } else if (tab === 'danger') {
+          await expect(page.locator('label[for="delete-account-email"]')).toContainText(journey.email);
+        }
+      },
     }),
   ),
-  { name: 'notifications', url: () => '/notifications', covers: { path: /^\/notifications$/ }, heading: title('Notifications') },
+  {
+    name: 'notifications',
+    url: () => '/notifications',
+    covers: { path: /^\/notifications$/ },
+    heading: title('Notifications'),
+    data: async (page) => {
+      await expect(page.getByText('No notifications in this scope.', { exact: true })).toBeVisible();
+    },
+  },
   {
     name: 'unread notifications',
     url: () => '/notifications?status=unread',
     covers: { path: /^\/notifications$/, query: { status: /^unread$/ } },
     heading: title('Notifications'),
+    data: async (page) => {
+      await expect(page.getByText('No unread notifications in this scope.', { exact: true })).toBeVisible();
+    },
   },
-  { name: 'alert rules', url: () => '/notifications/alerts', covers: { path: /^\/notifications\/alerts$/ }, heading: title('Create alert rule', 2) },
-  { name: 'support', url: () => '/support', covers: { path: /^\/support$/ }, heading: title('Contact support') },
+  {
+    name: 'alert rules',
+    url: () => '/notifications/alerts',
+    covers: { path: /^\/notifications\/alerts$/ },
+    heading: title('Create alert rule', 2),
+    data: async (page, journey) => {
+      await expect(page.locator('#alert-rules-title')).toContainText(journey.projectName);
+      await expect(page.getByText('No alert rules yet.', { exact: true })).toBeVisible();
+    },
+  },
+  {
+    name: 'support',
+    url: () => '/support',
+    covers: { path: /^\/support$/ },
+    heading: title('Contact support'),
+    data: async (page, journey) => {
+      await expect(page.locator('#support-organization')).toHaveValue(journey.organizationId);
+      await expect(page.locator('#support-project')).toHaveValue(journey.projectId);
+      await expect(page.locator('#support-targets')).toContainText('Free');
+    },
+  },
   {
     name: 'support about a request',
     url: (journey) => `/support?relatedRequestId=${journey.databaseId}`,
     covers: { path: /^\/support$/, query: { relatedRequestId: id } },
     heading: title('Contact support'),
+    data: async (page, journey) => {
+      await expect(page.locator('#support-related-request')).toHaveValue(journey.databaseId);
+      await expect(page.locator('#support-organization')).toHaveValue(journey.organizationId);
+    },
   },
   {
     name: 'invitation signed in',
@@ -437,6 +659,9 @@ export const dashboardStates: readonly PageState[] = [
     },
     heading: title('Connect an AI client'),
     shell: false,
+    data: async (page) => {
+      await expect(page.locator('main')).toContainText('Journey MCP client');
+    },
   },
   {
     name: 'api reference',
