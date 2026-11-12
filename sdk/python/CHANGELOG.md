@@ -49,6 +49,13 @@
   (`create_api_key`, `list_api_keys`, `revoke_api_key`, the project client,
   settings and user calls) sent an issuer's user info as HTTP Basic in place of
   the bearer token.
+- A client or token source that creates its own httpx client for a plain-http
+  `base_url` or issuer (always a loopback host) creates it with
+  `trust_env=False`, and a SQL session to a plain-http `base_url` connects with
+  websockets' `proxy=None`, so `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` no
+  longer receive its requests, credentials included, in clear. With https
+  origins only, both still read the environment. The SDK needs websockets 15 or
+  later, the first with that option.
 - Added the optional `sqlalchemy` extra (`pip install terrascale[sqlalchemy]`): a
   `terrascale://<project_id>/<database>` SQLAlchemy dialect and PEP 249 DBAPI
   over the SQL HTTP API, running in autocommit — each statement is one request

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet;
 
@@ -25,7 +26,7 @@ public static class TerraScaleAuthServiceCollectionExtensions
         services.AddHttpClient<TerraScaleAuthClient>(httpClient =>
         {
             httpClient.BaseAddress = optionSnapshot.BaseAddress;
-        }).ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
+        }).ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false, Proxy = new TerraBaseHttp.LoopbackDirect() });
 
         return services;
     }

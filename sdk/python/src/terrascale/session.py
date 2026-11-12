@@ -15,7 +15,7 @@ import contextlib
 import json
 import threading
 from collections.abc import Awaitable, Callable, Generator, Sequence
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
 from urllib.parse import quote
 
 from websockets.asyncio.client import ClientConnection as AsyncConnection
@@ -47,6 +47,10 @@ SUBPROTOCOL = "terrascale.sql.v1"
 MAX_FRAME_BYTES = 1 << 20
 T = TypeVar("T")
 Statements = Sequence[str | tuple[str, Args] | Statement]
+
+
+def _proxy(url: str) -> Literal[True] | None:
+    return None if url.startswith("ws://") else True
 
 
 def _url(base_url: str, project: str, database: str) -> str:
@@ -192,7 +196,7 @@ class SqlSession:
             token = client._bearer()
             try:
                 ws = connect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None, max_size=None,
-                             additional_headers={**client._headers, "Authorization": f"Bearer {token}"})
+                             additional_headers={**client._headers, "Authorization": f"Bearer {token}"}, proxy=_proxy(url))
             except InvalidStatus as exc:
                 err = _refusal(exc)
                 if _retry_refusal(client._source, token, err, refreshed):
@@ -348,7 +352,8 @@ class AsyncSqlSession:
             token = await client._bearer()
             try:
                 ws = await aconnect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None, max_size=None,
-                                    additional_headers={**client._headers, "Authorization": f"Bearer {token}"})
+                                    additional_headers={**client._headers, "Authorization": f"Bearer {token}"},
+                                    proxy=_proxy(url))
             except InvalidStatus as exc:
                 err = _refusal(exc)
                 if _retry_refusal(client._source, token, err, refreshed):

@@ -74,7 +74,8 @@ class AsyncTerraScale:
         http_client: httpx.AsyncClient | None = None,
     ):
         api_key, self.project, self.base_url = _settings(api_key, project, token, base_url, issuer)
-        self._http = http_client or httpx.AsyncClient(timeout=timeout, follow_redirects=False, http2=True)
+        self._http = http_client or httpx.AsyncClient(timeout=timeout, follow_redirects=False, http2=True,
+                                                      trust_env=_spec.trust_env(self.base_url, _spec.issuer_parts(issuer)[0]))
         self._owns_http = http_client is None
         self._max_attempts = max(1, max_attempts)
         self._source: AsyncAPIKeyTokenSource | None = None
