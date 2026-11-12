@@ -72,6 +72,14 @@ function serves(service, host) {
   return host === service.host || (host.endsWith(`.${service.host}`) && label !== "" && !label.includes("."));
 }
 
+/** @param {string} a @param {string} b */
+function sameHost(a, b) {
+  if (!a.startsWith("[")) return a === b;
+  const left = ipv6(a.slice(1, -1));
+  const right = ipv6(b.slice(1, -1));
+  return left !== null && right !== null && left.every((group, index) => group === right[index]);
+}
+
 /**
  * @param {unknown} raw
  * @param {string} what
@@ -85,5 +93,9 @@ export function serviceOrigin(raw, what, service) {
   if (scheme === "http" && !isLoopbackHost(host))
     throw new TypeError(`${what} must use https; plain http is allowed only for localhost, 127.0.0.0/8 and [::1].`);
   if (!serves(service, host)) throw new TypeError(`${what} names a TerraScale host that does not serve ${service.name}.`);
-  return `${scheme}://${host}${port === "" ? "" : `:${port}`}`;
+  const origin = `${scheme}://${host}${port === "" ? "" : `:${port}`}`;
+  const parsed = URL.canParse(origin) ? new URL(origin) : null;
+  if (parsed === null || !sameHost(parsed.hostname, host) || parsed.port !== port)
+    throw new TypeError(`${what} is read as another host or port by the HTTP client.`);
+  return parsed.origin;
 }

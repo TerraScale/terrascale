@@ -1,4 +1,4 @@
-use url::Url;
+use url::{Host, Url};
 
 pub(crate) struct Service {
     host: &'static str,
@@ -143,6 +143,15 @@ fn serves(service: &Service, host: &str) -> bool {
             .is_some_and(|label| !label.is_empty() && !label.contains('.'))
 }
 
+fn same_host(parsed: Option<Host<&str>>, host: &str) -> bool {
+    match parsed {
+        Some(Host::Domain(domain)) => domain == host,
+        Some(Host::Ipv4(address)) => address.to_string() == host,
+        Some(Host::Ipv6(address)) => bracketed(host) == Some(address.segments()),
+        None => false,
+    }
+}
+
 pub(crate) fn service_origin(
     raw: &str,
     what: &str,
@@ -169,10 +178,8 @@ pub(crate) fn service_origin(
         Some(port) => format!("{scheme}://{host}:{port}"),
         None => format!("{scheme}://{host}"),
     };
-    Url::parse(&origin).map_err(|_| {
-        format!(
-            "{what} must be exactly scheme://host[:port], such as https://{}",
-            service.host
-        )
-    })
+    Url::parse(&origin)
+        .ok()
+        .filter(|url| url.port() == port && same_host(url.host(), &host))
+        .ok_or_else(|| format!("{what} is read as another host or port by the HTTP client"))
 }

@@ -2,6 +2,7 @@ package origin
 
 import (
 	"errors"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -33,7 +34,11 @@ func Parse(raw string, service Service) (string, error) {
 	if !service.serves(host) {
 		return "", errors.New("names a TerraScale host that does not serve " + service.name)
 	}
-	return scheme + "://" + host + port, nil
+	base := scheme + "://" + host + port
+	if u, err := url.Parse(base); err != nil || strings.ToLower(u.Host) != host+port {
+		return "", errors.New("is read as another host or port by the HTTP client")
+	}
+	return base, nil
 }
 
 func Loopback(host string) bool {

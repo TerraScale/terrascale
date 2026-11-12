@@ -39,7 +39,7 @@ public sealed record TerraScaleAuthClientOptions
             throw new ArgumentException("The ts-auth base address must be configured.", nameof(BaseAddress));
         }
 
-        ValidateEndpoint(BaseAddress, nameof(BaseAddress));
+        BaseAddress = Endpoint(BaseAddress, nameof(BaseAddress));
         InstanceSlug = ValidateSlug(InstanceSlug);
 
         if (ApiKey is not null && string.IsNullOrWhiteSpace(ApiKey))
@@ -89,6 +89,6 @@ public sealed record TerraScaleAuthClientOptions
         }
     }
 
-    internal static void ValidateEndpoint(Uri endpoint, string name) =>
-        _ = TerraScaleOrigin.Parse(endpoint, "The ts-auth base address", name, TerraScaleService.Auth, netBird: false);
+    internal static Uri Endpoint(Uri endpoint, string name) =>
+        TerraScaleOrigin.Parse(endpoint, "The ts-auth base address", name, TerraScaleService.Auth, netBird: false);
 }

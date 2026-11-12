@@ -55,9 +55,12 @@ internal static class TerraScaleOrigin
             throw new ArgumentException($"{label} names a TerraScale host that does not serve {service.Name}.", parameter);
         }
 
-        return Uri.TryCreate($"{scheme}://{host}{(port.Length == 0 ? "" : ":" + port)}/", UriKind.Absolute, out var origin)
-            ? origin
-            : throw new ArgumentException($"{label} must be exactly scheme://host[:port], such as https://{service.Host}.", parameter);
+        if (!Uri.TryCreate($"{scheme}://{host}{(port.Length == 0 ? "" : ":" + port)}/", UriKind.Absolute, out var origin) || !SameHost(origin, host, port))
+        {
+            throw new ArgumentException($"{label} is read as another host or port by the HTTP client.", parameter);
+        }
+
+        return origin;
     }
 
     private static (string Scheme, string Host, string Port)? Strict(string? raw)
@@ -163,6 +166,12 @@ internal static class TerraScaleOrigin
     private static bool Loopback(string host) =>
         host == "localhost" || host.StartsWith("127.", StringComparison.Ordinal) && Ipv4(host)
         || host.StartsWith('[') && Ipv6(host[1..^1]) is [0, 0, 0, 0, 0, 0, 0, 1];
+
+    private static bool SameHost(Uri origin, string host, string port) =>
+        (origin.IsDefaultPort ? "" : origin.Port.ToString(CultureInfo.InvariantCulture)) == port
+        && (host.StartsWith('[')
+            ? IPAddress.TryParse(origin.IdnHost, out var sent) && IPAddress.TryParse(host[1..^1], out var named) && sent.Equals(named)
+            : origin.IdnHost == host);
 
     private static bool IsNetBird(string host) =>
         IPAddress.TryParse(host, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork && NetBirdNetwork.Contains(ip);
