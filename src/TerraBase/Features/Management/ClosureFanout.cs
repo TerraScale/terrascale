@@ -48,8 +48,16 @@ internal sealed class ClosureFanout(
 
     public void Refused(string project, string region) => faults.Unacknowledged(project, new(RegionAnswer.NotEmpty), region);
 
-    public async Task<RegionAnswer> CheckAsync(string region, string project, ProjectClosureRequest closure, CancellationToken cancellationToken) =>
-        (await AskAsync(region, closure, address => new(HttpMethod.Get, new Uri(address, Path(project) + Query(closure))), cancellationToken).ConfigureAwait(false)).Answer;
+    public async Task<RegionAnswer> CheckAsync(string region, string project, ProjectClosureRequest closure, CancellationToken cancellationToken)
+    {
+        var reply = await AskAsync(region, closure, address => new(HttpMethod.Get, new Uri(address, Path(project) + Query(closure))), cancellationToken).ConfigureAwait(false);
+        if (reply.Answer is RegionAnswer.Refused or RegionAnswer.Invalid or RegionAnswer.NotListed or RegionAnswer.TimedOut or RegionAnswer.Unreachable)
+        {
+            faults.Unanswered(project, reply, region);
+        }
+
+        return reply.Answer;
+    }
 
     public async Task<RegionAnswer> SendAsync(string region, ProjectClosureRecord closure, CancellationToken cancellationToken)
     {

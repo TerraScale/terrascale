@@ -39,6 +39,15 @@ internal sealed class ClosureFaults(IMeterFactory meters, TimeProvider time, ILo
         }
     }
 
+    public void Unanswered(string project, RegionReply reply, string region)
+    {
+        var error = Label(reply.Answer);
+        if (Counted(region, error))
+        {
+            logger.ZLogWarning(reply.Cause, $"Region {region:@Region} did not answer the check before the closure of project {project:@Project} ({error:@Error}); nothing was written and the request is refused");
+        }
+    }
+
     private static string Label(RegionAnswer answer) => answer switch
     {
         RegionAnswer.NotEmpty => ManagementErrors.NotEmptyCode,

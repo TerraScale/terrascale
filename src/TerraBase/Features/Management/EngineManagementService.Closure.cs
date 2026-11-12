@@ -35,12 +35,12 @@ internal sealed partial class EngineManagementService
     private void RegisterClosureMetrics()
     {
         _recoveryMeter.CreateObservableGauge("terrabase.project_closure.pending", () => Interlocked.Read(ref _closuresPending),
-            description: "Project closures that a holder or a region has not confirmed.");
+            description: "Project closures sent to other regions that this machine or one of those regions has not confirmed.");
         _recoveryMeter.CreateObservableGauge("terrabase.project_closure.oldest_pending_age_seconds", () =>
         {
             var ticks = Interlocked.Read(ref _closuresOldestTicks);
             return ticks == 0 ? 0 : Math.Max(0, (time.GetUtcNow() - new DateTimeOffset(ticks, TimeSpan.Zero)).TotalSeconds);
-        }, description: "Seconds since the oldest unconfirmed project closure was requested.");
+        }, description: "Seconds since the oldest of those unconfirmed project closures was requested.");
     }
 
     public async ValueTask<CloseProjectResult> CloseProjectAsync(
@@ -369,8 +369,8 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        var status = await ClosureStatusAsync(transaction, closure, forwarded: false, cancellationToken).ConfigureAwait(false);
-        return new(closure, regions, status.Status == ProjectClosure.Pending);
+        var own = await OwnClosureReceiptAsync(transaction, closure, cancellationToken).ConfigureAwait(false);
+        return new(closure, regions, regions.Count > 0 || own is null || !own.Confirms(closure, options.MachineId));
     }
 
     private async ValueTask<WaitingClosure?> NameServingRegionsAsync(
@@ -491,7 +491,9 @@ internal sealed partial class EngineManagementService
                 {
                     try
                     {
-                        seen[index] = await AcknowledgeRegionsAsync(closures[index].Id, serving, silent, token).ConfigureAwait(false);
+                        seen[index] = NamesRegion(closures[index])
+                            ? await AcknowledgeRegionsAsync(closures[index].Id, serving, silent, token).ConfigureAwait(false)
+                            : new(Pending: false, null);
                     }
                     catch (Exception error) when (error is not OperationCanceledException || !token.IsCancellationRequested)
                     {
@@ -506,6 +508,9 @@ internal sealed partial class EngineManagementService
             return seen.TakeWhile(closure => closure is not null).Count();
         }
     }
+
+    private static bool NamesRegion(StoredRecord stored) =>
+        EntityPayload.Read(stored, ManagementJsonContext.Default.ProjectClosureRecord) is { } closure && closure.ExpectedHolders.Any(ProjectClosure.IsRegionHolder);
 
     private async ValueTask ConvergeClosuresAsync(CancellationToken cancellationToken)
     {
