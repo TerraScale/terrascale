@@ -341,6 +341,20 @@ internal sealed class HomeMoves(
 
     private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, HomeLease? failedHome, string? name = null, DatabaseIdentity? identity = null)
     {
+        if (name is not null)
+        {
+            var named = await tenants.FindDatabaseAsync(database.OrganizationId, database.ProjectId!, name, CancellationToken.None).ConfigureAwait(false);
+            if (named is TenantContext taken && taken.DatabaseId != database.DatabaseId)
+            {
+                return new Conflict("the database's name is taken in the target region; rename one of the databases", "move_aborted");
+            }
+
+            if (named is Unavailable error)
+            {
+                return error;
+            }
+        }
+
         string? detached = null;
         try
         {

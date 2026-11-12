@@ -154,7 +154,7 @@ internal static class ApiExamples
         "404" => "unknown_database, unknown_route, not_found",
         "408" => "request_timeout",
         "409" when id == "deleteDatabase" => "database_replicated, wrong_region, move_in_progress",
-        "409" when id == "moveDatabaseHome" => "move_in_progress",
+        "409" when id is "moveDatabaseHome" or "setDatabaseTtl" or "clearDatabaseTtl" => "move_in_progress",
         "409" when id == "updateDatabase" => "move_in_progress, name_taken, platform_placement_locked, wrong_region",
         "409" when id == "deleteDatabaseIfId" => "database_identity_mismatch, wrong_region, move_in_progress",
         "409" when id == "branchDatabaseIfId" => "database_identity_changed, name_taken",

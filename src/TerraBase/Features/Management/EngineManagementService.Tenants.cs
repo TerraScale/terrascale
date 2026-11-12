@@ -9,6 +9,7 @@ using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Management;
 
@@ -292,6 +293,7 @@ internal sealed partial class EngineManagementService
             return ManagementErrors.NotFound;
         }
 
+        identity = DatabaseIdentity.Reconcile(identity);
         var history = await ReadAsync<AdoptDatabaseResult>(
             async transaction => !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                 ? UnreadableCatalog
@@ -358,6 +360,9 @@ internal sealed partial class EngineManagementService
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
+    private readonly ConcurrentDictionary<(string Database, string Name), byte> _keptNames = new();
+    private readonly Counter<long> _nameConflicts = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.catalog.name_kept");
+
     public async ValueTask<UpdatePlacementResult> UpdatePlacementAsync(
         TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken, string? name = null, DatabaseIdentity? identity = null)
     {
@@ -368,6 +373,7 @@ internal sealed partial class EngineManagementService
             return new PlacementUpdate(Updated: false);
         }
 
+        identity = DatabaseIdentity.Reconcile(identity);
         return await WriteAsync<UpdatePlacementResult>(async transaction =>
         {
             if (!Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false)))
@@ -382,12 +388,26 @@ internal sealed partial class EngineManagementService
                 return new PlacementUpdate(Updated: false);
             }
 
+            var keptName = name ?? record.Name;
+            if (name is not null
+                && await CatalogTables.DatabaseNamedAsync(transaction, database.ProjectId, name, cancellationToken).ConfigureAwait(false) is { } named
+                && named != database.DatabaseId)
+            {
+                keptName = record.Name;
+                if (_keptNames.TryAdd((database.DatabaseId, name), 0))
+                {
+                    _nameConflicts.Add(1);
+                    logger.ZLogWarning($"Database {database.DatabaseId:@Database} kept its stored name because {name:@Name} is taken in this region");
+                }
+            }
+
+            var facts = DatabaseIdentity.Reconcile(identity, new DatabaseIdentity(record.CreatedAt, record.BranchedFrom, record.ExpiresAt))!;
             var updated = record with
             {
-                Name = name ?? record.Name,
-                CreatedAt = identity?.CreatedAt ?? record.CreatedAt,
-                BranchedFrom = identity is null ? record.BranchedFrom : identity.BranchedFrom,
-                ExpiresAt = identity is null ? record.ExpiresAt : identity.ExpiresAt,
+                Name = keptName,
+                CreatedAt = facts.CreatedAt,
+                BranchedFrom = facts.BranchedFrom,
+                ExpiresAt = facts.ExpiresAt,
                 HomeRegion = placement.Home,
                 ReplicaRegions = placement.Version == record.PlacementVersion ? record.ReplicaRegions : placement.Replicas.Count == 0 ? null : [.. placement.Replicas],
                 PlacementVersion = placement.Version,

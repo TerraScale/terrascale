@@ -15,11 +15,12 @@ internal sealed class SetDatabaseTtlEndpoint(IManagementService management, Terr
         Metadata(AnchoredRevocation.Instance);
         Name("setDatabaseTtl");
         Summary("Deletes a database after a time");
-        Description("Sets expiresAt to now plus ttlSeconds, replacing any earlier TTL." + DatabaseTtl.Description + " Sent to the database's home region (421 wrong_region elsewhere). " + ProjectApiRoute.IdentityDescription);
+        Description("Sets expiresAt to now plus ttlSeconds, replacing any earlier TTL." + DatabaseTtl.Description + " 409 move_in_progress while the database's writer is moving; send the request again after it settles. Sent to the database's home region (421 wrong_region elsewhere). " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
@@ -49,10 +50,11 @@ internal sealed class ClearDatabaseTtlEndpoint(IManagementService management, Te
         Metadata(AnchoredRevocation.Instance);
         Name("clearDatabaseTtl");
         Summary("Keeps a database until it is deleted");
-        Description("Removes the database's TTL; expiresAt becomes null. Sent to the database's home region (421 wrong_region elsewhere). " + ProjectApiRoute.IdentityDescription);
+        Description("Removes the database's TTL; expiresAt becomes null. 409 move_in_progress while the database's writer is moving; send the request again after it settles. Sent to the database's home region (421 wrong_region elsewhere). " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);

@@ -1,6 +1,8 @@
 using NATS.Client.Core;
 using System.Net.Http.Headers;
 using System.Net;
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -70,6 +72,22 @@ internal sealed partial class RegionReplication
     }
 
 
+    private readonly Counter<long> _catalogErrors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.replica.catalog_errors");
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _catalogLogged = new(StringComparer.Ordinal);
+
+    private void CatalogFailed(string region, Exception? error)
+    {
+        _catalogErrors.Add(1);
+        var now = time.GetUtcNow();
+        if (_catalogLogged.TryGetValue(region, out var last) && now - last < TimeSpan.FromMinutes(10))
+        {
+            return;
+        }
+
+        _catalogLogged[region] = now;
+        logger.ZLogWarning(error, $"An entry from region {region:@Region}'s catalog failed; other entries and replica reconciliation continue");
+    }
+
     private async Task SyncHomeAsync(ReplicaPeer home, CancellationToken cancellationToken)
     {
         var listed = await ListAsync(home, cancellationToken).ConfigureAwait(false);
@@ -77,7 +95,14 @@ internal sealed partial class RegionReplication
         {
             foreach (var entry in listed.Values)
             {
-                await RecordAsync(entry, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await RecordAsync(entry, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    CatalogFailed(entry.HomeRegion, error);
+                }
             }
         }
 
@@ -185,7 +210,7 @@ internal sealed partial class RegionReplication
     {
         if (!await catalog.RecordAsync(entry, cancellationToken).ConfigureAwait(false))
         {
-            logger.ZLogWarning($"A replicated database could not be recorded here (its project belongs to another organization, its name is taken or it was deleted); it is not replicated");
+            CatalogFailed(entry.HomeRegion, null);
         }
     }
 
@@ -207,7 +232,7 @@ internal sealed partial class RegionReplication
             return;
         }
 
-        _ = await catalog.RecordAsync(entry, cancellationToken).ConfigureAwait(false);
+        _ = await catalog.RecordAsync(entry.HomeRegion == home.Region ? entry : entry with { Identity = null }, cancellationToken).ConfigureAwait(false);
         if (!entry.AllRegions && !entry.ReplicaRegions.Contains(options.Region))
         {
             await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);

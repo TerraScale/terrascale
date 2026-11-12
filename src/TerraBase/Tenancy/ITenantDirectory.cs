@@ -18,7 +18,12 @@ public readonly union RegisteredDatabaseResult(bool, Unavailable);
 
 public readonly union ReplicatesDatabaseResult(bool, Unavailable);
 
-public sealed record DatabaseIdentity(DateTimeOffset CreatedAt, string? BranchedFrom = null, DateTimeOffset? ExpiresAt = null);
+public sealed record DatabaseIdentity(DateTimeOffset CreatedAt, string? BranchedFrom = null, DateTimeOffset? ExpiresAt = null)
+{
+    public static DatabaseIdentity? Reconcile(DatabaseIdentity? incoming, DatabaseIdentity? stored = null) =>
+        incoming is null || incoming.CreatedAt == default ? stored
+            : stored is not null && stored.CreatedAt < incoming.CreatedAt ? stored : incoming;
+}
 
 public sealed record TenantDatabaseRecord(string Name, DatabasePlacement Placement, DatabaseIdentity Identity);
 

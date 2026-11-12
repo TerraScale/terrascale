@@ -53,7 +53,19 @@ Renames and TTL changes answer `409 move_in_progress` while a move marker is hel
 deadline; moving never restarts or shortens its TTL. These additions change JSON peer messages, not storage.
 Older senders omit identity and retain the former adoption behavior until a later sync supplies the facts;
 older receivers ignore the extra JSON members. If a database already moved and its current home has lost the
-original facts, catalog sync cannot reconstruct them from that home.
+original facts, a follower keeps its earlier creation time and its own branch origin and expiry when the home's
+creation time is later. The home never takes identity facts from a follower. Its listing stays lossy until the writer
+moves back to a region that retained the earlier facts; promotion preserves those facts by the same rule.
+An identity with a missing or default creation time is treated as absent.
+
+Names are unique within each region's project catalog. Different databases in one project can have the same name
+in disjoint regions. A follower keeps its stored name when the incoming name belongs to another database, applies
+the remaining facts and placement, and tries the name again on the next sweep. A two-database name swap converges
+in at most two successful sweeps after the home finishes the swap. A promotion checks for a taken name before
+detaching, importing or taking the lease and refuses with the existing peer `409 move_aborted`; placement callers
+receive `503 replica_not_ready`. Rename one of the databases and repeat the move. The regions API does not expose
+the name-conflict reason. Catalog sync also runs from handoff paths; a follower can show the old name for up to
+one sweep.
 
 ## Moving the home
 
