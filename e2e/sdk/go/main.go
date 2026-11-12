@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -351,7 +354,7 @@ func (r *runner) do(op operation) error {
 	case "placement.set":
 		return r.placementSet()
 	case "origin.rule":
-		return originRule(op.Cases)
+		return originRule(ctx, r.project, op.Cases)
 	case "agent.create_ttl":
 		ttl := op.TTLSeconds
 		before := time.Now().UTC()
@@ -460,7 +463,14 @@ func (r *runner) do(op operation) error {
 	return fmt.Errorf("no implementation for %s", op.ID)
 }
 
-func originRule(file string) error {
+type recorder struct{ sent *url.URL }
+
+func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.sent = req.URL
+	return nil, errors.New("recorded, not sent")
+}
+
+func originRule(ctx context.Context, project, file string) error {
 	raw, err := os.ReadFile(filepath.Join(filepath.Dir(os.Getenv("E2E_OPERATIONS")), file))
 	if err != nil {
 		return err
@@ -473,14 +483,17 @@ func originRule(file string) error {
 	}
 	var wrong []string
 	for _, c := range spec.Cases {
-		_, err := v1.New(v1.Config{BaseURL: *c[0], Token: "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"})
-		if (err == nil) != (c[1] != nil) {
-			expected, got := "refused", "accepted"
+		api := &recorder{}
+		if client, err := v1.New(v1.Config{BaseURL: *c[0], Token: "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln", HTTPClient: &http.Client{Transport: api}}); err == nil {
+			_, _ = client.Database(project, "probe").Create(ctx)
+		}
+		if !sameOrigin(api.sent, c[1]) {
+			expected, got := "refused", "refused"
 			if c[1] != nil {
 				expected = *c[1]
 			}
-			if err != nil {
-				got = err.Error()
+			if api.sent != nil {
+				got = api.sent.Scheme + "://" + api.sent.Host
 			}
 			wrong = append(wrong, fmt.Sprintf("%q: expected %s, got %s", (*c[0])[:min(len(*c[0]), 60)], expected, got))
 		}
@@ -489,6 +502,22 @@ func originRule(file string) error {
 		return fmt.Errorf("origin rule: %d of %d cases differ: %s", len(wrong), len(spec.Cases), strings.Join(wrong, "; "))
 	}
 	return nil
+}
+
+func sameOrigin(sent *url.URL, want *string) bool {
+	if sent == nil || want == nil {
+		return sent == nil && want == nil
+	}
+	expected, err := url.Parse(*want)
+	if err != nil || sent.Scheme != expected.Scheme || sent.Port() != expected.Port() {
+		return false
+	}
+	got, gotErr := netip.ParseAddr(sent.Hostname())
+	wanted, wantErr := netip.ParseAddr(expected.Hostname())
+	if gotErr == nil && wantErr == nil {
+		return got == wanted
+	}
+	return sent.Hostname() == expected.Hostname()
 }
 
 func main() {
