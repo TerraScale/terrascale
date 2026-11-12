@@ -57,7 +57,7 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
             nameApplied = await names.ApplyAsync(entry, listed, lookups ?? owned!, cancellationToken).ConfigureAwait(false);
         }
 
-        return stored switch
+        var applied = stored switch
         {
             NotFound => await tenants.AdoptDatabaseAsync(database, entry.Name, placement, entry.Identity, cancellationToken).ConfigureAwait(false) is Done,
             TenantDatabaseRecord record when record.Placement.Version <= placement.Version =>
@@ -65,6 +65,7 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
             TenantDatabaseRecord => true,
             Unavailable => false,
         };
+        return applied && (nameApplied || stored is TenantDatabaseRecord current && current.Name == entry.Name);
     }
 
     public async ValueTask UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken) =>

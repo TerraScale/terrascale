@@ -22,6 +22,14 @@ internal sealed class RemovedReplicaFaults(IMeterFactory meters, TimeProvider ti
         }
     }
 
+    public void Rejected(TenantContext database, string home)
+    {
+        if (Counted(home, "catalog_rejected"))
+        {
+            logger.ZLogWarning($"Region {home:@Region}'s catalog entry for database {database.DatabaseId:@Database} could not be adopted or its name was taken; the stored routing record is retained");
+        }
+    }
+
     public void Failed(TenantContext database, string home, Exception error)
     {
         if (Counted(home, error.GetType().Name))

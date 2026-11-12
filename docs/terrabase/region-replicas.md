@@ -58,8 +58,9 @@ eventual consistency.
    organization and project as a project token would, records each database with the home's placement, and starts a
    follower. A recorded database the home no longer lists is checked with
    `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/placement`, which answers the
-   placement that region records, home or not: `404` means it was deleted, so the region forgets it and deletes the
-   replica; otherwise the region takes the placement when it is newer and deletes the replica when it no longer names
+   placement that region records, home or not: `404` authorizes forgetting and replica deletion only when the
+   responding node matches the activated regional writer observed before and after the request (without NATS,
+   exactly one configured regional node). An unobserved writer or standby leaves the record intact; otherwise the region takes the placement when it is newer and deletes the replica when it no longer names
    this region. The record stays as the routing record of a region that was removed, and later passes keep it
    current ([removing a region](placement.md#removing-a-region)). A follower whose database's home changed (a [move](placement.md#moving-the-home)) is stopped, its
    replica deleted and pulled again from the new home. The peers file is read again on every sweep, so a region that

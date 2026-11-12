@@ -30,6 +30,7 @@ internal sealed partial class RegionReplication(
 
     private const int MaxConcurrentPulls = 8;
     private const int MaxRefreshes = 64;
+    private const int MaxRecentRefreshes = 4096;
     private static readonly TimeSpan PlacementTimeout = TimeSpan.FromSeconds(5);
     private static readonly Unavailable PlacementUnanswered = new("the region did not answer for the database's placement");
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(2);
@@ -43,7 +44,8 @@ internal sealed partial class RegionReplication(
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (TenantContext Database, long At)> _revised = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (string Revision, TenantContext Database)> _published = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), bool> _suspended = new();
-    private readonly ConcurrentDictionary<string, (string Project, string Database)> _refreshed = new();
+    private readonly ConcurrentDictionary<string, (string Project, string Database)> _refreshAfter = new();
+    private readonly Dictionary<(string, string, string), DateTimeOffset> _refreshed = [];
     private readonly Channel<bool> _publish = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Channel<string> _catalogWakes = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly SemaphoreSlim[] _lifecycle = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
@@ -373,7 +375,8 @@ internal sealed partial class RegionReplication(
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord)
+            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
+                && placement.Home == home.Region && placement.Includes(options.Region))
             {
                 await FollowRegisteredAsync(key, database, home, cancellationToken).ConfigureAwait(false);
             }

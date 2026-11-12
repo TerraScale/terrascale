@@ -8,7 +8,7 @@ import { expect, type APIResponse, type Page } from '@playwright/test';
 import { test, authenticatedCells, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
 import { dash, production, stateDir } from '../support/stack';
 import { Audit, auditedContext } from '../support/audit';
-import { saveCookies, saveSecret } from '../support/state';
+import { journey, saveCookies, saveSecret } from '../support/state';
 import { confirmWithPassword, onboard, signUp, verify } from '../support/hosted';
 import { newAddress } from '../support/inbox';
 import { createApiKey } from '../support/paid';
@@ -651,7 +651,6 @@ multiple('R15 an observed intermediate home rename still converges after a swap'
 });
 
 test('R16 a removed region refuses every request, erases its copy and takes the database back', async ({ cells }) => {
-  test.setTimeout(300_000);
   const created = await create(cells, ['gru', 'fra']);
   const execute = (region: string, statement: string) => cells.post(`${region}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: statement }] } });
   const rows = async (region: string) => (await sql(cells, region, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows;
@@ -699,5 +698,56 @@ test('R16 a removed region refuses every request, erases its copy and takes the 
     expect(await json(await cells.get(`${home}${database(created.id)}`))).toMatchObject({ id: created.id, regions: ['fra', 'gru'] });
   } finally {
     await removeDatabase(cells, created.id);
+  }
+});
+
+test('R17 a removed follower retains routing and rejoins with the current name and data', async ({ cells }) => {
+  const created = await create(cells, ['gru', 'fra']);
+  const renamed = name('removed-follower');
+  try {
+    await seed(cells, created.id);
+    await observed(cells, created.id);
+    await replicated(cells, replica, created.id, 3);
+    await answer(await patch(cells, created.id, ['gru']), 200, '200 follower removed');
+    await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (4)');
+    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
+      { message: 'the removed follower refuses its stale record', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
+    await rename(cells, home, created.id, renamed, journey().projectId);
+    await expect.poll(() => files('terrabase-fra', created.id),
+      { message: 'the removed follower erases its replica', timeout: 45_000, intervals: [250, 500, 1000] }).toEqual([]);
+    const path = `/v1/sync/organizations/${journey().organizationId}/projects/${journey().projectId}/databases/${created.id}/placement`;
+    await expect.poll(async () => (await catalogRecord<{ name: string }>('http://127.0.0.2:8081', path)).name,
+      { message: 'the removed follower learns a rename without a placement version change', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(renamed);
+    await answer(await patch(cells, created.id, ['gru', 'fra']), 200, '200 follower added again');
+    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
+      { message: 'the follower observes the placement that adds it again', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(200);
+    await replicated(cells, replica, created.id, 4);
+    expect(await json(await cells.get(`${replica}${database(created.id)}`))).toMatchObject({ id: created.id, name: renamed });
+    expect((await sql(cells, replica, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3], [4]]);
+  } finally {
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('R18 deletion at the home retires a database while its follower is removed', async ({ cells }) => {
+  const created = await create(cells, ['gru', 'fra']);
+  let deleted = false;
+  try {
+    await seed(cells, created.id);
+    await observed(cells, created.id);
+    await replicated(cells, replica, created.id, 3);
+    await answer(await patch(cells, created.id, ['gru']), 200, '200 follower removed');
+    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
+      { message: 'the follower observes its removal before deletion', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
+    expect(await json(await cells.get(`${home}${database(created.id)}`))).toMatchObject({ id: created.id, regions: ['gru'] });
+    await answer(await cells.delete(`${home}${database(created.id)}`), 204, '204 deleted at the home');
+    deleted = true;
+    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
+      { message: 'the removed follower forgets the database after the home deletes it', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(404);
+    expect(files('terrabase-fra', created.id)).toEqual([]);
+    const listed = await json<{ items: { id: string }[] }>(await cells.get(`${replica}${project()}/databases`));
+    expect(listed.items.map(item => item.id)).not.toContain(created.id);
+  } finally {
+    if (!deleted) await removeDatabase(cells, created.id);
   }
 });
