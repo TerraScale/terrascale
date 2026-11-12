@@ -53,6 +53,7 @@ internal sealed class ClosureFaults(IMeterFactory meters, TimeProvider time, ILo
         RegionAnswer.NotEmpty => ManagementErrors.NotEmptyCode,
         RegionAnswer.ClosureConflict => ProjectClosure.ClosureConflictCode,
         RegionAnswer.BindingConflict => ProjectClosure.BindingConflictCode,
+        RegionAnswer.PlatformProjectProtected => ManagementErrors.PlatformProjectProtectedCode,
         RegionAnswer.Refused => "refused",
         RegionAnswer.Invalid => "invalid_answer",
         RegionAnswer.NotListed => "not_listed",

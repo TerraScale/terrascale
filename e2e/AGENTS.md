@@ -86,7 +86,9 @@ for the project, list no bucket and hold neither the object nor the database; th
 no closure of its project. Its second test upgrades its owner to Pro at the Stripe stand-in for a second project,
 creates a database of that project through fra, sees the console's project deletion refused with 409 while a `GET`
 of the closure on each internal listener shows no fence in gru or fra, then deletes the database, deletes the project
-and deletes the account.
+and deletes the account. Its third test signs up nobody: it sends a closure, the same closure with the header
+`X-TerraBase-Closure-Scope: region` and the check of the dashboard's platform project to fra's internal listener, for
+both versions, and each answers 409 `platform_project_protected`.
 
 Other existing projects can run in two-region mode by starting this same stack first and selecting their project
 normally. No two-region CI job is configured; adding one requires its own journey shard with `E2E_REGIONS=2`,

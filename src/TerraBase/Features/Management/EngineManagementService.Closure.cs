@@ -15,10 +15,11 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
-    private readonly HashSet<string> _platformClosuresReported = [with(StringComparer.Ordinal)];
     private const int ForwardedAtOnce = 8;
 
     private static readonly TimeSpan ForwardPassBudget = TimeSpan.FromSeconds(10);
+
+    private readonly HashSet<string> _platformClosuresReported = [with(StringComparer.Ordinal)];
 
     private string? _closuresAfter;
 
@@ -83,8 +84,14 @@ internal sealed partial class EngineManagementService
     }
 
     public async ValueTask<CloseProjectResult> InspectClosureAsync(
-        string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken) =>
-        await ReadAsync<CloseProjectResult>(async transaction =>
+        string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken)
+    {
+        if (PlatformDatabases.IsPlatformProject(projectId))
+        {
+            return ManagementErrors.PlatformProjectProtected;
+        }
+
+        return await ReadAsync<CloseProjectResult>(async transaction =>
         {
             var existing = await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
             if (existing is not null && ClosureConflicts(existing, projectId, closureId, authorityOrganizationId, version))
@@ -106,6 +113,7 @@ internal sealed partial class EngineManagementService
                 ? ManagementErrors.NotEmpty
                 : new ProjectClosureStatus(ProjectClosure.Empty, closureId, 0);
         }, static error => error, cancellationToken).ConfigureAwait(false);
+    }
 
     private async ValueTask<CloseProjectResult?> RefusedBeforeFenceAsync(
         string projectId, ProjectClosureRequest closure, IReadOnlyList<string> regions, CancellationToken cancellationToken)
@@ -122,6 +130,11 @@ internal sealed partial class EngineManagementService
         }
 
         var answers = await Task.WhenAll(regions.Select(region => closureFanout.CheckAsync(region, projectId, closure, cancellationToken))).ConfigureAwait(false);
+        if (answers.Contains(RegionAnswer.PlatformProjectProtected))
+        {
+            return ManagementErrors.PlatformProjectProtected;
+        }
+
         if (answers.Contains(RegionAnswer.NotEmpty))
         {
             return ManagementErrors.NotEmpty;
@@ -340,7 +353,8 @@ internal sealed partial class EngineManagementService
                 case RegionAnswer.NotListed or RegionAnswer.TimedOut or RegionAnswer.Unreachable:
                     _ = silent.TryAdd(region, true);
                     break;
-                case RegionAnswer.Pending or RegionAnswer.Empty or RegionAnswer.ClosureConflict or RegionAnswer.BindingConflict or RegionAnswer.Refused or RegionAnswer.Invalid:
+                case RegionAnswer.Pending or RegionAnswer.Empty or RegionAnswer.ClosureConflict or RegionAnswer.BindingConflict or RegionAnswer.PlatformProjectProtected
+                    or RegionAnswer.Refused or RegionAnswer.Invalid:
                     break;
                 default:
                     throw new UnreachableException();
@@ -491,7 +505,7 @@ internal sealed partial class EngineManagementService
                 {
                     try
                     {
-                        seen[index] = NamesRegion(closures[index])
+                        seen[index] = !PlatformDatabases.IsPlatformProject(closures[index].Id) && NamesRegion(closures[index])
                             ? await AcknowledgeRegionsAsync(closures[index].Id, serving, silent, token).ConfigureAwait(false)
                             : new(Pending: false, null);
                     }

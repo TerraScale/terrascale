@@ -15,7 +15,7 @@ internal sealed class InspectProjectClosureEndpoint(IProjectCatalog catalog) : E
         Summary("Answers what a project closure would find in this region");
         Description("Internal peer listener only, behind the shared peer credential; 404 elsewhere. The query carries version, closureId and authorityOrganizationId of the closure. "
             + "One read transaction, nothing is written: 200 empty when this region has no fence for the project and, for version 1, holds no database, key, backup destination or bucket of it; "
-            + "this region's own 200 accepted or 202 pending when it already has the fence; 409 not_empty, closure_conflict or binding_conflict as the closure itself would answer. "
+            + "this region's own 200 accepted or 202 pending when it already has the fence; 409 not_empty, closure_conflict, binding_conflict or platform_project_protected as the closure itself would answer. "
             + "A region asks every other serving region this before it writes the fence of a version 1 closure.");
         Tags("Administration");
         Produces<ProjectClosureStatus>();

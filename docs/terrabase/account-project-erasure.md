@@ -43,6 +43,8 @@ A bucket and its file records are stored in the catalog of the region whose list
 | Receipt | A | On `200 accepted` that carries this closure id and evidence version 2, A writes the receipt `project_closure_receipts/<project>/region:<name>` in a transaction that reads the fence again and requires the same closure id, organization and version and that holder. On `409 not_empty` it writes that receipt with `empty` false, once: a later refusal finds it and changes nothing. |
 | Finished | A | ts-auth gets `200 accepted` once this machine's receipt and every region's receipt are there, and `202 pending` with the number of missing holders until then. `notEmptyRegions` of a pending answer names the regions whose receipt says `empty` false. |
 
+A [platform project](platform-databases.md) is refused in every region: A's closure, B's check and B's forwarded closure each answer 409 `platform_project_protected` before anything is read, sent or written, and the pass never sends a stored closure record of a platform project and counts it in neither gauge.
+
 Once B has the fence it refuses, with 404, a new bucket, a new upload URL and the completion of an upload for the project, because each of them reads the fence in its committing transaction. A file that arrives through a URL B signed before the fence is deleted by B's own late-object pass, and after that by B's sweep.
 
 Each step is safe to repeat. The fence is written once and every later request is compared with it; the erasure goes on from the records that are left; B's answer is computed from B's records each time; a receipt is written again with the same content. A crash therefore leaves one of these:

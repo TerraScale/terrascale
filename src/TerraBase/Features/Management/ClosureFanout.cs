@@ -15,6 +15,7 @@ internal enum RegionAnswer
     NotEmpty,
     ClosureConflict,
     BindingConflict,
+    PlatformProjectProtected,
     Refused,
     Invalid,
     NotListed,
@@ -72,7 +73,7 @@ internal sealed class ClosureFanout(
             reply = new(RegionAnswer.Invalid);
         }
 
-        if (reply.Answer is not (RegionAnswer.Accepted or RegionAnswer.Pending or RegionAnswer.NotEmpty))
+        if (reply.Answer is not (RegionAnswer.Accepted or RegionAnswer.Pending or RegionAnswer.NotEmpty or RegionAnswer.PlatformProjectProtected))
         {
             faults.Unacknowledged(closure.ProjectId, reply, region);
         }
@@ -139,6 +140,7 @@ internal sealed class ClosureFanout(
         ManagementErrors.NotEmptyCode => RegionAnswer.NotEmpty,
         ProjectClosure.ClosureConflictCode => RegionAnswer.ClosureConflict,
         ProjectClosure.BindingConflictCode => RegionAnswer.BindingConflict,
+        ManagementErrors.PlatformProjectProtectedCode => RegionAnswer.PlatformProjectProtected,
         _ => RegionAnswer.Refused,
     };
 }

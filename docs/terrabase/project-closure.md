@@ -50,6 +50,9 @@ after a lost response, a restart or a repeated request presents the same identit
   regions with the header `X-TerraBase-Closure-Scope: region`; a region answers such a request for itself alone, and
   its `200 accepted` becomes that holder's receipt ([account-project-erasure.md](account-project-erasure.md), "Every
   region").
+- A [platform project](platform-databases.md) is refused in every region: the closure, the check and the forwarded
+  closure each answer 409 `platform_project_protected` before anything is read, sent or written, and the pass that
+  sends closures to the other regions never sends a stored closure record of a platform project or counts it as pending.
 - Database registration, project API key issue (`EngineApiKeyStore`), backup destination saves
   (`ProjectBackupDestinations`), file bucket creation, upload reservation and upload completion
   (`FileStorageService`) all read the fence in their committing transaction. A file request answers 404 once it is there. Project-key and destination writes

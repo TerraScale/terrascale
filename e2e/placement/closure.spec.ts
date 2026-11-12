@@ -17,6 +17,8 @@ const firstInternal = 'http://127.0.0.1:8081';
 const secondInternal = 'http://127.0.0.2:8081';
 const checkout = 'https://checkout.stripe.com';
 const crockford = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const platformOrganization = '00000000000000000000000001';
+const dashboardProject = '00000000000000000000000005';
 
 type Owner = { email: string; password: string; organizationId: string; projectId: string; projectName: string };
 type Closure = { version: number; closureId: string; authorityOrganizationId: string };
@@ -101,12 +103,12 @@ function ulid(): string {
   return head + Array.from(randomBytes(16), (byte) => crockford[byte % 32]).join('');
 }
 
-function internal(cell: string, method: 'GET' | 'PUT', path: string, body?: Closure): Promise<Answer> {
+function internal(cell: string, method: 'GET' | 'PUT', path: string, body?: Closure, scope: Record<string, string> = {}): Promise<Answer> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   return new Promise<Answer>((resolve, reject) => {
     const session = connect(cell);
     session.on('error', reject);
-    const stream = session.request({ ':method': method, ':path': path, 'content-type': 'application/json', 'x-terrabase-peer-credential': credential });
+    const stream = session.request({ ':method': method, ':path': path, 'content-type': 'application/json', 'x-terrabase-peer-credential': credential, ...scope });
     let status = 0;
     let text = '';
     stream.setEncoding('utf8');
@@ -122,6 +124,8 @@ function internal(cell: string, method: 'GET' | 'PUT', path: string, body?: Clos
 }
 
 const close = (cell: string, projectId: string, closure: Closure) => internal(cell, 'PUT', `/admin/projects/${projectId}/closure`, closure);
+const forward = (cell: string, projectId: string, closure: Closure) =>
+  internal(cell, 'PUT', `/admin/projects/${projectId}/closure`, closure, { 'x-terrabase-closure-scope': 'region' });
 const inspect = (cell: string, projectId: string, closure: Closure) =>
   internal(cell, 'GET', `/admin/projects/${projectId}/closure?version=${closure.version}&closureId=${closure.closureId}&authorityOrganizationId=${closure.authorityOrganizationId}`);
 
@@ -238,4 +242,14 @@ test('a project deletion through gru is refused while fra holds a database of th
   }
 
   await deleteAccount(page, audit, current, 'closure-check');
+});
+
+test('fra refuses a closure, a closure sent on by another region and a check of the dashboard platform project', async () => {
+  const refused = { status: 409, body: { error: { code: 'platform_project_protected' } } };
+  for (const version of [1, 2]) {
+    const closure = { version, closureId: ulid(), authorityOrganizationId: platformOrganization };
+    expect(await close(secondInternal, dashboardProject, closure), `a version ${version} closure`).toMatchObject(refused);
+    expect(await forward(secondInternal, dashboardProject, closure), `a version ${version} closure sent on by gru`).toMatchObject(refused);
+    expect(await inspect(secondInternal, dashboardProject, closure), `the check of that version ${version} closure`).toMatchObject(refused);
+  }
 });
