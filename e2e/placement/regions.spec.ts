@@ -349,7 +349,7 @@ const multiple = test.extend<{ owner: { cells: Cells; projectId: string; page: P
       saveSecret('catalog-password', password);
       await signUp(page, audit, email, password, 'catalog owner');
       await verify(page, email);
-      await onboard(page, audit, 'Catalog owner', name('catalog-project'), 'catalog owner');
+      await onboard(page, audit, 'Catalog owner', 'C35 catalog project', 'catalog owner');
       const projectId = new URL(page.url()).searchParams.get('projectId') ?? '';
       expect(projectId).not.toBe('');
       await page.goto(`${dash}/organization?tab=billing`);
@@ -459,8 +459,8 @@ multiple('R10 a home name swap converges on the follower within two sweeps', asy
 });
 
 multiple('R11 a conflicting promotion is refused before takeover and succeeds after a rename', async ({ owner: { cells, projectId, page, audit } }, info) => {
-  const occupied = name('move-name');
-  const original = name('move-original');
+  const occupied = 'c35-move-name';
+  const original = 'c35-move-original';
   const x = await named(cells, home, original, ['gru', 'fra'], projectId);
   const y = await named(cells, replica, occupied, ['fra'], projectId);
   try {
@@ -478,7 +478,10 @@ multiple('R11 a conflicting promotion is refused before takeover and succeeds af
     expect((await refused).status()).toBe(409);
     await expect(page.locator('main .ts-alert-danger .ts-alert-body')).toHaveText('Another database in fra already uses this name. Rename one of them, then save again.');
     await audit.check('name conflict explains how to save regions');
-    await page.screenshot({ path: info.outputPath('regions-name-taken-dark.png'), fullPage: true });
+    for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.screenshot({ path: info.outputPath(`regions-name-taken-dark-${viewport.width}.png`), fullPage: true });
+    }
     const after = await json<Record<string, unknown>>(await cells.get(`${home}${database(x.id, projectId)}`));
     expect(after).toEqual(before);
     expect(await recordedName(cells, x.id, projectId)).toBe(original);
