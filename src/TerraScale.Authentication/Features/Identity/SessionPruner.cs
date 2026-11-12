@@ -2,6 +2,7 @@ using ZLogger;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Storage;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.Identity;
 
@@ -22,18 +23,30 @@ public sealed class SessionPruner(AuthSchema schema, Sessions sessions, Passcode
         using var timer = new PeriodicTimer(Interval);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            try
-            {
-                await sessions.PruneAsync(BatchSize, stoppingToken).ConfigureAwait(false);
-                await passcodes.PruneAsync(BatchSize, stoppingToken).ConfigureAwait(false);
-                await proofs.PruneAsync(BatchSize, stoppingToken).ConfigureAwait(false);
-                await oidcTokens.PruneAsync(BatchSize, stoppingToken).ConfigureAwait(false);
-                await oidcAuthorizations.PruneAsync(BatchSize, stoppingToken).ConfigureAwait(false);
-            }
-            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
-            {
-                logger.ZLogWarning(error, $"Session or code pruning failed; retrying at the next interval");
-            }
+            await this.PruneAsync("sessions", sessions.PruneAsync, stoppingToken).ConfigureAwait(false);
+            await this.PruneAsync("passcodes", passcodes.PruneAsync, stoppingToken).ConfigureAwait(false);
+            await this.PruneAsync("step-up proofs", proofs.PruneAsync, stoppingToken).ConfigureAwait(false);
+            await this.PruneAsync("OIDC tokens", oidcTokens.PruneAsync, stoppingToken).ConfigureAwait(false);
+            await this.PruneAsync("OIDC authorizations", oidcAuthorizations.PruneAsync, stoppingToken).ConfigureAwait(false);
         }
     }
+
+    private async Task PruneAsync(string store, Func<int, CancellationToken, Task<int>> prune, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await prune(BatchSize, stoppingToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+        {
+            logger.ZLogWarning(error, $"Pruning {store} failed (TerraBase code {Code(error)}); retrying at the next interval");
+        }
+    }
+
+    private static string Code(Exception error) => error switch
+    {
+        TerraBaseException { ErrorCode: { } code } => code,
+        { InnerException: { } inner } => Code(inner),
+        _ => "none",
+    };
 }

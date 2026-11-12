@@ -234,7 +234,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     private static UserRecord Merge(UserRecord caller, IReadOnlyList<CredentialBinding> fresh)
     {
         var bindings = caller.AuthenticationBindings.Concat(fresh).Distinct().ToArray();
-        if (bindings.Length > Credentials.MaxBindings)
+        if (bindings.Length > Credentials.MaxLineage)
         {
             throw Required();
         }
@@ -248,13 +248,19 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
 
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
         var now = clock.GetUtcNow();
-        return await data.ReadAsync(async (db, token) =>
-            await db.StepUpProofs.Where(row => row.ExpiresAt <= now).ExecuteDeleteAsync(token).ConfigureAwait(false)
-            + await db.StepUpDeletionGrants.Where(row => row.ExpiresAt <= now).ExecuteDeleteAsync(token).ConfigureAwait(false)
-            + await db.Passcodes.Where(row => row.Purpose == "step-up" && row.ExpiresAt <= now).ExecuteDeleteAsync(token).ConfigureAwait(false)
-            + await db.EmailChanges.Where(row => row.ExpiresAt <= now).ExecuteDeleteAsync(token).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
+        return await data.InBatchesAsync(batchSize, (db, token) => db.StepUpProofs.Where(row => row.ExpiresAt <= now).OrderBy(row => row.ExpiresAt).Take(batchSize)
+                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
+            + await data.InBatchesAsync(batchSize, (db, token) => db.StepUpDeletionGrants.Where(row => row.ExpiresAt <= now
+                    && db.StepUpDeletionGrants.Where(expired => expired.ExpiresAt <= now).OrderBy(expired => expired.ExpiresAt).Take(batchSize)
+                        .Any(expired => expired.InstanceId == row.InstanceId && expired.ReceiptHash == row.ReceiptHash))
+                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
+            + await data.InBatchesAsync(batchSize, (db, token) => db.Passcodes.Where(row => row.Purpose == "step-up" && row.ExpiresAt <= now
+                    && db.Passcodes.Where(expired => expired.Purpose == "step-up" && expired.ExpiresAt <= now).OrderBy(expired => expired.ExpiresAt).Take(batchSize)
+                        .Any(expired => expired.InstanceId == row.InstanceId && expired.Key == row.Key))
+                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
+            + await data.InBatchesAsync(batchSize, (db, token) => db.EmailChanges.Where(row => row.ExpiresAt <= now).OrderBy(row => row.ExpiresAt).Take(batchSize)
+                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
     internal static ApiException Required() => new(403, "step_up_required", "A fresh, approved, purpose-bound single-use proof is required.");

@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Profile
         internal const string ReturnTo = "/profile?tab=access-tokens";
 
         // The ts-auth callback for a token flow: the fresh grant must belong to the signed-in browser's user.
-        public static async Task<IResult> IssueAsync(HttpContext http, OidcFlow flow, SessionRecord fresh)
+        public static async Task<IResult> IssueAsync(HttpContext http, OidcFlow flow, SessionRecord fresh, DateTimeOffset expiresAt)
         {
             var retained = false;
             try
@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 try
                 {
                     StepUpFlow.Validate(http, context, intent, "create_pat");
-                    var created = await tokens.CreateAsync(context, flow.TokenName, flow.TokenDays, fresh, intent, http.RequestAborted);
+                    var created = await tokens.CreateAsync(context, flow.TokenName, expiresAt, fresh, intent, http.RequestAborted);
                     // The credential now owns the grant, even if preparing/rendering its view fails.
                     retained = true;
                     return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Tokens: await tokens.ListAsync(context, http.RequestAborted), CreatedToken: created, Sessions: await sessions.ListAsync(http, context.Session)));

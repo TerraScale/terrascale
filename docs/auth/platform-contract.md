@@ -377,7 +377,7 @@ tokens expire:
 | --- | --- | --- |
 | API key revoked, expired or rotated past its grace | at once | within 60 seconds |
 | Member removed, role lowered, project or organization deleted | at once (the management API and every exchange read it) | within 60 seconds |
-| Sign-in revoked (RFC 7009, refresh-token reuse), user deleted | at once | within 5 minutes of the last exchange |
+| Sign-in revoked (RFC 7009, reuse of a rotating refresh token), user deleted | at once | within 5 minutes of the last exchange |
 | Signed out everywhere, password reset | at once (refresh, the management API and the exchange) | within 5 minutes of the last exchange |
 | API key creator signed out everywhere or reset their password | at once (that key secret stops exchanging) | within 60 seconds |
 
@@ -495,6 +495,12 @@ without a signed-in user.
 | `ts-cli` (client id `00000000000000000000000007`) | public | device code (RFC 8628), refresh token, token exchange |
 | service clients (`TS_AUTH_SERVICE_CLIENTS`) | confidential | client credentials |
 | API keys (ULID clients) | confidential | client credentials |
+
+A `ts-dashboard` authorization code redeemed with `ts_refresh_expires_at` (a
+personal access token or an MCP sign-in) gets a refresh token that expires at
+that time, at most 365 days and 5 minutes ahead, and never rotates; every other grant's
+refresh token rotates on each use. See
+[refresh replay](regional/refresh-replay.md#grants-that-do-not-rotate).
 
 **Device flow for ts-cli.** Users sign in and approve on ts-auth's own hosted
 page (HA1, 2026-10-22), like every other TerraScale sign-in:

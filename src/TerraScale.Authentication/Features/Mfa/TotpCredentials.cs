@@ -103,7 +103,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         {
             var enabled = (await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.Record.Enabled == true;
             return (!enabled || multiFactorMethod is not null)
-                && await users.GetAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is { } user
+                && await users.GetAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is { Disabled: false } user
                 && user.AuthEpoch.ToString(CultureInfo.InvariantCulture) == authEpoch && user.AuthStamp == authStamp
                     ? user with { MultiFactor = enabled || multiFactorMethod is not null, MfaMethod = multiFactorMethod }
                     : null;

@@ -13,6 +13,22 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
         return await read(db, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<int> InBatchesAsync(int batchSize, Func<AuthDbContext, CancellationToken, Task<int>> statement, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        ArgumentNullException.ThrowIfNull(statement);
+        var total = 0;
+        int changed;
+        do
+        {
+            changed = await this.ReadAsync(statement, cancellationToken).ConfigureAwait(false);
+            total += changed;
+        }
+        while (changed >= batchSize);
+
+        return total;
+    }
+
     public Task<bool> SaveAsync(Change change, CancellationToken cancellationToken) => this.SaveAsync([change], cancellationToken);
 
     public async Task<bool> SaveAsync(IReadOnlyList<Change> changes, CancellationToken cancellationToken)

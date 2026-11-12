@@ -28,7 +28,7 @@ The database enforces the invariants the code relies on:
 | One account per external identity in a tenant | `provider_links` primary key `(instance_id, provider, issuer, client_id, subject)` |
 | Project names unique in an organization, ignoring case | `projects` unique `(organization_id, name_key)` (`name_key` is the invariant upper case of the name) |
 | One pending invitation per address and target | `invitations` unique `(organization_id, target, email) WHERE status = 'pending'`; token digest unique |
-| One-use credentials (passcodes, sessions, challenges, refresh tokens, GitHub Actions `jti`) win once | `credential_claims` primary key `(instance_id, kind, key)` |
+| One-use credentials (passcodes, sessions, challenges, rotating refresh tokens, GitHub Actions `jti`) win once | `credential_claims` primary key `(instance_id, kind, key)` |
 | Passkey credential ids unique in a tenant | `passkeys` primary key `(instance_id, credential_id)` |
 | OIDC reference tokens unique | `oidc_tokens` unique `(instance_id, reference_id)` |
 | One SSO connection per organization and domain | `sso_connections` primary key `domain`, unique `organization_id` |
@@ -97,6 +97,15 @@ An operator grants the platform admin role through TerraBase's internal listener
 UPDATE users SET platform_role = 'admin' WHERE id = '<user ULID>' AND instance_id = 'terrascale';
 ```
 
-Background workers prune expired sessions, passcodes, step-up proofs, email changes, challenges, OIDC tokens and
-authorizations with set-based deletes, and drive deletion and closure jobs from `deletion_jobs` and `closure_jobs`.
+Background workers prune expired sessions, passcodes, step-up proofs, email changes, challenges, OIDC tokens (and
+the refresh tokens of a revoked authorization) and authorizations with set-based deletes, and drive deletion and
+closure jobs from `deletion_jobs` and `closure_jobs`. The session pruner (every 10 minutes: sessions, passcodes,
+step-up records, OIDC tokens and authorizations) changes at most 500 rows per statement, through each table's index
+where it has one, and repeats a statement until it changes fewer, so one pass prunes everything due within
+TerraBase's per-transaction limits. A store whose prune fails is logged with TerraBase's error code and retried at the
+next pass, and the other stores are still pruned. A device request's authorization stays while a device approval
+made from it exists: the approval records it as a `credential_claims` row of kind `oidc-device-approval` (key the
+approval, owner the device request's authorization), because the ts-cli sign-in's ancestry binds that authorization.
+The authorization pass deletes that row once its approval is gone, and the device request's authorization goes at a
+later pass.
 EF Core's `Microsoft.EntityFrameworkCore` meter is exported with ts-auth's metrics.

@@ -204,6 +204,12 @@ public static class OidcIssuer
                     .AddEventHandler<ProcessSignInContext>(handler => handler.UseScopedHandler<ProjectSessionPolicy>()
                         .SetOrder(OpenIddictServerHandlers.PrepareRefreshTokenPrincipal.Descriptor.Order + 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ProcessSignInContext>(handler => handler.UseSingletonHandler<KeepFixedRefreshToken>()
+                        .SetOrder(OpenIddictServerHandlers.EvaluateGeneratedTokens.Descriptor.Order + 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ProcessSignInContext>(handler => handler.UseSingletonHandler<ExpireFixedRefreshToken>()
+                        .SetOrder(OpenIddictServerHandlers.PrepareRefreshTokenPrincipal.Descriptor.Order + 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<HandleRevocationRequestContext>(handler => handler.UseScopedHandler<RevokeTheSignIn>()
                         .SetOrder(OpenIddictServerHandlers.Revocation.RevokeToken.Descriptor.Order - 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
@@ -406,6 +412,8 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
 {
     internal const string DeviceAuthorizationClaim = "ts_auth_device_authorization";
 
+    internal const string DeviceApprovalKind = "oidc-device-approval";
+
     /// <inheritdoc />
     public async ValueTask HandleAsync(ProcessSignInContext context)
     {
@@ -437,6 +445,16 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
 
         var tenant = context.Transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) ?? throw new InvalidOperationException("The request has no tenant.");
         var inherited = token.Bindings.Concat(CredentialLineage.Read(context.Principal!)).Distinct().ToArray();
+        if (FixedRefreshTokens.Presented(context))
+        {
+            if (!await credentials.AreCurrentAsync(tenant, inherited, context.CancellationToken).ConfigureAwait(false))
+            {
+                context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+            }
+
+            return;
+        }
+
         var addsBinding = context.EndpointType is not OpenIddictServerEndpointType.EndUserVerification;
         var binding = Credentials.New("oidc", identifier);
         List<Change> operations =
@@ -471,6 +489,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             approvedAuthorizationId = approval.Id;
             operations.Add(Change.Assert(parent));
             operations.Add(Change.Insert(approval));
+            operations.Add(Credentials.Claim(tenant, DeviceApprovalKind, approval.Id, parentId));
         }
         else if (context.Request.IsDeviceCodeGrantType())
         {
@@ -485,7 +504,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             approvedAuthorizationId = approvalId;
         }
 
-        if (inherited.Length + (addsBinding ? 1 : 0) > Credentials.MaxBindings)
+        if (inherited.Length + (addsBinding ? 1 : 0) > Credentials.MaxLineage)
         {
             context.Reject(Errors.InvalidGrant, "This sign-in reached its rotation limit. Sign in again to continue.");
             return;

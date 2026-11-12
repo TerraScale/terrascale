@@ -405,10 +405,18 @@ public sealed class OidcAuthorizationStore(AuthData data, IHttpContextAccessor h
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         var cutoff = clock.GetUtcNow() - TimeSpan.FromHours(1);
-        return await data.ReadAsync((db, token) => db.OidcAuthorizations
-            .Where(authorization => (authorization.Status == Statuses.Revoked || authorization.Type == AuthorizationTypes.AdHoc) && authorization.CreationDate <= cutoff
-                && !db.OidcTokens.Any(entry => entry.AuthorizationId == authorization.Id))
-            .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        return await data.InBatchesAsync(batchSize, (db, token) => db.OidcAuthorizations
+                .Where(authorization => (authorization.Status == Statuses.Revoked || authorization.Type == AuthorizationTypes.AdHoc) && authorization.CreationDate <= cutoff
+                    && !db.OidcTokens.Any(entry => entry.AuthorizationId == authorization.Id)
+                    && !db.CredentialClaims.Any(claim => claim.InstanceId == authorization.InstanceId && claim.Kind == RedeemExactlyOnce.DeviceApprovalKind
+                        && claim.OwnerId == authorization.Id && db.OidcAuthorizations.Any(approval => approval.Id == claim.Key)))
+                .OrderBy(authorization => authorization.CreationDate).Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
+            + await data.InBatchesAsync(batchSize, (db, token) => db.CredentialClaims
+                .Where(claim => claim.InstanceId == OidcIssuer.Slug && claim.Kind == RedeemExactlyOnce.DeviceApprovalKind
+                    && db.CredentialClaims.Where(spent => spent.InstanceId == OidcIssuer.Slug && spent.Kind == RedeemExactlyOnce.DeviceApprovalKind
+                            && !db.OidcAuthorizations.Any(approval => approval.Id == spent.Key))
+                        .Select(spent => spent.Key).OrderBy(key => key).Take(batchSize).Contains(claim.Key))
+                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
     private async IAsyncEnumerable<OidcAuthorization> FindAsync(string? subject, string? client, string? status, string? type, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -688,7 +696,19 @@ public sealed class OidcTokenStore(AuthData data, Credentials credentials, IOpen
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
-        return await data.ReadAsync((db, token) => db.OidcTokens.Where(entry => entry.ExpirationDate <= now).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        var deleted = await data.InBatchesAsync(batchSize, (db, token) => db.OidcTokens.Where(entry => entry.ExpirationDate <= now).OrderBy(entry => entry.ExpirationDate)
+            .Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        var revoked = await data.ReadAsync((db, token) => db.OidcAuthorizations.Where(authorization => authorization.Status == Statuses.Revoked
+                && db.OidcTokens.Any(entry => entry.AuthorizationId == authorization.Id && entry.Type == TokenTypeIdentifiers.RefreshToken))
+            .Select(authorization => authorization.Id).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        foreach (var authorizationId in revoked)
+        {
+            deleted += await data.InBatchesAsync(batchSize, (db, token) => db.OidcTokens
+                .Where(entry => entry.AuthorizationId == authorizationId && entry.Type == TokenTypeIdentifiers.RefreshToken).OrderBy(entry => entry.CreationDate)
+                .Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        }
+
+        return deleted;
     }
 
     private async IAsyncEnumerable<OidcToken> FindAsync(string? subject, string? client, string? authorization, string? status, string? type,

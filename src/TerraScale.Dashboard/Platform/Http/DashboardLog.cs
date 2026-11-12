@@ -23,8 +23,8 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Dashboard request on {Route} lost a concurrent write race; answered 409")]
         internal static partial void DashboardRequestConflicted(this ILogger logger, object? route);
 
-        [LoggerMessage(EventId = 7, Level = LogLevel.Warning, Message = "Refresh of a stored ts-auth grant in {Table} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
-        internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, object? table, object? errorType, object? status, object? errorCode);
+        [LoggerMessage(EventId = 7, Message = "Refresh of a stored ts-auth grant in {Table} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
+        internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, LogLevel level, object? table, object? errorType, object? status, object? errorCode);
 
         [LoggerMessage(EventId = 8, Level = LogLevel.Warning, Message = "Saving a refreshed ts-auth grant in {Table} failed ({ErrorType}); retrying")]
         internal static partial void SavingARefreshedTsAuthGrant(this ILogger logger, object? table, object? errorType);
@@ -149,6 +149,9 @@ namespace TerraScale.Dashboard.Platform.Http
 
         [LoggerMessage(EventId = 49, Level = LogLevel.Warning, Message = "Account deletion did not end the billing of organization {OrganizationId} with {ErrorType} {ErrorCode}; the deletion cleanup retries it.")]
         internal static partial void AccountDeletionDidNotEndBilling(this ILogger logger, string organizationId, string errorType, string errorCode);
+
+        [LoggerMessage(EventId = 50, Level = LogLevel.Warning, Message = "Revoking the ts-auth grant of an expired dashboard session failed ({ErrorType}, status {Status}, code {ErrorCode}); its row stays for the next pass.")]
+        internal static partial void RevokingAnExpiredSessionFailed(this ILogger logger, string errorType, object? status, string errorCode);
 
         [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
         internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);

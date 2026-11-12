@@ -179,15 +179,20 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         var cutoff = clock.GetUtcNow() - IssueWindow - Lifetime;
-        var version = AuthIds.New();
-        return await data.ReadAsync((db, token) => db.Passcodes.Where(passcode => passcode.WindowStartedAt <= cutoff && !passcode.Pruned)
-            .ExecuteUpdateAsync(passcode => passcode
-                .SetProperty(row => row.CodeHash, string.Empty)
-                .SetProperty(row => row.PasswordHash, (string?)null)
-                .SetProperty(row => row.PendingTokenHash, (string?)null)
-                .SetProperty(row => row.Consumed, true)
-                .SetProperty(row => row.Pruned, true)
-                .SetProperty(row => EF.Property<string>(row, AuthDbContext.VersionProperty), version), token), cancellationToken).ConfigureAwait(false);
+        return await data.InBatchesAsync(batchSize, (db, token) =>
+        {
+            var version = AuthIds.New();
+            var batch = db.Passcodes.Where(passcode => passcode.WindowStartedAt <= cutoff && !passcode.Pruned)
+                .OrderBy(passcode => passcode.WindowStartedAt).Select(passcode => EF.Property<string>(passcode, AuthDbContext.VersionProperty)).Take(batchSize);
+            return db.Passcodes.Where(passcode => passcode.WindowStartedAt <= cutoff && !passcode.Pruned && batch.Contains(EF.Property<string>(passcode, AuthDbContext.VersionProperty)))
+                .ExecuteUpdateAsync(passcode => passcode
+                    .SetProperty(row => row.CodeHash, string.Empty)
+                    .SetProperty(row => row.PasswordHash, (string?)null)
+                    .SetProperty(row => row.PendingTokenHash, (string?)null)
+                    .SetProperty(row => row.Consumed, true)
+                    .SetProperty(row => row.Pruned, true)
+                    .SetProperty(row => EF.Property<string>(row, AuthDbContext.VersionProperty), version), token);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task<bool> IsCurrentAsync(string instanceId, PasscodePurpose purpose, string key, string issueId, CancellationToken cancellationToken)

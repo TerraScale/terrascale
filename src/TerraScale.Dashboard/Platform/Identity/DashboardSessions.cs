@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Platform.Identity;
 
@@ -198,7 +199,11 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
             var now = time.GetUtcNow();
             if ((record.SessionExpiresAt ?? record.ExpiresAt) <= now)
             {
-                await RemoveAsync(row, "expired", cancellationToken);
+                if (row.Kind == SessionRow.Credential)
+                {
+                    await RemoveAsync(row, "expired", cancellationToken);
+                }
+
                 return null;
             }
 
@@ -214,9 +219,10 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
                     await RemoveAsync(row, "no refresh token", cancellationToken);
                     return null;
                 }
-                if (record.RefreshLease.Length != 0)
+                var leaseEnded = record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now;
+                if (record.RefreshLease.Length != 0 && !(leaseEnded && lookup.Kind == SessionRow.Credential))
                 {
-                    if (record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now) { await RemoveAsync(row, "abandoned refresh lease", cancellationToken); return null; }
+                    if (leaseEnded) { await RemoveAsync(row, "abandoned refresh lease", cancellationToken); return null; }
                     if (waitDeadline.Elapsed > TimeSpan.FromSeconds(20))
                     {
                         throw new TimeoutException("Session refresh is still in progress.");
@@ -245,17 +251,18 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 
                     return null;
                 }
-                catch (Exception error) when (error is not (SignInRejectedException or RefreshNotStartedException))
+                catch (Exception error) when (error is RefreshNotStartedException || lookup.Kind == SessionRow.Credential)
                 {
-                    logger.RefreshOfAStoredTsAuth(lookup.Kind,
-                        error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TerraScale.Dashboard.Platform.TsAuth.TsAuthException)?.ErrorCode ?? "none");
-                    throw;
-                }
-                catch (RefreshNotStartedException)
-                {
-                    if (await FindAsync(lookup, rotating) is { } unchanged && Open(unchanged, credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
+                    var level = error is RefreshNotStartedException ? LogLevel.Debug : LogLevel.Warning;
+                    if (logger.IsEnabled(level))
                     {
-                        await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, rotating);
+                        var cause = error is RefreshNotStartedException { InnerException: { } inner } ? inner : error;
+                        logger.RefreshOfAStoredTsAuth(level, lookup.Kind, cause.GetType().Name, (cause as HttpRequestException)?.StatusCode, (cause as TsAuthException)?.ErrorCode ?? "none");
+                    }
+
+                    if (await FindAsync(lookup, cancellationToken) is { } unchanged && Open(unchanged, credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
+                    {
+                        await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, cancellationToken);
                     }
 
                     if (forceRefresh || record.ExpiresAt <= time.GetUtcNow())
@@ -265,6 +272,12 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 
                     renewBefore = TimeSpan.Zero;
                     continue;
+                }
+                catch (Exception error)
+                {
+                    logger.RefreshOfAStoredTsAuth(LogLevel.Warning, lookup.Kind, error.GetType().Name, (error as HttpRequestException)?.StatusCode,
+                        (error as TsAuthException)?.ErrorCode ?? "none");
+                    throw;
                 }
 
                 if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now ||
@@ -345,13 +358,59 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
         }
     }
 
+    public async Task ExpireBrowserSessionsAsync(int batchSize, CancellationToken cancellationToken)
+    {
+        var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
+        var now = time.GetUtcNow().UtcDateTime;
+        List<SessionRow> expired;
+        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        {
+            expired = await db.Sessions.AsNoTracking().Where(row => row.Kind == SessionRow.Browser && row.ExpiresAt <= now).OrderBy(row => row.Id).Take(batchSize)
+                .ToListAsync(cancellationToken);
+        }
+
+        foreach (var row in expired)
+        {
+            SessionRecord record;
+            try { record = Open(row, key); }
+            catch (IOException)
+            {
+                await RemoveAsync(row, "unreadable", cancellationToken);
+                continue;
+            }
+
+            try { await auth.RevokeAsync(record, cancellationToken); }
+            catch (Exception error) when (error is HttpRequestException or TimeoutException)
+            {
+                logger.RevokingAnExpiredSessionFailed(error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TsAuthException)?.ErrorCode ?? "none");
+                if (ConcernsTheClient(error))
+                {
+                    throw;
+                }
+
+                continue;
+            }
+
+            await RemoveAsync(row, "expired", cancellationToken);
+        }
+    }
+
+    private static bool ConcernsTheClient(Exception error) => error switch
+    {
+        TsAuthException { ErrorCode: "invalid_client" } => true,
+        TsAuthException { StatusCode: HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests or HttpStatusCode.BadGateway or HttpStatusCode.GatewayTimeout } => true,
+        TsAuthException => false,
+        _ => true,
+    };
+
     public async Task EndAsync(HttpContext context)
     {
         if (BrowserToken(context) is { } token)
         {
             var hash = Key(token);
+            var now = time.GetUtcNow().UtcDateTime;
             await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
-            await db.Sessions.Where(row => row.TokenHash == hash).ExecuteDeleteAsync(context.RequestAborted);
+            await db.Sessions.Where(row => row.TokenHash == hash && row.ExpiresAt > now).ExecuteDeleteAsync(context.RequestAborted);
         }
         Clear(context);
     }

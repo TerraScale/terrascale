@@ -207,8 +207,20 @@ was selected; the discarded historical backup choice cannot be recovered.
 
 ### Expiry
 
-`StorageSweeper` runs every 10 minutes and deletes expired `auth_flows`, `sessions` (and with them their access tokens
-and codes), expired `mcp_codes`, and MCP clients that never finished a first sign-in within 24 hours.
+`StorageSweeper` runs every 10 minutes and deletes expired `auth_flows`, expired `credential` rows of `sessions` (and
+with them their access tokens and codes; their ts-auth grant expires with them), expired `mcp_codes`, and MCP clients
+that never finished a first sign-in within 24 hours.
+
+An expired browser session's grant outlives it at ts-auth, so each pass revokes the grants of at most 500 expired
+browser sessions, oldest first (RFC 7009), and deletes the row of each one ts-auth accepted; ts-auth then prunes that
+sign-in's refresh tokens, and the rest follow in the next passes. A revocation that fails is logged and leaves its row
+for the next pass, and the pass goes on with the next session. The pass ends early only when the failure concerns the
+dashboard's client or ts-auth as a whole: no answer within the deadline or no connection, `invalid_client` (`401`),
+`429`, or a gateway's `502` or `504`; any other answer from ts-auth, such as `503 temporarily_unavailable` after a lost
+write, concerns that session only. A request that finds its browser session expired answers as signed out at once
+without calling ts-auth and leaves the row to the sweeper. Sign-out revokes a live session's grant itself and leaves an
+expired session's row to the sweeper as well. A row the sweeper cannot decrypt holds no grant it can revoke and is
+deleted.
 
 Project and organization deletion delete `alert_rules` and `log_drains` (their events and cursors cascade) and the
 organization's `allowance_alerts`.

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -27,7 +28,7 @@ namespace TerraScale.Dashboard.Features.Auth
             return endpoint + "?" + string.Join("&", fields.Select(field => Uri.EscapeDataString(field.Key) + "=" + Uri.EscapeDataString(field.Value)));
         }
 
-        public async Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, CancellationToken cancellationToken)
+        public async Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, DateTimeOffset? credentialExpiresAt, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(code) || code.Length > 4096)
             {
@@ -39,9 +40,11 @@ namespace TerraScale.Dashboard.Features.Auth
             try
             {
                 tokens = await Client().Oidc.ExchangeAuthorizationCodeAsync(
-                    credentials.AuthClientId, credentials.AuthClientSecret, code, flow.RedirectUri, flow.Verifier, cancellationToken);
+                    credentials.AuthClientId, credentials.AuthClientSecret, code, flow.RedirectUri, flow.Verifier, credentialExpiresAt, cancellationToken);
             }
             catch (TsAuthException error) when (error.ErrorCode == "invalid_grant") { throw new SignInRejectedException(); }
+            catch (TsAuthException error) when (error.ErrorCode == "invalid_request" && credentialExpiresAt is not null)
+            { throw new AccountAccessException("This token could not be created with that expiry. Choose a shorter expiry.", 422); }
             return await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken);
         }
 
@@ -63,9 +66,9 @@ namespace TerraScale.Dashboard.Features.Auth
             {
                 tokens = await client.Oidc.RefreshTokenAsync(credentials.AuthClientId, credentials.AuthClientSecret, session.RefreshToken, cancellationToken);
             }
-            catch (TsAuthException error) when (error.ErrorCode == "invalid_grant" || error.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.Unauthorized)
+            catch (TsAuthException error) when (error.ErrorCode == "invalid_grant")
             { throw new SignInRejectedException(); }
-            catch (TsAuthException error) when (error.ErrorCode == "temporarily_unavailable" || error.StatusCode is System.Net.HttpStatusCode.TooManyRequests)
+            catch (TsAuthException error) when (error.ErrorCode == "temporarily_unavailable" || error.StatusCode is >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError)
             { throw new RefreshNotStartedException(error); }
             catch (HttpRequestException error) when (error is not TsAuthException && error.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError)
             { throw new RefreshNotStartedException(error); }
@@ -211,7 +214,7 @@ namespace TerraScale.Dashboard.Features.Auth
         private static async Task<TsAuthUserInfo> UserInfoAsync(TsAuthClient client, string accessToken, CancellationToken cancellationToken)
         {
             try { return await client.Oidc.GetUserInfoAsync(accessToken, cancellationToken); }
-            catch (TsAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            catch (TsAuthException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
             { throw new SignInRejectedException(); }
         }
 
