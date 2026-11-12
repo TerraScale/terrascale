@@ -71,6 +71,7 @@ After a failed statement inside a transaction, every `execute` answers `transact
 | No auth frame within 5 seconds of a headerless upgrade | close 1008 |
 | Server restarting | close 1001 |
 | The region's writer starts handing off to another node | close 1012 after the answer to the frame in flight; frames that arrive later do not run. Reconnect |
+| An upgrade while that handoff holds the region's ingress | 503 with `Retry-After: 1` |
 
 The server pings every 20 seconds and drops a peer that does not answer within 20 seconds. After a close for a client
 fault (1003, 1008, 1009, 1011) it drops a peer that does not answer the close within 2 seconds. After a 1001 or 1012 it

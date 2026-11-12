@@ -370,7 +370,7 @@ internal sealed class SqlSocket(
     {
         try
         {
-            return await ingress.EnterAsync(_admitting).ConfigureAwait(false);
+            return await ingress.EnterAsync(parkWhileHeld: true, _admitting).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_fence.IsCancellationRequested)
         {

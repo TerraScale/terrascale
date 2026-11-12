@@ -17,7 +17,7 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
     private int _outstanding;
     private bool _held;
 
-    internal async Task<Lease> EnterAsync(CancellationToken token)
+    internal async Task<Lease?> EnterAsync(bool parkWhileHeld, CancellationToken token)
     {
         if (!await _slots.WaitAsync(0, token).ConfigureAwait(false))
         {
@@ -46,6 +46,11 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
                         return new Lease(this, drain: false, _fence.Token);
                     }
                     opened = _open.Task;
+                }
+                if (!parkWhileHeld)
+                {
+                    ReleaseOutstanding();
+                    return null;
                 }
                 await opened.WaitAsync(token).ConfigureAwait(false);
             }
@@ -175,6 +180,8 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
         result.SetResult();
         return result;
     }
+
+    internal sealed class RefusedWhileHeld;
 
     internal sealed class Lease(RegionalIngress ingress, bool drain, CancellationToken fence) : IDisposable
     {
