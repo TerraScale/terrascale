@@ -89,7 +89,16 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 if (stored is not { Erased: false } || binding.RequestId != draft.DraftId || binding.CheckoutId != draft.CheckoutId
                     || binding.CustomerId != draft.CustomerId || binding.SubscriptionId != draft.SubscriptionId)
                 {
-                    throw new IOException("Organization already has a billing binding for another checkout or subscription.");
+                    if (pending is { State: OrganizationCheckoutStates.Creating })
+                    {
+                        pending.State = OrganizationCheckoutStates.Canceling;
+                        pending.RefusalReason = "This organization already has billing.";
+                        if (!await storage.ReplaceAsync(pending, cancellationToken))
+                        {
+                            continue;
+                        }
+                    }
+                    throw new OrganizationCheckoutRefusedException("This organization already has billing.");
                 }
 
                 if (pending is not null)
@@ -130,8 +139,15 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             }
             else
             {
-                stored.Rows.Attach(db);
-                Apply(db, stored.Rows, Write(organization, AccountService.NewId(), null));
+                var root = stored.Rows.Root;
+                db.Attach(root);
+                root.Kind = organization.Kind;
+                root.PlanId = organization.PlanId;
+                root.BillingStatus = organization.BillingStatus;
+                root.Status = organization.Status;
+                root.PaymentMethodValidated = organization.PaymentMethodValidated;
+                root.Version = AccountService.NewId();
+                organization = Read(stored.Rows);
             }
             db.Add(billing);
             db.Add(new StripeCustomerRow

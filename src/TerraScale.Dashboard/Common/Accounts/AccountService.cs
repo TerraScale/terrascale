@@ -222,6 +222,9 @@ namespace TerraScale.Dashboard.Common.Accounts
                 return (found, organizationStore.ReadManyAsync([.. found.Where(live => TerraScaleIds.IsValid(live.Id)).Select(live => live.Id)], cancellationToken));
             }
 
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var creating = await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(
+                row => row.UserId == session.UserId && row.State == OrganizationCheckoutStates.Creating, cancellationToken);
             var prefetched = new System.Collections.Concurrent.ConcurrentDictionary<string, OrganizationAccess>(StringComparer.Ordinal);
             async Task HydrateSelectedAsync(OrganizationRecord org)
             {
@@ -240,7 +243,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 }
 
                 var collaborator = live.Role is null;
-                var org = await OrganizationStateAsync(session, live, snapshot, cancellationToken, create: !collaborator);
+                var org = await OrganizationStateAsync(session, live, snapshot, creating, cancellationToken, create: !collaborator);
                 if (org is null)
                 {
                     return null;
@@ -346,21 +349,16 @@ namespace TerraScale.Dashboard.Common.Accounts
         }
 
         private async Task<OrganizationRecord?> OrganizationStateAsync(SessionRecord session, TsAuthPlatformOrganization live, Task<IReadOnlyDictionary<string, OrganizationRecord?>> snapshot,
-            CancellationToken cancellationToken, bool create = true)
+            PendingOrganizationCheckout? creating, CancellationToken cancellationToken, bool create = true)
         {
-            if (live.CreatedBy == session.UserId)
+            var records = await snapshot;
+            if (live.CreatedBy == session.UserId && creating is not null
+                && (creating.OrganizationId.Length > 0 ? creating.OrganizationId == live.Id : !records.ContainsKey(live.Id)))
             {
-                await using var db = await storage.CreateDbContextAsync(cancellationToken);
-                var draft = await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(
-                    row => row.UserId == session.UserId && row.State == OrganizationCheckoutStates.Creating, cancellationToken);
-                if (draft is not null && (draft.OrganizationId.Length > 0 ? draft.OrganizationId :
-                    (await CreatingOrganizationAsync(session, draft, cancellationToken)).Id) == live.Id)
-                {
-                    return null;
-                }
+                return null;
             }
 
-            if ((await snapshot).TryGetValue(live.Id, out var read))
+            if (records.TryGetValue(live.Id, out var read))
             {
                 return read ?? throw new AccountAccessException("Organization is unavailable.", 404);
             }
