@@ -35,7 +35,7 @@ pending.
 
 | Table | Holds | Keys and constraints |
 |---|---|---|
-| `auth_flows` | A sealed OIDC or step-up flow | `id` ULID; unique `token_hash` (SHA-256 of the cookie bearer); `purpose` is one of the two flow kinds; nonce 12 and tag 16 bytes; `expires_at > created_at` |
+| `auth_flows` | A sealed OIDC, step-up or alert-secret flow | `id` ULID; unique `token_hash` (SHA-256 of the cookie bearer); `purpose` is one of the three flow kinds; nonce 12 and tag 16 bytes; `expires_at > created_at` |
 | `sessions` | A sealed ts-auth grant: a browser session (`kind = 'browser'`) or a PAT/MCP credential (`kind = 'credential'`) | `id` ULID; unique `token_hash`, required for browser rows and absent for credentials; index on `user_id`; `version` ULID concurrency token for refresh leases |
 | `access_tokens` | A personal access token | `id` ULID; unique `secret_hash`; unique `credential_id`, foreign key to `sessions` with cascade delete; `mcp_client_id` foreign key to `mcp_clients` |
 | `mcp_clients` | A dynamically registered MCP OAuth client | `id` canonical ULID; 1 to 10 redirect URIs; lifecycle checks (`last_activity_at >= created_at`, first sign-in between them, `closed_at` after the last activity); `version` concurrency token |
@@ -108,6 +108,12 @@ account or organization that has no row yet inserts the fenced row, so a create 
 
 Alerts and log drains:
 
+- A new alert signing secret is revealed after a `303` through a two-minute encrypted `auth_flows` hand-off, bound
+  to the creating user, dashboard browser-session hash and project. Its cookie contains only a random bearer; only
+  its hash is stored. A successful delete consumes the hand-off before rendering, so two concurrent GETs reveal it
+  once. Expired or mismatched hand-offs reveal nothing; `StorageSweeper` deletes unread expired rows every ten minutes.
+  Both the hand-off and the rule's persistent signing secret use AES-GCM with the dashboard session encryption key;
+  neither is stored as plaintext, put in a URL or logged.
 - Creating an alert rule takes the lowest free slot; a create that loses the slot to a concurrent one takes the next,
   and a project with all 20 slots taken answers `409`. A threshold change writes a new `version`, so a worker that
   evaluated the old threshold saves nothing and evaluates again a minute later.
@@ -162,6 +168,11 @@ dotnet ef migrations add <Name> --project src/TerraScale.Dashboard \
 sed -i '/^\s*\/\/\/ <inheritdoc \/>$/d' src/TerraScale.Dashboard/Platform/Persistence/Migrations/*.cs
 dotnet format whitespace src/TerraScale.Dashboard/TerraScale.Dashboard.csproj
 ```
+
+`AllowAlertSecretHandoff` changes only the `auth_flows` purpose check constraint to admit `ts-dashboard-alert-secret`;
+no column is added. During a rolling deploy, older instances query only the OIDC and step-up purposes and leave new
+hand-offs unread; their sweeper can delete expired rows without decrypting them. A redirect reaching an older
+instance cannot reveal the new secret, so the reveal requires an instance running the new code.
 
 Each migration runs in one TerraBase transaction, capped at 5 seconds. Keep one table per migration: a single
 migration creating seven tables took a median 4.7 s and up to 9.5 s while the E2E suite migrated about 30 databases
