@@ -256,7 +256,7 @@ internal sealed partial class ContinuousBackup
         BackupScratchStream sealedObject;
         try
         {
-            sealedObject = await SealAsync(file, key, file.Pending, cancellationToken).ConfigureAwait(false);
+            (sealedObject, _) = await SealAsync(file, key, file.Pending, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -303,29 +303,37 @@ internal sealed partial class ContinuousBackup
         while (read.Remaining);
     }
 
-    private async Task StoreAsync(ShippedFile file, string key, string path, string kind, CancellationToken cancellationToken)
+    private async Task<string> StoreAsync(ShippedFile file, string key, string path, string kind, CancellationToken cancellationToken)
     {
         await using var bundle = new FileStream(ScratchFile(".snapshot"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
             FileOptions.Asynchronous | FileOptions.DeleteOnClose);
         await SnapshotBundle.WriteAsync(path, bundle, cancellationToken).ConfigureAwait(false);
         bundle.Position = 0;
-        await StoreAsync(file, key, bundle, kind, cancellationToken).ConfigureAwait(false);
+        return await StoreAsync(file, key, bundle, kind, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task StoreAsync(ShippedFile file, string key, Stream content, string kind, CancellationToken cancellationToken)
+    private async Task<string> StoreAsync(ShippedFile file, string key, Stream content, string kind, CancellationToken cancellationToken)
     {
-        await using var sealedObject = await SealAsync(file, key, content, cancellationToken).ConfigureAwait(false);
-        await PutAsync(file, key, sealedObject, kind, cancellationToken).ConfigureAwait(false);
+        var (sealedObject, keyId) = await SealAsync(file, key, content, cancellationToken).ConfigureAwait(false);
+        await using (sealedObject.ConfigureAwait(false))
+        {
+            await PutAsync(file, key, sealedObject, kind, cancellationToken).ConfigureAwait(false);
+        }
+        return keyId;
     }
-    private async Task<BackupScratchStream> SealAsync(ShippedFile file, string key, Stream content, CancellationToken cancellationToken)
+    private async Task<(BackupScratchStream Content, string KeyId)> SealAsync(ShippedFile file, string key, Stream content, CancellationToken cancellationToken)
     {
+        if (file.GenerationKey is { } generationKey)
+        {
+            _ = await file.Target.Keys.GetAsync(file.Scope, generationKey, cancellationToken).ConfigureAwait(false);
+        }
         var (keyId, dataKey) = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
         var bytes = checked(content.Length + (content.Length / (1 << 20) + 1) * 24 + 62);
         var sealedObject = new BackupScratchStream(ScratchFile(".sealed"), null, bytes);
         try
         {
             await BackupObject.WriteAsync(content, sealedObject, key, keyId, dataKey, cancellationToken).ConfigureAwait(false);
-            return sealedObject;
+            return (sealedObject, keyId);
         }
         catch
         {
@@ -361,6 +369,7 @@ internal sealed partial class ContinuousBackup
     {
         file.PlatformProgress = null;
         file.Generation = null;
+        file.GenerationKey = null;
         if (file.Side is { Completion.IsCompleted: false } side)
         {
             file.DrilledAt = DateTimeOffset.MinValue;

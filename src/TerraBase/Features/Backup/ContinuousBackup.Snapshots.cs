@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Runtime.ExceptionServices;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
@@ -18,6 +19,10 @@ internal sealed partial class ContinuousBackup
     {
         if (side.Stored!.Task.Exception?.GetBaseException() is { } error)
         {
+            if (GenerationLost(error))
+            {
+                ExceptionDispatchInfo.Throw(error);
+            }
             _failures.Add(1);
             file.SnapshotFailures++;
             (file.SnapshotRetryAt, file.SnapshotError) = (_time.GetUtcNow() + Backoff(file.SnapshotFailures), error.GetType().Name);
@@ -54,6 +59,7 @@ internal sealed partial class ContinuousBackup
     internal static long SealedPendingBytes(long growth) => checked(2 * growth + (1L << 20));
     private async Task StartGenerationAsync(ShippedFile file, CancellationToken cancellationToken)
     {
+        _ = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
         var claim = _disk.Reserve(await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false));
         var generation = EntityIds.New(_time);
         var snapshot = ScratchFile(".db");
@@ -70,14 +76,14 @@ internal sealed partial class ContinuousBackup
                 ? await _engine.ChecksumAsync(snapshot, cancellationToken).ConfigureAwait(false)
                 : null;
             await StoreGenerationProofAsync(file, generation, key, captured, cancellationToken).ConfigureAwait(false);
-            await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
+            var generationKey = await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
             if (file.Tap is ICdcBackupRetention baseline)
             {
                 await baseline.AcknowledgeAsync(baseline.Position, cancellationToken).ConfigureAwait(false);
             }
 
-            (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
-                (generation, 0, 0, at, at, at, false);
+            (file.Generation, file.GenerationKey, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
+                (generation, generationKey, 0, 0, at, at, at, false);
             Prove(file, at);
             _generations.Add(1);
             (file.LastError, file.Failures) = (null, 0);

@@ -599,7 +599,16 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             _logger.ZLogDebug($"Continuous backup of {file.Prefix:@File} stopped: its database closed while it was read; the next discovery reopens it if it exists");
             return;
         }
-        if (file.Target.Revision != BackupDestinationNames.Platform && file.Generation is not null)
+        if (GenerationLost(error))
+        {
+            file.Target.Keys.Forget(file.Scope);
+            if (file.Generation is not null)
+            {
+                Drop(file, error is DatabaseShreddedException ? "shredded" : "missing_key");
+                file.DrilledAt = DateTimeOffset.MinValue;
+            }
+        }
+        else if (file.Target.Revision != BackupDestinationNames.Platform && file.Generation is not null)
         {
             Drop(file, "destination");
         }
@@ -610,6 +619,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         file.RetryAt = _time.GetUtcNow() + Backoff(file.Failures);
         _logger.ZLogWarning(error, $"Continuous backup of {file.Prefix:@File} failed; the next pass retries");
     }
+    private static bool GenerationLost(Exception error) =>
+        error is DatabaseShreddedException or InvalidDataException { Message: DataKeys.MissingKeyMessage };
+
     private static double Lag(ShippedFile file, DateTimeOffset now)
     {
         var noticed = file.BehindSince is { } since ? Math.Max(0, (now - since).TotalSeconds) : 0;
@@ -696,6 +708,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public SideWork? Side { get; set; }
 
         public Ulid? Generation { get; set; }
+        public string? GenerationKey { get; set; }
         public long Position { get; set; }
         public long PendingStart { get; set; }
         public DateTimeOffset PendingAt { get; set; }

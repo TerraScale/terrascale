@@ -10,6 +10,11 @@ internal sealed class KeyRevocationLocal(KeyCustody custody, IShreddedDatabases 
 {
     internal async Task<bool> RevokeAsync(TenantContext database, CancellationToken token)
     {
+        if (ShredGuard.Refusal(database) is not null)
+        {
+            return false;
+        }
+
         var scope = BackupLayout.KeyScope(database);
         if (await ShredRecords.ReadAsync(custody.Store, scope, token).ConfigureAwait(false) is not { } record)
         {
@@ -20,7 +25,7 @@ internal sealed class KeyRevocationLocal(KeyCustody custody, IShreddedDatabases 
         {
             true => await EraseAsync(database, token).ConfigureAwait(false),
             false => false,
-            Forbidden => true,
+            Forbidden => false,
         };
     }
 
