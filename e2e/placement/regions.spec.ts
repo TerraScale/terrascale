@@ -236,7 +236,10 @@ test('R7 unchanged placement and the documented nine-member maximum', async ({ c
     const repeated = await patch(cells, created.id, ['fra', 'gru']);
     await answer(repeated, 200, '200 unchanged database');
     expect(await repeated.json()).toEqual(before);
-    console.log(`R7 version field: ${Object.keys(before).filter(key => /version|epoch/i.test(key)).join(',') || 'not exposed by the database response'}`);
+    expect(before.placementVersion, 'placementVersion is exposed').toEqual(expect.any(Number));
+    const after = await json<Record<string, unknown>>(await cells.get(`${home}${database(created.id)}`));
+    expect(after.placementVersion, 'unchanged request retains placementVersion').toBe(before.placementVersion);
+    console.log(`R7 placementVersion unchanged: ${before.placementVersion}`);
     const over = await patch(cells, created.id, ['gru', 'fra', 'sjc', 'iad', 'lhr', 'cdg', 'sin', 'syd', 'nrt', 'bom']);
     await answer(over, 400, 'invalid_request');
     expect((await over.json()).error.message).toBe('regions can place a database in at most 9 regions, including the writer and any intermediate placement');
