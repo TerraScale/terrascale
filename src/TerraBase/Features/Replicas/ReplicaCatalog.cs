@@ -44,7 +44,7 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
         var stored = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
         if (stored is TenantDatabaseRecord unchanged && unchanged.Name == entry.Name
             && unchanged.Placement.Home == placement.Home && unchanged.Placement.Version == placement.Version
-            && unchanged.Placement.AllRegions == placement.AllRegions && unchanged.Placement.Replicas.SequenceEqual(placement.Replicas)
+            && unchanged.Placement.AllRegions == placement.AllRegions && DatabaseRegions.SameSet(unchanged.Placement.Replicas, placement.Replicas)
             && unchanged.Identity == DatabaseIdentity.Reconcile(entry.Identity, unchanged.Identity))
         {
             return true;
