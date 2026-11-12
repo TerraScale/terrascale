@@ -4,6 +4,9 @@ import { createServer } from 'node:http';
 
 const origin = 'https://dash.terrascale.tech';
 const bucket = /^\/(terrascale-[a-z]+-files)\/(app-files\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26})$/;
+const listing = /^\/(terrascale-[a-z]+-files)\/?$/;
+const projectPrefix = /^app-files\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/$/;
+const listQuery = new Set(['list-type', 'prefix', 'max-keys', 'encoding-type']);
 const objects = new Map();
 const log = { calls: [], unexpected: [] };
 
@@ -69,6 +72,28 @@ function unexpected(request, response, status, code, detail) {
   fail(response, status, code, detail);
 }
 
+function list(request, response, name, query) {
+  const prefix = query.get('prefix') ?? '';
+  const limit = Number(query.get('max-keys') ?? 1000);
+  const encoded = query.has('encoding-type');
+  if (query.get('list-type') !== '2' || !projectPrefix.test(prefix) || [...query.keys()].some((key) => !listQuery.has(key))
+    || !Number.isInteger(limit) || limit < 1 || limit > 1000 || (encoded && query.get('encoding-type') !== 'url'))
+    return unexpected(request, response, 400, 'InvalidArgument', 'a listing that is not ListObjectsV2 of one project prefix');
+  const text = (value) => (encoded ? value.split('/').map(encode).join('/') : value);
+  const keys = [...objects.keys()].filter((key) => key.startsWith(`${name}/${prefix}`)).sort();
+  const contents = keys.slice(0, limit).map((key) => {
+    const stored = objects.get(key);
+    return `<Contents><Key>${text(key.slice(name.length + 1))}</Key><LastModified>${new Date(stored.modified).toISOString()}</LastModified>`
+      + `<ETag>${stored.etag.replaceAll('"', '&quot;')}</ETag><Size>${stored.body.length}</Size><StorageClass>STANDARD</StorageClass></Contents>`;
+  });
+  const more = keys.length > limit ? `<NextContinuationToken>${Buffer.from(keys[limit - 1]).toString('base64')}</NextContinuationToken>` : '';
+  const body = `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>${name}</Name>`
+    + `<Prefix>${text(prefix)}</Prefix><KeyCount>${contents.length}</KeyCount><MaxKeys>${limit}</MaxKeys>${encoded ? '<EncodingType>url</EncodingType>' : ''}`
+    + `<IsTruncated>${keys.length > limit}</IsTruncated>${more}${contents.join('')}</ListBucketResult>`;
+  response.writeHead(200, { 'content-type': 'application/xml', 'content-length': Buffer.byteLength(body) });
+  response.end(body);
+}
+
 createServer((request, response) => {
   const [rawPath, rawQuery = ''] = request.url.split('?', 2);
   if (request.method === 'GET' && rawPath === '/log') {
@@ -82,7 +107,8 @@ createServer((request, response) => {
     query.append(decode(at < 0 ? pair : pair.slice(0, at)), at < 0 ? '' : decode(pair.slice(at + 1)));
   }
   const target = bucket.exec(rawPath);
-  log.calls.push(`${request.method} ${target ? '/' + target[1] + '/<key>' : rawPath}`);
+  const listed = request.method === 'GET' ? listing.exec(rawPath) : null;
+  log.calls.push(`${request.method} ${target ? '/' + target[1] + '/<key>' : listed ? '/' + listed[1] + '?prefix=<project>' : rawPath}`);
   if (request.method === 'OPTIONS') {
     if (request.headers.origin !== origin || request.headers['access-control-request-method'] !== 'PUT' || !target)
       return unexpected(request, response, 403, 'CORSResponse', 'preflight from another origin, method or path');
@@ -90,8 +116,8 @@ createServer((request, response) => {
     response.writeHead(204, { 'access-control-allow-methods': 'PUT', 'access-control-allow-headers': 'content-type, x-amz-checksum-sha256', 'access-control-max-age': '600' });
     return response.end();
   }
-  if (!target) return unexpected(request, response, 404, 'NoSuchBucket', 'path outside the files bucket');
-  const key = `${target[1]}/${target[2]}`;
+  if (!target && !listed) return unexpected(request, response, 404, 'NoSuchBucket', 'path outside the files bucket');
+  const key = target ? `${target[1]}/${target[2]}` : null;
   const chunks = [];
   request.on('data', (chunk) => chunks.push(chunk));
   request.on('end', () => {
@@ -99,6 +125,7 @@ createServer((request, response) => {
     if (request.headers.origin === origin) cors(response);
     const denied = signed(request, rawPath, query);
     if (denied) return unexpected(request, response, 403, 'SignatureDoesNotMatch', denied);
+    if (listed) return list(request, response, listed[1], query);
     if (request.method === 'PUT') {
       if (Number(request.headers['content-length']) !== body.length) return unexpected(request, response, 400, 'IncompleteBody', 'content-length differs from the body');
       if (request.headers['x-amz-checksum-sha256'] !== sha256(body, 'base64')) return fail(response, 400, 'BadDigest', 'The SHA256 you specified did not match the calculated checksum.');

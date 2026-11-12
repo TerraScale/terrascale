@@ -12,6 +12,7 @@ public sealed record FileObject(string Id, string Name, string ContentType, long
 public sealed record FileSignedUrl(string Id, string Url, DateTimeOffset ExpiresAt, IReadOnlyDictionary<string, string> Headers);
 public sealed record FileBucketPage(IReadOnlyList<FileBucket> Items, string? Next);
 public sealed record FileObjectPage(IReadOnlyList<FileObject> Items, string? Next);
+public sealed record FileObjectListing(IReadOnlyList<string> Keys, bool Truncated);
 public readonly union FileStorageResult(FileBucket, FileBucketPage, FileObject, FileObjectPage, FileSignedUrl, Done, Validation, Forbidden, NotFound, Conflict, QuotaExceeded, Unavailable);
 public interface IFileStorage
 {
@@ -27,8 +28,10 @@ public interface IFileStorage
 }
 public interface IFileObjectStore
 {
+    bool Configured { get; }
     ValueTask<FileSignedUrl> UploadAsync(string region, string key, FileObject file, CancellationToken cancellationToken);
     ValueTask<FileSignedUrl> DownloadAsync(string region, string key, FileObject file, CancellationToken cancellationToken);
     ValueTask<bool> VerifyAsync(string region, string key, FileObject file, CancellationToken cancellationToken);
     ValueTask DeleteAsync(string region, string key, CancellationToken cancellationToken);
+    ValueTask<FileObjectListing> ListAsync(string region, string prefix, CancellationToken cancellationToken);
 }

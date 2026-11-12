@@ -17,7 +17,7 @@ after a lost response, a restart or a repeated request presents the same identit
 | --- | --- | --- |
 | 200 `{"status": "accepted"}` | Every expected holder recorded an empty receipt under the fence. | fence (earlier) |
 | 202 `{"status": "pending", "pendingHolders": n}` | Fence persisted; some holders have not confirmed emptiness, or one sees a database. | fence |
-| 409 `not_empty` | This node sees a database, project API key or backup destination. | nothing |
+| 409 `not_empty` | Version 1 only: this node sees a database, project API key, backup destination or file bucket. | nothing |
 | 409 `closure_conflict` | A fence for this project exists with another closure id or authority organization. | nothing |
 | 409 `binding_conflict` | TerraBase's own binding names another authority organization, or an unverified legacy namespace holds the id. | nothing |
 | 503 | Catalog unavailable or not verified (restore gate). | nothing |
@@ -31,8 +31,9 @@ after a lost response, a restart or a repeated request presents the same identit
 - The request's transaction resolves TerraBase's own mapping and binding, checks local emptiness and writes the fence
   plus this machine's receipt atomically. Expected holders are the retained catalog members plus this machine, the same
   rule as permanent database purge.
-- Database registration, project API key issue (`EngineApiKeyStore`) and backup destination saves
-  (`ProjectBackupDestinations`) all read the fence in their committing transaction. Project-key and destination writes
+- Database registration, project API key issue (`EngineApiKeyStore`), backup destination saves
+  (`ProjectBackupDestinations`), file bucket creation, upload reservation and upload completion
+  (`FileStorageService`) all read the fence in their committing transaction. A file request answers 404 once it is there. Project-key and destination writes
   answer 404 once it is there; the operator key route keeps its fixed 400 for an unknown scope.
 - Every machine's convergence pass (2 s) writes or refreshes its own receipt `project_closure_receipts/<project>/<machine>`
   in a local catalog transaction that sees the fence. Receipt `empty` is computed from live database records of the

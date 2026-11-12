@@ -10,6 +10,8 @@ namespace TerraBase.Features.FileStorage;
 [JsonSerializable(typeof(FileBucketRulesRequest))]
 [JsonSerializable(typeof(CreateFileUploadRequest))]
 [JsonSerializable(typeof(FileObject))]
+[JsonSerializable(typeof(FileObjectPurge))]
+[JsonSerializable(typeof(FileProjectPurge))]
 [JsonSerializable(typeof(FileSignedUrl))]
 [JsonSerializable(typeof(FileBucketPage))]
 [JsonSerializable(typeof(FileObjectPage))]

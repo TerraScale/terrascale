@@ -69,7 +69,8 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   `/account-deleted` by itself, without a click, within its timeout); the sign-up submission of the four `hosted`
   tests: each would send a production mail, and `setup`, `desktop-setup` and `invitation` already audit the verify
   page; and the global teardown's check of the Stripe stand-in's unexpected calls (`support/teardown.ts`), because
-  production has no stand-in.
+  production has no stand-in. The files tests of `interactions/files.spec.ts` are skipped there, and `finish` leaves
+  out its object-store checks, because the browser and the runner may not reach the object store on production.
 - The SDK stage keeps the pacing and every per-operation check. TerraBase's lane counters (`127.0.0.1:9091`) exist only
   on the local target, so a refused request that an SDK resends itself (Go and Rust REST calls, JavaScript and .NET
   reads) is caught on pull requests only; on production a refusal fails the run when it reaches the runner.
@@ -125,6 +126,21 @@ filter, and its second page is a state of its own (the phone owner's organizatio
 `finish`; the two pages show 20). `finish`, the teardown of `setup`, starts when all four have ended and runs its
 tests in order in one worker: SDK group A, the database deletion through the UI, SDK group B, a rename and the account
 deletion. A teardown whose setup failed fails once with "setup did not finish" and runs nothing else.
+
+`interactions/files.spec.ts` (the phone owner, local stack only) creates a bucket, uploads through the upload zone,
+downloads the same bytes, deletes the file and deletes the bucket in the next click: TerraBase erases a bucket's
+deleted files with it. Its second test sees a forged upload and a forged delete refused and a bucket that still has a
+file refused with 409, and leaves that bucket with one live file for `finish` (`$E2E_STATE/files-left.json`). Each
+test asks the object store itself whether an object is there: `stored` of `support/files.ts` sends the stand-in a
+`HEAD` signed with the run's R2 key pair. Just before its account deletion `finish` uploads and deletes one more file
+in that bucket and reserves an upload it does not use. After the deletion the live and the just-deleted file are gone
+from the object store, the reserved link still takes its file, and that file is gone again within the step's wait
+(TerraBase deletes such late objects every 5 s until the link has expired). The test then puts one object under the
+project's prefix that no record names, signed with the run's key pair (`putUnnamed`): the state an upload leaves when
+it ends after its purge record is gone, six minutes after the reservation, which a run of three minutes cannot reach
+by waiting. Only TerraBase's sweep of the closed project's prefix can delete it; a sweep comes each time the age of
+the project's marker has doubled, so the wait is bounded by the time since the deletion began plus 15 s. A `finish`
+without the bucket of the files tests fails with "left no bucket for the account deletion".
 
 ## The SDK stage and the plans' request budgets
 
@@ -216,7 +232,8 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
   `env/r2.mjs` for Cloudflare R2 behind `journey.r2.cloudflarestorage.com`, TerraBase's customer file store: in-memory
   objects of the `terrascale-<region>-files` bucket, every request signed with SigV4 by the run's key pair in
   `$E2E_STATE/r2`, presigned or in its headers, an upload refused unless its body matches its
-  `x-amz-checksum-sha256`, and CORS for the dashboard's origin only. A request it refuses for any other reason than a
+  `x-amz-checksum-sha256`, a `ListObjectsV2` of one project's prefix (`app-files/<organization>/<project>/`, at most
+  1000 keys a call; a listing of anything else is unexpected), and CORS for the dashboard's origin only. A request it refuses for any other reason than a
   checksum or a missing object is a line in its `unexpected` list, which fails the run when it ends). The
   edge stands in for the ts-orch edge: Caddy for HTTPS and `env/pg-edge.mjs` for PostgreSQL on
   `pg.terrascale.tech:5432` (`SSLRequest`, TLS with the edge certificate, then TerraBase's listener). One exclusion:

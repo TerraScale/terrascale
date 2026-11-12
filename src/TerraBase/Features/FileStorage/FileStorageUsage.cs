@@ -16,7 +16,8 @@ internal sealed class FileStorageUsage(IStorageEngine engine) : IFileStorageUsag
     internal const string Prefix = "file-storage/";
     internal static string Buckets(string project) => SystemCatalog.ProjectState(project) + "file-buckets";
     internal static string Files(string organization, string project, string bucket) => $"{Prefix}{organization}/{project}/{bucket}";
-    internal static string Key(string organization, string project, string bucket, string file) => $"app-files/{organization}/{project}/{bucket}/{file}";
+    internal static string ProjectObjects(string organization, string project) => $"app-files/{organization}/{project}/";
+    internal static string Key(string organization, string project, string bucket, string file) => $"{ProjectObjects(organization, project)}{bucket}/{file}";
 
     public async ValueTask<long> BytesAsync(string organization, string? project, CancellationToken cancellationToken)
     {
