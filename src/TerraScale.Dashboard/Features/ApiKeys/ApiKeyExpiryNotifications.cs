@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
         private static string Url(ProjectCredential key)
         {
-            return "/api-keys?q=" + key.Id;
+            return "/api-keys/" + key.Id;
         }
     }
 }

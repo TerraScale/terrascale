@@ -256,11 +256,4 @@ function install(section) {
   });
 }
 
-document.addEventListener('submit', event => {
-  const form = event.target;
-  if (!(form instanceof HTMLFormElement) || !form.hasAttribute('data-download')) return;
-  event.preventDefault();
-  form.submit();
-}, true);
-
 for (const section of document.querySelectorAll('[data-upload]')) install(section);

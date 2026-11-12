@@ -128,6 +128,10 @@ summary.ts-card-head {
   padding: var(--ts-s3) var(--ts-s5);
 }
 
+.ts-card-flush > .ts-card-body > .ts-empty {
+  margin-inline: var(--ts-s5);
+}
+
 .ts-card-boxed.ts-card-flush > .ts-card-head {
   padding: var(--ts-s4) var(--ts-s5);
   border-bottom: 1px solid var(--ts-line);
@@ -154,6 +158,10 @@ summary.ts-card-head {
   position: relative;
   margin-left: calc(-1 * var(--ts-stat-pad));
   overflow: hidden;
+}
+
+.ts-card-boxed .ts-stats {
+  margin-left: 0;
 }
 
 /* The top and bottom hairlines start where the content does, not at the shift. */

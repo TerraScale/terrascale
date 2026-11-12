@@ -40,7 +40,7 @@ const syn = {
   punct: token('--ts-syn-punct'),
 };
 const series2 = token('--ts-chart-2');
-const series3 = token('--ts-cat-3');
+const series3 = token('--ts-chart-3');
 probe.remove();
 
 export const theme = {

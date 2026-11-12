@@ -133,7 +133,7 @@ else
                     <td class="ts-table-actions"><div class="ts-row ts-files-actions">
                         <button class="ts-icon-btn" type="button" command="show-modal" commandfor="@("file-details-" + file.Id)" aria-label="@("Details: " + file.Name)" title="Details">@Icons.Render("Info", 16)</button>
                         <form method="post" action="/api/v1/dashboard/storage/download" data-download><input type="hidden" name="_csrf" value="@csrf" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-icon-btn" type="submit" aria-label="@("Download " + file.Name)" title="Download">@Icons.Render("Download", 16)</button></form>
-                        @if (canWrite) { <button class="ts-icon-btn ts-files-delete" type="button" command="show-modal" commandfor="@("delete-file-" + file.Id)" aria-label="@("Delete " + file.Name)" title="Delete">@Icons.Render("X", 16)</button> }
+                        @if (canWrite) { <button class="ts-icon-btn ts-files-delete" type="button" command="show-modal" commandfor="@("delete-file-" + file.Id)" aria-label="@("Delete " + file.Name)" title="Delete">@Icons.Render("Trash2", 16)</button> }
                     </div>
                     <dialog id="@("file-details-" + file.Id)" class="ts-dialog ts-files-dialog" closedby="any" aria-labelledby="@("file-details-" + file.Id + "-title")"><div class="ts-dialog-content">
                         <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title ts-break" id="@("file-details-" + file.Id + "-title")">@file.Name</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@("file-details-" + file.Id)">@Icons.Render("X", 18)</button></header>
@@ -171,7 +171,7 @@ else
         "application/json" or "application/ld+json" or "application/xml" or "text/xml" or "application/javascript" or "text/javascript" or "text/css" or "text/html" => ("FileJson", "code"),
         "text/csv" or "text/tab-separated-values" or "application/vnd.ms-excel" or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" or "application/x-sqlite3" or "application/vnd.sqlite3" => ("Table", "data"),
         "application/zip" or "application/gzip" or "application/x-gzip" or "application/x-tar" or "application/x-7z-compressed" or "application/vnd.rar" or "application/zstd" => ("Archive", "archive"),
-        var type when type.StartsWith("image/", StringComparison.Ordinal) => ("Eye", "image"),
+        var type when type.StartsWith("image/", StringComparison.Ordinal) => ("Image", "image"),
         var type when type.StartsWith("video/", StringComparison.Ordinal) || type.StartsWith("audio/", StringComparison.Ordinal) => ("Play", "media"),
         _ => ("FileText", "file")
     };
