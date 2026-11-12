@@ -313,7 +313,13 @@ export class V1Transport {
       init.body = new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } });
       init.duplex = "half";
     }
-    const response = await this.#fetch(`${this.#authOrigin}${path}`, init);
+    /** @type {Response} */
+    let response;
+    try { response = await this.#fetch(`${this.#authOrigin}${path}`, init); }
+    catch (error) {
+      bounded.throwIfAborted();
+      throw new RequestTransportError(error);
+    }
     const text = await this.readText(response, bounded, 64 * 1024);
     if (response.status !== (path.endsWith("scoped-keys") ? 201 : 200)) {
       const error = parseV1Error(response.status, response.headers, text);

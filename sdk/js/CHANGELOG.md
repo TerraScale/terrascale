@@ -41,6 +41,10 @@ a label that begins or ends with a hyphen or begins with `xn--` (internationalis
 names), the name `loopback` and the unspecified addresses `0.0.0.0` and `[::]`.
 The client throws a `TypeError` when it is built.
 
+A key exchange or `createScopedKey` call that fails before ts-auth answers
+throws `RequestTransportError`, with the runtime's failure as its `cause`, as
+data calls do; earlier versions threw the runtime's bare `TypeError`.
+
 `rotateOrganizationApiKey` and `rotateProjectApiKey` of
 `createTerraScaleIdentityManagementClient` take the `rotate_api_key` step-up
 proof as `options.stepUpProof` and send it as `X-TerraScale-Step-Up-Proof`,

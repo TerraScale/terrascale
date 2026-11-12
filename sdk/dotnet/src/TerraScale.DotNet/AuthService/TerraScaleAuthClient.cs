@@ -39,7 +39,7 @@ public sealed partial class TerraScaleAuthClient
 
         if (httpClient.BaseAddress is { } baseAddress)
         {
-            if (TerraScaleAuthClientOptions.Endpoint(baseAddress, nameof(httpClient)) != optionSnapshot.BaseAddress)
+            if (TerraScaleOrigin.Parse(baseAddress, "HttpClient.BaseAddress", nameof(httpClient), TerraScaleService.Auth) != optionSnapshot.BaseAddress)
             {
                 throw new ArgumentException(
                     "HttpClient.BaseAddress conflicts with the configured ts-auth origin.",
