@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
+import type { Page } from '@playwright/test';
 import { Audit, auditedContext, expect, test } from '../support/audit';
 import { confirmWithPassword, hostedReady, onboard, signUp, verify } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
 import { auth, dash, desktop, onLocalStack } from '../support/stack';
-import { journey, ownerSession, saveCookies, saveSecret } from '../support/state';
+import { journey, saveCookies, saveSecret } from '../support/state';
 
 type Delivery = { receivedAt: number; id: string; valid: boolean; code: number; event: { id: string; type: string; data: { email: string } } };
 const receiver = 'http://127.0.0.1:8029';
@@ -145,7 +146,7 @@ test('auth webhook backlog of 200 in one project allows another project through 
   await onLocalStack(async () => {
     const owner = journey();
     const context = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
-    const other = await auditedContext(browser, { viewport: desktop, storageState: ownerSession() });
+    const other = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
     const page = await context.newPage();
     const otherPage = await other.newPage();
     const audit = new Audit(page, info);
@@ -153,6 +154,9 @@ test('auth webhook backlog of 200 in one project allows another project through 
     const password = randomBytes(24).toString('base64url');
     const email = await newAddress(`webhook-fairness-${randomBytes(4).toString('hex')}`);
     saveSecret('fairness-owner-password', password);
+    const otherPassword = randomBytes(24).toString('base64url');
+    const otherEmail = await newAddress(`webhook-healthy-${randomBytes(4).toString('hex')}`);
+    saveSecret('fairness-healthy-owner-password', otherPassword);
     const pathA = `/receive/a-${randomBytes(4).toString('hex')}`;
     const pathB = `/receive/b-${randomBytes(4).toString('hex')}`;
     const queued: string[] = [];
@@ -181,7 +185,10 @@ test('auth webhook backlog of 200 in one project allows another project through 
       await verify(page, email);
       await onboard(page, audit, 'Fairness owner', `Fairness ${owner.runId}`, 'fairness webhook owner');
       const enqueueA = await register(page, audit, pathA, password);
-      const enqueueB = await register(otherPage, otherAudit, pathB, owner.password);
+      await signUp(otherPage, otherAudit, otherEmail, otherPassword, 'fairness healthy owner');
+      await verify(otherPage, otherEmail);
+      await onboard(otherPage, otherAudit, 'Healthy owner', `Healthy ${owner.runId}`, 'fairness healthy owner');
+      const enqueueB = await register(otherPage, otherAudit, pathB, otherPassword);
       await enqueueA();
       for (let offset = 1; offset < 200; offset += 8) {
         await Promise.all(Array.from({ length: Math.min(8, 200 - offset) }, () => enqueueA()));
@@ -207,15 +214,19 @@ test('auth webhook backlog of 200 in one project allows another project through 
       console.log('Webhook fairness: project B delivered with only one A request in flight; all 200 A deliveries drained in order.');
       await otherPage.goto(`${dash}/auth/webhooks`);
       await otherPage.locator('tr').filter({ hasText: pathB }).getByRole('button', { name: 'Delete', exact: true }).click();
-      await page.goto(`${dash}/profile?tab=danger`);
-      await page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
-      await page.locator('#delete-account-email').fill(email);
-      await page.locator('#delete-account').getByRole('button', { name: 'Delete account', exact: true }).click();
-      await confirmWithPassword(page, audit, password, 'fairness webhook owner cleanup');
-      await page.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
-      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Account deleted');
-      await audit.finish();
-      await otherAudit.finish();
+      for (const account of [
+        { page, audit, email, password },
+        { page: otherPage, audit: otherAudit, email: otherEmail, password: otherPassword },
+      ]) {
+        await account.page.goto(`${dash}/profile?tab=danger`);
+        await account.page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
+        await account.page.locator('#delete-account-email').fill(account.email);
+        await account.page.locator('#delete-account').getByRole('button', { name: 'Delete account', exact: true }).click();
+        await confirmWithPassword(account.page, account.audit, account.password, 'fairness webhook owner cleanup');
+        await account.page.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
+        await expect(account.page.getByRole('heading', { level: 1 })).toHaveText('Account deleted');
+        await account.audit.finish();
+      }
     } finally {
       await saveCookies(context);
       await saveCookies(other);
@@ -228,10 +239,7 @@ test('auth webhook backlog of 200 in one project allows another project through 
 test('auth webhook timeouts release delivery lanes for another project within one endpoint pass', async ({ browser }, info) => {
   await onLocalStack(async () => {
     const owner = journey();
-    const contexts = await Promise.all([0, 1].map(() => auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } })));
-    const healthyContext = await auditedContext(browser, { viewport: desktop, storageState: ownerSession() });
-    const healthyPage = await healthyContext.newPage();
-    const healthyAudit = new Audit(healthyPage, info);
+    const contexts = await Promise.all([0, 1, 2].map(() => auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } })));
     const accounts = await Promise.all(contexts.map(async (context, index) => {
       const page = await context.newPage();
       const audit = new Audit(page, info);
@@ -243,7 +251,7 @@ test('auth webhook timeouts release delivery lanes for another project within on
       await onboard(page, audit, 'Timeout owner', 'Timeout ' + owner.runId + '-' + index, 'timeout webhook owner');
       return { page, audit, email, password };
     }));
-    const register = async (page: typeof healthyPage, audit: Audit, password: string, hold: boolean) => {
+    const register = async (page: Page, audit: Audit, password: string, hold: boolean) => {
       const path = '/receive/timeout-' + randomBytes(8).toString('hex');
       await page.goto(dash + '/auth/webhooks');
       await page.getByRole('button', { name: 'Add webhook endpoint', exact: true }).first().click();
@@ -266,14 +274,15 @@ test('auth webhook timeouts release delivery lanes for another project within on
       } };
     };
     try {
-      const failing = (await Promise.all(accounts.map(async (account, index) => {
+      const failing = (await Promise.all(accounts.slice(0, 2).map(async (account, index) => {
         const endpoints = [];
         for (let count = 0; count < (index === 0 ? 3 : 2); count++) {
           endpoints.push(await register(account.page, account.audit, account.password, true));
         }
         return endpoints;
       }))).flat();
-      const healthy = await register(healthyPage, healthyAudit, owner.password, false);
+      const healthyOwner = accounts[2];
+      const healthy = await register(healthyOwner.page, healthyOwner.audit, healthyOwner.password, false);
       await Promise.all(failing.map(async endpoint => {
         for (let count = 0; count < 10; count++) await endpoint.enqueue();
       }));
@@ -295,8 +304,8 @@ test('auth webhook timeouts release delivery lanes for another project within on
       expect(performance.now() - queuedAt).toBeLessThan(30_000);
       expect(rows.filter(row => failing.some(endpoint => endpoint.path === row.path)).length).toBeLessThanOrEqual(5);
       console.log('Webhook timeouts: five failing endpoints with ten deliveries each; healthy project delivered within one 30-second endpoint pass.');
-      await healthyPage.goto(dash + '/auth/webhooks');
-      await healthyPage.locator('tr').filter({ hasText: healthy.path }).getByRole('button', { name: 'Delete', exact: true }).click();
+      await healthyOwner.page.goto(dash + '/auth/webhooks');
+      await healthyOwner.page.locator('tr').filter({ hasText: healthy.path }).getByRole('button', { name: 'Delete', exact: true }).click();
       await Promise.all(accounts.map(async ({ page, audit, email, password }) => {
         await page.goto(dash + '/profile?tab=danger');
         await page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
@@ -307,9 +316,8 @@ test('auth webhook timeouts release delivery lanes for another project within on
         await expect(page.getByRole('heading', { level: 1 })).toHaveText('Account deleted');
         await audit.finish();
       }));
-      await healthyAudit.finish();
     } finally {
-      for (const context of [...contexts, healthyContext]) {
+      for (const context of contexts) {
         await saveCookies(context);
         await context.close();
       }
