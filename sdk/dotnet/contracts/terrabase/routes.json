@@ -33,12 +33,6 @@
     },
     {
       "client": "management",
-      "operation": "renameOrganization",
-      "method": "PATCH",
-      "path": "/v1/management/organizations/{organization}"
-    },
-    {
-      "client": "management",
       "operation": "setOrganizationPlan",
       "method": "PUT",
       "path": "/v1/management/organizations/{organization}/plan"
@@ -48,18 +42,6 @@
       "operation": "deleteOrganization",
       "method": "DELETE",
       "path": "/v1/management/organizations/{organization}"
-    },
-    {
-      "client": "management",
-      "operation": "getCurrentOrganization",
-      "method": "GET",
-      "path": "/v1/management/current-organization"
-    },
-    {
-      "client": "management",
-      "operation": "setCurrentOrganization",
-      "method": "PUT",
-      "path": "/v1/management/current-organization"
     },
     {
       "client": "management",
@@ -81,129 +63,15 @@
     },
     {
       "client": "management",
-      "operation": "renameProject",
-      "method": "PATCH",
-      "path": "/v1/management/organizations/{organization}/projects/{project}"
-    },
-    {
-      "client": "management",
       "operation": "closeProject",
       "method": "PUT",
       "path": "/admin/projects/{project}/closure"
-    },
-    {
-      "client": "database",
-      "operation": "cancelClosure",
-      "method": "PUT",
-      "path": "/admin/projects/{project}/databases/{database}/closure-cancellations/{generation}"
-    },
-    {
-      "client": "management",
-      "operation": "requestHistoryErasure",
-      "method": "PUT",
-      "path": "/admin/history-erasures/{erasure}"
     },
     {
       "client": "management",
       "operation": "deleteProject",
       "method": "DELETE",
       "path": "/v1/management/organizations/{organization}/projects/{project}"
-    },
-    {
-      "client": "management",
-      "operation": "listMembers",
-      "method": "GET",
-      "path": "/v1/management/organizations/{organization}/members"
-    },
-    {
-      "client": "management",
-      "operation": "changeMemberRole",
-      "method": "PUT",
-      "path": "/v1/management/organizations/{organization}/members/{user}/role"
-    },
-    {
-      "client": "management",
-      "operation": "removeMember",
-      "method": "DELETE",
-      "path": "/v1/management/organizations/{organization}/members/{user}"
-    },
-    {
-      "client": "management",
-      "operation": "addMember",
-      "method": "PUT",
-      "path": "/v1/management/organizations/{organization}/members/{user}"
-    },
-    {
-      "client": "management",
-      "operation": "leaveOrganization",
-      "method": "POST",
-      "path": "/v1/management/organizations/{organization}/leave"
-    },
-    {
-      "client": "management",
-      "operation": "createInvitation",
-      "method": "POST",
-      "path": "/v1/management/organizations/{organization}/invitations"
-    },
-    {
-      "client": "management",
-      "operation": "listInvitations",
-      "method": "GET",
-      "path": "/v1/management/organizations/{organization}/invitations"
-    },
-    {
-      "client": "management",
-      "operation": "revokeInvitation",
-      "method": "DELETE",
-      "path": "/v1/management/organizations/{organization}/invitations/{invitation}"
-    },
-    {
-      "client": "management",
-      "operation": "acceptInvitation",
-      "method": "POST",
-      "path": "/v1/management/invitations/accept"
-    },
-    {
-      "client": "management",
-      "operation": "getOwnershipTransfer",
-      "method": "GET",
-      "path": "/v1/management/organizations/{organization}/ownership-transfer"
-    },
-    {
-      "client": "management",
-      "operation": "startOwnershipTransfer",
-      "method": "POST",
-      "path": "/v1/management/organizations/{organization}/ownership-transfer"
-    },
-    {
-      "client": "management",
-      "operation": "confirmOwnershipTransfer",
-      "method": "POST",
-      "path": "/v1/management/organizations/{organization}/ownership-transfer/confirm"
-    },
-    {
-      "client": "management",
-      "operation": "cancelOwnershipTransfer",
-      "method": "DELETE",
-      "path": "/v1/management/organizations/{organization}/ownership-transfer"
-    },
-    {
-      "client": "management",
-      "operation": "getAuditRetention",
-      "method": "GET",
-      "path": "/v1/management/organizations/{organization}/audit-retention"
-    },
-    {
-      "client": "management",
-      "operation": "setAuditRetention",
-      "method": "PUT",
-      "path": "/v1/management/organizations/{organization}/audit-retention"
-    },
-    {
-      "client": "management",
-      "operation": "listAuditEvents",
-      "method": "GET",
-      "path": "/v1/management/organizations/{organization}/audit-events"
     },
     {
       "client": "platform",

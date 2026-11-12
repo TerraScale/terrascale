@@ -6,8 +6,6 @@ namespace TerraScale.DotNet;
 
 public sealed partial class TerraScaleAuthClient
 {
-    internal Task<T> SendPreparedJsonAsync<T>(HttpMethod method, string route, byte[] payload, JsonTypeInfo<T> responseType, CancellationToken caller) =>
-        WithDeadlineAsync(token => SendPreparedJsonCoreAsync(method, route, payload, responseType, token), caller);
 
     internal Task<T> GetMetadataAsync<T>(string route, JsonTypeInfo<T> responseType, CancellationToken caller) =>
         WithDeadlineAsync(token => GetMetadataCoreAsync(route, responseType, token), caller);
@@ -39,12 +37,7 @@ public sealed partial class TerraScaleAuthClient
     internal Task<bool> SendForAccountDeletionAsync(HttpMethod method, string route, AuthenticationHeaderValue? authorization, string receipt, CancellationToken caller, string? deletionAuthorization = null) =>
         WithDeadlineAsync(token => SendForAccountDeletionCoreAsync(method, route, authorization, receipt, token, deletionAuthorization), caller);
 
-    private Task<T> SendAsync<T>(HttpMethod method, string route, Func<HttpContent?>? bodyFactory, JsonTypeInfo<T> responseType,
-        RequestAuthentication authentication, CancellationToken caller) =>
-        WithDeadlineAsync(token => SendCoreAsync(method, route, bodyFactory, responseType, authentication, token), caller);
 
-    private Task SendNoContentAsync(HttpMethod method, string route, Func<HttpContent?>? bodyFactory, RequestAuthentication authentication, CancellationToken caller) =>
-        WithDeadlineAsync(token => SendNoContentCoreAsync(method, route, bodyFactory, authentication, token), caller);
 
     private static Task WithDeadlineAsync(Func<CancellationToken, Task> operation, CancellationToken caller) =>
         WithDeadlineAsync(async token => { await operation(token).ConfigureAwait(false); return true; }, caller);

@@ -29,9 +29,6 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBasePage<TerraBaseOrganization>))]
 [JsonSerializable(typeof(TerraBaseProject))]
 [JsonSerializable(typeof(TerraBaseProjectClosure))]
-[JsonSerializable(typeof(ClosureCancellationBody))]
-[JsonSerializable(typeof(TerraBaseClosureCancellation))]
-[JsonSerializable(typeof(TerraBaseHistoryErasure))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseProject>))]
 [JsonSerializable(typeof(TerraBaseManagedDatabase))]
 [JsonSerializable(typeof(TerraBaseRestoreOperation))]
@@ -39,13 +36,6 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseScopedKeyRequest))]
 [JsonSerializable(typeof(TerraBaseScopedKey))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseManagedDatabase>))]
-[JsonSerializable(typeof(TerraBaseMember))]
-[JsonSerializable(typeof(TerraBasePage<TerraBaseMember>))]
-[JsonSerializable(typeof(TerraBaseCreatedInvitation))]
-[JsonSerializable(typeof(TerraBasePage<TerraBaseInvitation>))]
-[JsonSerializable(typeof(TerraBaseOwnershipTransfer))]
-[JsonSerializable(typeof(TerraBaseAuditRetention))]
-[JsonSerializable(typeof(TerraBasePage<TerraBaseAuditEvent>))]
 [JsonSerializable(typeof(TerraBaseCreateDatabaseRequest))]
 [JsonSerializable(typeof(TerraBaseDatabaseUsage))]
 [JsonSerializable(typeof(TerraBaseDatabaseRegions))]
@@ -98,25 +88,9 @@ internal sealed record RequestBody
 
     public TerraBasePlan? Plan { get; init; }
 
-    public TerraBaseRole? Role { get; init; }
-
-    public string? Email { get; init; }
-
-    public string? Token { get; init; }
-
-    public string? UserId { get; init; }
-
-    public string? OrganizationId { get; init; }
-
-    public int? Days { get; init; }
-
     public int? Version { get; init; }
 
     public string? ClosureId { get; init; }
 
     public string? AuthorityOrganizationId { get; init; }
-
-    public DateTimeOffset? RequestedAt { get; init; }
-
-    public string? SettlementToken { get; init; }
 }

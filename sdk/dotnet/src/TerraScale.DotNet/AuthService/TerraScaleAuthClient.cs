@@ -22,7 +22,6 @@ public sealed partial class TerraScaleAuthClient
 
     private readonly HttpClient httpClient;
     private readonly TerraScaleAuthClientOptions options;
-    private volatile AuthenticationHeaderValue? cachedApiKeyHeader;
 
     /// <summary>
     /// Creates a ts-auth client over a caller-owned <see cref="HttpClient"/>.
@@ -50,19 +49,10 @@ public sealed partial class TerraScaleAuthClient
         this.httpClient = httpClient;
         this.options = optionSnapshot;
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
-        Users = new TerraScaleAuthUsersClient(this);
-        Sessions = new TerraScaleAuthSessionsClient(this);
         Oidc = new TerraScaleAuthOidcClient(this);
         Platform = new TerraScaleAuthPlatformClient(this);
         Projects = new TerraScaleAuthProjectsClient(this);
     }
-
-    /// <summary>User, session-adjacent, MFA factor, and passkey management.</summary>
-    public TerraScaleAuthUsersClient Users { get; }
-
-    /// <summary>Session revocation.</summary>
-    public TerraScaleAuthSessionsClient Sessions { get; }
-
 
     /// <summary>OIDC discovery, JWKS, token, revocation, and userinfo.</summary>
     public TerraScaleAuthOidcClient Oidc { get; }
@@ -78,103 +68,7 @@ public sealed partial class TerraScaleAuthClient
 
     internal string ManagementRoute(string relative) => "/v1/" + TerraScaleAuthPaths.Escape(InstanceSlug) + relative;
 
-    internal Task<TResponse> GetJsonAsync<TResponse>(
-        string requestUri,
-        JsonTypeInfo<TResponse> responseTypeInfo,
-        CancellationToken cancellationToken) =>
-        SendAsync<TResponse>(
-            HttpMethod.Get,
-            requestUri,
-            bodyFactory: null,
-            responseTypeInfo,
-            authentication: RequestAuthentication.Management,
-            cancellationToken);
 
-    /// <summary>One management POST that takes no request body and returns JSON.</summary>
-    internal Task<TResponse> PostJsonAsync<TResponse>(
-        string requestUri,
-        JsonTypeInfo<TResponse> responseTypeInfo,
-        CancellationToken cancellationToken) =>
-        SendAsync<TResponse>(
-            HttpMethod.Post,
-            requestUri,
-            bodyFactory: null,
-            responseTypeInfo,
-            authentication: RequestAuthentication.Management,
-            cancellationToken);
-
-    /// <summary>One management request whose JSON body the caller already serialized
-    /// (the tri-state user patch builds its own object).</summary>
-    private async Task<TResponse> SendPreparedJsonCoreAsync<TResponse>(
-        HttpMethod method,
-        string requestUri,
-        byte[] payload,
-        JsonTypeInfo<TResponse> responseTypeInfo,
-        CancellationToken cancellationToken)
-    {
-        using var response = await SendRequestAsync(
-            method,
-            requestUri,
-            CreateRawJsonBodyFactory(payload),
-            RequestAuthentication.Management,
-            cancellationToken).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static Func<HttpContent?> CreateRawJsonBodyFactory(byte[] payload)
-    {
-        if (payload.Length > MaxOperationBytes)
-        {
-            throw new ArgumentException($"The serialized ts-auth operation exceeds the {MaxOperationBytes} byte limit.", nameof(payload));
-        }
-
-        return () =>
-        {
-            var content = new ByteArrayContent(payload);
-            content.Headers.ContentType = JsonContentType;
-            return content;
-        };
-    }
-
-    internal Task<TResponse> SendJsonAsync<TRequest, TResponse>(
-        HttpMethod method,
-        string requestUri,
-        TRequest body,
-        JsonTypeInfo<TRequest> requestTypeInfo,
-        JsonTypeInfo<TResponse> responseTypeInfo,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(body);
-        return SendAsync(
-            method,
-            requestUri,
-            CreateJsonBodyFactory(body, requestTypeInfo),
-            responseTypeInfo,
-            RequestAuthentication.Management,
-            cancellationToken);
-    }
-
-    internal Task SendForNoContentAsync(
-        HttpMethod method,
-        string requestUri,
-        CancellationToken cancellationToken) =>
-        SendNoContentAsync(method, requestUri, bodyFactory: null, RequestAuthentication.Management, cancellationToken);
-
-    internal Task SendJsonForNoContentAsync<TRequest>(
-        HttpMethod method,
-        string requestUri,
-        TRequest body,
-        JsonTypeInfo<TRequest> requestTypeInfo,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(body);
-        return SendNoContentAsync(
-            method,
-            requestUri,
-            CreateJsonBodyFactory(body, requestTypeInfo),
-            RequestAuthentication.Management,
-            cancellationToken);
-    }
 
     /// <summary>One unauthenticated GET for OIDC metadata.</summary>
     private async Task<TResponse> GetMetadataCoreAsync<TResponse>(
@@ -348,51 +242,6 @@ public sealed partial class TerraScaleAuthClient
         }
     }
 
-    private async Task<TResponse> SendCoreAsync<TResponse>(
-        HttpMethod method,
-        string requestUri,
-        Func<HttpContent?>? bodyFactory,
-        JsonTypeInfo<TResponse> responseTypeInfo,
-        RequestAuthentication authentication,
-        CancellationToken cancellationToken)
-    {
-        using var response = await SendRequestAsync(
-            method,
-            requestUri,
-            bodyFactory,
-            authentication,
-            cancellationToken).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task SendNoContentCoreAsync(
-        HttpMethod method,
-        string requestUri,
-        Func<HttpContent?>? bodyFactory,
-        RequestAuthentication authentication,
-        CancellationToken cancellationToken)
-    {
-        using var response = await SendRequestAsync(
-            method,
-            requestUri,
-            bodyFactory,
-            authentication,
-            cancellationToken).ConfigureAwait(false);
-        if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
-        {
-            throw await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (response.StatusCode != HttpStatusCode.NoContent)
-        {
-            throw new TerraScaleAuthException(
-                response.StatusCode,
-                $"ts-auth returned HTTP {(int)response.StatusCode}, but HTTP {(int)HttpStatusCode.NoContent} was required.",
-                errorCode: null,
-                retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response), response: response);
-        }
-    }
-
     private static Func<HttpContent?> CreateJsonBodyFactory<TRequest>(TRequest body, JsonTypeInfo<TRequest> typeInfo, int maximumBytes = MaxOperationBytes)
     {
         ArgumentNullException.ThrowIfNull(typeInfo);
@@ -466,14 +315,6 @@ public sealed partial class TerraScaleAuthClient
         {
             case RequestAuthenticationKind.None:
                 return;
-            case RequestAuthenticationKind.Management:
-                if (string.IsNullOrWhiteSpace(options.ApiKey))
-                {
-                    throw new InvalidOperationException("Configure TerraScaleAuthClientOptions.ApiKey (the instance sk_ management key) for ts-auth management API calls.");
-                }
-
-                request.Headers.Authorization ??= cachedApiKeyHeader ??= new AuthenticationHeaderValue("Bearer", options.ApiKey.Trim());
-                return;
             case RequestAuthenticationKind.Explicit:
                 request.Headers.Authorization = authentication.Header;
                 return;
@@ -545,7 +386,6 @@ public sealed partial class TerraScaleAuthClient
     private readonly record struct RequestAuthentication(RequestAuthenticationKind Kind, AuthenticationHeaderValue? Header = null)
     {
         public static readonly RequestAuthentication None = new(RequestAuthenticationKind.None);
-        public static readonly RequestAuthentication Management = new(RequestAuthenticationKind.Management);
 
         public RequestAuthentication(AuthenticationHeaderValue header) : this(RequestAuthenticationKind.Explicit, header)
         {
@@ -555,7 +395,6 @@ public sealed partial class TerraScaleAuthClient
     private enum RequestAuthenticationKind
     {
         None,
-        Management,
         Explicit
     }
 }

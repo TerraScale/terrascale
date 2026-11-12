@@ -8,21 +8,6 @@ namespace TerraScale.DotNet;
 /// pinned with <see cref="JsonPropertyNameAttribute"/> because the service
 /// uses explicit wire names for each operation.
 /// </summary>
-[JsonSerializable(typeof(TerraScaleAuthUser))]
-[JsonSerializable(typeof(TerraScaleAuthUserPage))]
-[JsonSerializable(typeof(TerraScaleAuthCreateUser))]
-[JsonSerializable(typeof(TerraScaleAuthSession))]
-[JsonSerializable(typeof(TerraScaleAuthSessionPage))]
-[JsonSerializable(typeof(TerraScaleAuthImpersonation))]
-[JsonSerializable(typeof(TerraScaleAuthEmptyBody))]
-[JsonSerializable(typeof(TerraScaleAuthMfaFactor))]
-[JsonSerializable(typeof(TerraScaleAuthMfaFactorPage))]
-[JsonSerializable(typeof(TerraScaleAuthRecoveryCodes))]
-[JsonSerializable(typeof(TerraScaleAuthPasskey))]
-[JsonSerializable(typeof(TerraScaleAuthPasskeyPage))]
-[JsonSerializable(typeof(TerraScaleAuthUserOrganization))]
-[JsonSerializable(typeof(IReadOnlyList<TerraScaleAuthUserOrganization>))]
-[JsonSerializable(typeof(TerraScaleAuthOrganization))]
 [JsonSerializable(typeof(TerraScaleAuthOidcDiscovery))]
 [JsonSerializable(typeof(TerraScaleAuthJwkSet))]
 [JsonSerializable(typeof(TerraScaleAuthJwk))]
