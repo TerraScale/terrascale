@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { expect, type Locator, type Page } from '@playwright/test';
+import { regionsSettled } from '../support/overview';
 import type { Journey } from '../support/state';
 
 export type PagePattern = { path: RegExp; query?: Record<string, RegExp> };
@@ -187,7 +188,7 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Overview'),
     data: async (page) => {
       await expect(stat(page, 'Databases')).toHaveText('1');
-      await expect(page.locator('#home-regions')).toContainText(/No database regions|Region measurements unavailable|healthy|lagging|degraded/);
+      await regionsSettled(page);
     },
   },
   {
@@ -197,7 +198,7 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Overview'),
     data: async (page) => {
       await expect(stat(page, 'Databases')).toHaveText('1');
-      await expect(page.locator('#home-regions')).toContainText(/No database regions|Region measurements unavailable|healthy|lagging|degraded/);
+      await regionsSettled(page);
     },
   },
   {

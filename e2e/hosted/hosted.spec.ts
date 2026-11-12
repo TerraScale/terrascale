@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { hostedReady, onboard, onHosted, openSignUp, signInWithPassword, signUp, submitSignUp, verify } from '../support/hosted';
+import { regionsSettled } from '../support/overview';
 import { newAddress } from '../support/inbox';
 import { auth, dash, desktop, mobile, onLocalStack } from '../support/stack';
 import { journey, saveCookies, saveSecret } from '../support/state';
@@ -105,6 +106,7 @@ for (const size of sizes) {
       await signInWithPassword(page, audit, owner.email, owner.password, label);
       await page.waitForURL((url) => url.origin === dash && url.pathname === '/');
       await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible();
+      await regionsSettled(page);
       await expect(page.locator('.ts-account-trigger')).toContainText(owner.displayName);
 
       await page.goto(`${auth}/ui/terrascale/security`);

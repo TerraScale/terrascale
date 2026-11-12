@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { hostedReady, onboard, onHosted, signInWithPassword } from '../support/hosted';
+import { regionsSettled } from '../support/overview';
 import { nextMail } from '../support/inbox';
 import type { PaidJourney } from '../support/paid';
 import { enterSecret } from '../support/secret';
@@ -89,6 +90,7 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await onboard(page, audit, memberName, memberProject, 'invited user');
   const personal = new URL(page.url()).searchParams;
   await shell(page, { email, displayName: memberName, organizationId: personal.get('organizationId') ?? '', organizationName: 'Personal', projectId: personal.get('projectId') ?? '', projectName: memberProject });
+  await regionsSettled(page);
   await audit.check('invited user on the Personal overview after onboarding');
   await page.locator('.ts-account-trigger').click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
@@ -102,6 +104,7 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await audit.check('organization choice of the invited user');
   await choices.filter({ hasText: owner.organizationName }).click();
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/');
+  await regionsSettled(page);
   await expect(page.locator(`[data-active-organization-id="${owner.organizationId}"]`)).toHaveText(`Current organization: ${owner.organizationName}`);
   await audit.check('invited user on the Pro organization overview');
   await audit.finish();
