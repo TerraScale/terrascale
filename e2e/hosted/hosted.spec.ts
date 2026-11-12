@@ -59,26 +59,20 @@ test('a second user enrolls a passkey and signs back in to the dashboard and a r
         await audit.check('expired MFA POST still offers passkey sign-in');
       }
       await page.locator('#sign-in-email').fill(email);
-      if (path === null || path === 'post') {
-        const [navigation] = await Promise.all([
-          page.waitForRequest((request) => request.isNavigationRequest() && request.frame() === page.mainFrame()),
-          page.locator('#passkey-sign-in').click(),
-        ]);
-        expect(navigation.method()).toBe('GET');
-        expect(new URL(navigation.url()).pathname).toBe('/ui/terrascale/sign-in');
-        await page.waitForURL(onHosted('sign-in'));
-        await hostedReady(page);
-        expect(dialogs).toEqual([]);
-        await expect(page.getByRole('link', { name: 'Continue', exact: true })).toHaveAttribute('href', dash);
-        await audit.check('signed in without a continuation offers the dashboard');
-        await page.getByRole('link', { name: 'Continue', exact: true }).click();
-      } else {
-        await page.locator('#passkey-sign-in').click();
-      }
-      await expect(page, `passkey sign-in continues to ${path ?? 'the dashboard after GET'}`).toHaveURL((url) => url.origin === dash && url.pathname === (path === null || path === 'post' ? '/' : path));
+      const [navigation] = await Promise.all([
+        page.waitForRequest((request) => request.isNavigationRequest() && request.frame() === page.mainFrame()),
+        page.locator('#passkey-sign-in').click(),
+      ]);
+      expect(navigation.method()).toBe('GET');
+      await expect(page, `passkey sign-in continues to ${path === null || path === 'post' ? 'the default dashboard' : path}`).toHaveURL((url) => url.origin === dash && url.pathname === (path === null || path === 'post' ? '/' : path));
+      expect(dialogs).toEqual([]);
       await expect(page.locator('.ts-account-trigger')).toContainText('Passkey user');
       await audit.check(`passkey sign-in reaches ${path}`);
     }
+    await page.goto(`${auth}/ui/terrascale/sign-in`);
+    await hostedReady(page);
+    await expect(page.locator('#sign-in-email')).toBeVisible();
+    await audit.check('a signed-in user can open the sign-in form directly');
     await audit.finish();
   } finally {
     await saveCookies(context);

@@ -172,12 +172,12 @@ case SignInStep.Continue:
 }
 else
 {
-<a class="btn" href="@Model.DefaultDestination">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn" data-continue href="@Model.DefaultDestination">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 }
 break;
 case SignInStep.SignedIn:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@Model.Copy.SignedIn</p></div>
-<a class="btn" href="@Model.DefaultDestination">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn" data-continue href="@Model.DefaultDestination">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.Sso:
 @if (Model.Refresh is { })

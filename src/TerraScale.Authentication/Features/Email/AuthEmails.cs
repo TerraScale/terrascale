@@ -334,19 +334,35 @@ public sealed partial class AuthEmails(AuthOptions options)
     public static string? UiLocales(HttpRequest request)
     {
         var requested = request.Query["ui_locales"].ToString();
-        if (requested.Length is 0 or > 64)
+        if (requested.Length is 0 or > 256)
         {
             return null;
         }
 
-        var tags = requested.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return tags.Length > 0 && tags.All(tag => Locales.Contains(tag, StringComparer.OrdinalIgnoreCase))
-            ? string.Join(' ', tags)
-            : null;
+        List<string> tags = [];
+        var length = 0;
+        foreach (var tag in requested.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var locale = Locales.FirstOrDefault(locale => locale.Equals(tag, StringComparison.OrdinalIgnoreCase));
+            if (locale is null)
+            {
+                continue;
+            }
+
+            length += locale.Length + (tags.Count > 0 ? 1 : 0);
+            if (length > 64)
+            {
+                break;
+            }
+
+            tags.Add(locale);
+        }
+
+        return tags.Count > 0 ? string.Join(' ', tags) : null;
     }
 
     public static string Locale(HttpRequest request) => UiLocales(request) is { } locales
-        ? Locales.First(locale => locale.Equals(locales.Split(' ')[0], StringComparison.OrdinalIgnoreCase))
+        ? locales.Split(' ')[0]
         : Locale(request.Headers.AcceptLanguage);
 
     /// <summary>

@@ -154,7 +154,7 @@ function passkeyDecode(text) {
   function follow(html) {
     var page = document.createElement('template');
     page.innerHTML = html;
-    var link = page.content.querySelector('a.delayed-continue');
+    var link = page.content.querySelector('a.delayed-continue') || page.content.querySelector('a[data-continue]');
     if (link) {
       var target = new URL(link.getAttribute('href'), window.location.href);
       if (target.origin === window.location.origin || target.protocol === 'https:') window.location.replace(target.href);
