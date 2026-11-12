@@ -20,5 +20,5 @@ For a registered public app with a code grant/callback, use
 `ExchangePublicAuthorizationCodeAsync` with the original redirect and PKCE verifier.
 The producer controls scopes, lifetimes, roles and MFA; no privilege is broadened.
 
-Producer provenance: contracts/auth/public-client-provenance.json. Live qualification
-is pending; HTTP fixtures are not live proof. Source/local pack only; NuGet held.
+Live qualification
+is pending. Source/local pack only; NuGet held.

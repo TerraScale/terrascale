@@ -1,7 +1,6 @@
 # Public health status
 
-Authority: [public-health-provenance.json](public-health-provenance.json), producer
-`a3cbf8b1c73d304189a489fa8033d41f3b508de3`. Anonymous client-listener probes have
+Authority: producer `a3cbf8b1c73d304189a489fa8033d41f3b508de3`. Anonymous client-listener probes have
 exactly three required, non-null string fields: `status`, `version`, `region`.
 
 | GET route | Operation | Declared outcomes |

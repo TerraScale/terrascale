@@ -1,6 +1,5 @@
 # Organization policy and account MFA status
 
-Source contract: [mfa-policy-provenance.json](mfa-policy-provenance.json).
 Use the caller's platform **sign-in** access token with the source SDK:
 
 ```csharp

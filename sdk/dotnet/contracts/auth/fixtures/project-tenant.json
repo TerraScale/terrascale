@@ -66,19 +66,19 @@
   },
   "create_client": {
     "method": "POST", "path": "/v1/{project}/clients", "status": 201,
-    "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "create_oauth_client", "audience": "ts-auth", "required": true, "provenance": "step-up-provenance.json"},
+    "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "create_oauth_client", "audience": "ts-auth", "required": true},
     "request": {"name": "Synthetic app", "type": "confidential", "redirect_uris": ["http://localhost:3000/callback"]},
     "response": {"client_id": "{client}", "name": "Synthetic app", "type": "confidential", "redirect_uris": ["http://localhost:3000/callback"], "created_at": "2026-10-13T00:00:00+00:00", "client_secret": "fixture-client-secret"}
   },
   "update_client": {
     "method": "PUT", "path": "/v1/{project}/clients/{client}", "status": 200,
-    "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "update_oauth_client", "audience": "ts-auth", "required": true, "provenance": "step-up-provenance.json"},
+    "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "update_oauth_client", "audience": "ts-auth", "required": true},
     "request": {"name": "Synthetic app", "redirect_uris": ["https://example.test/callback"]},
     "response": {"client_id": "{client}", "name": "Synthetic app", "type": "public", "redirect_uris": ["https://example.test/callback"], "created_at": "2026-10-13T00:00:00+00:00"}
   },
   "rotate_client_secret": {
     "method": "POST", "path": "/v1/{project}/clients/{client}/secret/rotate", "status": 200,
-    "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "rotate_oauth_client", "audience": "ts-auth", "required": true, "provenance": "step-up-provenance.json"},
+    "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "rotate_oauth_client", "audience": "ts-auth", "required": true},
     "request": {"grace_seconds": 3600},
     "response": {"client_id": "{client}", "client_secret": "fixture-client-secret", "previous_secret_expires_at": "2026-10-14T00:00:00+00:00"}
   },

@@ -2,7 +2,7 @@
 
 Unproven: these are source-derived contracts and HTTP-fake fixtures, not producer integration or live-service qualification. I5 must run producer parity with the selected SDK SHA and package; COS owns independent review.
 
-Producer: TerraScale/terrascale `e30ffdc287530551b161b0130220be53d3c0475e` (fresh origin/main at execution). `provenance.json` hashes the inspected files. All fixture values are synthetic and authorize no live resource. `security.json` records trust/scope/error/boundary details. `routes.json` records exact operation IDs, paths, methods, request/response DTOs, statuses, media types, security and pagination. `dtos.json` records exact producer wire fields/types/nullability; SDK names are distinct from the retained legacy instance clients.
+Producer: TerraScale/terrascale `e30ffdc287530551b161b0130220be53d3c0475e` (fresh origin/main at execution). All fixture values are synthetic and authorize no live resource. `security.json` records trust/scope/error/boundary details. `routes.json` records exact operation IDs, paths, methods, request/response DTOs, statuses, media types, security and pagination. `dtos.json` records exact producer wire fields/types/nullability; SDK names are distinct from the retained legacy instance clients.
 
 ## Interface handoff to I3/I5
 
