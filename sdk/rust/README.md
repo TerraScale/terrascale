@@ -43,6 +43,15 @@ empty region is rejected so no header is sent.
 `v1` delivery of ts-auth end-user lifecycle events and returns the parsed event or the
 SDK's typed `Error`.
 
+## Base URL rules
+
+The base URLs given to `Client::builder`, `ClientBuilder::endpoint`, `ClientBuilder::auth_base_url` and
+`ClientConfigBuilder::auth_base_url` follow the origin rule of [`sdk/SQL-API.md`](../SQL-API.md#client): `build()`
+returns an error, before any request, for a base URL with user info or a path, a string of more than 2,048 characters,
+a name of more than 253 characters or with a label of more than 63, a label that begins or ends with a hyphen or
+begins with `xn--`, the name `loopback`, and the unspecified addresses `0.0.0.0`, `[::]` and `[::ffff:0:0]` in any
+spelling.
+
 ## SQL
 
 Every call is one `POST /v1/projects/{project}/databases/{database}/sql/execute` request and one transaction:

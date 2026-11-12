@@ -19,7 +19,7 @@ classifiers = [
   "Topic :: Database",
   "Typing :: Typed",
 ]
-dependencies = ["httpx[http2]>=0.27,<1", "websockets>=14,<17"]
+dependencies = ["httpx[http2]>=0.27,<1", "websockets>=15,<17"]
 
 [project.urls]
 Homepage = "https://terrascale.tech"

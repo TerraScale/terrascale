@@ -15,7 +15,6 @@ SOURCE = "https://api.terrascale.tech/openapi/v1.json"
 AGENT_ROUTES = [
     "DELETE /v1/projects/{project}/databases/{database}/ttl",
     "POST /v1/terrascale/api-keys/self/scoped-keys",
-    "POST /v1/terrascale/api-keys/{key}/rotate",
     "PUT /v1/projects/{project}/databases/{database}/ttl",
 ]
 

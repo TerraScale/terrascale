@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"terrascale.tech/sdk/internal/entityid"
+	"terrascale.tech/sdk/internal/origin"
 	"terrascale.tech/sdk/tsauth"
 )
 
@@ -57,8 +58,6 @@ type Config struct {
 	// Set this, Token or TokenSource exclusively.
 	APIKey string
 	// BaseURL is the TerraBase origin; empty uses DefaultBaseURL.
-	// It must be HTTPS; plain HTTP is accepted only for loopback hosts. A path
-	// prefix is kept; a query, fragment or user info is rejected.
 	BaseURL string
 	// Resolver supplies the endpoint for each call. Set either Resolver or
 	// BaseURL; BaseURL uses a StaticResolver. Resolver must be safe for
@@ -232,47 +231,30 @@ func (c *Client) invalidateToken(token string, refusal *APIError, refreshed bool
 
 func keyExchangeOrigin(cfg Config) (string, error) {
 	if cfg.TSAuthBaseURL != "" {
-		u, err := parseBaseURL(cfg.TSAuthBaseURL)
-		if err != nil || u.Path != "" {
-			return "", errors.New("terrabase: TSAuthBaseURL must be a bare ts-auth origin: https, or plain HTTP on a loopback host, without a path")
+		authOrigin, err := origin.Parse(cfg.TSAuthBaseURL, origin.Auth)
+		if err != nil {
+			return "", fmt.Errorf("terrabase: TSAuthBaseURL %w", err)
 		}
-		return u.Scheme + "://" + u.Host, nil
-	}
-	if cfg.Resolver == nil && cfg.BaseURL == "" {
-		return "https://auth.terrascale.tech", nil
+		return authOrigin, nil
 	}
 	if cfg.Resolver == nil {
-		if u, err := parseBaseURL(cfg.BaseURL); err != nil || u.String() == DefaultBaseURL {
-			return "https://auth.terrascale.tech", err
+		base, err := parseBaseURL(cmp.Or(cfg.BaseURL, DefaultBaseURL))
+		if err != nil {
+			return "", err
+		}
+		if base.String() == DefaultBaseURL {
+			return origin.Auth.Default(), nil
 		}
 	}
 	return "", errors.New("terrabase: set TSAuthBaseURL to the ts-auth that exchanges the APIKey: with a TerraBase origin other than https://api.terrascale.tech the key is not sent to production ts-auth")
 }
 
 func parseBaseURL(raw string) (*url.URL, error) {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return nil, fmt.Errorf("terrabase: BaseURL %q is not an absolute URL", raw)
+	base, err := origin.Parse(raw, origin.API)
+	if err != nil {
+		return nil, fmt.Errorf("terrabase: BaseURL %w", err)
 	}
-	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		return nil, errors.New("terrabase: BaseURL must not carry user info, a query or a fragment")
-	}
-	switch u.Scheme {
-	case "https":
-	case "http":
-		host := u.Hostname()
-		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return nil, errors.New("terrabase: plain HTTP BaseURL is allowed only for loopback hosts")
-		}
-	default:
-		return nil, fmt.Errorf("terrabase: BaseURL scheme %q is not https", u.Scheme)
-	}
-	escaped := u.EscapedPath()
-	if strings.HasSuffix(escaped, "/") {
-		u.Path = strings.TrimSuffix(u.Path, "/")
-		u.RawPath = strings.TrimSuffix(escaped, "/")
-	}
-	return u, nil
+	return url.Parse(base)
 }
 
 type request struct {

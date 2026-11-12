@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -47,6 +50,7 @@ type operation struct {
 	Access        string         `json:"access"`
 	MintStatus    int            `json:"mintStatus"`
 	DeletedStatus int            `json:"deletedStatus"`
+	Cases         string         `json:"cases"`
 }
 
 type item struct {
@@ -349,6 +353,8 @@ func (r *runner) do(op operation) error {
 		return r.placementCreate()
 	case "placement.set":
 		return r.placementSet()
+	case "origin.rule":
+		return originRule(ctx, r.project, op.Cases)
 	case "agent.create_ttl":
 		ttl := op.TTLSeconds
 		before := time.Now().UTC()
@@ -455,6 +461,69 @@ func (r *runner) do(op operation) error {
 		return same(status(err), op.DeletedStatus, "the deleted database")
 	}
 	return fmt.Errorf("no implementation for %s", op.ID)
+}
+
+type recorder struct{ sent *url.URL }
+
+func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.sent = req.URL
+	return nil, errors.New("recorded, not sent")
+}
+
+func originRule(ctx context.Context, project, file string) error {
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(os.Getenv("E2E_OPERATIONS")), file))
+	if err != nil {
+		return err
+	}
+	var spec struct {
+		Cases [][3]*string `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		return err
+	}
+	var wrong []string
+	for i, c := range spec.Cases {
+		api, auth := &recorder{}, &recorder{}
+		if client, err := v1.New(v1.Config{BaseURL: *c[0], Token: "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln", HTTPClient: &http.Client{Transport: api}}); err == nil {
+			_, _ = client.Database(project, "probe").Create(ctx)
+		}
+		key := "01JA0000000000000000000000_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
+		if client, err := v1.New(v1.Config{APIKey: key, TSAuthBaseURL: *c[0], HTTPClient: &http.Client{Transport: auth}}); err == nil {
+			_, _ = client.CreateScopedKey(ctx, v1.ScopedKeyRequest{Database: v1.NewID(), Access: v1.ScopedKeyRead})
+		}
+		for column, sent := range []*url.URL{api.sent, auth.sent} {
+			if !sameOrigin(sent, c[column+1]) {
+				expected, got := "refused", "refused"
+				if c[column+1] != nil {
+					expected = *c[column+1]
+				}
+				if sent != nil {
+					got = sent.Scheme + "://" + sent.Host
+				}
+				wrong = append(wrong, fmt.Sprintf("#%d %q %s: expected %s, got %s", i, (*c[0])[:min(len(*c[0]), 60)], []string{"api", "auth"}[column], expected, got))
+			}
+		}
+	}
+	if len(wrong) > 0 {
+		return fmt.Errorf("origin rule: %d of %d checks differ: %s", len(wrong), 2*len(spec.Cases), strings.Join(wrong, "; "))
+	}
+	return nil
+}
+
+func sameOrigin(sent *url.URL, want *string) bool {
+	if sent == nil || want == nil {
+		return sent == nil && want == nil
+	}
+	expected, err := url.Parse(*want)
+	if err != nil || sent.Scheme != expected.Scheme || sent.Port() != expected.Port() {
+		return false
+	}
+	got, gotErr := netip.ParseAddr(sent.Hostname())
+	wanted, wantErr := netip.ParseAddr(expected.Hostname())
+	if gotErr == nil && wantErr == nil {
+		return got == wanted
+	}
+	return sent.Hostname() == expected.Hostname()
 }
 
 func main() {

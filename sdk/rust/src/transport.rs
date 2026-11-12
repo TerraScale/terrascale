@@ -216,6 +216,7 @@ impl ReqwestTransport {
         Self {
             inner: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .build()
                 .expect("HTTP client initialization"),
@@ -240,6 +241,7 @@ impl ReqwestTransport {
         let mut builder = reqwest::Client::builder()
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
             .connect_timeout(std::time::Duration::from_secs(5));
         for certificate in certificates {
             builder = builder.add_root_certificate(certificate);

@@ -39,10 +39,7 @@ public sealed partial class TerraScaleAuthClient
 
         if (httpClient.BaseAddress is { } baseAddress)
         {
-            // Uri equality omits user information and fragments. Validate the
-            // caller's address as a bare auth origin before comparing it.
-            TerraScaleAuthClientOptions.ValidateEndpoint(baseAddress, nameof(httpClient));
-            if (baseAddress != optionSnapshot.BaseAddress)
+            if (TerraScaleOrigin.Parse(baseAddress, "HttpClient.BaseAddress", nameof(httpClient), TerraScaleService.Auth) != optionSnapshot.BaseAddress)
             {
                 throw new ArgumentException(
                     "HttpClient.BaseAddress conflicts with the configured ts-auth origin.",
@@ -460,7 +457,7 @@ public sealed partial class TerraScaleAuthClient
         {
             request.Content = content;
         }
-        return await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        return TerraScaleOrigin.Sent(await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), options.BaseAddress!);
     }
 
     private void ApplyAuthentication(HttpRequestMessage request, RequestAuthentication authentication)

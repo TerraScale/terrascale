@@ -12,6 +12,7 @@ import (
 	"unicode/utf16"
 
 	"terrascale.tech/sdk/internal/entityid"
+	"terrascale.tech/sdk/internal/origin"
 )
 
 // ProjectOAuthClient is a project's registered authorization-code/S256 PKCE
@@ -177,7 +178,7 @@ func validClientRedirects(uris []string) error {
 		if parseErr != nil {
 			return errors.New("tsauth: redirect URI must be an absolute URL")
 		}
-		secure := parsed.Scheme == "https" || parsed.Scheme == "http" && loopback(strings.ToLower(parsed.Hostname()))
+		secure := parsed.Scheme == "https" || parsed.Scheme == "http" && origin.Loopback(parsed.Hostname())
 		if parsed.Host == "" || strings.Contains(redirect, "#") || !secure {
 			return errors.New("tsauth: redirect URI must use absolute HTTPS, or HTTP on loopback, without a fragment")
 		}

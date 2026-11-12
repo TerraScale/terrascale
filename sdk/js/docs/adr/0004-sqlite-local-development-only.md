@@ -2,7 +2,7 @@
 
 Status: operating contract applied; exported legacy runtime removed in 0.0.16.
 
-The [zero-configuration policy](../../AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)
+The [zero-configuration policy](https://docs.terrascale.tech/guides/zero-configuration)
 confines fake/local SDK stores to test code and test binaries. Version 0.0.16
 removes the SQLite emulator, PostgreSQL listener client, their CLI and retired
 native schema/query/framework bindings. They are no longer package entrypoints

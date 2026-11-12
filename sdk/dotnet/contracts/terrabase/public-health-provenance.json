@@ -7,9 +7,7 @@
     "src/TerraBase/Features/Backup/BackupHealthEndpoint.cs": "12dac1a307d1c08bf48323df210d886b76470470a14344a685bb317b0a31533a",
     "src/TerraBase/Hosting/Listeners.cs": "0244b2784a2401e000c8b661ec8cf11e3257c1f2336e1eedbe47e69e711e3c9f",
     "src/TerraBase/Hosting/TerraBaseJsonContext.cs": "448816c44361d03fbe5bce6168e9f743d4847f903ca489ed44131617e875c026",
-    "src/TerraBase/Features/ApiReference/ApiExamples.cs": "4a7845fc9ee2b3d076f9a79f31578e8dc2d305ae1879efbe29606bbae7dcc725",
-    "tests/TerraBase.Fast/Platform/HealthTests.cs": "8e42591c00fa045e685553a9bdb1d973f78572a5e9a23e531b0d06d74bfb6a21",
-    "tests/TerraBase.Fast/Platform/ApiReferenceTests.cs": "c7e9bd79c44346bf68c15d6f00baa353dc1cad593b0b8ff799b4d65fa609124e"
+    "src/TerraBase/Features/ApiReference/ApiExamples.cs": "4a7845fc9ee2b3d076f9a79f31578e8dc2d305ae1879efbe29606bbae7dcc725"
   },
   "additional_immutable_contract": {"revision": "a095400a19bcc432ac27d0afaca4eba042b636a7", "source": "src/TerraBase/Features/Health/HealthzEndpoint.cs", "sha256": "afe88c688f0f605069dac490edb22b2c2155cadc0204e454bcabe28521c276ac", "shape": "StatusBody has only required status/version/region strings."},
   "operations": [

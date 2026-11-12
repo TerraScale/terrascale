@@ -29,9 +29,10 @@ print(db.query("SELECT * FROM notes"))
 ```
 
 The API key is exchanged with ts-auth (`https://auth.terrascale.tech`) for a
-short-lived project access token, cached and refreshed automatically. A client
-that holds an API key (`api_key=` or `TERRASCALE_API_KEY`, also next to `token=`)
-and a `base_url` other than `https://api.terrascale.tech` needs `issuer=`, the ts-auth
+short-lived project access token, cached and refreshed automatically. Pass
+either `api_key=` or `token=`: both raise `ValueError`, and `TERRASCALE_API_KEY`
+is read only when neither is passed. A client that holds an API key (`api_key=`
+or `TERRASCALE_API_KEY`) and a `base_url` other than `https://api.terrascale.tech` needs `issuer=`, the ts-auth
 issuer that exchanges the key (for example `https://auth.example.com/terrascale`);
 without it the client raises `ValueError` before any request instead of sending
 the key to `https://auth.terrascale.tech`. Keep keys on your server and out of git. See [examples/quickstart.py](examples/quickstart.py).
@@ -209,7 +210,7 @@ its own when the set changes. Tests cover the recorded fixtures in
 
 | Surface | Methods |
 | --- | --- |
-| Client | `TerraScale(api_key=, project=, token=, base_url=, region=, issuer=)`, `database(name)`, `list_databases()`, `create_database(name, regions=, ttl_seconds=)`, `rename_database(id, name)`, `fork_database`, `set_database_ttl`, `set_database_placement`, `clear_database_ttl`, `delete_database`, `delete_database_if_id`, `create_scoped_key`, `rotate_api_key`, `create_api_key(organization, name, scopes, project=, database=, expires_at=, allowed_cidrs=)`, `list_api_keys(organization, project=, limit=, cursor=)`, `revoke_api_key(organization, key, project=)`, `create_project_client(name, client_type, redirect_uris, step_up_proof=, project=)`, `list_project_clients(project=)`, `update_project_client(client_id, name, redirect_uris, step_up_proof=, project=)`, `rotate_project_client_secret(client_id, step_up_proof=, grace_seconds=, project=)`, `delete_project_client(client_id, project=)` |
+| Client | `TerraScale(api_key=, project=, token=, base_url=, region=, issuer=)`, `database(name)`, `list_databases()`, `create_database(name, regions=, ttl_seconds=)`, `rename_database(id, name)`, `fork_database`, `set_database_ttl`, `set_database_placement`, `clear_database_ttl`, `delete_database`, `delete_database_if_id`, `create_scoped_key`, `create_api_key(organization, name, scopes, project=, database=, expires_at=, allowed_cidrs=)`, `list_api_keys(organization, project=, limit=, cursor=)`, `revoke_api_key(organization, key, project=)`, `rotate_api_key(organization, key, step_up_proof=, project=, grace_seconds=)`, `create_project_client(name, client_type, redirect_uris, step_up_proof=, project=)`, `list_project_clients(project=)`, `update_project_client(client_id, name, redirect_uris, step_up_proof=, project=)`, `rotate_project_client_secret(client_id, step_up_proof=, grace_seconds=, project=)`, `delete_project_client(client_id, project=)` |
 | Database | `info()`, `delete()`, `delete_if_id(expected_id)`, `branch(name)`, `branch_if_id(name, expected_id)`, `list_database_logs(status=None)`, `execute`, `query`, `batch` (see [SQL](#sql)) |
 
 **IDs** are canonical ULIDs (`terrascale.new_id()`).

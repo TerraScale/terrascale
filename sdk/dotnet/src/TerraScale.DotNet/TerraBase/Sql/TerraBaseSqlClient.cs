@@ -8,7 +8,7 @@ public sealed record TerraBaseSqlClientOptions
 {
     /// <summary>
     /// HTTPS origin of the TerraBase client listener, for example <c>https://api.terrascale.tech</c>, or the plain-HTTP
-    /// origin of a private listener on NetBird <c>100.64.0.0/10</c> addresses or loopback. With an ApiKey and no
+    /// origin of a private listener on loopback (localhost, 127.0.0.0/8 or [::1]). With an ApiKey and no
     /// EndpointResolver or AuthAddress it defaults to <c>https://api.terrascale.tech</c>.
     /// </summary>
     public Uri? BaseAddress { get; init; }
@@ -32,7 +32,7 @@ public sealed record TerraBaseSqlClientOptions
 
     /// <summary>
     /// Origin of the ts-auth that exchanges <see cref="ApiKey"/>, for example <c>https://auth.terrascale.tech</c>, or the
-    /// plain-HTTP origin of a private ts-auth on NetBird <c>100.64.0.0/10</c> addresses or loopback. It defaults to
+    /// plain-HTTP origin of a private ts-auth on loopback. It defaults to
     /// <c>https://auth.terrascale.tech</c> only when requests go to TerraScale's public origin (no BaseAddress or
     /// EndpointResolver, or BaseAddress <c>https://api.terrascale.tech</c>); with any other TerraBase origin an ApiKey
     /// needs it, so the key never leaves for a host the caller did not name.
@@ -92,7 +92,7 @@ public sealed partial class TerraBaseSqlClient
 
     private static Uri AuthOrigin(TerraBaseSqlClientOptions options) => options switch
     {
-        { AuthAddress: { } auth } => TerraBaseConnection.Origin(auth, nameof(options), nameof(options.AuthAddress), "ts-auth"),
+        { AuthAddress: { } auth } => TerraScaleOrigin.Parse(auth, nameof(options.AuthAddress), nameof(options), TerraScaleService.Auth),
         { EndpointResolver: null, BaseAddress: null } => TerraScaleApiKeyTokens.ProductionOrigin,
         { EndpointResolver: null, BaseAddress: { } address } when address == TerraBaseRegion.PublicOrigin => TerraScaleApiKeyTokens.ProductionOrigin,
         _ => throw new ArgumentException(
@@ -114,7 +114,7 @@ public sealed partial class TerraBaseSqlClient
         var options = new TerraBaseSqlClientOptions { ApiKey = apiKey };
         var baseUrl = Environment.GetEnvironmentVariable("TERRASCALE_BASE_URL");
         if (!string.IsNullOrWhiteSpace(baseUrl))
-            options = options with { BaseAddress = new Uri(baseUrl, UriKind.Absolute) };
+            options = options with { BaseAddress = TerraScaleOrigin.Address(baseUrl, "TERRASCALE_BASE_URL", TerraScaleService.Api) };
         var region = Environment.GetEnvironmentVariable("TERRASCALE_REGION");
         if (!string.IsNullOrWhiteSpace(region))
             options = options with { Region = region };

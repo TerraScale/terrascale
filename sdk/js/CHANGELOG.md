@@ -24,6 +24,35 @@ key; `createScopedKey` uses the same origin. `authBaseUrl` without `apiKey` is
 refused. Earlier versions sent the key to `https://auth.terrascale.tech` for
 every TerraBase origin.
 
+`baseUrl`, `authBaseUrl` and the identity clients' `apiBaseUrl` follow the origin
+rule every SDK shares (`sdk/SQL-API.md`): https, or http only for `localhost`,
+`127.0.0.0/8` and `[::1]` (no longer `*.localhost`, or `*.test` next to a custom
+`fetch`); no user info, query, fragment or path, where a `baseUrl` path prefix
+was kept before; and a `terrascale.tech` host only for its own service
+(`api.terrascale.tech` and `<cell>.api.terrascale.tech` for TerraBase,
+`auth.terrascale.tech` and `<cell>.auth.terrascale.tech` for ts-auth), so
+`authBaseUrl` refuses `api.terrascale.tech` and its regional hosts. The string is
+checked as written, before the URL parser can repair it: whitespace, `%`, `\`, a
+non-ASCII character, a trailing dot, an empty user info, an IPv4 address in any
+form but four decimal octets and a port with a leading zero are refused, where
+earlier versions sent to the repaired host. So are a string of more than 2,048
+characters, a name of more than 253 characters or with a label of more than 63,
+a label that begins or ends with a hyphen or begins with `xn--` (internationalised
+names), the name `loopback` and the unspecified addresses `0.0.0.0`, `[::]` and
+`[::ffff:0:0]`. The client throws a `TypeError` when it is built.
+
+A key exchange or `createScopedKey` call that fails before ts-auth answers
+throws `RequestTransportError`, with the runtime's failure as its `cause`, as
+data calls do; earlier versions threw the runtime's bare `TypeError`.
+
+`rotateOrganizationApiKey` and `rotateProjectApiKey` of
+`createTerraScaleIdentityManagementClient` take the `rotate_api_key` step-up
+proof as `options.stepUpProof` and send it as `X-TerraScale-Step-Up-Proof`,
+which ts-auth requires; without it they throw a `TypeError` before any request.
+Earlier versions refused the option, so every rotation failed with
+`step_up_required`. `TsAuthClient.apiKeys` (`TsAuthApiKeysClient`) is gone: it
+called `/v1/{slug}/api-keys`, which ts-auth does not serve.
+
 `execute` on a database, on a SQL session and inside `transaction` also takes
 one `{ sql, args }` or `{ sql, named }` statement value. Arguments next to a
 statement value, or any other value, are refused with a `TypeError` before

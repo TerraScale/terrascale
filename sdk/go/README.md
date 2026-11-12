@@ -35,11 +35,20 @@ origin `https://auth.terrascale.tech` unless the caller names another ts-auth
 activation, endpoint pinning or manual secret copying belongs in setup.
 Customer tenant/project scope and authorized access credentials remain required.
 The examples describe SDK boundaries; deployed issuer trust still requires
-qualification. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
+qualification. See the [zero-configuration contract](https://docs.terrascale.tech/guides/zero-configuration).
 
 `Client.ListRegions(ctx)` reads the anonymous [serving-region catalog](contracts/regions.md)
 for database placement. It sends one request, accepts future valid region IDs, and
 adds no routing, cache or background discovery. No credentials are required.
+
+## Base URL rules
+
+`v1.Config.BaseURL` and `TSAuthBaseURL`, the root `Config`'s `APIBaseURL` and `TSAuthBaseURL`, and the `tsauth`
+`Issuer` follow the origin rule of [`sdk/SQL-API.md`](../SQL-API.md#client). The constructor returns an error, before
+any request, for a base URL with user info or a path, a string of more than 2,048 characters, a name of more than 253
+characters or with a label of more than 63, a label that begins or ends with a hyphen or begins with `xn--`, the name
+`loopback`, and the unspecified addresses `0.0.0.0`, `[::]` and `[::ffff:0:0]` in any spelling. A call fails the same
+way, before sending, when a `Resolver` returns such an endpoint.
 
 ## TerraBase v1 client (`terrascale.tech/sdk/v1`)
 

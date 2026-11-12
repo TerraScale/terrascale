@@ -1,11 +1,14 @@
 package sdk
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"terrascale.tech/sdk/internal/origin"
 )
 
 // DefaultStatusBaseURL is the public ts-status origin.
@@ -63,9 +66,9 @@ func (s *StatusClient) Latency(ctx context.Context, region string) (*LatencyResp
 }
 
 func statusResolveBase(raw string) (string, error) {
-	base := strings.TrimSpace(raw)
-	if base == "" {
-		return DefaultStatusBaseURL, nil
+	status, err := origin.Parse(cmp.Or(raw, DefaultStatusBaseURL), origin.Status)
+	if err != nil {
+		return "", &ValidationError{Field: "status_base_url", Message: err.Error()}
 	}
-	return resolveServiceBase(base, "status_base_url", false)
+	return status, nil
 }

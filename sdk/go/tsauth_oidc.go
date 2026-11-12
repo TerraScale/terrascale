@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"terrascale.tech/sdk/internal/entityid"
+	"terrascale.tech/sdk/internal/origin"
 )
 
 // TSAuthOAuthClientAuthentication binds requests to the registered OAuth method.
@@ -445,7 +446,7 @@ func oidcOperationError(operation string, mutation bool, err error) error {
 
 func trustedOIDCURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" || (u.Scheme != "https" && !(u.Scheme == "http" && oidcLoopback(u.Hostname()))) || strings.EqualFold(u.Hostname(), "api.terrascale.tech") {
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" || (u.Scheme != "https" && !(u.Scheme == "http" && origin.Loopback(u.Hostname()))) || strings.EqualFold(u.Hostname(), "api.terrascale.tech") {
 		return nil, oidcError("untrusted_endpoint", "configuration", false, err)
 	}
 	return u, nil
@@ -462,9 +463,6 @@ func trustedOIDCRedirect(raw string) (*url.URL, error) {
 	}
 	u.RawQuery = query
 	return u, nil
-}
-func oidcLoopback(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func validateTSAuthOAuthRegistration(redirects, logout, origins []string) error {

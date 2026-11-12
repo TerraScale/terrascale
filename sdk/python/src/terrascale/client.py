@@ -17,7 +17,6 @@ from ._spec import Call
 from ._version import __version__
 from .auth import (
     APIKeyTokenSource,
-    _rotate_key_call,
     _scoped_key_call,
     create_api_key_call,
     create_project_client_call,
@@ -35,6 +34,7 @@ from .auth import (
     list_users_call,
     revoke_api_key_call,
     revoke_session_call,
+    rotate_api_key_call,
     rotate_project_client_secret_call,
     set_provider_call,
     update_project_client_call,
@@ -52,18 +52,21 @@ T = TypeVar("T")
 
 def _settings(api_key: str | None, project: str | None, token: Any, base_url: str | None,
               issuer: str | None) -> tuple[str | None, str, str]:
-    api_key = api_key if api_key is not None else os.environ.get("TERRASCALE_API_KEY")
+    if api_key is not None and token is not None:
+        raise ValueError("pass either api_key or token, not both")
+    if token is None and api_key is None:
+        api_key = os.environ.get("TERRASCALE_API_KEY")
     project = project if project is not None else os.environ.get("TERRASCALE_PROJECT_ID")
     if not project:
         raise ValueError("project is required: pass project= or set TERRASCALE_PROJECT_ID")
     validate_id(project, "project")
     if not api_key and token is None:
         raise ValueError("an API key is required: pass api_key= or set TERRASCALE_API_KEY")
-    base = (base_url or os.environ.get("TERRASCALE_BASE_URL") or _spec.DEFAULT_BASE_URL).rstrip("/")
-    url = httpx.URL(base)
-    if url.scheme != "https" and not (url.scheme == "http" and url.host in ("localhost", "127.0.0.1", "::1")):
-        raise ValueError("base_url must be an https URL")
-    if api_key and issuer is None and url != httpx.URL(_spec.DEFAULT_BASE_URL):
+    base = _spec.service_origin(base_url or os.environ.get("TERRASCALE_BASE_URL") or _spec.DEFAULT_BASE_URL, "base_url",
+                                _spec.API_SERVICE)
+    if issuer is not None:
+        _spec.issuer_parts(issuer)
+    if api_key and issuer is None and base != _spec.DEFAULT_BASE_URL:
         raise ValueError("set issuer to the ts-auth that exchanges the API key from api_key= or TERRASCALE_API_KEY: with a "
                          "base_url other than https://api.terrascale.tech the key is not sent to production ts-auth")
     return api_key, project, base
@@ -94,7 +97,8 @@ class TerraScale:
         http_client: httpx.Client | None = None,
     ):
         api_key, self.project, self.base_url = _settings(api_key, project, token, base_url, issuer)
-        self._http = http_client or httpx.Client(timeout=timeout, follow_redirects=False, http2=True)
+        self._http = http_client or httpx.Client(timeout=timeout, follow_redirects=False, http2=True,
+                                                 mounts={"http://": httpx.HTTPTransport(http2=True)})
         self._owns_http = http_client is None
         self._max_attempts = max(1, max_attempts)
         self._source: APIKeyTokenSource | None = None
@@ -311,10 +315,6 @@ class TerraScale:
         return self._send(_scoped_key_call(
             self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds))
 
-    def rotate_api_key(self, key_id: str, grace_seconds: int = 0) -> models.RotatedApiKey:
-        """Issue a new secret for the caller's API key id; the previous one keeps working for grace_seconds (0 to 86400)."""
-        return self._send(_rotate_key_call(self._api_key, self._issuer, key_id, grace_seconds))
-
     def create_api_key(
         self, organization: str, name: str, scopes: Sequence[str], *,
         project: str | None = None, database: str | None = None, expires_at: str | None = None,
@@ -333,6 +333,12 @@ class TerraScale:
     def revoke_api_key(self, organization: str, key: str, *, project: str | None = None) -> None:
         """Revoke a key at once; tokens already issued live out their 15 minutes."""
         self._send(revoke_api_key_call(self._issuer, organization, project, key))
+
+    def rotate_api_key(
+        self, organization: str, key: str, *, step_up_proof: str, project: str | None = None, grace_seconds: int = 0,
+    ) -> models.ApiKeySecret:
+        return self._send(rotate_api_key_call(
+            self._issuer, organization, project, key, grace_seconds, step_up_proof))
 
     def create_project_client(
         self, name: str, client_type: str, redirect_uris: Sequence[str], *, step_up_proof: str,

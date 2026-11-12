@@ -64,7 +64,7 @@ Static assets live in `static/` and are served from root-relative URLs such as `
 
 ## Public regions and SDK samples
 
-The [zero-configuration operating contract](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)
+The [zero-configuration operating contract](https://docs.terrascale.tech/guides/zero-configuration)
 requires every serving region to be discovered automatically, with no regional
 activation step. The checked-in `static/regions.json` is currently a marketing
 catalog, not live node admission or evidence of which regions serve. An

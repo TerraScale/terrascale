@@ -10,6 +10,7 @@ use terrascale::v1::{
     ForkDatabaseOptions, ManagedDatabase, ScopedKeyAccess, ScopedKeyOptions, SqlRecord, SqlSession,
     SqlStatement, SqlStatementResult, SqlValue,
 };
+use terrascale::ClientConfig;
 
 type Outcome = Result<(), String>;
 
@@ -89,6 +90,51 @@ fn register_secret(name: &str, value: &str) -> Outcome {
         .open(std::path::Path::new(&secrets).join(name))
         .and_then(|mut file| file.write_all(value.as_bytes()))
         .map_err(|error| error.to_string())
+}
+
+fn origin_rule(project: &str, file: &str) -> Outcome {
+    let operations = std::env::var("E2E_OPERATIONS").map_err(|error| error.to_string())?;
+    let path = std::path::Path::new(&operations).with_file_name(file);
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let spec: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let cases = spec["cases"].as_array().cloned().unwrap_or_default();
+    let mut wrong = Vec::new();
+    for (index, case) in cases.iter().enumerate() {
+        let raw = case[0].as_str().unwrap_or_default();
+        let api = Client::builder(raw, "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln")
+            .project(project)
+            .build()
+            .ok()
+            .map(|client| client.base_url().origin().ascii_serialization());
+        let auth = ClientConfig::builder()
+            .auth_base_url(raw)
+            .build()
+            .ok()
+            .and_then(|config| config.auth_base_url().map(str::to_owned));
+        for (column, expected, got) in [
+            ("api", case[1].as_str(), api),
+            ("auth", case[2].as_str(), auth),
+        ] {
+            if got.as_deref() != expected {
+                wrong.push(format!(
+                    "#{index} {:?} {column}: expected {}, got {}",
+                    raw.chars().take(60).collect::<String>(),
+                    expected.unwrap_or("refused"),
+                    got.as_deref().unwrap_or("refused")
+                ));
+            }
+        }
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "origin rule: {} of {} checks differ: {}",
+            wrong.len(),
+            2 * cases.len(),
+            wrong.join("; ")
+        ))
+    }
 }
 
 fn records(records: &[SqlRecord]) -> Value {
@@ -471,6 +517,7 @@ impl Runner {
                 &json!([true, false]),
                 "validation",
             ),
+            "origin.rule" => origin_rule(&self.project, &text(op, "cases")),
             "agent.create_ttl" => {
                 let options = CreateDatabaseOptions {
                     ttl_seconds: op["ttlSeconds"].as_u64(),

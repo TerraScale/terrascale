@@ -7,6 +7,7 @@ import { parseExactJson } from "./json.js";
 import { region as regionId } from "./catalog.js";
 import { v1Route, v1RoutePath } from "./routes.js";
 import { V1SqlSocket, sqlSocketProtocol } from "./sql-socket.js";
+import { apiService, authService, serviceOrigin } from "../origin.js";
 import { ShapeHints, shapeHintProtocol } from "./shape-hints.js";
 /**
  * @import { FetchLike } from "../config.js"
@@ -50,55 +51,6 @@ const publicAuthOrigin = "https://auth.terrascale.tech";
  */
 
 /**
- * @param {string} host
- * @returns {boolean}
- */
-function isLoopbackHost(host) {
-  const name = host.toLowerCase();
-  return (
-    name === "localhost" ||
-    name.endsWith(".localhost") ||
-    name === "[::1]" ||
-    isLoopbackIpv4(name)
-  );
-}
-
-/**
- * A dotted-decimal address in 127.0.0.0/8 with every octet at most 255. An
- * out-of-range octet would make the URL parser treat the host as a DNS name.
- * @param {string} name
- * @returns {boolean}
- */
-function isLoopbackIpv4(name) {
-  const octets = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(name);
-  return octets !== null && octets.slice(1).every((octet) => Number(octet) <= 255);
-}
-
-/**
- * @param {string} raw
- * @param {string} what
- * @returns {URL}
- */
-export function requireServiceUrl(raw, what) {
-  /** @type {URL} */
-  let url;
-  if (typeof raw !== "string") throw new TypeError(`${what} must be an absolute URL.`);
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new TypeError(`${what} must be an absolute URL.`);
-  }
-  if (url.username !== "" || url.password !== "" || url.hash !== "")
-    throw new TypeError(`${what} must not carry credentials or a fragment.`);
-  if (
-    url.protocol !== "https:" &&
-    !(url.protocol === "http:" && isLoopbackHost(url.hostname))
-  )
-    throw new TypeError(`${what} must use HTTPS; plain HTTP is allowed only for loopback hosts.`);
-  return url;
-}
-
-/**
  * An explicitly configured endpoint, with no discovery or hardcoded hosts.
  * @param {string} baseUrl
  * @returns {V1EndpointResolver}
@@ -109,17 +61,11 @@ export function staticBaseUrlResolver(baseUrl) {
 }
 /** @param {string} raw @returns {string} */
 function canonicalBaseUrl(raw) {
-  const url = requireServiceUrl(raw, "baseUrl");
-  if (url.search !== "") throw new TypeError("baseUrl must not carry a query.");
-  return `${url.origin}${url.pathname.replace(/\/+$/u, "")}`;
+  return serviceOrigin(raw, "baseUrl", apiService);
 }
 
 function keyExchangeOrigin(/** @type {unknown} */ authBaseUrl, /** @type {string | undefined} */ base) {
-  if (authBaseUrl !== undefined) {
-    const url = requireServiceUrl(/** @type {string} */ (authBaseUrl), "authBaseUrl");
-    if (url.pathname !== "/" || url.search !== "") throw new TypeError("authBaseUrl must be a bare ts-auth origin without a path or query.");
-    return url.origin;
-  }
+  if (authBaseUrl !== undefined) return serviceOrigin(/** @type {string} */ (authBaseUrl), "authBaseUrl", authService);
   if (base !== publicBaseUrl)
     throw new TypeError("Set authBaseUrl to the ts-auth that exchanges the apiKey: with a TerraBase origin other than https://api.terrascale.tech the key is not sent to production ts-auth.");
   return publicAuthOrigin;
@@ -367,7 +313,13 @@ export class V1Transport {
       init.body = new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } });
       init.duplex = "half";
     }
-    const response = await this.#fetch(`${this.#authOrigin}${path}`, init);
+    /** @type {Response} */
+    let response;
+    try { response = await this.#fetch(`${this.#authOrigin}${path}`, init); }
+    catch (error) {
+      bounded.throwIfAborted();
+      throw new RequestTransportError(error);
+    }
     const text = await this.readText(response, bounded, 64 * 1024);
     if (response.status !== (path.endsWith("scoped-keys") ? 201 : 200)) {
       const error = parseV1Error(response.status, response.headers, text);

@@ -199,7 +199,17 @@ delivery. Current TerraBase clients still require an endpoint/resolver pending
 TS-507; legacy direct-origin, proxy and tuning selectors remain inventoried for
 owning implementation changes. Examples below show current API boundaries,
 not a first-party production setup recipe. `discoveredOrigin` below is a trusted
-HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
+HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See the [zero-configuration contract](https://docs.terrascale.tech/guides/zero-configuration).
+
+## Base URL rules
+
+Every `BaseAddress` and `AuthAddress` option, `TerraBaseStaticEndpointResolver`, `TERRASCALE_BASE_URL` and the
+`Endpoint` and `AuthEndpoint` of the EF Core connection string follow the origin rule of
+[`sdk/SQL-API.md`](../SQL-API.md#client). Building the client or resolver throws `ArgumentException`, before any
+request, for a base address with user info or a path, a string of more than 2,048 characters, a name of more than 253
+characters or with a label of more than 63, a label that begins or ends with a hyphen or begins with `xn--`, the name
+`loopback`, and the unspecified addresses `0.0.0.0`, `[::]` and `[::ffff:0:0]` in any spelling. A `Uri` option is
+parsed first by the caller's `new Uri(...)`, which refuses some of these strings with its own `UriFormatException`.
 
 ## TerraBase client
 
@@ -242,11 +252,11 @@ The [published pricing catalog](https://terrascale.tech/pricing.json) meters dat
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ```csharp
-// Use the ts-orch NetBird service address; the caller configures the required peer credential on httpClient.
+// TerraBase's private listener on the same host; the caller configures the required peer credential on httpClient.
 // Qualify this pinned-contract example against the OCI server before use.
 var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
 {
-    BaseAddress = new Uri("http://100.64.0.1:8081"),
+    BaseAddress = new Uri("http://127.0.0.1:8081"),
 });
 
 TerraBaseOrganization organization = await management.CreateOrganizationAsync(
@@ -342,8 +352,9 @@ are not evidence that their routes exist. See [the supported contract](contracts
 
 ```csharp
 using TerraScale.DotNet;
+using TerraScale.DotNet.TerraBase;
 
-using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false });
+using var http = new HttpClient(TerraBaseHttp.CreateHandler());
 var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions
 {
     BaseAddress = new Uri("https://auth.terrascale.tech"),
@@ -369,8 +380,8 @@ End-user lifecycle webhook deliveries are verified by `TerraScaleWebhooks.Verify
 ## Verification and package distribution
 
 ```bash
-dotnet build TerraScale.DotNet.slnx --configuration Release
-dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
+dotnet restore TerraScale.DotNet.slnx --locked-mode
+dotnet build TerraScale.DotNet.slnx --configuration Release --no-restore
 ```
 
 [Package release](docs/package-release.md) records the release procedure; it does not authorize

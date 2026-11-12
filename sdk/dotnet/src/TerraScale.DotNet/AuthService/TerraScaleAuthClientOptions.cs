@@ -39,7 +39,7 @@ public sealed record TerraScaleAuthClientOptions
             throw new ArgumentException("The ts-auth base address must be configured.", nameof(BaseAddress));
         }
 
-        ValidateEndpoint(BaseAddress, nameof(BaseAddress));
+        BaseAddress = TerraScaleOrigin.Parse(BaseAddress, "The ts-auth base address", nameof(BaseAddress), TerraScaleService.Auth);
         InstanceSlug = ValidateSlug(InstanceSlug);
 
         if (ApiKey is not null && string.IsNullOrWhiteSpace(ApiKey))
@@ -88,32 +88,4 @@ public sealed record TerraScaleAuthClientOptions
             throw new ArgumentException($"{name} must contain printable characters and no control characters.", name);
         }
     }
-
-    internal static void ValidateEndpoint(Uri endpoint, string name)
-    {
-        if (!endpoint.IsAbsoluteUri)
-        {
-            throw new ArgumentException("The ts-auth base address must be absolute.", name);
-        }
-
-        if (endpoint.UserInfo.Length != 0 || endpoint.Query.Length != 0 || endpoint.Fragment.Length != 0 || endpoint.AbsolutePath is not ("" or "/"))
-        {
-            throw new ArgumentException("The ts-auth base address must be an origin without credentials, paths, queries, or fragments.", name);
-        }
-
-        if (endpoint.Scheme is not ("http" or "https"))
-        {
-            throw new ArgumentException("The ts-auth base address must use HTTP or HTTPS.", name);
-        }
-
-        if (endpoint.Scheme == "http" && !IsLoopbackOrTestHost(endpoint.Host))
-        {
-            throw new ArgumentException("HTTP is allowed only for loopback or explicit test endpoints; production endpoints must use HTTPS.", name);
-        }
-    }
-
-    private static bool IsLoopbackOrTestHost(string host) =>
-        string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".test", StringComparison.OrdinalIgnoreCase) ||
-        IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
 }

@@ -47,9 +47,6 @@ func New(cfg Config) (*Client, error) {
 		return nil, err
 	}
 	dir, tenant := path.Split(u.Path)
-	if tenant == "" {
-		return nil, fmt.Errorf("tsauth: Issuer %q must name its tenant: https://<host>/<tenant>", cfg.Issuer)
-	}
 	u.Path = dir + "v1/" + tenant
 	return &Client{base: u.String(), hc: noRedirects(cfg.HTTPClient)}, nil
 }

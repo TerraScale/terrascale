@@ -17,6 +17,7 @@ use tokio_tungstenite::tungstenite;
 use super::auth::{Auth, Credential};
 use super::database::Database;
 use super::errors::{self, Error, Result};
+use crate::origin::{service_origin, API, AUTH};
 
 /// The public TerraBase API origin used by [`Client::for_project`].
 pub const DEFAULT_BASE_URL: &str = "https://api.terrascale.tech";
@@ -290,15 +291,6 @@ pub(crate) fn valid_region(region: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-fn is_loopback(url: &Url) -> bool {
-    match url.host() {
-        Some(url::Host::Domain(d)) => d == "localhost",
-        Some(url::Host::Ipv4(ip)) => IpAddr::V4(ip).is_loopback(),
-        Some(url::Host::Ipv6(ip)) => IpAddr::V6(ip).is_loopback(),
-        None => false,
-    }
-}
-
 fn key_exchange_origin(
     credential: &Credential,
     auth_base_url: Option<&str>,
@@ -309,15 +301,10 @@ fn key_exchange_origin(
         (Credential::Bearer(_), Some(_)) => Err(Error::InvalidInput(
             "auth_base_url exchanges an API key; remove it or use Client::for_project_api_key".into(),
         )),
-        (_, Some(raw)) => {
-            let url = parse_base_url(raw)?;
-            if url.path() != "/" {
-                return Err(Error::InvalidInput(
-                    "auth_base_url must be a bare ts-auth origin without a path".into(),
-                ));
-            }
-            Ok(url.origin().ascii_serialization())
-        }
+        (_, Some(raw)) => Ok(service_origin(raw, "auth_base_url", &AUTH)
+            .map_err(Error::InvalidInput)?
+            .origin()
+            .ascii_serialization()),
         (Credential::ApiKey(_), None) if *base != public => Err(Error::InvalidInput(
             "set auth_base_url to the ts-auth that exchanges the API key: with a TerraBase origin other than https://api.terrascale.tech the key is not sent to production ts-auth".into(),
         )),
@@ -326,38 +313,7 @@ fn key_exchange_origin(
 }
 
 fn parse_base_url(raw: &str) -> Result<Url> {
-    let mut url =
-        Url::parse(raw).map_err(|e| Error::InvalidInput(format!("base URL {raw:?}: {e}")))?;
-    if !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(Error::InvalidInput(
-            "base URL must not carry user info, a query or a fragment".into(),
-        ));
-    }
-    match url.scheme() {
-        "https" => {}
-        "http" => {
-            if !is_loopback(&url) {
-                return Err(Error::InvalidInput(
-                    "plain HTTP base URL is allowed only for loopback hosts".into(),
-                ));
-            }
-        }
-        other => {
-            return Err(Error::InvalidInput(format!(
-                "base URL scheme {other:?} is not https"
-            )))
-        }
-    }
-    if url.host().is_none() {
-        return Err(Error::InvalidInput("base URL has no host".into()));
-    }
-    let trimmed = url.path().trim_end_matches('/').to_owned();
-    url.set_path(&trimmed);
-    Ok(url)
+    service_origin(raw, "base_url", &API).map_err(Error::InvalidInput)
 }
 
 struct Inner {

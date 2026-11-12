@@ -479,8 +479,9 @@ without a signed-in user.
   preferences such as a user's current organization. It reads identity through
   this API and suspends a project through section 8.1.
 - **ts-auth's own storage.** ts-auth reaches TerraBase at
-  `http://gru.ts-terrabase.internal:8081` for everything but discovery and the JWKS (those at its own region's), TerraBase's internal
-  listener on the private service network. Storage requests carry the shared
+  `http://127.0.0.1:8081` (`TS_AUTH_TERRABASE_URL`), the internal listener of the
+  TerraBase on its own host, for every storage read and write
+  ([local host](local-host.md)). Storage requests carry the shared
   `TERRABASE_PEER_SECRET` supplied through OCI Vault on each app; see
   [peer authentication](../terrabase/peer-authentication.md) for rollout and enforcement.
   The separate storage-signing-key design is retired. Signing keys live in

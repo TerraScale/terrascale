@@ -5,8 +5,7 @@ public sealed record TerraBaseDatabaseClientOptions
 {
     /// <summary>
     /// HTTPS origin of the TerraBase client listener, for example <c>https://api.terrascale.tech</c>, or the plain-HTTP
-    /// origin of its private listener on NetBird <c>100.64.0.0/10</c> addresses or loopback, for example
-    /// <c>http://100.64.0.1:8081</c>.
+    /// origin of its private listener on loopback, for example <c>http://127.0.0.1:8081</c>.
     /// </summary>
     public Uri? BaseAddress { get; init; }
 

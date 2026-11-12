@@ -17,7 +17,6 @@ import (
 	"io"
 	"math"
 	mrand "math/rand/v2"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -28,6 +27,7 @@ import (
 	"time"
 
 	"terrascale.tech/sdk/internal/entityid"
+	"terrascale.tech/sdk/internal/origin"
 )
 
 // DefaultIssuer is the terrascale tenant, which issues every platform token.
@@ -449,26 +449,17 @@ func tokenEndpoint(issuer string) (string, error) {
 	return u.String(), nil
 }
 
-// parseIssuer validates an issuer, empty meaning DefaultIssuer: an https
-// URL (http for loopback) without user info, query, fragment or escaped
-// path segments; a trailing slash is dropped.
 func parseIssuer(issuer string) (*url.URL, error) {
-	if issuer == "" {
-		issuer = DefaultIssuer
+	scheme, rest, _ := strings.Cut(cmp.Or(issuer, DefaultIssuer), "://")
+	authority, tenant, _ := strings.Cut(rest, "/")
+	base, err := origin.Parse(scheme+"://"+authority, origin.Auth)
+	if err != nil {
+		return nil, fmt.Errorf("tsauth: Issuer %w", err)
 	}
-	u, err := url.Parse(issuer)
-	// A RawPath means escapes such as %2F that the decoded Path loses.
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" ||
-		(u.Scheme != "https" && !(u.Scheme == "http" && loopback(u.Hostname()))) {
-		return nil, fmt.Errorf("tsauth: Issuer %q must be an https URL without a query or escaped path", issuer)
+	if tenant != "terrascale" && entityid.Check(tenant) != nil {
+		return nil, errors.New("tsauth: Issuer must be a ts-auth origin followed by one tenant segment: terrascale or a project id")
 	}
-	u.Path = strings.TrimSuffix(u.Path, "/")
-	return u, nil
-}
-
-func loopback(host string) bool {
-	ip := net.ParseIP(host)
-	return host == "localhost" || ip != nil && ip.IsLoopback()
+	return url.Parse(base + "/" + tenant)
 }
 
 // requestToken posts form to the token endpoint and decodes the token.
