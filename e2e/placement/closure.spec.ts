@@ -227,6 +227,7 @@ test('a project deletion through gru is refused while fra holds a database of th
     form: { _csrf: await csrfToken(page), projectId: current.projectId, returnUrl: '/organization?tab=projects' }, maxRedirects: 0,
   }), 303);
   const held = await createDatabase(cell, second, projectId);
+  let heldRemoved = false;
   try {
     expect(held.homeRegion).toBe('fra');
     const probe = { version: 1, closureId: ulid(), authorityOrganizationId: current.organizationId };
@@ -245,6 +246,7 @@ test('a project deletion through gru is refused while fra holds a database of th
     }
 
     await status(await cell.delete(`${second}${api(projectId)}/databases/${held.id}`), 204);
+    heldRemoved = true;
     await expect.poll(async () => (await deleteProject(page, projectId, projectName)).status(), { message: 'the same call completes once fra is empty', timeout: 60_000 }).toBe(303);
     await page.goto('/organization?tab=projects');
     await expect(page.locator(`#delete-project-${projectId}`)).toHaveCount(0);
@@ -252,8 +254,7 @@ test('a project deletion through gru is refused while fra holds a database of th
       expect(await inspect(cellInternal, projectId, probe), `${cellInternal} holds the fence of the completed deletion`).toMatchObject({ status: 409, body: { error: { code: 'closure_conflict' } } });
     }
   } finally {
-    const removed = await cell.delete(`${second}${api(projectId)}/databases/${held.id}`);
-    expect([204, 404], 'delete the held database unless the project was already deleted').toContain(removed.status());
+    if (!heldRemoved) await status(await cell.delete(`${second}${api(projectId)}/databases/${held.id}`), 204);
   }
 
   await deleteAccount(page, audit, current, 'closure-check');
