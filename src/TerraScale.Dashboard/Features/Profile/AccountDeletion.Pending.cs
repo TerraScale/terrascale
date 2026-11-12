@@ -66,9 +66,9 @@ namespace TerraScale.Dashboard.Features.Profile
                     return await CompleteAsync(http, sessions, platform, storage, tokens, null, operation);
                 }
 
-                return PendingPage(http, completed ? "Finalizing dashboard cleanup" : "Account deletion is pending",
-                    completed ? "ts-auth has confirmed account closure. Finishing dashboard cleanup. This page continues by itself." :
-                    "Account closure is still pending. Completion requires project deletion confirmation from every storage region that holds your data. If a required region is unavailable, confirmation waits for recovery. This status does not identify a specific waiting step or region.",
+                return PendingPage(http, completed ? "Finishing dashboard cleanup" : "Account deletion is pending",
+                    completed ? "Account closure is confirmed. This page removes the dashboard records and signs you out." :
+                    "Account closure is still pending on the machine that is closing it. This page keeps checking and does not name a waiting step.",
                     attempt, 202);
             }
             catch (AccountAccessException error) when (error.StatusCode is >= 400 and < 500 and not (408 or 429))
