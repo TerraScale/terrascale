@@ -59,8 +59,8 @@ export type Database = { id: string; homeRegion: string; replicaRegions: string[
 export type Progress = { homeRegion: string; replicas: { region: string; revision: string | null; lastPulledAt: string | null; lagMs: number | null }[] };
 export type Sql = { results: { rows: unknown[][] }[] };
 
-export const project = () => `/v1/projects/${journey().projectId}`;
-export const database = (id: string) => `${project()}/databases/${id}`;
+export const project = (projectId = journey().projectId) => `/v1/projects/${projectId}`;
+export const database = (id: string, projectId?: string) => `${project(projectId)}/databases/${id}`;
 export const name = (prefix: string) => `${prefix}-${randomBytes(6).toString('hex')}`;
 
 export async function status(response: APIResponse, expected: number): Promise<void> {
@@ -72,13 +72,13 @@ export async function json<T>(response: APIResponse, expected = 200): Promise<T>
   return response.json() as Promise<T>;
 }
 
-export async function sql(cells: Cells, region: string, id: string, statement: string): Promise<Sql> {
-  return json<Sql>(await cells.post(`${region}${database(id)}/sql/execute`, { data: { statements: [{ sql: statement }] } }));
+export async function sql(cells: Cells, region: string, id: string, statement: string, projectId?: string): Promise<Sql> {
+  return json<Sql>(await cells.post(`${region}${database(id, projectId)}/sql/execute`, { data: { statements: [{ sql: statement }] } }));
 }
 
-export async function replicated(cells: Cells, region: string, id: string, value: number): Promise<void> {
+export async function replicated(cells: Cells, region: string, id: string, value: number, projectId?: string): Promise<void> {
   await expect.poll(async () => {
-    const response = await cells.post(`${region}${database(id)}/sql/execute`, {
+    const response = await cells.post(`${region}${database(id, projectId)}/sql/execute`, {
       data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
     });
     if (response.status() === 404 || response.status() === 503) return [];
@@ -95,12 +95,12 @@ export async function replicated(cells: Cells, region: string, id: string, value
 }
 
 
-export async function removeDatabase(cells: Cells, id: string): Promise<void> {
+export async function removeDatabase(cells: Cells, id: string, projectId?: string): Promise<void> {
   await expect.poll(async () => {
-    let response = await cells.delete(`${home}${database(id)}`);
+    let response = await cells.delete(`${home}${database(id, projectId)}`);
     if (response.status() === 421) {
       expect((await response.json()).error.code).toBe('wrong_region');
-      response = await cells.delete(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id)}`);
+      response = await cells.delete(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id, projectId)}`);
     }
     if (response.status() === 409) {
       expect((await response.json()).error.code).toBe('move_in_progress');

@@ -1,9 +1,13 @@
+import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse } from '@playwright/test';
 import { test, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
-import { dash, production } from '../support/stack';
+import { auth, dash, production } from '../support/stack';
 import { Audit, auditedContext } from '../support/audit';
-import { ownerSession, saveCookies } from '../support/state';
+import { saveCookies, saveSecret } from '../support/state';
+import { confirmWithPassword, onboard, signUp, verify } from '../support/hosted';
+import { newAddress } from '../support/inbox';
+import { createApiKey } from '../support/paid';
 
 test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
 test.describe.configure({ mode: 'default', timeout: 180_000 });
@@ -17,46 +21,46 @@ async function answer(response: APIResponse, code: number, documented: string): 
   if (code >= 400) expect((await response.json()).error.code, documented).toBe(documented);
 }
 
-async function create(cells: Cells, regions: string[]): Promise<Database> {
-  const response = await cells.post(`${home}${project()}/databases`, { data: { name: name('regions'), regions } });
+async function create(cells: Cells, regions: string[], projectId?: string): Promise<Database> {
+  const response = await cells.post(`${home}${project(projectId)}/databases`, { data: { name: name('regions'), regions } });
   await answer(response, 201, '201 database created');
   return response.json();
 }
 
-async function progress(cells: Cells, id: string, region = home): Promise<Progress> {
-  let response = await cells.get(`${region}${database(id)}/regions`);
+async function progress(cells: Cells, id: string, region = home, projectId?: string): Promise<Progress> {
+  let response = await cells.get(`${region}${database(id, projectId)}/regions`);
   if (response.status() === 421) {
     await answer(response, 421, 'wrong_region');
-    response = await cells.get(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id)}/regions`);
+    response = await cells.get(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id, projectId)}/regions`);
   }
   await answer(response, 200, '200 database regions');
   return response.json();
 }
 
-async function observed(cells: Cells, id: string): Promise<void> {
-  await expect.poll(async () => (await progress(cells, id)).regions.find(row => row.region === 'fra'),
+async function observed(cells: Cells, id: string, projectId?: string): Promise<void> {
+  await expect.poll(async () => (await progress(cells, id, home, projectId)).regions.find(row => row.region === 'fra'),
     { message: 'fra has a completed pull observation', timeout: 45_000, intervals: [250, 500, 1000] })
     .toMatchObject({ revision: expect.any(String), lastPulledAt: expect.any(String), lagMs: expect.any(Number) });
 }
 
-async function seed(cells: Cells, id: string): Promise<void> {
-  await sql(cells, home, id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
-  await sql(cells, home, id, 'INSERT INTO placement_rows VALUES (1), (2), (3)');
+async function seed(cells: Cells, id: string, projectId?: string): Promise<void> {
+  await sql(cells, home, id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)', projectId);
+  await sql(cells, home, id, 'INSERT INTO placement_rows VALUES (1), (2), (3)', projectId);
 }
 
-async function patch(cells: Cells, id: string, regions: string[]): Promise<APIResponse> {
-  let response = await cells.patch(`${home}${database(id)}`, { data: { regions } });
+async function patch(cells: Cells, id: string, regions: string[], projectId?: string): Promise<APIResponse> {
+  let response = await cells.patch(`${home}${database(id, projectId)}`, { data: { regions } });
   if (response.status() === 421) {
     await answer(response, 421, 'wrong_region');
-    response = await cells.patch(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id)}`, { data: { regions } });
+    response = await cells.patch(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id, projectId)}`, { data: { regions } });
   }
   return response;
 }
 
-async function move(cells: Cells, id: string, label: string, timeout: number, statuses: number[] = []): Promise<void> {
+async function move(cells: Cells, id: string, label: string, timeout: number, statuses: number[] = [], projectId?: string): Promise<void> {
   try {
     await expect.poll(async () => {
-      const response = await patch(cells, id, ['fra']);
+      const response = await patch(cells, id, ['fra'], projectId);
       statuses.push(response.status());
       if (response.status() === 200) {
         await answer(response, 200, '200 database updated');
@@ -69,7 +73,7 @@ async function move(cells: Cells, id: string, label: string, timeout: number, st
   } finally {
     console.log(`${label} statuses: ${JSON.stringify(statuses)}`);
   }
-  expect((await progress(cells, id, replica)).regions.map(row => row.region)).toEqual(['fra']);
+  expect((await progress(cells, id, replica, projectId)).regions.map(row => row.region)).toEqual(['fra']);
 }
 
 test('R1 create two regions, read across listeners and observe a pull', async ({ cells }) => {
@@ -244,11 +248,19 @@ test('R7 unchanged placement and the documented nine-member maximum', async ({ c
   }
 });
 
-test('R8 a TTL branch keeps its identity through catalog sync, a move and a rename', async ({ cells, browser }, info) => {
-  const context = await auditedContext(browser, { storageState: ownerSession() });
+test('R8 a TTL branch keeps its identity through catalog sync, a move and a rename', async ({ browser, playwright, request }, info) => {
+  const context = await auditedContext(browser, {});
   try {
     const page = await context.newPage();
     const audit = new Audit(page, info);
+    const email = await newAddress(name('identity'));
+    const password = randomBytes(24).toString('base64url');
+    saveSecret('identity-password', password);
+    await signUp(page, audit, email, password, 'database identity owner');
+    await verify(page, email);
+    await onboard(page, audit, 'Database identity owner', name('identity-project'), 'database identity owner');
+    const projectId = new URL(page.url()).searchParams.get('projectId') ?? '';
+    expect(projectId).not.toBe('');
     await page.goto(`${dash}/organization?tab=billing`);
     await page.locator('article.ts-plan', { has: page.locator('#plan-pro') }).getByRole('button', { name: 'Upgrade to Pro', exact: true }).click();
     await page.waitForURL(url => url.origin === 'https://checkout.stripe.com' && url.pathname.startsWith('/c/pay/cs_test_'));
@@ -256,51 +268,70 @@ test('R8 a TTL branch keeps its identity through catalog sync, a move and a rena
     await page.waitForURL(url => url.origin === dash && url.pathname === '/organization' && url.searchParams.get('payment') === 'success');
     await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
     await audit.check('placement branch owner upgraded');
+    const key = await createApiKey(page, audit, name('identity-key'), 'database identity');
+    const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
+      form: { grant_type: 'client_credentials', client_id: key.slice(0, 26), client_secret: key, project: projectId, scope: 'sql:read sql:write databases:read databases:write' },
+    }));
+    saveSecret('identity-token', grant.access_token);
+    const cells = await playwright.request.newContext({ extraHTTPHeaders: { authorization: `Bearer ${grant.access_token}` }, timeout: 15_000 });
+    try {
+      const source = await create(cells, ['gru'], projectId);
+      let branch: Database | undefined;
+      try {
+        await seed(cells, source.id, projectId);
+        branch = await json<Database>(await cells.post(`${home}${database(source.id, projectId)}/branches`, {
+          data: { name: name('identity'), ttlSeconds: 3600 },
+        }), 201);
+        const id = branch.id;
+        const original = await json<Record<string, unknown>>(await cells.get(`${home}${database(id, projectId)}`));
+        expect(original.branchedFrom).toBe(source.id);
+        expect(original.createdAt).toEqual(expect.any(String));
+        expect(original.expiresAt).toEqual(expect.any(String));
+        await answer(await patch(cells, id, ['gru', 'fra'], projectId), 200, '200 database updated with writer retained');
+        await observed(cells, id, projectId);
+        await replicated(cells, replica, id, 3, projectId);
+
+        const renamed = await json<Record<string, unknown>>(await cells.patch(`${home}${database(id, projectId)}`, { data: { name: name('before-move') } }));
+        const before = await json<Record<string, unknown>>(await cells.put(`${home}${database(id, projectId)}/ttl`, { data: { ttlSeconds: 7200 } }));
+        expect(before.name).toBe(renamed.name);
+        expect(before.expiresAt).not.toBe(original.expiresAt);
+        expect(before.placementVersion).toBe(renamed.placementVersion);
+        const facts = ({ region, homeRegion, replicaRegions, placementVersion, allRegions, regions, ...identity }: Record<string, unknown>) => identity;
+        expect(facts(before)).toEqual({ ...facts(original), name: before.name, expiresAt: before.expiresAt });
+        await expect.poll(async () => facts(await json<Record<string, unknown>>(await cells.get(`${replica}${database(id, projectId)}`))),
+          { message: 'the existing replica receives name and expiry changes without a placement change', timeout: 45_000, intervals: [250, 500, 1000] })
+          .toEqual(facts(before));
+
+        const atPromotion = await json<Record<string, unknown>>(await cells.put(`${home}${database(id, projectId)}/ttl`, { data: { ttlSeconds: 10800 } }));
+        expect(atPromotion.expiresAt).not.toBe(before.expiresAt);
+        await move(cells, id, 'R8', 60_000, [], projectId);
+        const moved = await json<Record<string, unknown>>(await cells.get(`${replica}${database(id, projectId)}`));
+        expect(facts(moved)).toEqual(facts(atPromotion));
+        const changedName = name('after-move');
+        const renamedAfterMove = await json<Record<string, unknown>>(await cells.patch(`${replica}${database(id, projectId)}`, { data: { name: changedName } }));
+        expect(renamedAfterMove).toEqual({ ...moved, name: changedName });
+        expect(await json(await cells.get(`${replica}${database(id, projectId)}`))).toEqual(renamedAfterMove);
+        console.log('R8 createdAt, branchedFrom, expiresAt and every non-placement field retained; rename changes only name');
+      } finally {
+        if (branch) await removeDatabase(cells, branch.id, projectId);
+        await removeDatabase(cells, source.id, projectId);
+      }
+    } finally {
+      await cells.dispose();
+    }
+
+    await page.goto(`${dash}/profile?tab=danger`);
+    await page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
+    const dialog = page.locator('#delete-account');
+    await dialog.locator('#delete-account-email').fill(email);
+    await dialog.getByRole('button', { name: 'Delete account', exact: true }).click();
+    await confirmWithPassword(page, audit, password, 'database identity owner deletion');
+    await page.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Account deleted');
+    await audit.check('database identity owner deleted');
     await audit.finish();
   } finally {
     await saveCookies(context);
     await context.close();
-  }
-
-  const source = await create(cells, ['gru']);
-  let branch: Database | undefined;
-  try {
-    await seed(cells, source.id);
-    branch = await json<Database>(await cells.post(`${home}${database(source.id)}/branches`, {
-      data: { name: name('identity'), ttlSeconds: 3600 },
-    }), 201);
-    const id = branch.id;
-    const original = await json<Record<string, unknown>>(await cells.get(`${home}${database(id)}`));
-    expect(original.branchedFrom).toBe(source.id);
-    expect(original.createdAt).toEqual(expect.any(String));
-    expect(original.expiresAt).toEqual(expect.any(String));
-    await answer(await patch(cells, id, ['gru', 'fra']), 200, '200 database updated with writer retained');
-    await observed(cells, id);
-    await replicated(cells, replica, id, 3);
-
-    const renamed = await json<Record<string, unknown>>(await cells.patch(`${home}${database(id)}`, { data: { name: name('before-move') } }));
-    const ttl = await json<Record<string, unknown>>(await cells.put(`${home}${database(id)}/ttl`, { data: { ttlSeconds: 7200 } }));
-    const before = await json<Record<string, unknown>>(await cells.get(`${home}${database(id)}`));
-    expect(before).toEqual(ttl);
-    expect(before.name).toBe(renamed.name);
-    expect(before.expiresAt).not.toBe(original.expiresAt);
-    const facts = ({ region, homeRegion, replicaRegions, placementVersion, allRegions, regions, ...identity }: Record<string, unknown>) => identity;
-    await expect.poll(async () => facts(await json<Record<string, unknown>>(await cells.get(`${replica}${database(id)}`))),
-      { message: 'the existing replica receives name and expiry changes without a placement change', timeout: 45_000, intervals: [250, 500, 1000] })
-      .toEqual(facts(before));
-
-    const atPromotion = await json<Record<string, unknown>>(await cells.put(`${home}${database(id)}/ttl`, { data: { ttlSeconds: 10800 } }));
-    expect(atPromotion.expiresAt).not.toBe(before.expiresAt);
-    await move(cells, id, 'R8', 60_000);
-    const moved = await json<Record<string, unknown>>(await cells.get(`${replica}${database(id)}`));
-    expect(facts(moved)).toEqual(facts(atPromotion));
-    const changedName = name('after-move');
-    const renamedAfterMove = await json<Record<string, unknown>>(await cells.patch(`${replica}${database(id)}`, { data: { name: changedName } }));
-    expect(renamedAfterMove).toEqual({ ...moved, name: changedName });
-    expect(await json(await cells.get(`${replica}${database(id)}`))).toEqual(renamedAfterMove);
-    console.log('R8 createdAt, branchedFrom, expiresAt and every non-placement field retained; rename changes only name');
-  } finally {
-    if (branch) await removeDatabase(cells, branch.id);
-    await removeDatabase(cells, source.id);
   }
 });
