@@ -28,8 +28,10 @@ printf '%s\n' "$peer_secret" "$terrabase_master_key" "$auth_master_key" "$auth_a
   "$r2_access_key_id" "$r2_secret_access_key" > "$state/secrets"
 if [ -n "${GITHUB_ACTIONS:-}" ]; then sed 's/^/::add-mask::/' "$state/secrets"; fi
 
+dashboard_peers=()
 if [ "${E2E_REGIONS:-1}" = 2 ]; then
   printf 'journey-1 gru 127.0.0.1\njourney-2 fra 127.0.0.2\n' > "$state/peers"
+  dashboard_peers=(TS_PEERS_FILE="$state/peers")
   rm -rf "$state/terrabase-fra"
   mkdir -p "$state/terrabase-fra"
   cells=(DOTNET_ENVIRONMENT=Production TS_PEERS_FILE="$state/peers" TERRABASE_INTERNAL_PORT=8081
@@ -70,7 +72,7 @@ timeout --kill-after=10 "$boot_seconds" env "${auth[@]}" dotnet "$build/ts-auth/
   || { echo "ts-auth provision-signing-key failed or was still running after $boot_seconds s (exit status $?)" >&2; tail -n 40 "$logs/provision-signing-key.log" >&2; exit 1; }
 start dashboard env TS_AUTH_DASHBOARD_CLIENT_SECRET="$client_secret" TS_DASHBOARD_SESSION_ENCRYPTION_KEY="$session_key" \
   STRIPE_SECRET_KEY="$stripe_secret_key" STRIPE_WEBHOOK_SECRET="$stripe_signing_secret" TERRABASE_PEER_SECRET="$peer_secret" \
-  TS_DASHBOARD_TERRABASE_URL=http://127.0.0.1:8081 TS_REGION=gru TS_NODE=journey-1 \
+  TS_DASHBOARD_TERRABASE_URL=http://127.0.0.1:8081 TS_REGION=gru TS_NODE=journey-1 "${dashboard_peers[@]}" \
   dotnet "$build/dashboard/TerraScale.Dashboard.dll" --environment Production --urls http://127.0.0.1:8085 --contentRoot "$build/dashboard"
 
 ready ts-auth curl -fsS --max-time 2 http://127.0.0.1:8090/readyz

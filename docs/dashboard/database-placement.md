@@ -6,12 +6,21 @@ dialog and the **Regions** card on the database's **Replication** tab render the
 last selected region cannot be unselected. Only organization members with management access can change the regions;
 everyone else sees the map read-only. Platform databases keep their placement.
 
-TerraBase's placement API still takes a home region and replica regions, so `DatabasePlacementEndpoints` derives them
-from the selected set:
+Region discovery determines the engine contract. With a catalog, create and Replication use the shared map with
+region icons. Creates send the selected `regions` set, and placement saves send the complete set in one management
+call. An all-regions database keeps that mode while every offered region stays selected. If a region is still copying,
+the editor retains the requested selection, records the engine placement and shows a status message. Saving again
+completes the change once copying finishes. A stale route refreshes placement before resubmitting; concurrent edits
+require reviewing the region set first.
+
+Without a catalog, create uses the shared map with the region verified through TerraBase health. It sends
+`homeRegion`, optional `replicaRegions` and `allRegions`, never `regions`. A response without a `regions` array derives its placement from
+home plus replicas. Replication remains editable for managers of ready customer databases, using the same shared
+map and offered regions as before. It saves through the home/replica operations and never sends `regions`:
 
 - **Create.** The home is the first region the user selected: the dialog posts the selection order as `regionOrder`,
   and without it the first checked region in the page's order is used. Every other selected region is a replica.
-- **Save.** Every selected code is checked against the region catalog before the first call: a code the catalog does
+- **Save.** Every selected code is checked against the offered regions before the first call: a code the offered set does
   not list answers `422` and nothing is called. The selected regions are then handled in region id order, so a retry
   takes the same steps as the first attempt.
 - **Save, home still selected.** One `updateDatabase` with the other selected regions as replicas. An all-regions
@@ -26,9 +35,8 @@ from the selected set:
   syncing while the old one keeps serving, and the next one finishes once the new region has caught up.
 - **No region selected** answers `422`, and so do more than 9 regions outside all-regions mode.
 
-The dashboard calls TerraBase's placement API through the management RPC contract using the current user's
-`databases:write` authority. A move waits for TerraBase to complete it, then saves the returned placement and endpoint.
-A failed or unresolved move displays an error; the dashboard does not assume that a failed response changed anything.
+The dashboard calls TerraBase through the current user's management RPC authority. Rename and delete also refresh a
+stale route, preserving regional database management after a placement change.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 

@@ -179,9 +179,12 @@ namespace TerraScale.Dashboard.Features.Databases
         public IReadOnlyList<DatabaseRecord> Branches => [.. Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal)];
         public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database);
         public bool CanPlace => Context.CanManage && Database.Status == "ready" && !PlatformDatabases.IsPlatform(Context.Organization?.Id);
+        public DatabaseRegionsForm? RegionsForm { get; init; }
+        private IReadOnlyList<string> Asked => [.. (RegionsForm?.Asked ?? []).Where(code => Serving.Contains(code, StringComparer.OrdinalIgnoreCase) ||
+            Choices.Any(region => region.Code.Equals(code, StringComparison.OrdinalIgnoreCase)))];
         public RegionMapModel RegionMap => CanPlace
             ? new("database-regions", RegionMapMode.Select, RegionMapModel.Rows(Choices.Select(region => new RegionMapRegion(region.Code, region.Name, region.Country))),
-                Database.AllRegions ? [.. Serving.Concat(Choices.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)] : Serving)
+                Asked.Count > 0 ? Asked : Database.AllRegions ? [.. Serving.Concat(Choices.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)] : Serving)
             {
                 LabelledBy = "regions-title",
                 Minimum = DatabasePlacementEndpoints.Minimum

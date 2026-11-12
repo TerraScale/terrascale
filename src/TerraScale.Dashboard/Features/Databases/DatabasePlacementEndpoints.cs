@@ -23,17 +23,26 @@ namespace TerraScale.Dashboard.Features.Databases
             }
 
             var id = form["databaseId"].ToString();
+            var asked = form["regions"].OfType<string>().Select(code => code.Trim()).Where(code => code.Length > 0).ToArray();
             try
             {
-                var database = await ApplyAsync(databases, backend, context, id, Selection(form, ""), http.RequestAborted);
+                var discovery = await backend.DiscoveryAsync(http.RequestAborted);
+                var database = discovery.Catalog.Count > 0
+                    ? await databases.PlaceRegionsAsync(context, id, Selection(form, ""), [.. form["offered"].OfType<string>()], http.RequestAborted)
+                    : await ApplyAsync(databases, backend, context, id, Selection(form, ""), http.RequestAborted);
                 return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "replication")) : Results.Json(DatabaseEndpoints.DatabaseOutput(database));
+            }
+            catch (DatabaseRegionsCopyingException copying) when (DatabaseResults.WantsHtml(http))
+            {
+                return await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
+                    status: StatusCodes.Status202Accepted, regions: new(asked, copying.Message));
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
                 return !DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404
                     ? DatabaseResults.PageFailure(http, context, error)
                     : await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
-                        DatabaseResults.Message(error), status: DatabaseResults.Status(error));
+                        DatabaseResults.Message(error), status: DatabaseResults.Status(error), regions: new(asked, ""));
             }
         }
 
@@ -45,11 +54,6 @@ namespace TerraScale.Dashboard.Features.Databases
             string[] selected = [.. order.Select(code => Array.Find(chosen, match => match.Equals(code, StringComparison.OrdinalIgnoreCase)))
                 .OfType<string>().Concat(chosen).Distinct(StringComparer.OrdinalIgnoreCase)];
             return selected.Length == 0 ? throw new AccountAccessException(Minimum, 422) : selected;
-        }
-
-        internal static IReadOnlyList<string> Capped(IReadOnlyList<string> regions)
-        {
-            return regions.Count > Limit ? throw new AccountAccessException($"Choose at most {Limit} regions.", 422) : regions;
         }
 
         private static async Task<DatabaseRecord> ApplyAsync(DatabaseService databases, IDatabaseBackend backend, AccountContext context, string id,
@@ -77,7 +81,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 return await databases.PlaceAsync(context, id, [], true, cancellationToken);
             }
 
-            var wanted = Capped(listed);
+            var wanted = DatabaseService.Capped(listed);
             if (keeps)
             {
                 return await databases.PlaceAsync(context, id, [.. wanted.Where(region => region != keeper)], false, cancellationToken);
@@ -94,4 +98,6 @@ namespace TerraScale.Dashboard.Features.Databases
             return await databases.PlaceAsync(context, id, [.. wanted.Where(region => region != successor)], false, cancellationToken);
         }
     }
+
+    public sealed record DatabaseRegionsForm(IReadOnlyList<string> Asked, string Notice);
 }
