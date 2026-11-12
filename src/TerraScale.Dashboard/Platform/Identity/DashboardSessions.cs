@@ -219,9 +219,10 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
                     await RemoveAsync(row, "no refresh token", cancellationToken);
                     return null;
                 }
-                if (record.RefreshLease.Length != 0)
+                var leaseEnded = record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now;
+                if (record.RefreshLease.Length != 0 && !(leaseEnded && lookup.Kind == SessionRow.Credential))
                 {
-                    if (record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now) { await RemoveAsync(row, "abandoned refresh lease", cancellationToken); return null; }
+                    if (leaseEnded) { await RemoveAsync(row, "abandoned refresh lease", cancellationToken); return null; }
                     if (waitDeadline.Elapsed > TimeSpan.FromSeconds(20))
                     {
                         throw new TimeoutException("Session refresh is still in progress.");
@@ -250,19 +251,13 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 
                     return null;
                 }
-                catch (Exception error) when (error is not (SignInRejectedException or RefreshNotStartedException))
+                catch (Exception error) when (error is RefreshNotStartedException || lookup.Kind == SessionRow.Credential)
                 {
-                    logger.RefreshOfAStoredTsAuth(lookup.Kind,
-                        error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TsAuthException)?.ErrorCode ?? "none");
-                    throw;
-                }
-                catch (RefreshNotStartedException error)
-                {
-                    logger.RefreshOfAStoredTsAuth(lookup.Kind, error.InnerException?.GetType().Name, (error.InnerException as HttpRequestException)?.StatusCode,
-                        (error.InnerException as TsAuthException)?.ErrorCode ?? "none");
-                    if (await FindAsync(lookup, rotating) is { } unchanged && Open(unchanged, credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
+                    var cause = error is RefreshNotStartedException { InnerException: { } inner } ? inner : error;
+                    logger.RefreshOfAStoredTsAuth(lookup.Kind, cause.GetType().Name, (cause as HttpRequestException)?.StatusCode, (cause as TsAuthException)?.ErrorCode ?? "none");
+                    if (await FindAsync(lookup, cancellationToken) is { } unchanged && Open(unchanged, credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
                     {
-                        await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, rotating);
+                        await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, cancellationToken);
                     }
 
                     if (forceRefresh || record.ExpiresAt <= time.GetUtcNow())
@@ -272,6 +267,12 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 
                     renewBefore = TimeSpan.Zero;
                     continue;
+                }
+                catch (Exception error)
+                {
+                    logger.RefreshOfAStoredTsAuth(lookup.Kind, error.GetType().Name, (error as HttpRequestException)?.StatusCode,
+                        (error as TsAuthException)?.ErrorCode ?? "none");
+                    throw;
                 }
 
                 if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now ||
