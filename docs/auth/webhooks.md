@@ -46,9 +46,10 @@ events occurring after registration. Test events bypass subscription filtering.
 
 | Event | Trigger |
 | --- | --- |
+| `user.created` | A project account is created or imported through the management API |
 | `user.signed_up` | A project account is created by email verification or first social sign-in |
 | `user.signed_in` | A sign-in completes |
-| `user.updated` | The end user completes a verified email change |
+| `user.updated` | The end user completes a verified email change, or their profile or metadata changes |
 | `user.disabled` | An admin disables an end user |
 | `user.enabled` | An admin re-enables an end user |
 | `user.deleted` | An end user is deleted |

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -46,8 +47,12 @@ public sealed record MethodsPatch(bool? Passcode, bool? Password, bool? SignUp);
 /// <summary><c>PUT /v1/{project}/settings</c>: an omitted part is unchanged; a sent branding replaces the branding.</summary>
 public sealed record UpdateSettingsRequest(MethodsPatch? Methods, BrandingBody? Branding, ConfigurationBody? Configuration = null);
 
-/// <summary>An end user of the tenant.</summary>
-public sealed record ProjectUserBody(string Id, string Email, DateTimeOffset CreatedAt, bool Disabled);
+public sealed record ProjectUserBody(string Id, string Email, DateTimeOffset CreatedAt, bool Disabled, string? FirstName, string? LastName,
+    string? ImageUrl, string? ExternalId, bool EmailVerified, JsonElement PublicMetadata, JsonElement PrivateMetadata, JsonElement UnsafeMetadata)
+{
+    public static ProjectUserBody From(UserRecord user) => new(user.Id, user.Email, user.CreatedAt, user.Disabled, user.FirstName, user.LastName,
+        user.ImageUrl, user.ExternalId, user.EmailVerified, JsonElement.Parse(user.PublicMetadata), JsonElement.Parse(user.PrivateMetadata), JsonElement.Parse(user.UnsafeMetadata));
+}
 
 /// <summary>A page of end users.</summary>
 public sealed record ProjectUserPageBody(IReadOnlyList<ProjectUserBody> Items, string? Next);
@@ -80,8 +85,14 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
 
     protected TenantDirectory Tenants { get; } = tenants;
 
-    protected sealed override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
-        this.HandleAsync(new ProjectCaller.SignedIn(caller), cancellationToken);
+    protected sealed override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    {
+        var person = new ProjectCaller.SignedIn(caller);
+        await this.BeforeWriteAsync(person, cancellationToken);
+        return await this.HandleAsync(person, cancellationToken);
+    }
+
+    protected virtual Task BeforeWriteAsync(ProjectCaller caller, CancellationToken cancellationToken) => Task.CompletedTask;
 
     protected abstract Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken);
 
@@ -113,6 +124,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
             ?? throw new InvalidOperationException("A management operation must have a name.");
         try
         {
+            await this.BeforeWriteAsync(new ProjectCaller.SecretKey(key), cancellationToken);
             return await this.Tenants.AuditKeyWriteAsync(key, operation, request.Path,
                 token => this.HandleAsync(new ProjectCaller.SecretKey(key), token), cancellationToken);
         }
@@ -165,8 +177,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
                 : new ProviderBody(name, false, null, null, null, null, SocialProviders.Callback(options, projectId, name).AbsoluteUri))], settings.Configuration ?? ConfigurationBody.Default);
     }
 
-    /// <summary>An end user.</summary>
-    protected static ProjectUserBody Map(UserRecord user) => new(user.Id, user.Email, user.CreatedAt, user.Disabled);
+    protected static ProjectUserBody Map(UserRecord user) => ProjectUserBody.From(user);
 
     /// <summary>A client, with its secret when just created.</summary>
     protected static ClientBody Map(OidcApplication client, string? secret = null) => new(client.ClientId!, client.DisplayName ?? string.Empty, client.ClientType!,

@@ -531,3 +531,19 @@ class AsyncAPIKeyTokenSource:
 
     def invalidate(self, token: str) -> None:
         self._x.invalidate(token)
+
+
+def create_user_call(issuer: str | None, project: str, request: models.CreateProjectUser) -> _spec.Call:
+    return _spec.Call("POST", _tenant_path(project, "users"), lambda r: models.ProjectUser.from_json(r.json()),
+                      body=request.body(), success=(201,), base_url=_origin(issuer))
+
+
+def update_user_call(issuer: str | None, project: str, user_id: str, request: models.UpdateProjectUser) -> _spec.Call:
+    return _spec.Call("PATCH", _tenant_path(project, "users", validate_id(user_id, "user id")),
+                      lambda r: models.ProjectUser.from_json(r.json()), body=request.body(), base_url=_origin(issuer))
+
+
+def import_users_call(issuer: str | None, project: str, users: list[models.ImportProjectUser]) -> _spec.Call:
+    return _spec.Call("POST", _tenant_path(project, "users", "import"),
+                      lambda r: models.ImportProjectUsersResult.from_json(r.json()),
+                      body={"users": [user.body() for user in users]}, base_url=_origin(issuer))

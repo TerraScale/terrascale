@@ -68,6 +68,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
     private Task RunAsync(JsonElement op, CancellationToken cancellationToken) => Text(op, "id") switch
     {
         "auth.manage_user" => ManageUserAsync(cancellationToken),
+        "auth.user_profiles" => UserProfilesAsync(op, cancellationToken),
         "sql.execute.positional" => ExecutePositionalAsync(op, cancellationToken),
         "sql.execute.named" => ExecuteNamedAsync(op, cancellationToken),
         "sql.execute.statement" => ExecuteStatementAsync(op, cancellationToken),
@@ -116,6 +117,29 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         Same(((int?)refusal.StatusCode)?.ToString(CultureInfo.InvariantCulture) ?? "missing", "403", "read key cannot disable");
         Same((await auth.Projects.DisableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "disabled", "write key disables");
         Same((await auth.Projects.EnableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "enabled", "write key enables");
+    }
+
+    private async Task UserProfilesAsync(JsonElement op, CancellationToken cancellationToken)
+    {
+        using var http = new HttpClient();
+        var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech"), InstanceSlug = "terrascale" }).Projects;
+        var write = Required("E2E_AUTH_WRITE_KEY");
+        var created = await auth.CreateUserAsync(write, project, new($"profile-dotnet-{run}@example.com", FirstName: "SDK",
+            PublicMetadata: JsonElement.Parse("""{"keep":1,"remove":true}""")), cancellationToken);
+        Same(created.FirstName ?? throw new InvalidOperationException("Missing first name"), "SDK", "created profile");
+        var changed = await auth.UpdateUserAsync(write, project, created.Id, new(PublicMetadata: JsonElement.Parse("""{"remove":null,"added":"yes"}"""),
+            PrivateMetadata: JsonElement.Parse("""{"backend":true}""")), cancellationToken);
+        Same(changed.PublicMetadata.GetProperty("keep").GetRawText(), "1", "metadata preserved");
+        Same(changed.PublicMetadata.TryGetProperty("remove", out _) ? "present" : "absent", "absent", "metadata removed");
+        Same(changed.PublicMetadata.GetProperty("added").GetString() ?? throw new InvalidOperationException("Missing metadata"), "yes", "metadata added");
+        var imported = await auth.ImportUsersAsync(write, project, new([
+            new($"import-dotnet-{run}@example.com", true, Text(op, "password_hash")),
+            new($"invalid-dotnet-{run}@example.com", false, "malformed")
+        ]), cancellationToken);
+        Same(imported.Items.Count.ToString(CultureInfo.InvariantCulture), "1", "import valid row");
+        Same(imported.Errors.Single().Index.ToString(CultureInfo.InvariantCulture), "1", "refuse malformed row");
+        await auth.DeleteUserAsync(write, project, imported.Items[0].User.Id, cancellationToken);
+        await auth.DeleteUserAsync(write, project, created.Id, cancellationToken);
     }
 
     private async Task ExecutePositionalAsync(JsonElement op, CancellationToken cancellationToken)

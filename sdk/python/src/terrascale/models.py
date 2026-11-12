@@ -27,6 +27,10 @@ __all__ = [
     "ProjectSettings",
     "ProjectSettingsUpdate",
     "ProjectUser",
+    "CreateProjectUser",
+    "UpdateProjectUser",
+    "ImportProjectUser",
+    "ImportProjectUsersResult",
     "ProjectUserExportPage",
     "ProjectUserPage",
     "Regions",
@@ -549,6 +553,14 @@ class ProjectUser:
     email: str
     created_at: str
     disabled: bool
+    first_name: str | None = None
+    last_name: str | None = None
+    image_url: str | None = None
+    external_id: str | None = None
+    email_verified: bool = False
+    public_metadata: dict[str, Any] = field(default_factory=dict)
+    private_metadata: dict[str, Any] = field(default_factory=dict)
+    unsafe_metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectUser:
@@ -556,7 +568,11 @@ class ProjectUser:
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project user")
         return cls(id=validate_id(body["id"]), email=body["email"], created_at=body["created_at"],
-                   disabled=_bool(body, "disabled", "project user state"))
+                   disabled=_bool(body, "disabled", "project user state"),
+                   first_name=body.get("first_name"), last_name=body.get("last_name"), image_url=body.get("image_url"),
+                   external_id=body.get("external_id"), email_verified=_bool(body, "email_verified", "email verification"),
+                   public_metadata=body["public_metadata"], private_metadata=body["private_metadata"],
+                   unsafe_metadata=body["unsafe_metadata"])
 
 
 @dataclass(frozen=True)
@@ -741,3 +757,76 @@ class DatabaseRequestLogs:
             raise ValueError("invalid request logs items")
         return cls(validate_id(body["databaseId"]), [DatabaseRequestLog.from_json(i) for i in items],
                    body["truncated"], body["recordingLimited"])
+
+
+@dataclass(frozen=True, kw_only=True)
+class UpdateProjectUser:
+    first_name: str | None = None
+    last_name: str | None = None
+    image_url: str | None = None
+    external_id: str | None = None
+    public_metadata: dict[str, Any] | None = None
+    private_metadata: dict[str, Any] | None = None
+    unsafe_metadata: dict[str, Any] | None = None
+    clear: tuple[str, ...] = ()
+
+    def body(self) -> dict[str, Any]:
+        body = {name: value for name in ("first_name", "last_name", "image_url", "external_id",
+                                         "public_metadata", "private_metadata", "unsafe_metadata")
+                if (value := getattr(self, name)) is not None}
+        for name in self.clear:
+            if name not in ("first_name", "last_name", "image_url", "external_id"):
+                raise ValueError("Only scalar profile fields can be cleared.")
+            body[name] = None
+        return body
+
+
+@dataclass(frozen=True, kw_only=True)
+class CreateProjectUser(UpdateProjectUser):
+    email: str
+    password: str | None = None
+
+    def body(self) -> dict[str, Any]:
+        body = super().body()
+        body["email"] = self.email
+        if self.password is not None:
+            body["password"] = self.password
+        return body
+
+
+@dataclass(frozen=True, kw_only=True)
+class ImportProjectUser(UpdateProjectUser):
+    email: str
+    email_verified: bool = False
+    password_hash: str | None = None
+
+    def body(self) -> dict[str, Any]:
+        body = super().body()
+        body.update(email=self.email, email_verified=self.email_verified)
+        if self.password_hash is not None:
+            body["password_hash"] = self.password_hash
+        return body
+
+
+@dataclass(frozen=True)
+class ImportedProjectUser:
+    index: int
+    user: ProjectUser
+
+
+@dataclass(frozen=True)
+class UserImportError:
+    index: int
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class ImportProjectUsersResult:
+    items: list[ImportedProjectUser]
+    errors: list[UserImportError]
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ImportProjectUsersResult:
+        return cls(items=[ImportedProjectUser(row["index"], ProjectUser.from_json(row["user"])) for row in body["items"]],
+                   errors=[UserImportError(row["index"], row["code"], row["message"]) for row in body["errors"]])

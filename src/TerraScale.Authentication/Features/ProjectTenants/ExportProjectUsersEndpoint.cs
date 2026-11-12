@@ -88,7 +88,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
             .OrderBy(user => user.Id).Take(limit + 1)
             .Select(user => new { User = user, Links = db.ProviderLinks.Where(link => link.UserId == user.Id).OrderBy(link => link.Provider).ThenBy(link => link.Subject).ToList() })
             .ToListAsync(token), cancellationToken);
-        var items = rows.Take(limit).Select(row => new DirectoryUserBody(row.User.Id, row.User.Email, true, row.User.CreatedAt, row.User.Disabled,
+        var items = rows.Take(limit).Select(row => new DirectoryUserBody(row.User.Id, row.User.Email, row.User.EmailVerified, row.User.CreatedAt, row.User.Disabled,
             [.. row.Links.Select(link => new DirectoryProviderBody(link.Provider, link.ClientId, link.Subject))])).ToArray();
         var next = rows.Count > limit
             ? WebEncoders.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new DirectoryCursor(cutoff, rows[limit - 1].User.Id), DirectoryExportJson.Default.DirectoryCursor))
@@ -116,7 +116,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         var csv = new StringBuilder("id,email,email_verified,created_at,disabled,linked_providers\r\n");
         foreach (var user in items)
         {
-            csv.AppendJoin(',', new[] { user.Id, user.Email, "true", user.CreatedAt.ToString("O", CultureInfo.InvariantCulture), user.Disabled ? "true" : "false",
+            csv.AppendJoin(',', new[] { user.Id, user.Email, user.EmailVerified ? "true" : "false", user.CreatedAt.ToString("O", CultureInfo.InvariantCulture), user.Disabled ? "true" : "false",
                 JsonSerializer.Serialize(user.LinkedProviders, DirectoryExportJson.Default.IReadOnlyListDirectoryProviderBody) }.Select(Cell)).Append("\r\n");
         }
 

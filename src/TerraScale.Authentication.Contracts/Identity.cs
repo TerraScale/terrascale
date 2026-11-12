@@ -16,6 +16,15 @@ namespace TerraScale.Authentication.Contracts;
 /// </param>
 public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null, string? PlatformRole = null)
 {
+    public string? FirstName { get; init; }
+    public string? LastName { get; init; }
+    public string? ImageUrl { get; init; }
+    public string? ExternalId { get; init; }
+    public string PublicMetadata { get; init; } = "{}";
+    public string PrivateMetadata { get; init; } = "{}";
+    public string UnsafeMetadata { get; init; } = "{}";
+    public bool EmailVerified { get; init; } = true;
+
     /// <summary>Identity of the last authentication-state change; equal numeric epochs can race across regions.</summary>
     public string? AuthStamp { get; init; }
 

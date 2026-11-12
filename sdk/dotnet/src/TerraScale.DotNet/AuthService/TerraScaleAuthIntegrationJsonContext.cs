@@ -66,4 +66,8 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthDeletionPage))]
 [JsonSerializable(typeof(TerraScaleAuthDeletionProof))]
 [JsonSerializable(typeof(TerraScaleAuthAcknowledgeDeletion))]
+[JsonSerializable(typeof(TerraScaleAuthCreateUser))]
+[JsonSerializable(typeof(TerraScaleAuthUpdateUser))]
+[JsonSerializable(typeof(TerraScaleAuthImportUsers))]
+[JsonSerializable(typeof(TerraScaleAuthImportUsersResult))]
 internal sealed partial class TerraScaleAuthIntegrationJsonContext : JsonSerializerContext;

@@ -471,3 +471,7 @@ for (;;) { try { await client.setDatabasePlacement(project, database, { regions:
 ## Project Authentication management
 
 Pass the project secret API key as the first credential argument to `client.projects.disableUser(secretKey, projectId, userId)`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
+
+Project user profile creation, merge-patch updates, and partial password-hash imports
+are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
+for fields, scope requirements, hash encodings and the next-release API names.

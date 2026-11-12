@@ -121,6 +121,7 @@ public static class App
         builder.Services.AddSingleton<Credentials>();
         builder.Services.AddSingleton<Challenges>();
         builder.Services.AddSingleton<Users>();
+        builder.Services.AddSingleton<UserProfiles>();
         builder.Services.AddSingleton<WebhookOutbox>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();

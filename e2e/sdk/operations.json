@@ -8,6 +8,12 @@
       "title": "auth:read lists users; auth:write disables and re-enables a project user"
     },
     {
+      "id": "auth.user_profiles",
+      "group": "a",
+      "title": "create and update profile metadata; import a valid hash and refuse a malformed row",
+      "password_hash": "$2b$10$abcdefghijklmnopqrstuuB5higg1tp13mgPBqluztPkYplq4K0O6"
+    },
+    {
       "id": "sql.execute.positional",
       "group": "a",
       "title": "execute with positional arguments",
@@ -136,7 +142,7 @@
         "big": "9007199254740993",
         "r": 1.5,
         "flag": true,
-        "t": "héllo ✓",
+        "t": "h\u00e9llo \u2713",
         "b": "AAEC/w==",
         "absent": null
       },

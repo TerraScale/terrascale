@@ -155,6 +155,14 @@ pub struct ProjectSettingsUpdate {
 /// A project end user.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectUser {
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub image_url: Option<String>,
+    pub external_id: Option<String>,
+    pub email_verified: bool,
+    pub public_metadata: serde_json::Map<String, Value>,
+    pub private_metadata: serde_json::Map<String, Value>,
+    pub unsafe_metadata: serde_json::Map<String, Value>,
     /// User id.
     pub id: String,
     /// Email address.
@@ -163,6 +171,85 @@ pub struct ProjectUser {
     pub created_at: String,
     /// Whether the user is disabled.
     pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct UserProfile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_metadata: Option<serde_json::Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_metadata: Option<serde_json::Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsafe_metadata: Option<serde_json::Map<String, Value>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CreateProjectUser {
+    pub email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(flatten)]
+    pub profile: UserProfile,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ImportProjectUser {
+    pub email: String,
+    pub email_verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password_hash: Option<String>,
+    #[serde(flatten)]
+    pub profile: UserProfile,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct UpdateProjectUser {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_metadata: Option<serde_json::Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_metadata: Option<serde_json::Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsafe_metadata: Option<serde_json::Map<String, Value>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportProjectUsers {
+    pub users: Vec<ImportProjectUser>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportedProjectUser {
+    pub index: usize,
+    pub user: ProjectUser,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserImportError {
+    pub index: usize,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportProjectUsersResult {
+    pub items: Vec<ImportedProjectUser>,
+    pub errors: Vec<UserImportError>,
 }
 
 /// One cursor page of project end users.
@@ -448,6 +535,55 @@ impl ProjectsClient {
             Method::Get,
             &format!("/{}/users{query}", self.project(project_id)?),
             None,
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn create_user(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        request: &CreateProjectUser,
+    ) -> Result<ProjectUser> {
+        self.send_typed(
+            "auth_projects.create_user",
+            Method::Post,
+            &format!("/{}/users", self.project(project_id)?),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn update_user(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        user_id: &str,
+        request: &UpdateProjectUser,
+    ) -> Result<ProjectUser> {
+        self.send_typed(
+            "auth_projects.update_user",
+            Method::Patch,
+            &self.user_path(project_id, user_id)?,
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn import_users(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        request: &ImportProjectUsers,
+    ) -> Result<ImportProjectUsersResult> {
+        self.send_typed(
+            "auth_projects.import_users",
+            Method::Post,
+            &format!("/{}/users/import", self.project(project_id)?),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
             sign_in,
         )
         .await

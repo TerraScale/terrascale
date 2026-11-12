@@ -322,3 +322,7 @@ while True:
 ## Project Authentication management
 
 Construct `TerraScale(api_key=secret_key, project=project_id)` or `AsyncTerraScale`; project management calls send the secret directly to ts-auth. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
+
+Project user profile creation, merge-patch updates, and partial password-hash imports
+are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
+for fields, scope requirements, hash encodings and the next-release API names.

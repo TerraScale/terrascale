@@ -20,7 +20,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// password and code attempts are also limited per email, which is what stops guessing against one account. Limits are shared by every replica and apply alike to addresses with and without an
 /// account, and every failure answers the same whatever the account state, so nothing tells an account from a stranger.
 /// </summary>
-public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, IHttpContextAccessor http, ILogger<HostedAuth> logger)
+public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, IHttpContextAccessor http, ILogger<HostedAuth> logger)
 {
     /// <summary>Calls an end-user IP may burst; one more is regained every <see cref="IpInterval"/>.</summary>
     public const int PerIp = 120;
@@ -184,7 +184,13 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         }
 
         var user = await users.FindByEmailAsync(this.Tenant, email, cancellationToken);
-        return await passwords.VerifyAsync(password, user?.PasswordHash, cancellationToken) ? user : null;
+        if (!await passwords.VerifyAsync(password, user?.PasswordHash, cancellationToken) || user is null)
+        {
+            return null;
+        }
+
+        return user.PasswordHash is { } hash && ImportedPasswords.NeedsUpgrade(hash)
+            ? await profiles.UpgradePasswordAsync(user, password, cancellationToken) : user;
     }
 
     // The first bytes of an IPv6 address, the rest zeroed.

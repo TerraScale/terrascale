@@ -1261,11 +1261,37 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("email");
 
+                    b.Property<bool>("EmailVerified")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true)
+                        .HasColumnName("email_verified");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("external_id");
+
+                    b.Property<string>("FirstName")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("first_name");
+
+                    b.Property<string>("ImageUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("image_url");
+
                     b.Property<string>("InstanceId")
                         .IsRequired()
                         .HasMaxLength(26)
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
+
+                    b.Property<string>("LastName")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_name");
 
                     b.Property<string>("PasswordHash")
                         .HasColumnType("TEXT")
@@ -1274,6 +1300,27 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<string>("PlatformRole")
                         .HasColumnType("TEXT")
                         .HasColumnName("platform_role");
+
+                    b.Property<string>("PrivateMetadata")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("private_metadata");
+
+                    b.Property<string>("PublicMetadata")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("public_metadata");
+
+                    b.Property<string>("UnsafeMetadata")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("unsafe_metadata");
 
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
@@ -1285,6 +1332,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("InstanceId", "Email")
+                        .IsUnique();
+
+                    b.HasIndex("InstanceId", "ExternalId")
                         .IsUnique();
 
                     b.ToTable("users", null, t =>

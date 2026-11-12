@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 import httpx
 from terrascale import AsyncTerraScale, Statement, TerraScale, is_valid_id, new_id
 from terrascale.errors import ServiceUnavailableError
+from terrascale.models import CreateProjectUser, ImportProjectUser, UpdateProjectUser
 
 spec = json.loads(Path(os.environ["E2E_OPERATIONS"]).read_text(encoding="utf-8"))
 run = os.environ["E2E_RUN_ID"]
@@ -72,6 +73,23 @@ def auth_manage_user(op):
             same((await write.enable_user(user)).disabled, False, "async write key enables")
 
     asyncio.run(asynchronous())
+
+
+def auth_user_profiles(op):
+    with TerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:
+        created = write.create_user(CreateProjectUser(email=f"profile-python-{run}@example.com", first_name="SDK",
+                                                      public_metadata={"keep": 1, "remove": True}))
+        same(created.first_name, "SDK", "created profile")
+        changed = write.update_user(created.id, UpdateProjectUser(public_metadata={"remove": None, "added": "yes"},
+                                                                 private_metadata={"backend": True}))
+        same(changed.public_metadata, {"keep": 1, "added": "yes"}, "metadata merge")
+        imported = write.import_users([ImportProjectUser(email=f"import-python-{run}@example.com", email_verified=True,
+                                                        password_hash=op["password_hash"]),
+                                       ImportProjectUser(email=f"invalid-python-{run}@example.com", password_hash="malformed")])
+        same(len(imported.items), 1, "import valid row")
+        same(imported.errors[0].index, 1, "refuse malformed row")
+        write.delete_user(imported.items[0].user.id)
+        write.delete_user(created.id)
 
 
 def execute_positional(op):
@@ -409,6 +427,7 @@ def placement_set(op):
 
 operations = {
     "auth.manage_user": auth_manage_user,
+    "auth.user_profiles": auth_user_profiles,
     "sql.execute.positional": execute_positional,
     "sql.execute.named": execute_named,
     "sql.execute.statement": execute_statement,

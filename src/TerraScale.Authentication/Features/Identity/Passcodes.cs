@@ -312,6 +312,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
                 authenticated = Users.BindAuthenticationState(current with
                 {
                     PasswordHash = passwordHash ?? current.PasswordHash,
+                    EmailVerified = true,
                     AuthEpoch = checked(current.AuthEpoch + 1),
                     AuthStamp = AuthIds.New(),
                 });

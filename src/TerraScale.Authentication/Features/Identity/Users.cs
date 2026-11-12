@@ -209,7 +209,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
 
         var passcode = await data.ReadAsync((db, token) => db.Passcodes.Where(row => row.InstanceId == instanceId && row.Key == userId).WithVersion()
             .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
-        List<Change> changes = [Change.Update(current with { Email = newEmail, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthIds.New() }), .. extra];
+        List<Change> changes = [Change.Update(current with { Email = newEmail, EmailVerified = true, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthIds.New() }), .. extra];
         if (await outbox.CreateAsync(instanceId, "user.updated", userId, newEmail, null, cancellationToken).ConfigureAwait(false) is { } updatedEvent)
         {
             changes.Add(updatedEvent);

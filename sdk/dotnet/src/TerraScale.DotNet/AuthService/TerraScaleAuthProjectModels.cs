@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
@@ -93,7 +94,34 @@ public sealed record TerraScaleAuthProjectUser(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("disabled")] bool Disabled);
+    [property: JsonPropertyName("disabled")] bool Disabled)
+{
+    /// <summary>FirstName.</summary>
+    [JsonPropertyName("first_name")]
+    public string? FirstName { get; init; }
+    /// <summary>LastName.</summary>
+    [JsonPropertyName("last_name")]
+    public string? LastName { get; init; }
+    /// <summary>ImageUrl.</summary>
+    [JsonPropertyName("image_url")]
+    public string? ImageUrl { get; init; }
+    /// <summary>ExternalId.</summary>
+    [JsonPropertyName("external_id")]
+    public string? ExternalId { get; init; }
+    /// <summary>EmailVerified.</summary>
+    [JsonPropertyName("email_verified")]
+    public bool EmailVerified { get; init; }
+    /// <summary>PublicMetadata.</summary>
+    [JsonPropertyName("public_metadata")]
+    public JsonElement PublicMetadata { get; init; }
+    /// <summary>PrivateMetadata.</summary>
+    [JsonPropertyName("private_metadata")]
+    public JsonElement PrivateMetadata { get; init; }
+    /// <summary>UnsafeMetadata.</summary>
+    [JsonPropertyName("unsafe_metadata")]
+    public JsonElement UnsafeMetadata { get; init; }
+}
+
 
 /// <summary>One page of <c>GET /v1/{project}/users/export</c>. Next is the opaque cursor for the following page and null
 /// at the end. CreatedBefore is the creation cutoff fixed by the first page; this is a creation-cutoff scan, not a

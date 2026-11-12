@@ -91,6 +91,14 @@ import { requireId } from "./ids.js";
  *   readonly email: string;
  *   readonly created_at: string;
  *   readonly disabled: boolean;
+ *   readonly first_name: string | null;
+ *   readonly last_name: string | null;
+ *   readonly image_url: string | null;
+ *   readonly external_id: string | null;
+ *   readonly email_verified: boolean;
+ *   readonly public_metadata: Readonly<Record<string, unknown>>;
+ *   readonly private_metadata: Readonly<Record<string, unknown>>;
+ *   readonly unsafe_metadata: Readonly<Record<string, unknown>>;
  * }} TsAuthProjectUser
  */
 
@@ -310,6 +318,13 @@ function requireCursor(after, maximumLength) {
  * TerraScale account sign-in token; the producer checks the project role on
  * every request (viewer reads, admin changes).
  */
+/**
+ * @typedef {{ first_name?: string | null, last_name?: string | null, image_url?: string | null, external_id?: string | null, public_metadata?: Record<string, unknown>, private_metadata?: Record<string, unknown>, unsafe_metadata?: Record<string, unknown> }} TsAuthUserProfile
+ * @typedef {TsAuthUserProfile & { email: string, password?: string }} TsAuthCreateUser
+ * @typedef {TsAuthUserProfile & { email: string, email_verified?: boolean, password_hash?: string }} TsAuthImportUser
+ * @typedef {{ items: { index: number, user: TsAuthProjectUser }[], errors: { index: number, code: string, message: string }[] }} TsAuthImportUsersResult
+ */
+
 export class TsAuthProjectsClient {
   /**
    * @type {TsAuthHttp}
@@ -392,6 +407,64 @@ export class TsAuthProjectsClient {
         ...(request.limit === undefined ? {} : { limit: request.limit }),
         ...(request.after === undefined ? {} : { after: request.after }),
       },
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {TsAuthCreateUser} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectUser>>}
+   */
+  createUser(signIn, projectId, request, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/users`,
+      routeName: "tsauth.projects.create_user",
+      projectAccessToken: managementCredential(signIn),
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {TsAuthUserProfile} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectUser>>}
+   */
+  updateUser(signIn, projectId, userId, request, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "PATCH",
+      path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}`,
+      routeName: "tsauth.projects.update_user",
+      projectAccessToken: managementCredential(signIn),
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {{ users: readonly TsAuthImportUser[] }} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthImportUsersResult>>}
+   */
+  importUsers(signIn, projectId, request, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/users/import`,
+      routeName: "tsauth.projects.import_users",
+      projectAccessToken: managementCredential(signIn),
+      body: request,
     });
   }
 

@@ -28,7 +28,7 @@ public sealed class PasswordHasher : IDisposable
     /// it spends the same work on a fixed hash and answers false.
     /// </summary>
     public Task<bool> VerifyAsync(string password, string? hash, CancellationToken cancellationToken) =>
-        this.RunAsync(() => Passwords.Verify(password, hash ?? this.equalizer) && hash is not null, cancellationToken);
+        this.RunAsync(() => ImportedPasswords.Verify(password, hash ?? this.equalizer) && hash is not null, cancellationToken);
 
     /// <inheritdoc />
     public void Dispose() => this.slots.Dispose();
