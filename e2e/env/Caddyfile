@@ -54,3 +54,15 @@ https://api.stripe.com, https://checkout.stripe.com, https://billing.stripe.com 
 	import edge
 	reverse_proxy 127.0.0.1:8027
 }
+
+https://fra.api.terrascale.tech {
+	import edge
+	reverse_proxy 127.0.0.1:8180 {
+		flush_interval -1
+	}
+}
+
+https://journey.backups.terrascale.tech, https://6cd3f3639e928077593d9b470765efeb.r2.cloudflarestorage.com, https://shapes-ts-terrabase-shapes-prod.terrascale.tech {
+	import edge
+	reverse_proxy 127.0.0.1:8028
+}
