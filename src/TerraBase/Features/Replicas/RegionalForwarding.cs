@@ -16,12 +16,7 @@ internal static class RegionalForwarding
             var metadata = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>();
             var served = metadata?.Listeners.Contains(TerraBaseListener.Client) == true
                 || ReferenceEquals(metadata, ListenerMetadata.Management)
-                || ReferenceEquals(metadata, ListenerMetadata.Internal)
-                    && context.GetEndpoint()?.Metadata.GetMetadata<GrpcMethodMetadata>() is null
-                    && !context.Request.Path.StartsWithSegments("/v1/rollout")
-                    && !context.Request.Path.StartsWithSegments("/v1/sync")
-                || context.Request.Path.StartsWithSegments("/admin/organizations")
-                || context.Request.Path.StartsWithSegments("/admin/projects");
+                || context.Request.Path.StartsWithSegments("/admin");
             if (!served || ReferenceEquals(metadata, ListenerMetadata.Probe))
             {
                 await next(context).ConfigureAwait(false);
