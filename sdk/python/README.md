@@ -260,7 +260,11 @@ The token exchange retries transport failures, 429 and 5xx the same way; one
 exchange runs at a time and concurrent callers share its result. A connect or
 connection-pool failure never reached the server, so writes retry it too; when
 attempts run out the `TerraScaleError` names the cause and says the request was
-not sent. A failed write is uncertain if no response arrives after sending, if a 5xx response has no server error code, or if the server code is `commit_uncertain`, `write_outcome_unknown` or `internal_error`. Other coded 5xx responses and SQL errors (the request rolled back) are definite refusals. Reads are never uncertain. Reconcile state before repeating an uncertain write; a malformed success acknowledgement is also uncertain. Malformed read responses raise `InvalidResponseError`.
+not sent.
+
+A failed write is uncertain if no response arrives after sending, if a 5xx response has no server error code, or if the server code is `commit_uncertain`, `write_outcome_unknown` or `internal_error`. Other coded 5xx responses and SQL errors (the request rolled back) are definite refusals. Reads are never uncertain. Reconcile state before repeating an uncertain write; a malformed success acknowledgement is also uncertain.
+
+Malformed read responses raise `InvalidResponseError`.
 The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Development
