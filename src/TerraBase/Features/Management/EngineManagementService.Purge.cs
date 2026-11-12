@@ -62,7 +62,7 @@ internal sealed partial class EngineManagementService
         {
             if (_refusedShreds.TryAdd((database.DatabaseId!, deletedAt), 0))
             {
-                logger.ZLogWarning($"Refused a shred record for platform database {database.DatabaseId:@Database} of project {database.ProjectId:@Project}, deleted at {deletedAt:@DeletedAt} by another node: its catalog record and files stay");
+                logger.ZLogWarning($"Refused a shred record for platform database {database.DatabaseId:@Database} of project {database.ProjectId:@Project}, deleted at {deletedAt:@DeletedAt} by another node: its catalog record and files stay, and its backups have stopped until an operator removes the record");
             }
 
             return new Forbidden("a platform database is never shredded");
