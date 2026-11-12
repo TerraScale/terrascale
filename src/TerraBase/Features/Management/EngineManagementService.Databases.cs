@@ -67,15 +67,15 @@ internal sealed partial class EngineManagementService
                 return ManagementErrors.WrongRegion;
             }
 
-            if (await HomeMovePendingAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
+            if (await GetAsync(transaction, HomeMoves, database.Id, ManagementJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is { } pending)
             {
-                return MoveInProgress;
+                return DatabaseRegions.SameSet(pending.RequestedRegions, selected) ? RegionSetPlacement.PlacementNotReady : (SetDatabaseRegionsResult)MoveInProgress;
             }
 
             var replicas = selected.Contains(options.Region, StringComparer.Ordinal)
                 ? DatabaseRegions.AllBut(selected, options.Region)
                 : DatabaseRegions.AllBut(database.Replicas.Concat(selected), options.Region);
-            if (DatabaseRegions.Check(replicas, options.Region) is Validation invalid)
+            if (DatabaseRegions.CheckRegionCount(replicas.Count + 1) is { } invalid)
             {
                 return invalid;
             }

@@ -60,7 +60,7 @@ internal sealed class MoveDatabaseHomeEndpoint(IManagementService management, Ho
             case ManagedDatabase database when database.Home(options.Region) != options.Region:
                 return DatabaseRegions.HomeRegion(database.Home(options.Region), database.Regions(options.Region));
             case ManagedDatabase database:
-                return await moves.MoveAsync(new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id), request.HomeRegion, cancellationToken)
+                return await moves.MoveAsync(new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id), request.HomeRegion, null, cancellationToken)
                     .ConfigureAwait(false) switch
                 {
                     ManagedDatabase moved => TypedResults.Ok(ManagedDatabaseBody.From(moved, options.Region)),

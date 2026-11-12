@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.Regions;
@@ -8,9 +9,9 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class RegionSetPlacement(IManagementService management, TerraBaseOptions options, IHomeApply apply, HomeMoves moves, IRegionPeers peers)
+internal sealed class RegionSetPlacement(IManagementService management, TerraBaseOptions options, IHomeApply apply, HomeMoves moves, IRegionPeers peers, IDatabaseRevisions revisions)
 {
-    private static readonly Unavailable PlacementNotReady = new("requested regions remain members; retry when a requested region can take over", "replica_not_ready");
+    internal static readonly Unavailable PlacementNotReady = new("requested regions remain members; retry when a requested region can take over", "replica_not_ready");
 
     public async ValueTask<IResult> UpdateAsync(HttpContext context, ManagedDatabase database, IReadOnlyList<string> selected, CancellationToken cancellationToken)
     {
@@ -37,25 +38,22 @@ internal sealed class RegionSetPlacement(IManagementService management, TerraBas
 
         IReadOnlyList<string> candidates = [.. selected.Order(StringComparer.Ordinal)];
         var tenant = new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id);
-        foreach (var target in candidates)
+        var observations = await revisions.ReplicaStatusAsync(tenant, current.Replicas, cancellationToken).ConfigureAwait(false);
+        var target = candidates.FirstOrDefault(candidate => observations.Any(row => row.Region == candidate && row is { LagMs: 0, LastPulledAt: not null, Revision: not null }));
+        if (target is null)
         {
-            var result = await moves.MoveAsync(tenant, target, cancellationToken).ConfigureAwait(false);
-            if (result is Unavailable refused && refused == HomeMoves.ReplicaNotReady)
-            {
-                continue;
-            }
-
-            return result switch
-            {
-                ManagedDatabase moved => await ContinueAsync(moved, selected, cancellationToken).ConfigureAwait(false),
-                Unavailable error => ErrorResponse.From(error),
-                NotFound error => ManagementRoute.DatabaseNotFound(error),
-                Validation error => ErrorResponse.From(error),
-                Conflict error => ErrorResponse.From(error),
-            };
+            return ErrorResponse.From(PlacementNotReady);
         }
 
-        return ErrorResponse.From(PlacementNotReady);
+        var result = await moves.MoveAsync(tenant, target, selected, cancellationToken).ConfigureAwait(false);
+        return result switch
+        {
+            ManagedDatabase moved => await ContinueAsync(moved, selected, cancellationToken).ConfigureAwait(false),
+            Unavailable error => ErrorResponse.From(error == HomeMoves.ReplicaNotReady ? PlacementNotReady : error),
+            NotFound error => ManagementRoute.DatabaseNotFound(error),
+            Validation => ErrorResponse.From(PlacementNotReady),
+            Conflict error => ErrorResponse.From(error),
+        };
     }
 
     private async ValueTask<IResult> ContinueAsync(ManagedDatabase database, IReadOnlyList<string> selected, CancellationToken cancellationToken)

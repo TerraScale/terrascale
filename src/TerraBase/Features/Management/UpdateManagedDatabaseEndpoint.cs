@@ -19,9 +19,10 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         Summary("Renames a database or sets its regions");
         Description("Sets regions to a nonempty set of distinct serving region ids, with at most 8 replicas besides the writer, including any intermediate superset. "
             + "Response regions are sorted by id; their order carries no meaning. If the current writer is excluded, missing requested regions are added and stay added; "
-            + "that call returns 503 replica_not_ready with the old writer and existing members plus requested regions still selected. Nothing is unstaged on any refusal. "
-            + "Repeat the request after catch-up: TerraBase tries requested regions in region-id order, promotes the first ready region, then removes every unselected region. "
-            + "Completed regions requests preserve their placement version. Transitional fields and move-home remain until category C23 of batch db4a5ba7. "
+            + "a call that adds regions returns 503 replica_not_ready with the old writer and existing members plus requested regions still selected. Nothing is unstaged on any refusal. "
+            + "When no regions need adding, including on the first call, TerraBase reads replica status and tries one candidate: the first ready requested region in region-id order. "
+            + "It promotes that region, then removes every unselected region and returns 200. No ready candidate or a repeat during the same regions move returns 503 replica_not_ready; a different move returns 409 move_in_progress. "
+            + "A regions request that changes nothing leaves the placement version unchanged; changing membership or the writer raises it. Transitional fields and move-home remain until category C23 of batch db4a5ba7. "
             + "Old-field PATCH still bumps the placement version when repeated, but now refuses with 409 move_in_progress while a move is pending, "
             + "so membership cannot consume the move's reserved version or diverge from the placement sent to the target. "
             + "Send regions separately from homeRegion, replicaRegions and allRegions. A name change must be sent separately. " + ProjectApiRoute.IdentityDescription);

@@ -40,7 +40,7 @@ internal sealed class HomeMoves(
     private readonly HttpClient _http = PeerHttp.Create(credential);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, bool> _aborted = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, bool> _running = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, MoveRequest> _running = new(StringComparer.Ordinal);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private Histogram<double>? _pause;
 
@@ -63,18 +63,22 @@ internal sealed class HomeMoves(
         base.Dispose();
     }
 
-    public async Task<MoveHomeResult> MoveAsync(TenantContext database, string target, CancellationToken cancellationToken)
+    private sealed record MoveRequest(IReadOnlyList<string>? Regions);
+
+    public async Task<MoveHomeResult> MoveAsync(TenantContext database, string target, IReadOnlyList<string>? requestedRegions, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         var started = Stopwatch.GetTimestamp();
-        if (!_running.TryAdd(database.DatabaseId!, true))
+        var request = new MoveRequest(requestedRegions);
+        var running = _running.GetOrAdd(database.DatabaseId!, request);
+        if (!ReferenceEquals(running, request))
         {
-            return EngineManagementService.MoveInProgress;
+            return DatabaseRegions.SameSet(running.Regions, requestedRegions) ? RegionSetPlacement.PlacementNotReady : (MoveHomeResult)EngineManagementService.MoveInProgress;
         }
 
         try
         {
-            return await moves.BeginHomeMoveAsync(database, target, cancellationToken).ConfigureAwait(false) switch
+            return await moves.BeginHomeMoveAsync(database, target, requestedRegions, cancellationToken).ConfigureAwait(false) switch
             {
                 HomeMoveStart begun => await MoveAsync(begun.Marker, started, cancellationToken).ConfigureAwait(false),
                 ManagedDatabase unchanged => unchanged,

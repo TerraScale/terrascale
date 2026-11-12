@@ -34,6 +34,12 @@ internal static class DatabaseRegions
 
     internal sealed class ReplicaReads;
 
+    internal static bool SameSet(IReadOnlyList<string>? left, IReadOnlyList<string>? right) =>
+        left is not null && right is not null && left.Order(StringComparer.Ordinal).SequenceEqual(right.Order(StringComparer.Ordinal), StringComparer.Ordinal);
+
+    internal static Validation? CheckRegionCount(int count) =>
+        count > MaxReplicas + 1 ? new Validation($"regions can place a database in at most {MaxReplicas + 1} regions, including the writer and any intermediate placement") : null;
+
     internal static Valid<IReadOnlyList<string>> Check(IReadOnlyList<string> replicas, string home) =>
         replicas.Count > MaxReplicas ? new Validation($"replicaRegions names at most {MaxReplicas} regions")
         : replicas.FirstOrDefault(region => !TerraBaseOptions.IsRegion(region)) is { } invalid ? new Validation($"replicaRegions names {invalid}, which is not a region")
@@ -47,7 +53,7 @@ internal static class DatabaseRegions
         : request.Regions is not { Count: > 0 } selected ? new Validation("regions must name at least one serving region, without duplicates")
         : selected.Any(region => !TerraBaseOptions.IsRegion(region)) || selected.Distinct(StringComparer.Ordinal).Count() != selected.Count
             ? new Validation("regions must name at least one serving region, without duplicates")
-        : Check(AllBut(selected, selected[0]), selected[0]) is Validation invalid ? invalid
+        : CheckRegionCount(selected.Count) is { } invalid ? invalid
         : Unserved("regions", selected, serving);
 
     internal static IReadOnlyList<string> AllBut(IEnumerable<string> serving, string home) =>
