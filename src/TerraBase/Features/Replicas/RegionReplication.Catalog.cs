@@ -6,6 +6,7 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
@@ -107,6 +108,10 @@ internal sealed partial class RegionReplication
             }
         }
 
+        (string Project, string Database)? resumed = _refreshed.TryGetValue(home.Name, out var last) ? last : null;
+        (string Project, string Database)? reached = null;
+        var refreshes = 0;
+        var deferred = false;
         TenantContext? after = null;
         do
         {
@@ -117,9 +122,10 @@ internal sealed partial class RegionReplication
 
             foreach (var database in page.Databases)
             {
-                var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
-                var replicated = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-                    && placement.Home == home.Region && (home.Region == options.Region || placement.Includes(options.Region));
+                var key = (Organization: database.OrganizationId, Project: database.ProjectId!, Database: database.DatabaseId!);
+                var held = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
+                    && placement.Home == home.Region ? placement : null;
+                var replicated = held is not null && (home.Region == options.Region || held.Includes(options.Region));
                 try
                 {
                     if (replicated && (listed is null || listed.ContainsKey(key)))
@@ -133,6 +139,19 @@ internal sealed partial class RegionReplication
                     else
                     {
                         await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
+                        if (held is not null && listed is not null && (resumed is not { } from || Follows(key.Project, key.Database, from)))
+                        {
+                            if (refreshes == MaxRefreshes)
+                            {
+                                deferred = true;
+                            }
+                            else
+                            {
+                                refreshes++;
+                                reached = (key.Project, key.Database);
+                                await RefreshRemovedAsync(home, database, held, cancellationToken).ConfigureAwait(false);
+                            }
+                        }
                     }
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -144,7 +163,68 @@ internal sealed partial class RegionReplication
             after = page.Next;
         }
         while (after is not null);
+
+        if (deferred && reached is { } next)
+        {
+            _refreshed[home.Name] = next;
+        }
+        else
+        {
+            _ = _refreshed.TryRemove(home.Name, out _);
+        }
     }
+
+    private static bool Follows(string project, string database, (string Project, string Database) cursor) =>
+        string.CompareOrdinal(project, cursor.Project) is var order && (order > 0 || order == 0 && string.CompareOrdinal(database, cursor.Database) > 0);
+
+    private async Task RefreshRemovedAsync(ReplicaPeer home, TenantContext database, DatabasePlacement held, CancellationToken cancellationToken)
+    {
+        try
+        {
+            switch (await PlacementAtAsync(home, database, cancellationToken).ConfigureAwait(false))
+            {
+                case NotFound:
+                    _ = await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false);
+                    break;
+                case ReplicaCatalogEntry entry when entry.HomeRegion != options.Region && entry.PlacementVersion > held.Version:
+                    await catalog.UpdatePlacementAsync(database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions), cancellationToken)
+                        .ConfigureAwait(false);
+                    break;
+                case ReplicaCatalogEntry:
+                    break;
+                case Unavailable:
+                    faults.Unanswered(database, home.Region);
+                    break;
+            }
+        }
+        catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            faults.Failed(database, home.Region, error);
+        }
+    }
+
+    private async Task<PeerPlacement> PlacementAtAsync(ReplicaPeer peer, TenantContext database, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await _http.GetAsync(new Uri(peer.Internal, ReplicaRoutes.DatabasePath(database, "placement")), cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return new NotFound();
+            }
+
+            return response.IsSuccessStatusCode
+                && await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.ReplicaCatalogEntry, cancellationToken).ConfigureAwait(false) is { } entry
+                ? entry
+                : PlacementUnanswered;
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return PlacementUnanswered;
+        }
+    }
+
+    private readonly union PeerPlacement(ReplicaCatalogEntry, NotFound, Unavailable);
 
 
     internal async Task DeleteShreddedAsync(TenantContext database, CancellationToken cancellationToken)

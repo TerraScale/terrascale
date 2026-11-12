@@ -8,6 +8,7 @@ using System.Threading.Channels;
 using TerraBase.Configuration;
 using TerraBase.Engine.Revisions;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.HomePush;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
@@ -21,13 +22,15 @@ namespace TerraBase.Features.Replicas;
 internal sealed partial class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
-    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners) : BackgroundService
+    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners, RemovedReplicaFaults faults) : BackgroundService
 {
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
 
     internal static readonly TimeSpan VerifyEvery = TimeSpan.FromMinutes(10);
 
     private const int MaxConcurrentPulls = 8;
+    private const int MaxRefreshes = 64;
+    private static readonly Unavailable PlacementUnanswered = new("the region did not answer for the database's placement");
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan RoundGap = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RetryGap = TimeSpan.FromSeconds(30);
@@ -39,6 +42,7 @@ internal sealed partial class RegionReplication(
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (TenantContext Database, long At)> _revised = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (string Revision, TenantContext Database)> _published = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), bool> _suspended = new();
+    private readonly ConcurrentDictionary<string, (string Project, string Database)> _refreshed = new();
     private readonly Channel<bool> _publish = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Channel<string> _catalogWakes = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly SemaphoreSlim[] _lifecycle = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];

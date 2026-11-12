@@ -60,7 +60,8 @@ eventual consistency.
    `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/placement`, which answers the
    placement that region records, home or not: `404` means it was deleted, so the region forgets it and deletes the
    replica; otherwise the region takes the placement when it is newer and deletes the replica when it no longer names
-   this region. A follower whose database's home changed (a [move](placement.md#moving-the-home)) is stopped, its
+   this region. The record stays as the routing record of a region that was removed, and later passes keep it
+   current ([removing a region](placement.md#removing-a-region)). A follower whose database's home changed (a [move](placement.md#moving-the-home)) is stopped, its
    replica deleted and pulled again from the new home. The peers file is read again on every sweep, so a region that
    joins is replicated without a restart. A database's home also tells its replica regions directly on deletion
    (`DELETE /v1/sync/organizations/{organization}/projects/{project}/databases/{database}`), so the record and replica

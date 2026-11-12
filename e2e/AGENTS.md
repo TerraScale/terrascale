@@ -90,6 +90,10 @@ and deletes the account. Its third test signs up nobody: it sends a closure, the
 `X-TerraBase-Closure-Scope: region` and the check of the dashboard's platform project to fra's internal listener, for
 both versions, and each answers 409 `platform_project_protected`.
 
+`placement/regions.spec.ts` R11 removes gru from a database's regions and reads gru's data directory
+(`$E2E_STATE/terrabase`, through `stateDir`) to see that no file named after the database is left there, then that
+the files are back once gru is added again.
+
 Other existing projects can run in two-region mode by starting this same stack first and selecting their project
 normally. No two-region CI job is configured; adding one requires its own journey shard with `E2E_REGIONS=2`,
 the placement project and the normal prepare/start/up/stop lifecycle. The pair shares one machine and third-party
