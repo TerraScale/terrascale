@@ -20,6 +20,7 @@ internal sealed partial class EngineManagementService
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         RegisterPurgeMetrics();
+        RegisterClosureMetrics();
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => Interlocked.Read(ref _unknownDatabaseFiles),
             description: "Unowned files preserved for operator recovery.");
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_bytes", () => Interlocked.Read(ref _unknownDatabaseBytes),

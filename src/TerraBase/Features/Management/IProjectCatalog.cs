@@ -15,6 +15,8 @@ internal interface IProjectCatalog
 
     ValueTask<SetPlanResult> SetStoragePlanAsync(string organizationId, PlanTier plan, CancellationToken cancellationToken);
 
-    ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken);
+    ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, bool forwarded, CancellationToken cancellationToken);
+
+    ValueTask<CloseProjectResult> InspectClosureAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken);
 
 }

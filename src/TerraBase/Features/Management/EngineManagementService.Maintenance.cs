@@ -114,14 +114,18 @@ internal sealed partial class EngineManagementService
 
 internal sealed class CatalogMaintenance(EngineManagementService catalog, TimeProvider time, ILogger<CatalogMaintenance> logger) : BackgroundService
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.WhenAll(
+        RunEveryAsync(catalog.RunMaintenanceAsync, stoppingToken),
+        RunEveryAsync(catalog.ForwardClosuresAsync, stoppingToken));
+
+    private async Task RunEveryAsync(Func<CancellationToken, ValueTask> pass, CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
             try
             {
-                await catalog.RunMaintenanceAsync(stoppingToken).ConfigureAwait(false);
+                await pass(stoppingToken).ConfigureAwait(false);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {

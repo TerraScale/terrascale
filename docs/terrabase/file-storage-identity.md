@@ -13,10 +13,10 @@ OCI Vault delivery supplies these references (the application uses its existing
 
 The identity needs object read/write/delete access only to
 `terrascale-gru-files`, `terrascale-sjc-files` and `terrascale-fra-files`,
-and it lists objects in those three buckets: after a project closure each
-node that holds the closure lists the closed project's prefix,
-`app-files/<organization>/<project>/`, in each of them and deletes what it finds
-([account-project-erasure.md](account-project-erasure.md)). It needs no
+and it lists objects in those three buckets: a project closure is sent to
+every serving region, and each region's node then lists the closed project's
+prefix, `app-files/<organization>/<project>/`, in each of the three and deletes
+what it finds ([account-project-erasure.md](account-project-erasure.md)). It needs no
 bucket-level permission beyond that list.
 
 Grant list on the three buckets before the credentials are installed on any
@@ -35,6 +35,14 @@ backup service available. File transfers return 503 and release their storage
 reservation. A node without credentials makes no list call: it keeps the sweep
 marker of each closed project until the marker's end, 24 hours and 5 minutes
 after it was written, sweeps it if it runs with credentials before then, and
-removes it after that. Supplying Tigris backup credentials alone never enables transfers.
+removes it after that. Such a node still takes a project closure from ts-auth
+or from another region: it fences the project, erases its bucket definitions
+and acknowledges, because those records need no credentials and a node that
+never had credentials holds no file record. A node that holds file records and
+lost its credentials cannot delete their objects: its region keeps the closure
+pending, and the region that asked keeps sending it, until the credentials
+are back. During a rolling deploy a node of an earlier release
+answers a closure sent by another region for itself, as the newer nodes do.
+Supplying Tigris backup credentials alone never enables transfers.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
