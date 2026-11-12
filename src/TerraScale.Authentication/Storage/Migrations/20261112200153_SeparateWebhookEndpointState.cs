@@ -49,21 +49,13 @@ namespace TerraScale.Authentication.Storage.Migrations
                 name: "IX_webhook_endpoints_project_id_last_served_at",
                 table: "webhook_endpoints");
 
-            migrationBuilder.DropColumn(
-                name: "disabled_at",
-                table: "webhook_endpoints");
+            migrationBuilder.Sql("ALTER TABLE webhook_endpoints DROP COLUMN disabled_at;");
 
-            migrationBuilder.DropColumn(
-                name: "first_failure_at",
-                table: "webhook_endpoints");
+            migrationBuilder.Sql("ALTER TABLE webhook_endpoints DROP COLUMN first_failure_at;");
 
-            migrationBuilder.DropColumn(
-                name: "last_served_at",
-                table: "webhook_endpoints");
+            migrationBuilder.Sql("ALTER TABLE webhook_endpoints DROP COLUMN last_served_at;");
 
-            migrationBuilder.DropColumn(
-                name: "lease_until",
-                table: "webhook_endpoints");
+            migrationBuilder.Sql("ALTER TABLE webhook_endpoints DROP COLUMN lease_until;");
 
             migrationBuilder.CreateIndex(
                 name: "IX_webhook_endpoint_states_disabled_at_lease_until",
