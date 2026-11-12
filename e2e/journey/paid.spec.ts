@@ -294,6 +294,65 @@ test('organization checkout creates nothing before payment and completes exactly
   await expect(page.locator('#organization-checkout-notice')).toHaveCount(0);
   console.log('organization checkout: requires_action refund retained beside a fresh draft; new draft canceled; settled refund keeps original refusal reason once; no organization; one full refund');
 
+  const conflictName = 'Existing billing ' + owner.run;
+  await page.goto('/organization?newOrganization=organization');
+  await wizard.locator('input[name=name]').fill(conflictName);
+  await wizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await wizard.locator('input[name=plan][value=pro]').check();
+  await wizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  const conflictUrl = page.url();
+  const conflictId = new URL(conflictUrl).pathname.split('/').at(-1) ?? '';
+  const external = await page.request.post('https://auth.terrascale.tech/v1/terrascale/organizations', {
+    headers: owner.headers, data: { name: conflictName, idempotency_key: conflictId },
+  });
+  expect(external.status()).toBe(201);
+  const conflictOrganization = await external.json();
+  await page.goto('/organization?tab=billing&organizationId=' + conflictOrganization.id);
+  await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('No plan');
+  await page.locator('summary.ts-context-trigger').click();
+  await page.locator('[data-organization-option="' + conflictOrganization.id + '"]').click();
+  await expect(page.locator('[data-active-organization-id="' + conflictOrganization.id + '"]')).toHaveText('Current organization: ' + conflictName);
+  await page.locator('article.ts-plan', { has: page.locator('#plan-pro') }).getByRole('button', { name: 'Choose Pro', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  const ownId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+  expect(ownId === conflictId, 'the organization has a separate checkout').toBe(false);
+  await page.getByRole('button', { name: 'Subscribe', exact: true }).click();
+  await page.waitForURL((url) => url.origin === dash && url.searchParams.get('payment') === 'success');
+  await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
+  const ownResponse = await page.request.get('https://api.stripe.com/v1/checkout/sessions/' + ownId, { headers: stripeHeaders });
+  expect(ownResponse.status()).toBe(200);
+  const ownSession = await ownResponse.json();
+  const conflictPayment = await page.request.post(conflictUrl, { maxRedirects: 0 });
+  expect(conflictPayment.status()).toBe(303);
+  const conflictResponse = await page.request.get('https://api.stripe.com/v1/checkout/sessions/' + conflictId, { headers: stripeHeaders });
+  expect(conflictResponse.status()).toBe(200);
+  const conflictSession = await conflictResponse.json();
+  await page.goto(conflictPayment.headers().location);
+  await expect(page.locator('#organization-checkout-notice')).toContainText('This organization already has billing.');
+  await expect(page.locator('#organization-checkout-notice')).toContainText('Your payment was refunded.');
+  await expect(page.locator('[data-organization-option="' + conflictOrganization.id + '"]')).toHaveCount(1);
+  await page.goto('/organization?tab=billing&organizationId=' + conflictOrganization.id);
+  await expect(page.locator('#organization-checkout-notice')).toHaveCount(0);
+  await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
+  await expect(page.locator('#billing-summary .ts-billing-plan .ts-badge')).toHaveText('Active');
+  const ownSubscription = await page.request.get('https://api.stripe.com/v1/subscriptions/' + ownSession.subscription, { headers: stripeHeaders });
+  expect(ownSubscription.status()).toBe(200);
+  const retainedSubscription = await ownSubscription.json();
+  expect(retainedSubscription.status).toBe('active');
+  expect(retainedSubscription.customer).toBe(ownSession.customer);
+  await page.goto('/organization?newOrganization=organization');
+  await expect(wizard.getByRole('button', { name: 'Cancel pending checkout', exact: true })).toHaveCount(0);
+  const conflictLog = await stripeLog();
+  const conflictRefunds = conflictLog.refunds.filter((entry) => entry.subscription === conflictSession.subscription);
+  expect(conflictRefunds).toHaveLength(1);
+  expect(conflictRefunds[0].amount).toBe(2000);
+  expect(conflictLog.cancels.filter((entry) => entry.subscription === conflictSession.subscription)).toHaveLength(1);
+  expect(conflictLog.cancels.filter((entry) => entry.subscription === ownSession.subscription)).toHaveLength(0);
+  expect(conflictLog.refunds.filter((entry) => entry.subscription === ownSession.subscription)).toHaveLength(0);
+  expect((await owner.organizations()).filter((org) => org.name === conflictName)).toHaveLength(1);
+  await audit.check('conflicting organization billing refunds only the paid draft');
+  console.log('organization checkout conflicting binding: public keyed ts-auth create; separate Pro billing retained; paid draft fully refunded once; refusal shown once; organization visible in switcher; no pending checkout');
 });
 
 test('canceling organization checkout leaves no organization and preserves the wizard draft', async ({ page, audit }) => {
