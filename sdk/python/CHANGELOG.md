@@ -33,11 +33,12 @@
   rule every SDK shares (`sdk/SQL-API.md`): https, or http only for
   `localhost`, `127.0.0.0/8` and `[::1]`; no user info, query, fragment or path;
   an issuer is the ts-auth origin and one tenant segment; a `terrascale.tech`
-  host only for its own service. The client raises `ValueError` when it is
-  built. Earlier versions kept a `base_url` path prefix, query or user info,
-  and the platform calls (`create_api_key`, `list_api_keys`, `revoke_api_key`,
-  the project client, settings and user calls) sent an issuer's user info as
-  HTTP Basic in place of the bearer token.
+  host only for its own service, a cell's `<cell>.auth.terrascale.tech`
+  included. The client raises `ValueError` when it is built. Earlier versions
+  kept a `base_url` path prefix, query or user info, and the platform calls
+  (`create_api_key`, `list_api_keys`, `revoke_api_key`, the project client,
+  settings and user calls) sent an issuer's user info as HTTP Basic in place of
+  the bearer token.
 - Added the optional `sqlalchemy` extra (`pip install terrascale[sqlalchemy]`): a
   `terrascale://<project_id>/<database>` SQLAlchemy dialect and PEP 249 DBAPI
   over the SQL HTTP API, running in autocommit — each statement is one request

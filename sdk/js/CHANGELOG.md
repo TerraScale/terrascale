@@ -28,7 +28,9 @@ every TerraBase origin.
 rule every SDK shares (`sdk/SQL-API.md`): https, or http only for `localhost`,
 `127.0.0.0/8` and `[::1]` (no longer `*.localhost`, or `*.test` next to a custom
 `fetch`); no user info, query, fragment or path, where a `baseUrl` path prefix
-was kept before; and a `terrascale.tech` host only for its own service, so
+was kept before; and a `terrascale.tech` host only for its own service
+(`api.terrascale.tech` and `<cell>.api.terrascale.tech` for TerraBase,
+`auth.terrascale.tech` and `<cell>.auth.terrascale.tech` for ts-auth), so
 `authBaseUrl` refuses `api.terrascale.tech` and its regional hosts. The client
 throws a `TypeError` when it is built.
 

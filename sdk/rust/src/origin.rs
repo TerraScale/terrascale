@@ -16,7 +16,7 @@ pub(crate) const API: Service = Service {
 
 pub(crate) const AUTH: Service = Service {
     host: "auth.terrascale.tech",
-    regional: false,
+    regional: true,
     name: "ts-auth",
 };
 

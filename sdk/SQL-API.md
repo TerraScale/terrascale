@@ -48,7 +48,7 @@ before any request:
 | Path | None; a trailing `/` is allowed. An issuer (Go `tsauth`, Python `issuer=`) is the ts-auth origin and one tenant segment, such as `/terrascale`. |
 | Query, fragment | Refused, also when empty (`?`, `#`). |
 | User info | Refused. |
-| TerraScale's own hosts | Under `terrascale.tech` the TerraBase origin is `api.terrascale.tech` or `<region>.api.terrascale.tech`, and the ts-auth origin is `auth.terrascale.tech`; any other `terrascale.tech` host is refused. An API key goes to `https://auth.terrascale.tech` only when the TerraBase origin is `https://api.terrascale.tech` in any case, with or without `:443` and `/`. |
+| TerraScale's own hosts | Under `terrascale.tech` the TerraBase origin is `api.terrascale.tech` or `<cell>.api.terrascale.tech`, and the ts-auth origin is `auth.terrascale.tech` or `<cell>.auth.terrascale.tech`, with one label for the cell (`gru`, `sjc`, `fra` today); any other `terrascale.tech` host is refused for both. An API key goes to `https://auth.terrascale.tech` only when the TerraBase origin is `https://api.terrascale.tech` in any case, with or without `:443` and `/`. |
 
 ## Databases for agents
 

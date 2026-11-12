@@ -25,7 +25,7 @@ REGION_PIN = "X-TerraScale-Region-Pin"
 MAX_ATTEMPTS = 4
 MAX_BACKOFF = 30.0
 API_SERVICE = ("api.terrascale.tech", True, "the TerraBase API")
-AUTH_SERVICE = ("auth.terrascale.tech", False, "ts-auth")
+AUTH_SERVICE = ("auth.terrascale.tech", True, "ts-auth")
 DEFAULT_ISSUER = "https://auth.terrascale.tech/terrascale"
 
 

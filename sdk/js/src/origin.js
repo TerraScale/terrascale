@@ -1,5 +1,5 @@
 export const apiService = Object.freeze({ host: "api.terrascale.tech", regional: true, name: "the TerraBase API" });
-export const authService = Object.freeze({ host: "auth.terrascale.tech", regional: false, name: "ts-auth" });
+export const authService = Object.freeze({ host: "auth.terrascale.tech", regional: true, name: "ts-auth" });
 
 export function isLoopbackHost(hostname = "") {
   const octets = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(hostname);

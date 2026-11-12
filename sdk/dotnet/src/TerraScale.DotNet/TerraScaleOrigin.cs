@@ -7,7 +7,7 @@ internal sealed record TerraScaleService(string Host, bool Regional, string Name
 {
     internal static readonly TerraScaleService Api = new("api.terrascale.tech", true, "the TerraBase API");
 
-    internal static readonly TerraScaleService Auth = new("auth.terrascale.tech", false, "ts-auth");
+    internal static readonly TerraScaleService Auth = new("auth.terrascale.tech", true, "ts-auth");
 
     internal bool Serves(string host)
     {

@@ -15,7 +15,7 @@ type Service struct {
 
 var (
 	API    = Service{host: "api.terrascale.tech", regional: true, name: "the TerraBase API"}
-	Auth   = Service{host: "auth.terrascale.tech", name: "ts-auth"}
+	Auth   = Service{host: "auth.terrascale.tech", regional: true, name: "ts-auth"}
 	Status = Service{host: "status.terrascale.tech", name: "the status page"}
 )
 
