@@ -56,6 +56,7 @@ internal sealed class SqlSocket(
     private readonly SemaphoreSlim _send = new(1, 1);
     private readonly SemaphoreSlim _frame = new(1, 1);
     private readonly CancellationTokenSource _revoked = new();
+    private readonly CancellationTokenSource _closed = new();
     private readonly List<IDisposable> _watches = [];
     private ISqlSession? _session;
     private TenantContext? _database;
@@ -72,6 +73,7 @@ internal sealed class SqlSocket(
     public async Task RunAsync(TenantContext? database, bool canWrite, CancellationToken fence, CancellationToken cancellationToken)
     {
         var stopping = lifetime.ApplicationStopping;
+        await using var aborting = _closed.Token.Register(socket.Abort).ConfigureAwait(false);
         await using var leaving = stopping.Register(() => _ = CloseAsync(WebSocketCloseStatus.EndpointUnavailable, "the server is restarting")).ConfigureAwait(false);
         await using var moving = fence.Register(() => _ = CloseAfterFrameAsync()).ConfigureAwait(false);
         await using var cutOff = _revoked.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the credential was revoked")).ConfigureAwait(false);
@@ -501,9 +503,10 @@ internal sealed class SqlSocket(
             }
 
             _closing = true;
+            _closed.CancelAfter(Shutdown.DrainBudget);
             await socket.CloseOutputAsync(status, reason, CancellationToken.None).ConfigureAwait(false);
         }
-        catch (WebSocketException)
+        catch (Exception error) when (error is WebSocketException or OperationCanceledException)
         {
         }
         finally
@@ -529,6 +532,7 @@ internal sealed class SqlSocket(
     {
         _watches.ForEach(watch => watch.Dispose());
         _revoked.Dispose();
+        _closed.Dispose();
         _frame.Dispose();
         _send.Dispose();
     }
