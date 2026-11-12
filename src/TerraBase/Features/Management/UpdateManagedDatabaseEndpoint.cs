@@ -20,7 +20,7 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         Description("Sets regions to a nonempty set of distinct serving region ids, with at most 8 replicas besides the writer, including any intermediate superset. "
             + "Response regions are sorted by id; their order carries no meaning. If the current writer is excluded, missing requested regions are added and stay added; "
             + "a call that adds regions returns 503 replica_not_ready with the old writer and existing members plus requested regions still selected. Nothing is unstaged on any refusal. "
-            + "When no regions need adding, including on the first call, TerraBase reads replica status and tries one candidate: the first ready requested region in region-id order. "
+            + "When no regions need adding, including on the first call, TerraBase reads replica status and tries one candidate: the first requested region, in region-id order, that has replicated this database at least once; the move brings it up to date and refuses with 503 replica_not_ready when it can't. "
             + "It promotes that region, then removes every unselected region and returns 200. No ready candidate or a repeat during the same regions move returns 503 replica_not_ready; a different move returns 409 move_in_progress. "
             + "A regions request that changes nothing leaves the placement version unchanged; changing membership or the writer raises it. Transitional fields and move-home remain until category C23 of batch db4a5ba7. "
             + "Old-field PATCH still bumps the placement version when repeated, but now refuses with 409 move_in_progress while a move is pending, "

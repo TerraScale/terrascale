@@ -39,7 +39,7 @@ internal sealed class RegionSetPlacement(IManagementService management, TerraBas
         IReadOnlyList<string> candidates = [.. selected.Order(StringComparer.Ordinal)];
         var tenant = new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id);
         var observations = await revisions.ReplicaStatusAsync(tenant, current.Replicas, cancellationToken).ConfigureAwait(false);
-        var target = candidates.FirstOrDefault(candidate => observations.Any(row => row.Region == candidate && row is { LagMs: 0, LastPulledAt: not null, Revision: not null }));
+        var target = candidates.FirstOrDefault(candidate => observations.Any(row => row.Region == candidate && row is { LagMs: not null, LastPulledAt: not null, Revision: not null }));
         if (target is null)
         {
             return ErrorResponse.From(PlacementNotReady);
