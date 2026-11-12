@@ -11,15 +11,20 @@ from the selected set:
 
 - **Create.** The home is the first region the user selected: the dialog posts the selection order as `regionOrder`,
   and without it the first checked region in the page's order is used. Every other selected region is a replica.
+- **Save.** Every selected code is checked against the region catalog before the first call: a code the catalog does
+  not list answers `422` and nothing is called. The selected regions are then handled in region id order, so a retry
+  takes the same steps as the first attempt.
 - **Save, home still selected.** One `updateDatabase` with the other selected regions as replicas. An all-regions
-  database keeps that mode while every catalog region stays selected; unselecting one sends the explicit list, which
-  turns the mode off. The dashboard has no control that turns all-regions mode on.
+  database keeps that mode while every catalog region stays selected, however many regions the catalog has; unselecting
+  one sends the explicit list, which turns the mode off. The dashboard has no control that turns all-regions mode on.
 - **Save, home unselected.** Three calls in order: `updateDatabase` so that every selected region is a replica (skipped
-  when the replicas already are exactly the selected regions); `moveDatabaseHome` to the first selected region, in the
-  database's stored region order, that already was a replica, or to the first selected region when none was;
+  when the replicas already are exactly the selected regions); `moveDatabaseHome` to the first selected region, in
+  region id order, that already was a replica, or to the first selected region in that order when none was;
   `updateDatabase` with the selected regions other than the new home, which removes the old one. A call that fails
-  leaves the earlier ones applied: the page shows the stored regions with TerraBase's error, and saving again continues.
-- **No region selected** answers `422`.
+  leaves the earlier ones applied: the page shows the stored regions with the error, and saving again continues.
+  Replacing a database's only region takes two saves: the first adds the new region and answers that it is still
+  syncing while the old one keeps serving, and the next one finishes once the new region has caught up.
+- **No region selected** answers `422`, and so do more than 9 regions outside all-regions mode.
 
 The dashboard calls TerraBase's placement API through the management RPC contract using the current user's
 `databases:write` authority. A move waits for TerraBase to complete it, then saves the returned placement and endpoint.

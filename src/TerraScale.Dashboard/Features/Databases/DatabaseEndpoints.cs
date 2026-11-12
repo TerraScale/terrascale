@@ -118,13 +118,13 @@ namespace TerraScale.Dashboard.Features.Databases
 
         private static IReadOnlyList<string> Regions(IFormCollection form, AccountContext context)
         {
-            return Picked(form) ? DatabasePlacementEndpoints.Selection(form, "regionOrder")
+            return Picked(form) ? DatabasePlacementEndpoints.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"))
                 : context.Project?.Region is { Length: > 0 } region ? [region] : throw new AccountAccessException(DatabasePlacementEndpoints.Minimum, 422);
         }
 
         private static IReadOnlyList<string> Chosen(IFormCollection form)
         {
-            try { return DatabasePlacementEndpoints.Selection(form, "regionOrder"); }
+            try { return DatabasePlacementEndpoints.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder")); }
             catch (AccountAccessException) { return []; }
         }
 

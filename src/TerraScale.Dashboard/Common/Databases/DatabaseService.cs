@@ -29,7 +29,7 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             var code = database?.Region ?? context.Project?.Region;
             return DatabaseRegion.Resolve(await backend.RegionsAsync(cancellationToken), code)
-                ?? throw new HttpRequestException("This database's home region is not a TerraBase region.");
+                ?? throw new HttpRequestException("This database's region is not a TerraBase region.");
         }
 
         internal async Task<IReadOnlyList<DatabaseRegion>> ConfiguredPlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken)
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Common.Databases
             return placement;
         }
 
-        private static DatabaseRegion ResolveRegion(IReadOnlyList<DatabaseRegion> catalog, string code)
+        internal static DatabaseRegion ResolveRegion(IReadOnlyList<DatabaseRegion> catalog, string code)
         {
             var value = code.Trim();
             return catalog.FirstOrDefault(region => region.Code.Equals(value, StringComparison.OrdinalIgnoreCase) || region.Id == value)
@@ -149,7 +149,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
             if (remote.HomeRegion != home.Id)
             {
-                throw new AccountAccessException("A branch with this name has a different home region.", 409);
+                throw new AccountAccessException("A branch with this name is in a different region.", 409);
             }
 
             if (ttlSeconds is not null && remote.ExpiresAt is null)
@@ -303,13 +303,14 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new AccountAccessException(error.ErrorCode switch
                 {
                     "move_in_progress" => "Another region change of this database is running. Try again when it finishes.",
-                    "replica_not_ready" => DatabaseFormat.Region(target.Id) + " is still syncing, so the current regions keep serving. Try again shortly.",
+                    "replica_not_ready" => DatabaseFormat.Region(target.Id) + " was added and is still syncing. Save again in a moment to finish; until then " +
+                        DatabaseFormat.Region(home.Id) + " keeps serving.",
                     _ => "The region change is still being settled, and writes are paused until it is. Try again."
                 }, error.Status, error.ErrorCode);
             }
             if (remote.HomeRegion != target.Id)
             {
-                throw new HttpRequestException("The move returned a different home region. Reload to check its placement.");
+                throw new HttpRequestException("The region change returned different regions. Reload to check them.");
             }
 
             return await SavePlacementAsync(context, database, remote, "database.home_moved", cancellationToken);
@@ -340,7 +341,7 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             var ids = codes.Where(code => !string.IsNullOrWhiteSpace(code)).Select(code => ResolveRegion(catalog, code).Id)
                 .Where(regionId => regionId != home.Id).Distinct(StringComparer.Ordinal).ToArray();
-            return ids.Length > 8 ? throw new AccountAccessException("Choose at most 8 replica regions.", 422) : ids;
+            return ids.Length > 8 ? throw new AccountAccessException("Choose at most 9 regions.", 422) : ids;
         }
 
         private async Task<DatabaseRecord> SavePlacementAsync(AccountContext context, DatabaseRecord database, ManagedDatabase remote, string audit, CancellationToken cancellationToken)
