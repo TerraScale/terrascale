@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Email;
@@ -7,6 +8,7 @@ using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
+using TerraScale.Authentication.Security;
 using TerraScale.Endpoints;
 using ZLogger;
 
@@ -40,7 +42,7 @@ public sealed class SocialCallbackEndpoint(SocialFlow flow) : EndpointWithoutReq
 /// <summary>The callback logic both callback endpoints share.</summary>
 public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessions, TotpCredentials mfa, HostedAuth hosted, ILogger<SocialFlow> logger)
 {
-    internal const string CallbackDescription = "The redirect URI registered at the provider; Apple posts it (form_post). Needs the start's state cookie and matching state, then redeems the code with the project's stored secret. The validated external subject selects its bound account. An unknown subject creates an account only with an unused verified email when the project allows sign-up; matching email never links accounts. An account with an active authenticator app gets the hosted second-factor step before any session. Success sets the project's session cookie and continues to next; any failure answers 401 without a session. Shares the hosted IP budget.";
+    internal const string CallbackDescription = "The redirect URI registered at the provider; Apple posts it (form_post). Needs the start's state cookie and matching state, then redeems the code with the project's stored secret. The validated external subject selects its bound account. An unknown subject creates an account immediately only with an unused verified email when the project allows sign-up; matching email never links accounts. An account with an active authenticator app gets the hosted second-factor step before any session. Success sets the project's session cookie and continues to next; any failure answers 401 without a session. Unverified email uses a sealed ten-minute pending link and a single-use emailed code for new and existing accounts. Proof atomically creates an allowed account and connects the subject. Shares the hosted IP and sign-up budgets.";
 
     /// <summary>Redeems the provider's answer and signs the browser in.</summary>
     public async Task<IResult> CompleteAsync(HttpContext context, string? code, string? state, CancellationToken cancellationToken)
@@ -97,13 +99,20 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
         if (user is null && identity is { EmailVerified: false } && Users.NormalizeEmail(identity.Email) is { } email)
         {
             using var reservation = context.RequestServices.GetRequiredService<SignInMail>().Reserve();
-            if (await hosted.LimitMailAsync(email, SignInFlow.Ip(context), cancellationToken) is { } refusal)
+            if ((await hosted.LimitSocialSignUpAsync(SignInFlow.Ip(context), cancellationToken)
+                ?? await hosted.LimitMailAsync(email, SignInFlow.Ip(context), cancellationToken)) is { } refusal)
             {
                 return SignInFlow.Limited(context, SignInStep.Code, refusal.Wait, email, resumed.Next);
             }
 
-            await reservation.EnqueueCodeAsync(tenant, email, PasscodePurpose.SignIn, AuthEmails.Locale(context.Request));
-            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, email, resumed.Next));
+            var clock = context.RequestServices.GetRequiredService<TimeProvider>();
+            var options = context.RequestServices.GetRequiredService<AuthOptions>();
+            var pending = new PendingSocialLink(Tokens.RandomToken(32), email, external!, provider,
+                (clock.GetUtcNow() + PendingSocialLinks.Lifetime).ToUnixTimeSeconds());
+            var token = PendingSocialLinks.Seal(options, tenant, pending);
+            await reservation.EnqueueSocialAsync(tenant, email, token, AuthEmails.Locale(context.Request));
+            context.Response.Cookies.Append(PendingSocialLinks.Cookie(tenant), token, PendingSocialLinks.CookieOptions(tenant));
+            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, email, resumed.Next) { CodeRequest = "sign-in" });
         }
 
         // An active local factor gets the hosted second step; the provider's own amr/acr never count as one.

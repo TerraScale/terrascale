@@ -73,7 +73,7 @@ test('project usernames and browser-bound magic links share single-use email ver
       if (key === 'microsoft') await dialog.locator('[name=tenant]').selectOption('organizations');
       if (key === 'oauth2') {
         for (const field of ['authorize_url', 'token_url', 'userinfo_url']) {
-          await dialog.locator(`[name=${field}]`).fill(`https://identity.example.invalid/${field}`);
+          await dialog.locator(`[name=${field}]`).fill(`https://identity.journey.terrascale.tech/${field}`);
         }
         await dialog.locator('[name=scopes]').fill('profile email');
       }
@@ -81,7 +81,7 @@ test('project usernames and browser-bound magic links share single-use email ver
       await expect(admin.locator(`#${id} .ts-badge`)).toHaveText('Configured');
       if (key === 'oauth2') {
         await admin.locator(`#${id} button[command=show-modal]`).click();
-        await expect(admin.locator(`#${id}-dialog [name=userinfo_url]`)).toHaveValue('https://identity.example.invalid/userinfo_url');
+        await expect(admin.locator(`#${id}-dialog [name=userinfo_url]`)).toHaveValue('https://identity.journey.terrascale.tech/userinfo_url');
         await admin.locator(`#${id}-dialog`).getByRole('button', { name: 'Cancel', exact: true }).click();
       }
       expect((await admin.content()).includes(password), 'provider secrets stay write-only').toBe(false);
@@ -94,16 +94,40 @@ test('project usernames and browser-bound magic links share single-use email ver
     await duplicate.locator('#sign-up-email').fill(duplicateEmail);
     await duplicate.locator('#sign-up-username').fill(username.toUpperCase());
     await enterSecret(duplicate.locator('#sign-up-password'), password);
+    const duplicateResponse = duplicate.waitForResponse(response => response.url() === base + '/sign-up' && response.request().method() === 'POST');
     await duplicate.locator('form:has(#sign-up-email) button[type=submit]').click();
-    const duplicateMail = await nextMail(duplicateEmail, 0);
-    const duplicateCode = /^\s*(\d{6})\s*$/m.exec(duplicateMail.text)?.[1] ?? '';
-    const duplicateToken = await duplicate.locator('input[name=pending_token]').first().inputValue();
-    saveSecret('duplicate-sign-up-token', duplicateToken);
-    const refusedDuplicate = await other.request.post(`${base}/sign-up/verify`, {
-      headers: { Origin: auth }, form: { email: duplicateEmail, code: duplicateCode, pending_token: duplicateToken },
+    expect((await duplicateResponse).status()).toBe(400);
+    await expect(duplicate.locator('#sign-in-error')).toContainText('Username taken');
+    expect((await other.cookies()).some(cookie => cookie.name === 'tsauth_session_' + projectId)).toBe(false);
+    const reserved = await other.request.post(base + '/sign-up', {
+      headers: { Origin: auth }, form: { email: duplicateEmail, username: 'AdMiN', password },
     });
-    expect(refusedDuplicate.status()).toBe(401);
-    expect((await other.cookies()).some(cookie => cookie.name === `tsauth_session_${projectId}`)).toBe(false);
+    expect(reserved.status()).toBe(400);
+    expect(await reserved.text()).toContain('Use a username');
+    const raceName = 'race_' + current.runId;
+    const raceEmail = await newAddress('race-first-' + current.runId);
+    const lostEmail = await newAddress('race-second-' + current.runId);
+    const starts = [];
+    for (const address of [raceEmail, lostEmail]) {
+      const response = await other.request.post(base + '/sign-up', {
+        headers: { Origin: auth }, form: { email: address, username: raceName, password },
+      });
+      expect(response.status()).toBe(200);
+      const html = await response.text();
+      const pending = /name="pending_token" value="([^"]+)"/.exec(html)?.[1] ?? '';
+      expect(pending).not.toBe('');
+      saveSecret('race-signup-token-' + address, pending);
+      starts.push({ address, pending });
+    }
+    for (const [index, start] of starts.entries()) {
+      const mail = await nextMail(start.address, 0);
+      const raceCode = /^\s*(\d{6})\s*$/m.exec(mail.text)?.[1] ?? '';
+      const response = await other.request.post(base + '/sign-up/verify', {
+        headers: { Origin: auth }, form: { email: start.address, code: raceCode, pending_token: start.pending },
+      });
+      expect(response.status()).toBe(index === 0 ? 200 : 400);
+      expect(await response.text()).toContain(index === 0 ? 'signed in' : 'Username taken');
+    }
     await duplicate.close();
 
     const passwordPage = await other.newPage();
@@ -183,5 +207,134 @@ test('social provider responses enforce identity, verification, PKCE and state b
   await onLocalStack(async () => {
     const { stdout } = await promisify(execFile)('dotnet', ['run', '--project', resolve(__dirname, '../social/Journey.Social.csproj'), '-c', 'Release'], { maxBuffer: 1024 * 1024 });
     expect(stdout).toContain('8 providers: token/userinfo, verification, PKCE, state and configuration binding passed.');
+  });
+});
+
+test('unverified social email creates and links an account only after the code, then its subject signs in directly', async ({ browser }, info) => {
+  await onLocalStack(async () => {
+    const run = randomBytes(4).toString('hex');
+    const owner = await auditedContext(browser, { viewport: desktop });
+    const customer = await auditedContext(browser, { viewport: desktop });
+    const admin = await owner.newPage();
+    const page = await customer.newPage();
+    const adminAudit = new Audit(admin, info);
+    const audit = new Audit(page, info);
+    const password = randomBytes(24).toString('base64url');
+    const ownerEmail = await newAddress('social-owner-' + run);
+    const email = await newAddress('social-new-' + run);
+    const subject = 'social-' + run;
+    saveSecret('social-sign-up-password', password);
+    try {
+      await signUp(admin, adminAudit, ownerEmail, password, 'unverified social owner');
+      await verify(admin, ownerEmail);
+      await onboard(admin, adminAudit, 'Social owner', 'Social ' + run, 'unverified social owner');
+      const projectId = new URL(admin.url()).searchParams.get('projectId') ?? '';
+      expect(projectId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+      const base = auth + '/ui/' + projectId;
+      await admin.goto('/auth/social');
+      await admin.locator('#auth-provider-oauth2 button[command=show-modal]').click();
+      const dialog = admin.locator('#auth-provider-oauth2-dialog');
+      await dialog.locator('[name=client_id]').fill('journey-client');
+      await enterSecret(dialog.locator('[name=client_secret]'), password);
+      for (const [field, path] of [['authorize_url', 'authorize'], ['token_url', 'token'], ['userinfo_url', 'userinfo']]) {
+        await dialog.locator('[name=' + field + ']').fill('https://identity.journey.terrascale.tech/' + path);
+      }
+      await dialog.locator('[name=scopes]').fill('profile email');
+      await dialog.getByRole('button', { name: 'Save Custom OAuth2', exact: true }).click();
+      await expect(admin.locator('#auth-provider-oauth2 .ts-badge')).toHaveText('Configured');
+      await admin.goto('/auth/sign-in');
+      await admin.locator('#auth-method-username').check();
+      await admin.getByRole('button', { name: 'Save sign-in methods', exact: true }).click();
+      await expect(admin.locator('#auth-method-username')).toBeChecked();
+      await adminAudit.check('unverified OAuth2 provider configured');
+
+      const providerSignIn = async (address: string, id: string, verified = false) => {
+        await page.goto(base + '/social/oauth2');
+        await page.locator('#email').fill(address);
+        await page.locator('#subject').fill(id);
+        if (verified) await page.locator('#verified').check();
+        await page.getByRole('button', { name: 'Continue', exact: true }).click();
+      };
+      await providerSignIn(email, subject);
+      await expect(page.locator('#sign-in-code-digit')).toBeVisible();
+      expect((await customer.cookies()).some(cookie => cookie.name === 'tsauth_session_' + projectId)).toBe(false);
+      await audit.check('new unverified social identity requires email proof');
+      const pending = (await customer.cookies()).filter(cookie => cookie.name.startsWith('tsauth_social_link_'));
+      expect(pending).toHaveLength(1);
+      pending.forEach(cookie => saveSecret('pending-social-cookie', cookie.value));
+      const mail = await nextMail(email, 0);
+      const code = /^\s*(\d{6})\s*$/m.exec(mail.text)?.[1] ?? '';
+      expect(code).toMatch(/^\d{6}$/);
+      const wrongCode = await customer.request.post(base + '/sign-in/verify', {
+        headers: { Origin: auth }, form: { email, code: code === '000000' ? '000001' : '000000' },
+      });
+      expect(wrongCode.status()).toBe(401);
+      expect((await customer.cookies()).some(cookie => cookie.name === 'tsauth_session_' + projectId)).toBe(false);
+      await enterSecret(page.locator('#sign-in-code-digit'), code);
+      await page.getByRole('button', { name: 'Verify and sign in', exact: true }).click();
+      await expect(page.locator('[data-state=success]')).toContainText('signed in');
+      await audit.check('email code creates the social account');
+      await page.goto(base + '/security');
+      await expect(page.getByRole('button', { name: 'Remove Custom OAuth2', exact: true })).toBeVisible();
+      const username = 'social_' + run;
+      await page.locator('#security-username').fill(username.toUpperCase());
+      await page.getByRole('button', { name: 'Save username', exact: true }).click();
+      await expect(page.locator('#security-username')).toHaveValue(username);
+      await expect(page.locator('[data-state=success]')).toContainText('Username saved');
+      await audit.check('an existing social user sets a username from Security');
+      const replayCookies = await customer.cookies();
+      const pendingCookie = replayCookies.filter(cookie => cookie.name.startsWith('tsauth_social_link_'));
+      expect(pendingCookie).toHaveLength(0);
+
+      await customer.clearCookies();
+      await customer.addCookies(pending);
+      const replay = await customer.request.post(base + '/sign-in/verify', { headers: { Origin: auth }, form: { email, code } });
+      expect(replay.status()).toBe(401);
+      expect((await customer.cookies()).some(cookie => cookie.name === 'tsauth_session_' + projectId)).toBe(false);
+      await customer.clearCookies();
+      await providerSignIn('changed-' + email, subject);
+      await expect(page.locator('[data-state=success]')).toContainText('signed in');
+      await expect(page.locator('#sign-in-code-digit')).toHaveCount(0);
+      await page.goto(base + '/security');
+      await expect(page.locator('main')).toContainText(email);
+      await expect(page.locator('#security-username')).toHaveValue(username);
+      await audit.check('bound subject signs into the same account without another email code');
+
+      await customer.clearCookies();
+      const existingEmail = await newAddress('social-existing-' + run);
+      await providerSignIn(existingEmail, 'original-subject-' + run, true);
+      await expect(page.locator('[data-state=success]')).toContainText('signed in');
+      await customer.clearCookies();
+      await providerSignIn(existingEmail, 'unverified-existing-' + run);
+      await expect(page.locator('#sign-in-code-digit')).toBeVisible();
+      expect((await customer.cookies()).some(cookie => cookie.name === 'tsauth_session_' + projectId)).toBe(false);
+      await audit.check('an unbound subject cannot select an existing account by email');
+      const existingMail = await nextMail(existingEmail, 0);
+      const existingCode = /^\s*(\d{6})\s*$/m.exec(existingMail.text)?.[1] ?? '';
+      await enterSecret(page.locator('#sign-in-code-digit'), existingCode);
+      await page.getByRole('button', { name: 'Verify and sign in', exact: true }).click();
+      await expect(page.locator('[data-state=success]')).toContainText('signed in');
+      await customer.clearCookies();
+      await providerSignIn('changed-' + existingEmail, 'unverified-existing-' + run);
+      await expect(page.locator('[data-state=success]')).toContainText('signed in');
+      await expect(page.locator('#sign-in-code-digit')).toHaveCount(0);
+      await page.goto(base + '/security');
+      await expect(page.locator('main')).toContainText(existingEmail);
+      await audit.check('existing account connects after proof and its next sign-in needs no code');
+
+      await admin.goto('/profile?tab=danger');
+      await admin.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
+      const deletion = admin.locator('#delete-account');
+      await deletion.locator('#delete-account-email').fill(ownerEmail);
+      await deletion.getByRole('button', { name: 'Delete account', exact: true }).click();
+      await confirmWithPassword(admin, adminAudit, password, 'unverified social owner deletion');
+      await admin.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
+      await expect(admin.locator('main')).toContainText('Account deleted');
+    } finally {
+      await saveCookies(customer);
+      await saveCookies(owner);
+      await customer.close();
+      await owner.close();
+    }
   });
 });

@@ -180,7 +180,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
             return (null, wait);
         }
 
-        return (Users.NormalizeEmail(email) is { } normalized ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null, null);
+        return (await this.VerifyPasswordAsync(email, password, cancellationToken), null);
     }
 
     private async Task<UserRecord?> VerifyPasswordAsync(string email, string password, CancellationToken cancellationToken)
@@ -202,7 +202,10 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         return new IPAddress(raw).ToString();
     }
 
-    /// <summary>Charges the shared IP, per-email cooldown and hourly budgets before any hosted code mail is issued.</summary>
+    internal async Task<MailRefusal?> LimitSocialSignUpAsync(string ip, CancellationToken cancellationToken) =>
+        await limiter.AcquireWithDeadlineAsync(this.Tenant, "hosted-signup-ip", limiter.Fold(ip), SignUpsPerIp, SignUpWindow, cancellationToken) is { } limit
+            ? new MailRefusal(limit.RetryAfter, BudgetExhausted: false) : null;
+
     public async Task<MailRefusal?> LimitMailAsync(string email, string ip, CancellationToken cancellationToken)
     {
         if (await this.LimitIpAsync(ip, mails: true, cancellationToken) is { } wait)

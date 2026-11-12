@@ -290,7 +290,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 Values = new AuthEmailValues(issued.Email)
                 {
                     Code = issued.Code,
-                    ExpiresIn = work.MagicBrowserHash is null ? Passcodes.Lifetime : MagicLinks.Lifetime,
+                    ExpiresIn = issued.ExpiresAt - clock.GetUtcNow(),
                     Tenant = issued.Tenant,
                     Link = work.MagicBrowserHash is { } browserHash ? MagicLinks.Create(options, issued, browserHash, work.MagicNext) : null,
                 },
@@ -358,7 +358,9 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             }, sending.Version).ConfigureAwait(false);
     }
 
-    private async Task<IssuedPasscode?> IssueAsync(MailWork work) => work.MagicBrowserHash is not null
+    private async Task<IssuedPasscode?> IssueAsync(MailWork work) => work.SocialLink is { } pending
+        ? await passcodes.RequestSocialAsync(work.Tenant, pending, CancellationToken.None).ConfigureAwait(false)
+        : work.MagicBrowserHash is not null
         ? await passcodes.RequestMagicLinkAsync(work.Tenant, work.Email, CancellationToken.None).ConfigureAwait(false)
         : work.Purpose switch
         {
@@ -554,6 +556,9 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = purpose }, locale, null);
 
         /// <summary>Queues a sign-up code, or a sign-in code when the address already has an account.</summary>
+        public Task EnqueueSocialAsync(string tenant, string email, string pending, string locale) =>
+            this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.Social, SocialLink = pending }, locale, null);
+
         public Task EnqueueSignUpAsync(string tenant, string email, string passwordHash, string pendingToken, string locale = AuthEmails.English, string? username = null) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, PasswordHash = passwordHash, PendingToken = pendingToken, Username = username }, locale, null);
 
@@ -608,6 +613,8 @@ public sealed record MailRow(string Id, string State, string Locale, DateTimeOff
 /// <summary>A code to issue (<see cref="Purpose"/>) or an email to send (<see cref="Kind"/>).</summary>
 internal sealed record MailWork(string Tenant, string Email)
 {
+    public string? SocialLink { get; init; }
+
     public string? MagicBrowserHash { get; init; }
 
     public string? MagicNext { get; init; }

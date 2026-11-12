@@ -5,6 +5,7 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Security;
+using TerraScale.Authentication.Features.Ui;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
@@ -28,6 +29,18 @@ internal static class MagicLinks
         IsEssential = true,
         MaxAge = Lifetime,
     };
+
+    internal static IResult CodePage(HttpContext context, MagicLinkProof proof, string token, string error, int status = StatusCodes.Status200OK) =>
+        SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(context), Mask(proof.Email),
+            SignInFlow.SafeNext(context, proof.Next), Error: error)
+        { Challenge = token, CodeRequest = "sign-in/magic" }, status);
+
+    internal static string Mask(string email)
+    {
+        var at = email.IndexOf('@', StringComparison.Ordinal);
+        var dot = email.LastIndexOf('.');
+        return email[..1] + "***@" + email[(at + 1)..(at + 2)] + "***" + email[dot..];
+    }
 
     internal static Uri Create(AuthOptions options, IssuedPasscode issued, string browserHash, string? next)
     {

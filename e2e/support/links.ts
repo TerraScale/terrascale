@@ -21,7 +21,7 @@ const journeyPages: readonly PagePattern[] = [
 
 const hostedPages: readonly RegExp[] = [
   /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/social\/(microsoft|gitlab|linkedin|slack|discord|facebook|x|oauth2)$/,
-  /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(sign-in|sign-up|reset|security|sign-in\/magic)$/,
+  /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(sign-in|sign-up|reset|security|security\/username|sign-in\/magic)$/,
   /^\/ui\/terrascale\/device$/,
   /^\/ui\/terrascale\/sign-up$/,
   /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(sign-up|sign-in|reset)$/,

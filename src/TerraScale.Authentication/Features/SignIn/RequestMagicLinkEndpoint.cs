@@ -33,7 +33,9 @@ public sealed class RequestMagicLinkEndpoint(SignInMail mail, HostedAuth hosted,
             return SignInFlow.Refused(context);
         }
 
-        var email = form.Email?.Trim() ?? string.Empty;
+        var proof = MagicLinks.Open(options, SignInFlow.Tenant(context), form.Challenge,
+            context.RequestServices.GetRequiredService<TimeProvider>());
+        var email = proof?.Email ?? form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(context, form.Next);
         if (await SignInFlow.SsoAsync(context, email, next, cancellationToken) is { } sso)
         {
@@ -46,20 +48,23 @@ public sealed class RequestMagicLinkEndpoint(SignInMail mail, HostedAuth hosted,
             var seconds = Math.Max(1, (long)Math.Ceiling(refusal.Wait.TotalSeconds));
             context.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
             context.Response.Headers.CacheControl = "no-store";
-            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(context), email, next,
+            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(context), proof is null ? email : MagicLinks.Mask(email), next,
                 Error: $"No link was sent. Try again in {seconds} seconds.")
             {
                 Limited = true,
                 CodeBudgetExhausted = refusal.BudgetExhausted,
                 WaitSeconds = seconds,
                 CodeRequest = "sign-in/magic",
+                Challenge = form.Challenge,
             }, StatusCodes.Status429TooManyRequests);
         }
 
         var tenant = SignInFlow.Tenant(context);
+        context.Response.Cookies.Delete(PendingSocialLinks.Cookie(tenant), PendingSocialLinks.CookieOptions(tenant));
         var browser = Tokens.RandomToken(32);
         await reservation.EnqueueMagicLinkAsync(tenant, email, Tokens.Sha256Hex(browser), next, AuthEmails.Locale(context.Request));
         context.Response.Cookies.Append(MagicLinks.Cookie(tenant), browser, MagicLinks.CookieOptions(tenant));
-        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, email, next) { CodeRequest = "sign-in/magic" });
+        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, proof is null ? email : MagicLinks.Mask(email), next)
+        { CodeRequest = "sign-in/magic", Challenge = form.Challenge });
     }
 }

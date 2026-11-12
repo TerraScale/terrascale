@@ -430,6 +430,7 @@ internal static class SecurityFlow
         {
             ErrorTitle = error?.Title,
             Account = user.Email,
+            Username = user.Username,
             MfaEnabled = enabled,
             RecoveryRemaining = remaining,
             Passkeys = passkeys,

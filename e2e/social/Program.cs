@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Claims;
 using System.Reflection;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Contracts;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.WebUtilities;
@@ -39,7 +40,7 @@ internal static class Program
                 var (location, cookie) = await social.StartAsync("project", record, null, CancellationToken.None);
                 var query = QueryHelpers.ParseQuery(location.Query);
                 Require(query["state"].ToString().Length > 0, "state");
-                Require(name == "facebook" || query["code_challenge_method"] == "S256", "PKCE");
+                Require(query["code_challenge_method"] == "S256", "PKCE");
                 var state = social.Resume("project", name, cookie, query["state"]);
                 Require(state is not null, "browser state");
                 provider.Nonce = state!.Nonce;
@@ -66,6 +67,23 @@ internal static class Program
         Require(open.Invoke(null, [options, "project", token, new FixedClock(issuedAt.AddMinutes(10).AddSeconds(-1))]) is not null, "magic link before expiry");
         Require(open.Invoke(null, [options, "project", token, new FixedClock(issuedAt.AddMinutes(10))]) is null, "magic link at ten-minute expiry");
         Require(open.Invoke(null, [options, "other-project", token, new FixedClock(issuedAt)]) is null, "magic link tenant binding");
+        var pendingType = typeof(SocialSignIn).Assembly.GetType("TerraScale.Authentication.Features.SignIn.PendingSocialLink", throwOnError: true)!;
+        var pendingLinks = typeof(SocialSignIn).Assembly.GetType("TerraScale.Authentication.Features.SignIn.PendingSocialLinks", throwOnError: true)!;
+        var pendingSeal = pendingLinks.GetMethod("Seal", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var pendingOpen = pendingLinks.GetMethod("Open", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var pendingProvider = SocialProviders.Seal(options, "project", SocialProviders.Facebook, null, "client", "secret", null, null, null);
+        var pending = pendingType.GetConstructors().Single().Invoke(["pending-id", "user@example.invalid",
+            new LinkedProvider("facebook", "https://www.facebook.com", "client", "123"), pendingProvider, issuedAt.AddMinutes(10).ToUnixTimeSeconds()]);
+        var pendingToken = (string)pendingSeal.Invoke(null, [options, "project", pending])!;
+        Require(pendingOpen.Invoke(null, [options, "project", pendingToken, new FixedClock(issuedAt.AddMinutes(10).AddSeconds(-1))]) is not null, "pending link before expiry");
+        Require(pendingOpen.Invoke(null, [options, "project", pendingToken, new FixedClock(issuedAt.AddMinutes(10))]) is null, "pending link ten-minute expiry");
+        Require(pendingOpen.Invoke(null, [options, "other-project", pendingToken, new FixedClock(issuedAt)]) is null, "pending link tenant binding");
+        foreach (var reserved in new[] { "admin", "administrator", "root", "support", "security", "help", "terrascale", "system", "owner", "staff" })
+        {
+            Require(Users.NormalizeUsername(reserved.ToUpperInvariant()) is null, "reserved username");
+        }
+
+        Console.WriteLine("Pending social links: ten-minute expiry and tenant binding passed; reserved usernames refused.");
         Console.WriteLine("Magic links: ten-minute expiry and tenant binding passed.");
         Console.WriteLine("8 providers: token/userinfo, verification, PKCE, state and configuration binding passed.");
     }
@@ -122,13 +140,14 @@ internal static class Program
             {
                 var form = QueryHelpers.ParseQuery(await request.Content!.ReadAsStringAsync(cancellationToken));
                 Require(form["code"] == "authorization-code", name + " code");
-                Require(name == "facebook" || form["code_verifier"].ToString().Length > 0, name + " verifier");
+                Require(form["code_verifier"].ToString().Length > 0, name + " verifier");
                 Require(name != "x" || request.Headers.Authorization?.Scheme == "Basic", "X client authentication");
                 var claims = new List<Claim>
                 {
                     new("sub", "123"),
                     new("email", "user@example.invalid"),
-                    new("email_verified", verified ? "true" : "false", ClaimValueTypes.Boolean),
+                    new("email_verified", name == "microsoft" || verified ? "true" : "false", ClaimValueTypes.Boolean),
+                    new("xms_edov", verified ? "true" : "false", ClaimValueTypes.Boolean),
                     new("nonce", this.Nonce),
                     new("tid", "11111111-1111-1111-1111-111111111111"),
                 };

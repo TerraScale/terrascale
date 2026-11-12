@@ -71,3 +71,5 @@ releases its identities and revokes every prior session and token.
 
 Both pages share the hosted per-IP budget. The outbound client times out after 10 seconds and connects only to
 public unicast addresses, so a configured OIDC issuer cannot reach loopback, private, link-local or mesh addresses.
+
+An unverified provider email requires a single-use code bound to a sealed ten-minute pending link containing the provider configuration and subject. The same response and queued mail flow serves new and existing addresses. Code verification atomically consumes the pending challenge and creates the account when self sign-up is allowed or connects the existing account. Reusing the provider subject then signs in directly. The provider configuration must still match, and the hosted mail, email-code and sign-up IP budgets apply. Microsoft email trust requires xms_edov=true; email_verified alone is insufficient.

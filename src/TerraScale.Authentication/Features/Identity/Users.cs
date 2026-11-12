@@ -55,7 +55,9 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
             : null;
 
     public static string? NormalizeUsername(string? username) => username is { Length: >= 3 and <= 32 }
-        && username.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '.') ? username.ToLowerInvariant() : null;
+        && username.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '.')
+        && username.ToLowerInvariant() is not ("admin" or "administrator" or "root" or "support" or "security" or "help" or "terrascale" or "system" or "owner" or "staff")
+        ? username.ToLowerInvariant() : null;
 
     public Task<UserRecord?> FindByUsernameAsync(string instanceId, string username, CancellationToken cancellationToken) =>
         NormalizeUsername(username) is { } normalized
@@ -176,6 +178,18 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         }
 
         return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<bool> SetUsernameAsync(UserRecord caller, string username, Change session, CancellationToken cancellationToken)
+    {
+        if (NormalizeUsername(username) is not { } normalized
+            || await this.GetAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { Disabled: false } current
+            || current.AuthEpoch != caller.AuthEpoch || current.AuthStamp != caller.AuthStamp)
+        {
+            return false;
+        }
+
+        return await data.SaveAsync([Change.Update(current with { Username = normalized }), session], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<bool> SetPasswordAsync(UserRecord caller, string passwordHash, CancellationToken cancellationToken = default)
@@ -311,7 +325,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         AuthenticationBindings = [.. BindAuthenticationState(user).AuthenticationBindings, new CredentialBinding(Credentials.SocialKind, Credentials.SocialKey(identity), user.Id)],
     };
 
-    private static ProviderLinkRecord Link(UserRecord user, LinkedProvider identity) =>
+    internal static ProviderLinkRecord Link(UserRecord user, LinkedProvider identity) =>
         new(user.InstanceId, user.Id, identity.Provider, identity.Issuer, identity.ClientId, identity.Subject);
 
     private static bool Complete(LinkedProvider identity) =>

@@ -98,7 +98,7 @@ public sealed partial class SocialSignIn(IHttpClientFactory clients, AuthOptions
             }
         }
 
-        if (provider.Provider is not (SocialProviders.Apple or SocialProviders.Facebook))
+        if (provider.Provider is not SocialProviders.Apple)
         {
             query["code_challenge"] = Base64UrlEncoder.Encode(SHA256.HashData(Encoding.ASCII.GetBytes(state.Verifier)));
             query["code_challenge_method"] = "S256";
@@ -148,7 +148,7 @@ public sealed partial class SocialSignIn(IHttpClientFactory clients, AuthOptions
             ["client_id"] = provider.ClientId,
             ["client_secret"] = secret,
         };
-        if (provider.Provider is not (SocialProviders.Apple or SocialProviders.Facebook))
+        if (provider.Provider is not SocialProviders.Apple)
         {
             form["code_verifier"] = state.Verifier;
         }
@@ -193,7 +193,7 @@ public sealed partial class SocialSignIn(IHttpClientFactory clients, AuthOptions
         }
 
         // Both accepted Google spellings name one authority; map only after token validation.
-        return new(email, provider.Provider == SocialProviders.Google ? GoogleIssuer : issuer, subject, provider.ClientId, Claim("email_verified") is true or "true");
+        return new(email, provider.Provider == SocialProviders.Google ? GoogleIssuer : issuer, subject, provider.ClientId, Claim(provider.Provider == SocialProviders.Microsoft ? "xms_edov" : "email_verified") is true or "true");
     }
 
     // GitHub: stable account ID and verified primary email from the same access token.

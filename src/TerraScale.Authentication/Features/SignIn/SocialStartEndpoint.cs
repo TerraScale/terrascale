@@ -10,7 +10,7 @@ public sealed class SocialStartEndpoint(SocialSignIn social, HostedAuth hosted) 
         Get("/ui/{slug}/social/{provider}");
         Name("ui_social_start");
         Summary("Sign in with a social provider");
-        Description("Redirects to the project's configured google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2 provider with state, PKCE (not Apple or Facebook) and an OIDC nonce, bound to the browser by an encrypted 10-minute cookie. A provider the project did not configure, and the platform's pages, answer 404. Shares the hosted IP budget (429 with Retry-After). next is honoured as on the sign-in page.");
+        Description("Redirects to the project's configured google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2 provider with state, PKCE (except Apple) and an OIDC nonce, bound to the browser by an encrypted 10-minute cookie. A provider the project did not configure, and the platform's pages, answer 404. Shares the hosted IP budget (429 with Retry-After). next is honoured as on the sign-in page.");
         Tags("Sign-in");
         Produces(StatusCodes.Status302Found);
         Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
@@ -35,6 +35,7 @@ public sealed class SocialStartEndpoint(SocialSignIn social, HostedAuth hosted) 
         try
         {
             var (location, sealedState) = await social.StartAsync(tenant, provider, next, cancellationToken);
+            this.HttpContext.Response.Cookies.Delete(PendingSocialLinks.Cookie(tenant), PendingSocialLinks.CookieOptions(tenant));
             this.HttpContext.Response.Cookies.Append(SocialSignIn.Cookie(tenant), sealedState, SocialFlow.CookieOptions(tenant));
             return Results.Redirect(location.AbsoluteUri);
         }

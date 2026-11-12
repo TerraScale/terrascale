@@ -1,10 +1,13 @@
 using System.Globalization;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Webhooks;
+using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
 
@@ -19,6 +22,8 @@ public enum PasscodePurpose
     SignUp,
 
     StepUp,
+
+    Social,
 }
 
 public sealed record IssuedPasscode(string Email, string Code, DateTimeOffset ExpiresAt, PasscodePurpose Purpose = PasscodePurpose.SignIn)
@@ -210,12 +215,89 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         PasscodePurpose.PasswordReset => "password-reset",
         PasscodePurpose.SignUp => "sign-up",
         PasscodePurpose.StepUp => "step-up",
-        _ => null,
+        PasscodePurpose.SignIn or PasscodePurpose.Social => null,
+        _ => throw new UnreachableException(),
     };
 
     // Every timestamp, including existing non-rounded records, identifies its containing UTC clock hour.
     private static DateTimeOffset IssueWindowStart(DateTimeOffset timestamp) =>
         new(timestamp.UtcTicks / IssueWindow.Ticks * IssueWindow.Ticks, TimeSpan.Zero);
+
+    internal async Task<IssuedPasscode?> RequestSocialAsync(string tenant, string token, CancellationToken cancellationToken)
+    {
+        if (await this.PendingSocialAsync(tenant, token, cancellationToken).ConfigureAwait(false) is not { } pending)
+        {
+            return null;
+        }
+
+        var user = await users.FindByEmailAsync(tenant, pending.Email, cancellationToken).ConfigureAwait(false);
+        var settings = await new ProjectAuthSettings(data).GetAsync(tenant, cancellationToken).ConfigureAwait(false);
+        if (user is { Disabled: true } || user is null && !settings.SignUp)
+        {
+            return null;
+        }
+
+        var previous = (await this.ReadAsync(tenant, "social:" + pending.Id, cancellationToken).ConfigureAwait(false))?.Value;
+        if (previous?.Consumed is true || user is null && previous?.AuthStamp is not null)
+        {
+            return null;
+        }
+
+        return await this.IssueAsync(tenant, "social:" + pending.Id, user?.Id ?? previous?.UserId ?? AuthIds.New(), pending.Email, user?.AuthEpoch ?? 0, user?.AuthStamp,
+            PasscodePurpose.Social, null, Tokens.Sha256Hex(token),
+            lifetime: DateTimeOffset.FromUnixTimeSeconds(pending.ExpiresAt) - clock.GetUtcNow(), cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<UserRecord?> RedeemSocialAsync(string tenant, string token, string code, CancellationToken cancellationToken)
+    {
+        if (!WellFormed(code) || await this.PendingSocialAsync(tenant, token, cancellationToken).ConfigureAwait(false) is not { } pending)
+        {
+            return null;
+        }
+
+        var user = await users.FindByEmailAsync(tenant, pending.Email, cancellationToken).ConfigureAwait(false);
+        var settings = await new ProjectAuthSettings(data).GetAsync(tenant, cancellationToken).ConfigureAwait(false);
+        if (user is { Disabled: true } || user is null && !settings.SignUp)
+        {
+            return null;
+        }
+
+        List<Change> linkChanges = user is null ? [] : [Change.Assert(user), Change.Insert(Users.Link(user, pending.Identity))];
+        if (user is not null && await outbox.CreateAsync(tenant, "user.provider_linked", user.Id, user.Email,
+            pending.Identity.Provider, cancellationToken).ConfigureAwait(false) is { } linked)
+        {
+            linkChanges.Add(linked);
+        }
+
+        var consumed = await this.ConsumeAsync(tenant, "social:" + pending.Id, code.Trim(), PasscodePurpose.Social,
+            passcode => passcode.Email == pending.Email && passcode.PendingTokenHash == Tokens.Sha256Hex(token)
+                && (user is null ? passcode.AuthStamp is null : passcode.UserId == user.Id && passcode.AuthEpoch == user.AuthEpoch && passcode.AuthStamp == user.AuthStamp),
+            cancellationToken, createAccount: user is null ? async passcode =>
+            {
+                var (created, changes) = users.NewAccount(tenant, pending.Email, null, passcode.UserId,
+                    await outbox.CreateAsync(tenant, "user.signed_up", passcode.UserId, pending.Email, null, cancellationToken).ConfigureAwait(false));
+                return (created, [.. changes, Change.Insert(Users.Link(created, pending.Identity))]);
+            }
+        : null,
+            extraChanges: linkChanges).ConfigureAwait(false);
+        return consumed is null ? null : await users.FindByProviderAsync(tenant, pending.Identity, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<PendingSocialLink?> PendingSocialAsync(string tenant, string token, CancellationToken cancellationToken)
+    {
+        var pending = PendingSocialLinks.Open(options, tenant, token, clock);
+        return pending is not null
+            && (await new ProjectAuthSettings(data).GetAsync(tenant, cancellationToken).ConfigureAwait(false)).Provider(pending.Identity.Provider) == pending.Provider
+            ? pending : null;
+    }
+
+    public async Task<bool> PendingUsernameTakenAsync(string tenant, string email, string token, CancellationToken cancellationToken)
+    {
+        var pending = (await this.ReadAsync(tenant, SignUpKey + Users.NormalizeEmail(email), cancellationToken).ConfigureAwait(false))?.Value;
+        return pending is { Username: { } username, PendingTokenHash: { } hash }
+            && Tokens.FixedTimeEquals(hash, Tokens.Sha256Hex(token))
+            && await users.FindByUsernameAsync(tenant, username, cancellationToken).ConfigureAwait(false) is not null;
+    }
 
     public async Task<IssuedPasscode?> RequestMagicLinkAsync(string instanceId, string email, CancellationToken cancellationToken) =>
         await users.FindByEmailAsync(instanceId, email, cancellationToken).ConfigureAwait(false) is { Disabled: false } user
@@ -228,6 +310,11 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         var now = clock.GetUtcNow();
         var rowData = await this.ReadAsync(instanceId, key, cancellationToken).ConfigureAwait(false);
         var previous = rowData?.Value;
+        if (purpose == PasscodePurpose.Social && previous is { Consumed: true })
+        {
+            return null;
+        }
+
         // One isolated issuance per step-up attempt. Sign-in ancestry and its recovery rollover never enter this row.
         if (purpose == PasscodePurpose.StepUp && previous is not null)
         {
@@ -280,7 +367,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
     }
 
     private async Task<PasscodeRecord?> ConsumeAsync(string instanceId, string key, string code, PasscodePurpose purpose, Func<PasscodeRecord, bool> belongs,
-        CancellationToken cancellationToken, string? passwordHash = null, Func<PasscodeRecord, Task<(UserRecord User, Change[] Changes)>>? createAccount = null)
+        CancellationToken cancellationToken, string? passwordHash = null, Func<PasscodeRecord, Task<(UserRecord User, Change[] Changes)>>? createAccount = null, IReadOnlyList<Change>? extraChanges = null)
     {
         // A round loses its write only to another charged guess, a redemption or a reissue, each bounded, so these
         // rounds reach a verdict under any realistic contention. Running out reveals nothing and charges nothing.
@@ -308,7 +395,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             }
 
             UserRecord? authenticated = null;
-            if (matches && (purpose is PasscodePurpose.PasswordReset || (passcode.ResetsAuthentication && purpose is not (PasscodePurpose.SignUp or PasscodePurpose.StepUp))))
+            if (matches && (purpose is PasscodePurpose.PasswordReset || (passcode.ResetsAuthentication && purpose is not (PasscodePurpose.SignUp or PasscodePurpose.StepUp or PasscodePurpose.Social))))
             {
                 if (await users.GetAsync(instanceId, passcode.UserId, cancellationToken).ConfigureAwait(false) is not { } current
                     || current.AuthEpoch != passcode.AuthEpoch || current.AuthStamp != passcode.AuthStamp)
@@ -332,9 +419,14 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
                 changes.AddRange(creates);
             }
 
+            if (matches && extraChanges is not null)
+            {
+                changes.AddRange(extraChanges);
+            }
+
             if (!await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
             {
-                if (created is not null)
+                if (created is not null || extraChanges is { Count: > 0 })
                 {
                     return null;
                 }

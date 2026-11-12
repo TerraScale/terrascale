@@ -128,6 +128,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     public string? CodeRequest { get; init; }
 
+    public string? Username { get; init; }
+
     public string? ErrorId => this.Error is null ? null : "sign-in-error";
 
     /// <summary>The pending sign-up's token, carried from the sign-up form to its code form.</summary>
@@ -281,7 +283,14 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
         var located = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = AuthEmails.UiLocales(context.Request) };
-        var rendered = located with { Refresh = NavigationTarget(ContinueTo(located)) };
+        var rendered = located with
+        {
+            Refresh = NavigationTarget(ContinueTo(located)),
+            CodeRequest = located.CodeRequest ?? (located.Step == SignInStep.Code
+                && PendingSocialLinks.Open(context.RequestServices.GetRequiredService<AuthOptions>(), located.Slug,
+                    context.Request.Cookies[PendingSocialLinks.Cookie(located.Slug)], context.RequestServices.GetRequiredService<TimeProvider>()) is not null
+                ? "sign-in" : null),
+        };
         var page = SignInPage.Create(rendered);
         page.StatusCode = statusCode;
         return page;

@@ -39,26 +39,32 @@ public sealed class RedeemMagicLinkEndpoint(Passcodes passcodes, Sessions sessio
         }
 
         var next = SignInFlow.SafeNext(context, proof.Next);
+        var sameBrowser = context.Request.Cookies[MagicLinks.Cookie(tenant)] is { } browser
+            && Tokens.FixedTimeEquals(proof.BrowserHash, Tokens.Sha256Hex(browser));
         if (await hosted.LimitIpAsync(SignInFlow.Ip(context), mails: false, cancellationToken) is { } wait)
         {
-            return SignInFlow.Limited(context, SignInStep.Code, wait, proof.Email, next);
+            return sameBrowser
+                ? SignInFlow.Limited(context, SignInStep.Code, wait, proof.Email, next)
+                : MagicLinks.CodePage(context, proof, context.Request.Query["token"]!, "Too many attempts. Try again later.", StatusCodes.Status429TooManyRequests);
         }
 
-        if (context.Request.Cookies[MagicLinks.Cookie(tenant)] is not { } browser
-            || !Tokens.FixedTimeEquals(proof.BrowserHash, Tokens.Sha256Hex(browser)))
+        if (!sameBrowser)
         {
-            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, proof.Email, next,
-                Error: "Open this link in the browser that requested it, or enter the code from the email.")
-            { CodeRequest = "sign-in/magic" });
+            return MagicLinks.CodePage(context, proof, context.Request.Query["token"]!,
+                "Open this link in the browser that requested it, or enter the code from the email.");
         }
 
-        context.Response.Cookies.Delete(MagicLinks.Cookie(tenant), MagicLinks.CookieOptions(tenant));
         if (await hosted.LimitCodeAsync(proof.Email, PasscodePurpose.SignIn, cancellationToken) is { } codeWait)
         {
             return SignInFlow.Limited(context, SignInStep.Code, codeWait, proof.Email, next);
         }
 
         var user = await passcodes.RedeemAsync(tenant, proof.Email, proof.Code, PasscodePurpose.SignIn, proof.IssueId, cancellationToken);
+        if (user is not null)
+        {
+            context.Response.Cookies.Delete(MagicLinks.Cookie(tenant), MagicLinks.CookieOptions(tenant));
+        }
+
         if (user is not null && await SignInFlow.SecondFactorAsync(context, mfa, user, next, cancellationToken) is { } factor)
         {
             return factor;
