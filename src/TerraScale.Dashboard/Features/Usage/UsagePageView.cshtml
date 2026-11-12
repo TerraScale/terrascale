@@ -10,7 +10,7 @@
     var database = new FilterField("database", selection.DatabaseId);
     var range = new FilterField("range", selection.Range);
 }
-<main id="usage-page" class="ts-page ts-usage" data-on:datastar-fetch="evt.detail.el.matches?.('.ts-filter-control') &amp;&amp; (evt.detail.type === 'started' ? ($_navPending = true) : evt.detail.type === 'finished' ? ($_navPending = false) : (evt.detail.type === 'error' || evt.detail.type === 'retries-failed') &amp;&amp; location.reload())"><header class="ts-usage-header"><h1>Usage</h1></header>
+<main id="usage-page" class="ts-page ts-usage" data-on:datastar-fetch="evt.detail.el.matches?.('.ts-filter-control') &amp;&amp; (evt.detail.type === 'started' ? ($_navPending = true) : evt.detail.type === 'finished' ? ($_navPending = false) : (evt.detail.type === 'error' || evt.detail.type === 'retries-failed') &amp;&amp; location.reload())"><h1 class="ts-sr-only">Usage</h1>
 @if (tabs.Length > 0 || Model.Tab == "overview")
 {
     <div class="ts-toolbar ts-usage-toolbar">

@@ -8,6 +8,13 @@
   margin-left: auto;
 }
 
+@container page (width < 640px) {
+  #project-databases .ts-card-actions {
+    flex-wrap: wrap;
+    margin-left: 0;
+  }
+}
+
 /* Search shrinks as needed to leave room for the creation button. */
 .ts-db-search {
   flex: 0 1 auto;
@@ -48,26 +55,6 @@
 
 .ts-db-name:hover .ts-strong {
   color: var(--ts-link);
-}
-
-.ts-databases .ts-db-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-s3) var(--ts-s4);
-}
-
-.ts-databases .ts-db-header h1 {
-  font-size: var(--ts-fs-3xl);
-  font-weight: 600;
-}
-
-.ts-databases .ts-db-header > .ts-page-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ts-s2);
-  margin-left: auto;
 }
 
 .ts-db-region {

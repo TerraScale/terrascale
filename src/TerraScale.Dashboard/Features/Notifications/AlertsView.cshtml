@@ -3,7 +3,7 @@
 @using System.Globalization
 @using TerraScale.Dashboard.Features.Notifications
 <main class="ts-page">
-<h1 class="ts-sr-only">Alerts</h1><div class="ts-page-actions"><a class="ts-btn ts-btn-ghost" href="/notifications">Notifications</a></div>
+<h1 class="ts-sr-only">Alerts</h1><div class="ts-page-actions ts-alerts-back"><a class="ts-btn ts-btn-ghost ts-btn-sm" href="/notifications">Notifications</a></div>
 @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
 @if (Model.Created is { } created && Model.Secret is { } secret)
 {

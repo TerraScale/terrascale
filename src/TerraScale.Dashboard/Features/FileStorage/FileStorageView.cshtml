@@ -17,11 +17,11 @@
 <main class="ts-page ts-files" data-project-id="@Model.Shell.Context.Project?.Id" data-organization-id="@Model.Shell.Context.Organization?.Id">
 @if (bucketId is null)
 {
-    <div class="ts-files-header"><h1>Files</h1>@if (canWrite && listing is not null) { <div class="ts-page-actions"><button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>Create bucket</span></button></div> }</div>
+    <h1 class="ts-sr-only">Files</h1>
     @if (Model.Error is { } error) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@error</p><a class="ts-link" href="/storage">Reload files</a></div> }
     @if (listing is not null)
     {
-        <section class="ts-card ts-card-flush" aria-labelledby="buckets-title"><header class="ts-card-head"><h2 class="ts-card-title" id="buckets-title">Buckets</h2></header><div class="ts-card-body">
+        <section class="ts-card ts-card-flush" aria-labelledby="buckets-title"><header class="ts-card-head"><h2 class="ts-card-title" id="buckets-title">Buckets</h2>@if (canWrite) { <div class="ts-card-actions"><button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>Create bucket</span></button></div> }</header><div class="ts-card-body">
         @if (listing.Buckets.Items.Count == 0)
         {
             <div class="ts-empty" role="status"><p class="ts-empty-title">No buckets yet.</p>@if (canWrite) { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>Create bucket</span></button> }</div>

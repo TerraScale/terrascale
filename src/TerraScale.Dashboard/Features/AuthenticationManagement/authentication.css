@@ -2,6 +2,19 @@
   gap: var(--ts-s6);
 }
 
+.ts-idp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ts-s2);
+  margin-bottom: calc(var(--ts-s6) * -1 + var(--ts-s2));
+}
+
+.ts-idp-actions:empty {
+  display: none;
+}
+
 .ts-idp-tabs {
   flex-wrap: nowrap;
   gap: 0 var(--ts-s4);

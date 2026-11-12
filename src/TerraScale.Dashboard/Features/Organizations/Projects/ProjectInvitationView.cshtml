@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectInvitationPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-invitations-title" data-signals="{_invitationPending: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_invitationPending = true)" data-on:pageshow__window="$_invitationPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_invitationPending = false)">
-    <header class="ts-page-header"><h1 id="project-invitations-title">Project invitations</h1><p>@Model.Shell.Context.Project!.Name</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
+    <h1 class="ts-sr-only" id="project-invitations-title">Project invitations</h1><div class="ts-page-actions"><span class="ts-strong">@Model.Shell.Context.Project!.Name</span><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></div>
     @if (Model.Notice.Length > 0) { <p class="ts-alert ts-alert-success" role="status">@Model.Notice</p> }
     @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Open the first page</a></p> }
     else if (Model.Invitations.Count == 0) { <p class="ts-empty" role="status">No project invitations on this page.</p> }
