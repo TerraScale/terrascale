@@ -207,8 +207,7 @@ internal sealed partial class RegionReplication
             return;
         }
 
-        await catalog.UpdatePlacementAsync(database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions), cancellationToken)
-            .ConfigureAwait(false);
+        _ = await catalog.RecordAsync(entry, cancellationToken).ConfigureAwait(false);
         if (!entry.AllRegions && !entry.ReplicaRegions.Contains(options.Region))
         {
             await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);

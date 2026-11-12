@@ -39,6 +39,11 @@ internal sealed partial class EngineManagementService
                 return ManagementErrors.WrongRegion;
             }
 
+            if (await HomeMovePendingAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false))
+            {
+                return MoveInProgress;
+            }
+
             var changed = database with { ExpiresAt = DatabaseTtl.ExpiresAt(time.GetUtcNow(), ttlSeconds) };
             await CatalogTables.PutDatabaseAsync(transaction, changed, cancellationToken).ConfigureAwait(false);
             return changed;

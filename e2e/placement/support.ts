@@ -5,7 +5,7 @@ import { journey, saveSecret } from '../support/state';
 
 export const home = 'https://gru.api.terrascale.tech';
 export const replica = 'https://fra.api.terrascale.tech';
-export type Cells = Pick<APIRequestContext, 'get' | 'post' | 'patch' | 'delete'>;
+export type Cells = Pick<APIRequestContext, 'get' | 'post' | 'put' | 'patch' | 'delete'>;
 export const test = base.extend<{ cells: Cells }>({
   cells: async ({ playwright, request }, use) => {
     const current = journey();
@@ -38,6 +38,7 @@ export const test = base.extend<{ cells: Cells }>({
     const cells: Cells = {
       get: async (url, options) => context.get(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
       post: async (url, options) => context.post(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
+      put: async (url, options) => context.put(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
       patch: async (url, options) => context.patch(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
       delete: async (url, options) => context.delete(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
     };

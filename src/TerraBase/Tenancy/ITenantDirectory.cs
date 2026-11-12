@@ -18,7 +18,9 @@ public readonly union RegisteredDatabaseResult(bool, Unavailable);
 
 public readonly union ReplicatesDatabaseResult(bool, Unavailable);
 
-public sealed record TenantDatabaseRecord(string Name, DatabasePlacement Placement);
+public sealed record DatabaseIdentity(DateTimeOffset CreatedAt, string? BranchedFrom = null, DateTimeOffset? ExpiresAt = null);
+
+public sealed record TenantDatabaseRecord(string Name, DatabasePlacement Placement, DatabaseIdentity Identity);
 
 public readonly union DatabaseRecordResult(TenantDatabaseRecord, NotFound, Unavailable);
 
@@ -59,9 +61,10 @@ public interface ITenantDirectory
 
     ValueTask<ReadDatabaseRecordsResult> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken);
 
-    ValueTask<AdoptDatabaseResult> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, CancellationToken cancellationToken);
+    ValueTask<AdoptDatabaseResult> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, DatabaseIdentity? identity, CancellationToken cancellationToken);
 
-    ValueTask<UpdatePlacementResult> UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken);
+    ValueTask<UpdatePlacementResult> UpdatePlacementAsync(
+        TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken, string? name = null, DatabaseIdentity? identity = null);
 
     ValueTask<ForgetDatabaseResult> ForgetDatabaseAsync(TenantContext database, CancellationToken cancellationToken);
 

@@ -34,6 +34,11 @@ internal sealed partial class EngineManagementService
                 return ManagementErrors.WrongRegion;
             }
 
+            if (await HomeMovePendingAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false))
+            {
+                return MoveInProgress;
+            }
+
             if (database.Name == name)
             {
                 return database;

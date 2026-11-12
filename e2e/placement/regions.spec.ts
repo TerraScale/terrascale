@@ -1,7 +1,9 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse } from '@playwright/test';
 import { test, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
-import { production } from '../support/stack';
+import { dash, production } from '../support/stack';
+import { Audit, auditedContext } from '../support/audit';
+import { ownerSession, saveCookies } from '../support/state';
 
 test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
 test.describe.configure({ mode: 'default', timeout: 180_000 });
@@ -239,5 +241,66 @@ test('R7 unchanged placement and the documented nine-member maximum', async ({ c
     expect((await over.json()).error.message).toBe('regions can place a database in at most 9 regions, including the writer and any intermediate placement');
   } finally {
     await removeDatabase(cells, created.id);
+  }
+});
+
+test('R8 a TTL branch keeps its identity through catalog sync, a move and a rename', async ({ cells, browser }, info) => {
+  const context = await auditedContext(browser, { storageState: ownerSession() });
+  try {
+    const page = await context.newPage();
+    const audit = new Audit(page, info);
+    await page.goto(`${dash}/organization?tab=billing`);
+    await page.locator('article.ts-plan', { has: page.locator('#plan-pro') }).getByRole('button', { name: 'Upgrade to Pro', exact: true }).click();
+    await page.waitForURL(url => url.origin === 'https://checkout.stripe.com' && url.pathname.startsWith('/c/pay/cs_test_'));
+    await page.getByRole('button', { name: 'Subscribe', exact: true }).click();
+    await page.waitForURL(url => url.origin === dash && url.pathname === '/organization' && url.searchParams.get('payment') === 'success');
+    await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
+    await audit.check('placement branch owner upgraded');
+    await audit.finish();
+  } finally {
+    await saveCookies(context);
+    await context.close();
+  }
+
+  const source = await create(cells, ['gru']);
+  let branch: Database | undefined;
+  try {
+    await seed(cells, source.id);
+    branch = await json<Database>(await cells.post(`${home}${database(source.id)}/branches`, {
+      data: { name: name('identity'), ttlSeconds: 3600 },
+    }), 201);
+    const id = branch.id;
+    const original = await json<Record<string, unknown>>(await cells.get(`${home}${database(id)}`));
+    expect(original.branchedFrom).toBe(source.id);
+    expect(original.createdAt).toEqual(expect.any(String));
+    expect(original.expiresAt).toEqual(expect.any(String));
+    await answer(await patch(cells, id, ['gru', 'fra']), 200, '200 database updated with writer retained');
+    await observed(cells, id);
+    await replicated(cells, replica, id, 3);
+
+    const renamed = await json<Record<string, unknown>>(await cells.patch(`${home}${database(id)}`, { data: { name: name('before-move') } }));
+    const ttl = await json<Record<string, unknown>>(await cells.put(`${home}${database(id)}/ttl`, { data: { ttlSeconds: 7200 } }));
+    const before = await json<Record<string, unknown>>(await cells.get(`${home}${database(id)}`));
+    expect(before).toEqual(ttl);
+    expect(before.name).toBe(renamed.name);
+    expect(before.expiresAt).not.toBe(original.expiresAt);
+    const facts = ({ homeRegion, replicaRegions, placementVersion, allRegions, regions, ...identity }: Record<string, unknown>) => identity;
+    await expect.poll(async () => facts(await json<Record<string, unknown>>(await cells.get(`${replica}${database(id)}`))),
+      { message: 'the existing replica receives name and expiry changes without a placement change', timeout: 45_000, intervals: [250, 500, 1000] })
+      .toEqual(facts(before));
+
+    const atPromotion = await json<Record<string, unknown>>(await cells.put(`${home}${database(id)}/ttl`, { data: { ttlSeconds: 10800 } }));
+    expect(atPromotion.expiresAt).not.toBe(before.expiresAt);
+    await move(cells, id, 'R8', 60_000);
+    const moved = await json<Record<string, unknown>>(await cells.get(`${replica}${database(id)}`));
+    expect(facts(moved)).toEqual(facts(atPromotion));
+    const changedName = name('after-move');
+    const renamedAfterMove = await json<Record<string, unknown>>(await cells.patch(`${replica}${database(id)}`, { data: { name: changedName } }));
+    expect(renamedAfterMove).toEqual({ ...moved, name: changedName });
+    expect(await json(await cells.get(`${replica}${database(id)}`))).toEqual(renamedAfterMove);
+    console.log('R8 createdAt, branchedFrom, expiresAt and every non-placement field retained; rename changes only name');
+  } finally {
+    if (branch) await removeDatabase(cells, branch.id);
+    await removeDatabase(cells, source.id);
   }
 });

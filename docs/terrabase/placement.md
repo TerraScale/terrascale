@@ -40,6 +40,21 @@ Until then, requests using `homeRegion`, `replicaRegions` or `allRegions`, and r
 | `503 replica_not_ready` | no requested replica can take over yet; added regions remain members (move-home itself changes nothing on this refusal) |
 | `503 move_unresolved` | the move outcome is being settled with the target; writes stay paused until it is; retry |
 
+## Database identity across regions
+
+Catalog entries carry an optional `identity` containing the original `createdAt`, `branchedFrom` and absolute
+`expiresAt`. The home supplies these facts on catalog pages and placement lookups. Followers reconcile the
+name and identity even at an unchanged placement version, so the next successful catalog sweep repairs records
+adopted before this change while an upgraded home still has the original facts. A rename changes only `name`;
+`previousName` and `conflictOf` are currently always null and have no stored catalog columns.
+
+Promotion also carries the paused home's name and identity, so an unswept TTL or rename reaches the new writer.
+Renames and TTL changes answer `409 move_in_progress` while a move marker is held. Expiry retains the absolute
+deadline; moving never restarts or shortens its TTL. These additions change JSON peer messages, not storage.
+Older senders omit identity and retain the former adoption behavior until a later sync supplies the facts;
+older receivers ignore the extra JSON members. If a database already moved and its current home has lost the
+original facts, catalog sync cannot reconstruct them from that home.
+
 ## Moving the home
 
 Region A is the home and region B the target. A coordinates; B's replica becomes the home file.

@@ -261,7 +261,7 @@ internal sealed partial class EngineManagementService
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
                     : await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is { } record
-                        ? new TenantDatabaseRecord(record.Name, record.Placement(options.Region))
+                        ? new TenantDatabaseRecord(record.Name, record.Placement(options.Region), new DatabaseIdentity(record.CreatedAt, record.BranchedFrom, record.ExpiresAt))
                         : ManagementErrors.NotFound,
                 static error => error, static value => value switch
                 {
@@ -283,7 +283,7 @@ internal sealed partial class EngineManagementService
             return new TenantDatabasePage(records, records.Count == CatalogPage ? records[^1] : null);
         }, static error => error, cancellationToken);
 
-    public async ValueTask<AdoptDatabaseResult> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, CancellationToken cancellationToken)
+    public async ValueTask<AdoptDatabaseResult> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, DatabaseIdentity? identity, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(placement);
@@ -321,7 +321,7 @@ internal sealed partial class EngineManagementService
 
         if (placement.Home == options.Region)
         {
-            return await AddDatabaseAsync(database.OrganizationId, project, name, sourceId: null, branchedFrom: null, cancellationToken, id: database.DatabaseId, placement: placement)
+            return await AddDatabaseAsync(database.OrganizationId, project, name, sourceId: null, branchedFrom: null, cancellationToken, id: database.DatabaseId, placement: placement, identity: identity)
                 .ConfigureAwait(false) switch
             {
                 AddedDatabase => new Done(),
@@ -333,8 +333,8 @@ internal sealed partial class EngineManagementService
         }
 
         var record = new ManagedDatabase(
-            database.DatabaseId, database.ProjectId, name, null, time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
-            placement.AllRegions);
+            database.DatabaseId, database.ProjectId, name, identity?.BranchedFrom, identity?.CreatedAt ?? time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
+            placement.AllRegions, ExpiresAt: identity?.ExpiresAt);
         return await WriteAsync<AdoptDatabaseResult>(async transaction =>
         {
             if (await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false))
@@ -358,7 +358,8 @@ internal sealed partial class EngineManagementService
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<UpdatePlacementResult> UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
+    public async ValueTask<UpdatePlacementResult> UpdatePlacementAsync(
+        TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken, string? name = null, DatabaseIdentity? identity = null)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(placement);
@@ -375,18 +376,29 @@ internal sealed partial class EngineManagementService
             }
 
             if (await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is not { } record
-                || placement.Version <= record.PlacementVersion || record.Home(options.Region) == options.Region)
+                || placement.Version < record.PlacementVersion || record.Home(options.Region) == options.Region
+                || placement.Version == record.PlacementVersion && (identity is null || placement.Home != record.Home(options.Region)))
             {
                 return new PlacementUpdate(Updated: false);
             }
 
-            await CatalogTables.PutDatabaseAsync(transaction, record with
+            var updated = record with
             {
+                Name = name ?? record.Name,
+                CreatedAt = identity?.CreatedAt ?? record.CreatedAt,
+                BranchedFrom = identity is null ? record.BranchedFrom : identity.BranchedFrom,
+                ExpiresAt = identity is null ? record.ExpiresAt : identity.ExpiresAt,
                 HomeRegion = placement.Home,
-                ReplicaRegions = placement.Replicas.Count == 0 ? null : [.. placement.Replicas],
+                ReplicaRegions = placement.Version == record.PlacementVersion ? record.ReplicaRegions : placement.Replicas.Count == 0 ? null : [.. placement.Replicas],
                 PlacementVersion = placement.Version,
                 AllRegions = placement.AllRegions,
-            }, cancellationToken).ConfigureAwait(false);
+            };
+            if (updated == record)
+            {
+                return new PlacementUpdate(Updated: false);
+            }
+
+            await CatalogTables.PutDatabaseAsync(transaction, updated, cancellationToken).ConfigureAwait(false);
             if (placement.Home == options.Region)
             {
                 await PutAsync(transaction, EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, DatabaseOwner.Of(database),

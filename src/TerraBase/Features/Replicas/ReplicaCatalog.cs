@@ -41,9 +41,9 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
         var placement = new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions);
         return await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) switch
         {
-            NotFound => await tenants.AdoptDatabaseAsync(database, entry.Name, placement, cancellationToken).ConfigureAwait(false) is Done,
-            TenantDatabaseRecord record when record.Placement.Version < placement.Version =>
-                await tenants.UpdatePlacementAsync(database, placement, cancellationToken).ConfigureAwait(false) is PlacementUpdate,
+            NotFound => await tenants.AdoptDatabaseAsync(database, entry.Name, placement, entry.Identity, cancellationToken).ConfigureAwait(false) is Done,
+            TenantDatabaseRecord record when record.Placement.Version <= placement.Version =>
+                await tenants.UpdatePlacementAsync(database, placement, cancellationToken, entry.Name, entry.Identity).ConfigureAwait(false) is PlacementUpdate,
             TenantDatabaseRecord => true,
             Unavailable => false,
         };

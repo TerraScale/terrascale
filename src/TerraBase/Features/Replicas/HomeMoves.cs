@@ -15,7 +15,8 @@ using ZLogger;
 
 namespace TerraBase.Features.Replicas;
 
-public sealed record HomePromoteRequest(string MoveId, string FromRegion, long Version, IReadOnlyList<string> ReplicaRegions, bool AllRegions);
+public sealed record HomePromoteRequest(string MoveId, string FromRegion, long Version, IReadOnlyList<string> ReplicaRegions, bool AllRegions,
+    string? Name = null, DatabaseIdentity? Identity = null);
 
 public sealed record HomeAbortRequest(string MoveId, long Version);
 
@@ -122,11 +123,11 @@ internal sealed class HomeMoves(
                 return ManagementErrors.NotFound;
             }
 
-            var record = await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false);
-            var placement = record is TenantDatabaseRecord { Placement: var current } ? current : null;
+            var record = await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is TenantDatabaseRecord found ? found : null;
+            var placement = record?.Placement;
             IReadOnlyList<string> next = placement is null ? [options.Region]
                 : [.. placement.Replicas.Where(region => region != marker.Target).Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-            promoted = await PromoteAsync(peer, marker, new HomePromoteRequest(marker.MoveId, options.Region, marker.Version, next, placement?.AllRegions ?? false))
+            promoted = await PromoteAsync(peer, marker, new HomePromoteRequest(marker.MoveId, options.Region, marker.Version, next, placement?.AllRegions ?? false, record?.Name, record?.Identity))
                 .ConfigureAwait(false) ?? await SettleAsync(peer, marker).ConfigureAwait(false);
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -292,7 +293,7 @@ internal sealed class HomeMoves(
             }
 
             IReadOnlyList<string> next = [.. request.ReplicaRegions.Where(region => region != options.Region)];
-            return await AdoptAsync(database, request.FromRegion, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), failedHome: null)
+            return await AdoptAsync(database, request.FromRegion, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), failedHome: null, request.Name, request.Identity)
                 .ConfigureAwait(false);
         }
         finally
@@ -338,7 +339,7 @@ internal sealed class HomeMoves(
         }
     }
 
-    private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, HomeLease? failedHome)
+    private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, HomeLease? failedHome, string? name = null, DatabaseIdentity? identity = null)
     {
         string? detached = null;
         try
@@ -364,7 +365,7 @@ internal sealed class HomeMoves(
                 return new Conflict("another region holds the database's home lease", "move_aborted");
             }
 
-            if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
+            if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None, name, identity).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
             {
                 if (!leases.Active)
                 {
