@@ -30,6 +30,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 AccountAccessException or DatabaseWrongRegionException or DatabaseSqlException or SqlOutcomeUnknownException or DatabaseRegionsCopyingException => error.Message,
                 TerraBaseException { ErrorCode: "operation_allowance" } => AllowanceUsed,
                 TerraBaseException { ErrorCode: MoveInProgress } => RegionsChanging,
+                TerraBaseException { ErrorCode: "name_taken" } => error.Message,
                 _ => Generic(error) + Reason(error) + RetryHint(error),
             };
         }

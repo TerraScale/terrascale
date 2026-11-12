@@ -14,7 +14,7 @@ internal sealed class HomePromoteEndpoint(HomeMoves moves) : Endpoint<HomePromot
         Summary("Makes this region the home of a database");
         Description("Internal listener only, behind the peer credential; 404 on the public listener. Sent by the paused home: this region pulls its replica "
             + "until a pull is empty, turns it into the home file and records itself as home at the given placement version. 409 when the move was "
-            + "abandoned or the placement differs.");
+            + "abandoned or the placement differs; 409 name_taken if another database of the project holds the name in this region. Rename one of them and repeat.");
         Tags("Administration");
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);

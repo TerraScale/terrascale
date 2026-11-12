@@ -22,7 +22,8 @@ public sealed record DatabaseIdentity(DateTimeOffset CreatedAt, string? Branched
 {
     public static DatabaseIdentity? Reconcile(DatabaseIdentity? incoming, DatabaseIdentity? stored = null) =>
         incoming is null || incoming.CreatedAt == default ? stored
-            : stored is not null && stored.CreatedAt < incoming.CreatedAt ? stored : incoming;
+            : stored is not null && stored.CreatedAt < incoming.CreatedAt
+                ? stored with { ExpiresAt = incoming.ExpiresAt, BranchedFrom = stored.BranchedFrom ?? incoming.BranchedFrom } : incoming;
 }
 
 public sealed record TenantDatabaseRecord(string Name, DatabasePlacement Placement, DatabaseIdentity Identity);

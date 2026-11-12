@@ -12,7 +12,7 @@ internal interface IReplicaCatalog
     ValueTask<ReadDatabaseRecordsResult> ListHomedAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken);
 
     ValueTask<bool> RecordAsync(ReplicaCatalogEntry entry, CancellationToken cancellationToken,
-        IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry>? listed = null);
+        IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry>? listed = null, ReplicaNameLookups? lookups = null);
 
     ValueTask UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken);
 
@@ -30,7 +30,7 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
         tenants.ReadDatabaseRecordsAsync(homeRegion, after, cancellationToken);
 
     public async ValueTask<bool> RecordAsync(ReplicaCatalogEntry entry, CancellationToken cancellationToken,
-        IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry>? listed = null)
+        IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry>? listed = null, ReplicaNameLookups? lookups = null)
     {
         ArgumentNullException.ThrowIfNull(entry);
         if (!TerraBaseOptions.IsRegion(entry.HomeRegion)
@@ -42,16 +42,26 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
         var database = new TenantContext(entry.OrganizationId, PlanTier.Hobby, entry.ProjectId, entry.DatabaseId);
         var placement = new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions);
         var stored = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
+        if (stored is TenantDatabaseRecord unchanged && unchanged.Name == entry.Name
+            && unchanged.Placement.Home == placement.Home && unchanged.Placement.Version == placement.Version
+            && unchanged.Placement.AllRegions == placement.AllRegions && unchanged.Placement.Replicas.SequenceEqual(placement.Replicas)
+            && unchanged.Identity == DatabaseIdentity.Reconcile(entry.Identity, unchanged.Identity))
+        {
+            return true;
+        }
+
+        var nameApplied = false;
         if (stored is NotFound || stored is TenantDatabaseRecord existing && existing.Placement.Version <= placement.Version && existing.Placement.Home == entry.HomeRegion)
         {
-            _ = await names.ApplyAsync(entry, listed, cancellationToken).ConfigureAwait(false);
+            using var owned = lookups is null ? new ReplicaNameLookups(cancellationToken) : null;
+            nameApplied = await names.ApplyAsync(entry, listed, lookups ?? owned!, cancellationToken).ConfigureAwait(false);
         }
 
         return stored switch
         {
             NotFound => await tenants.AdoptDatabaseAsync(database, entry.Name, placement, entry.Identity, cancellationToken).ConfigureAwait(false) is Done,
             TenantDatabaseRecord record when record.Placement.Version <= placement.Version =>
-                await tenants.UpdatePlacementAsync(database, placement, cancellationToken, entry.Name, entry.Identity).ConfigureAwait(false) is PlacementUpdate,
+                await tenants.UpdatePlacementAsync(database, placement, cancellationToken, nameApplied ? entry.Name : null, entry.Identity).ConfigureAwait(false) is PlacementUpdate,
             TenantDatabaseRecord => true,
             Unavailable => false,
         };

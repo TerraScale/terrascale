@@ -360,7 +360,21 @@ internal sealed partial class EngineManagementService
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    private readonly ConcurrentDictionary<(string Database, string Name), byte> _keptNames = new();
+    private readonly ConcurrentDictionary<string, string> _keptNames = new(StringComparer.Ordinal);
+
+    private void ClearKeptNames(string database) => _ = _keptNames.TryRemove(database, out _);
+
+    private void KeepDatabaseName(string database, string name)
+    {
+        if (_keptNames.TryGetValue(database, out var kept) && kept == name)
+        {
+            return;
+        }
+
+        _keptNames[database] = name;
+        _nameConflicts.Add(1);
+        logger.ZLogWarning($"Database {database:@Database} kept its stored name because {name:@Name} could not be applied in this region");
+    }
     private readonly Counter<long> _nameConflicts = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.catalog.name_kept");
 
     public async ValueTask<UpdatePlacementResult> UpdatePlacementAsync(
@@ -394,11 +408,12 @@ internal sealed partial class EngineManagementService
                 && named != database.DatabaseId)
             {
                 keptName = record.Name;
-                if (_keptNames.TryAdd((database.DatabaseId, name), 0))
-                {
-                    _nameConflicts.Add(1);
-                    logger.ZLogWarning($"Database {database.DatabaseId:@Database} kept its stored name because {name:@Name} is taken in this region");
-                }
+                KeepDatabaseName(database.DatabaseId, name);
+            }
+
+            if (name is not null && keptName == name)
+            {
+                ClearKeptNames(database.DatabaseId);
             }
 
             var facts = DatabaseIdentity.Reconcile(identity, new DatabaseIdentity(record.CreatedAt, record.BranchedFrom, record.ExpiresAt))!;

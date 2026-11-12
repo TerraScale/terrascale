@@ -91,13 +91,14 @@ internal sealed partial class RegionReplication
     private async Task SyncHomeAsync(ReplicaPeer home, CancellationToken cancellationToken)
     {
         var listed = await ListAsync(home, cancellationToken).ConfigureAwait(false);
+        using var lookups = new ReplicaNameLookups(cancellationToken);
         if (listed is not null)
         {
             foreach (var entry in listed.Values)
             {
                 try
                 {
-                    await RecordAsync(entry, listed, cancellationToken).ConfigureAwait(false);
+                    await RecordAsync(entry, listed, lookups, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
@@ -127,7 +128,7 @@ internal sealed partial class RegionReplication
                     }
                     else if (replicated)
                     {
-                        await ResolveMissingAsync(home, database, cancellationToken).ConfigureAwait(false);
+                        await ResolveMissingAsync(home, database, lookups, cancellationToken).ConfigureAwait(false);
                     }
                     else
                     {
@@ -206,15 +207,15 @@ internal sealed partial class RegionReplication
         return listed;
     }
 
-    private async Task RecordAsync(ReplicaCatalogEntry entry, IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry> listed, CancellationToken cancellationToken)
+    private async Task RecordAsync(ReplicaCatalogEntry entry, IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry> listed, ReplicaNameLookups lookups, CancellationToken cancellationToken)
     {
-        if (!await catalog.RecordAsync(entry, cancellationToken, listed).ConfigureAwait(false))
+        if (!await catalog.RecordAsync(entry, cancellationToken, listed, lookups).ConfigureAwait(false))
         {
             CatalogFailed(entry.HomeRegion, null);
         }
     }
 
-    private async Task ResolveMissingAsync(ReplicaPeer home, TenantContext database, CancellationToken cancellationToken)
+    private async Task ResolveMissingAsync(ReplicaPeer home, TenantContext database, ReplicaNameLookups lookups, CancellationToken cancellationToken)
     {
         var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
         var address = new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "placement"));
@@ -232,7 +233,14 @@ internal sealed partial class RegionReplication
             return;
         }
 
-        _ = await catalog.RecordAsync(entry.HomeRegion == home.Region ? entry : entry with { Identity = null }, cancellationToken).ConfigureAwait(false);
+        if (entry.HomeRegion == home.Region)
+        {
+            _ = await catalog.RecordAsync(entry, cancellationToken, lookups: lookups).ConfigureAwait(false);
+        }
+        else
+        {
+            await catalog.UpdatePlacementAsync(database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions), cancellationToken).ConfigureAwait(false);
+        }
         if (!entry.AllRegions && !entry.ReplicaRegions.Contains(options.Region))
         {
             await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);

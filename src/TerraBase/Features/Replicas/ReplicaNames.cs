@@ -5,26 +5,50 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replicas;
 
+internal sealed class ReplicaNameLookups(CancellationToken cancellationToken) : IDisposable
+{
+    private CancellationTokenSource? _timeout;
+
+    public CancellationToken Token
+    {
+        get
+        {
+            if (_timeout is null)
+            {
+                _timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                _timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            }
+
+            return _timeout.Token;
+        }
+    }
+
+    public void Dispose() => _timeout?.Dispose();
+}
+
 internal sealed class ReplicaNames(ITenantDirectory tenants, IReplicaPeers peers, InternalCredential credential) : IDisposable
 {
     private readonly HttpClient _http = PeerHttp.Create(credential);
 
     public async Task<bool> ApplyAsync(ReplicaCatalogEntry entry,
-        IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry>? listed, CancellationToken cancellationToken)
+        IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry>? listed, ReplicaNameLookups lookup, CancellationToken cancellationToken)
     {
         if (DatabaseIdentity.Reconcile(entry.Identity) is null)
         {
             return false;
         }
 
-        using var lookup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lookup.CancelAfter(TimeSpan.FromSeconds(3));
         var database = new TenantContext(entry.OrganizationId, PlanTier.Hobby, entry.ProjectId, entry.DatabaseId);
         return await tenants.ReconcileDatabaseNameAsync(database, entry.Name, entry.HomeRegion, entry.PlacementVersion, async (holder, token) =>
         {
             ReplicaCatalogEntry? found;
             if (listed?.TryGetValue((holder.OrganizationId, holder.ProjectId!, holder.DatabaseId!), out found) != true)
             {
+                if (lookup.Token.IsCancellationRequested)
+                {
+                    return null;
+                }
+
                 try
                 {
                     var home = (await peers.ListAsync(lookup.Token).ConfigureAwait(false)).FirstOrDefault(peer => peer.Region == entry.HomeRegion);
