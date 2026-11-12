@@ -91,6 +91,44 @@ fn register_secret(name: &str, value: &str) -> Outcome {
         .map_err(|error| error.to_string())
 }
 
+fn origin_rule(project: &str, file: &str) -> Outcome {
+    let operations = std::env::var("E2E_OPERATIONS").map_err(|error| error.to_string())?;
+    let path = std::path::Path::new(&operations).with_file_name(file);
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let spec: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let cases = spec["cases"].as_array().cloned().unwrap_or_default();
+    let wrong: Vec<String> = cases
+        .iter()
+        .filter_map(|case| {
+            let raw = case[0].as_str().unwrap_or_default();
+            let expected = case[1].as_str();
+            let got = Client::builder(raw, "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln")
+                .project(project)
+                .build()
+                .ok()
+                .map(|client| client.base_url().origin().ascii_serialization());
+            (got.as_deref() != expected).then(|| {
+                format!(
+                    "{:?}: expected {}, got {}",
+                    raw.chars().take(60).collect::<String>(),
+                    expected.unwrap_or("refused"),
+                    got.as_deref().unwrap_or("refused")
+                )
+            })
+        })
+        .collect();
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "origin rule: {} of {} cases differ: {}",
+            wrong.len(),
+            cases.len(),
+            wrong.join("; ")
+        ))
+    }
+}
+
 fn records(records: &[SqlRecord]) -> Value {
     Value::Array(
         records
@@ -471,6 +509,7 @@ impl Runner {
                 &json!([true, false]),
                 "validation",
             ),
+            "origin.rule" => origin_rule(&self.project, &text(op, "cases")),
             "agent.create_ttl" => {
                 let options = CreateDatabaseOptions {
                     ttl_seconds: op["ttlSeconds"].as_u64(),

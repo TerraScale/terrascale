@@ -227,7 +227,9 @@ its requests or admitted more than its booked count, with a message that names t
 `<sdk> group <a|b|c>: TerraBase admitted N of the M requests booked and refused 0`. The 20 tokens of headroom absorb
 requests in the lane that no runner's readings count, between two runners; none are expected. After a change to an
 SDK call or to `sdk/operations.json`, run `finish` (groups A and B) or `paid-finish` (group C) locally and set
-`requestsPerRunner` to the admitted counts the runners print.
+`requestsPerRunner` to the admitted counts the runners print. Group A's `origin.rule` sends no request: each runner
+builds a client with every base URL of `sdk/origins.json` and fails when the origin the client takes, or its refusal,
+differs from the file; a change to the origin rule of `sdk/SQL-API.md` changes that file with it.
 
 ## The branch action
 

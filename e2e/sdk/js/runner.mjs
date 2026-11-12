@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { createTerraBaseClientFromEnvironment, generateId, isValidId } from '../../../sdk/js/src/index.js';
+import { createTerraBaseClientFromEnvironment, generateId, isValidId, staticBaseUrlResolver } from '../../../sdk/js/src/index.js';
 
 const spec = JSON.parse(readFileSync(process.env.E2E_OPERATIONS, 'utf8'));
 const run = process.env.E2E_RUN_ID;
@@ -29,6 +29,15 @@ async function refused(work) {
     return error;
   }
   throw new Error('the call was accepted');
+}
+
+function origin(raw) {
+  try {
+    return staticBaseUrlResolver(raw)();
+  } catch (error) {
+    if (error instanceof TypeError) return null;
+    throw error;
+  }
 }
 
 async function status(work) {
@@ -171,6 +180,14 @@ const operations = {
   async 'ids.new_validate'(op) {
     const id = generateId();
     same([isValidId(id), isValidId(op.invalid)], [true, false], 'validation');
+  },
+  async 'origin.rule'(op) {
+    const { cases } = JSON.parse(readFileSync(join(dirname(process.env.E2E_OPERATIONS), op.cases), 'utf8'));
+    const wrong = cases
+      .map(([raw, expected]) => [raw, expected, origin(raw)])
+      .filter(([, expected, got]) => got !== (expected === null ? null : new URL(expected).origin))
+      .map(([raw, expected, got]) => `${JSON.stringify(raw.slice(0, 60))}: expected ${expected ?? 'refused'}, got ${got ?? 'refused'}`);
+    check(wrong.length === 0, `origin rule: ${wrong.length} of ${cases.length} cases differ: ${wrong.join('; ')}`);
   },
   async 'agent.create_ttl'(op) {
     const before = Date.now();

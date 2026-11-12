@@ -47,6 +47,7 @@ type operation struct {
 	Access        string         `json:"access"`
 	MintStatus    int            `json:"mintStatus"`
 	DeletedStatus int            `json:"deletedStatus"`
+	Cases         string         `json:"cases"`
 }
 
 type item struct {
@@ -349,6 +350,8 @@ func (r *runner) do(op operation) error {
 		return r.placementCreate()
 	case "placement.set":
 		return r.placementSet()
+	case "origin.rule":
+		return originRule(op.Cases)
 	case "agent.create_ttl":
 		ttl := op.TTLSeconds
 		before := time.Now().UTC()
@@ -455,6 +458,37 @@ func (r *runner) do(op operation) error {
 		return same(status(err), op.DeletedStatus, "the deleted database")
 	}
 	return fmt.Errorf("no implementation for %s", op.ID)
+}
+
+func originRule(file string) error {
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(os.Getenv("E2E_OPERATIONS")), file))
+	if err != nil {
+		return err
+	}
+	var spec struct {
+		Cases [][2]*string `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		return err
+	}
+	var wrong []string
+	for _, c := range spec.Cases {
+		_, err := v1.New(v1.Config{BaseURL: *c[0], Token: "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"})
+		if (err == nil) != (c[1] != nil) {
+			expected, got := "refused", "accepted"
+			if c[1] != nil {
+				expected = *c[1]
+			}
+			if err != nil {
+				got = err.Error()
+			}
+			wrong = append(wrong, fmt.Sprintf("%q: expected %s, got %s", (*c[0])[:min(len(*c[0]), 60)], expected, got))
+		}
+	}
+	if len(wrong) > 0 {
+		return fmt.Errorf("origin rule: %d of %d cases differ: %s", len(wrong), len(spec.Cases), strings.Join(wrong, "; "))
+	}
+	return nil
 }
 
 func main() {

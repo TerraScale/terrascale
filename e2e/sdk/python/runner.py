@@ -1,4 +1,5 @@
 import base64
+import ipaddress
 import json
 import os
 import sys
@@ -6,7 +7,9 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
+import httpx
 from terrascale import Statement, TerraScale, is_valid_id, new_id
 from terrascale.errors import ServiceUnavailableError
 
@@ -220,6 +223,30 @@ def ids(op):
     same([is_valid_id(new_id()), is_valid_id(op["invalid"])], [True, False], "validation")
 
 
+def address(origin):
+    url = urlsplit(origin)
+    try:
+        return url.scheme, ipaddress.ip_address(url.hostname), url.port
+    except ValueError:
+        return url.scheme, url.hostname, url.port
+
+
+def origin_rule(op):
+    cases = json.loads(Path(os.environ["E2E_OPERATIONS"]).with_name(op["cases"]).read_text(encoding="utf-8"))["cases"]
+    wrong = []
+    with httpx.Client() as http:
+        for raw, expected in cases:
+            try:
+                got = TerraScale(token="eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln", project=project, base_url=raw,
+                                 http_client=http).base_url
+            except ValueError:
+                got = None
+            if (got is None) != (expected is None) or got is not None and address(got) != address(expected):
+                wrong.append(f"{raw[:60]!r}: expected {expected or 'refused'}, got {got or 'refused'}")
+    if wrong:
+        raise AssertionError(f"origin rule: {len(wrong)} of {len(cases)} cases differ: {'; '.join(wrong)}")
+
+
 def create_ttl(op):
     before = datetime.now(timezone.utc)
     created = client.create_database(fill(op["name"]), ttl_seconds=op["ttlSeconds"])
@@ -357,6 +384,7 @@ operations = {
     "ws.close": ws_close,
     "conflicts.query": conflicts,
     "ids.new_validate": ids,
+    "origin.rule": origin_rule,
     "agent.create_ttl": create_ttl,
     "agent.set_ttl": set_ttl,
     "agent.clear_ttl": clear_ttl,

@@ -238,6 +238,12 @@
       "invalid": "not-a-terrascale-id"
     },
     {
+      "id": "origin.rule",
+      "group": "a",
+      "title": "a client built with each base URL of the case file takes its expected origin or refuses it",
+      "cases": "origins.json"
+    },
+    {
       "id": "agent.create_ttl",
       "group": "b",
       "title": "createDatabase with a TTL",
