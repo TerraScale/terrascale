@@ -5,6 +5,7 @@ using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -20,7 +21,7 @@ internal interface ICatalogGuard
     ValueTask<CatalogCheck> CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken);
 }
 
-internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
+internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard, RegionalOwners owners)
 {
     private const long MaxPageBytes = 1024 * 1024;
 
@@ -54,25 +55,12 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
     public ValueTask<T> WriteAsync<T>(
         Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
-        WriteAsync(write, unavailable, durable: false, file, line, cancellationToken);
+        WriteAsync(write, unavailable, durable: false, checkCatalog: true, file, line, cancellationToken);
 
     public ValueTask<T> WriteDurableAsync<T>(
         Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
-        WriteAsync(write, unavailable, durable: true, file, line, cancellationToken);
-
-    private async ValueTask<T> WriteAsync<T>(
-        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, bool durable, string file, int line, CancellationToken cancellationToken) =>
-        await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false) switch
-        {
-            Done => await WriteUncheckedAsync(async transaction =>
-                await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false) switch
-                {
-                    Done => await write(transaction).ConfigureAwait(false),
-                    Unavailable refused => unavailable(refused),
-                }, cancellationToken, durable, file, line).ConfigureAwait(false),
-            Unavailable refused => unavailable(refused),
-        };
+        WriteAsync(write, unavailable, durable: true, checkCatalog: true, file, line, cancellationToken);
 
     public async ValueTask<T> ReadUncheckedAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
     {
@@ -84,17 +72,38 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         }
     }
 
-    public async ValueTask<T> WriteUncheckedAsync<T>(
-        Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken, bool durable = false,
-        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+    public ValueTask<T> WriteUncheckedAsync<T>(
+        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken, bool durable = false,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+        WriteAsync(write, unavailable, durable, checkCatalog: false, file, line, cancellationToken);
+
+    private async ValueTask<T> WriteAsync<T>(
+        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, bool durable, bool checkCatalog,
+        string file, int line, CancellationToken cancellationToken)
     {
+        if (!owners.Writer)
+        {
+            return unavailable(new Unavailable("this machine is not the regional writer", "not_writer"));
+        }
+
+        if (checkCatalog && await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false) is Unavailable unavailableCatalog)
+        {
+            return unavailable(unavailableCatalog);
+        }
+
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         var transaction = durable
             ? await store.BeginDurableTransactionAsync(cancellationToken, file, line).ConfigureAwait(false)
             : await store.BeginTransactionAsync(write: true, cancellationToken, file, line).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            var result = await write(transaction).ConfigureAwait(false);
+            var result = checkCatalog
+                ? await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Done => await write(transaction).ConfigureAwait(false),
+                    Unavailable refused => unavailable(refused),
+                }
+                : await write(transaction).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return result;
         }

@@ -72,7 +72,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
             _ = await transaction.PutAsync(Outbox, id, JsonSerializer.SerializeToUtf8Bytes(new ShapeCdnPurgeWork(url, time.GetUtcNow()),
                 ShapeCdnPurgeJsonContext.Default.ShapeCdnPurgeWork), cancellationToken).ConfigureAwait(false);
             return true;
-        }, cancellationToken, durable: true).ConfigureAwait(false);
+        }, static _ => false, cancellationToken, durable: true).ConfigureAwait(false);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -147,15 +147,17 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
             _purges.Add(batch.Count, new KeyValuePair<string, object?>("outcome", success ? "purged" : "failed"));
             if (success)
             {
-                _ = await catalog.WriteUncheckedAsync(async transaction =>
+                if (await catalog.WriteUncheckedAsync(async transaction =>
                 {
                     foreach (var item in ready)
                     {
                         _ = await transaction.DeleteAsync(Outbox, item.Id, token).ConfigureAwait(false);
                     }
                     return true;
-                }, token, durable: true).ConfigureAwait(false);
-                Interlocked.Add(ref _pending, -ready.Count);
+                }, static _ => false, token, durable: true).ConfigureAwait(false))
+                {
+                    Interlocked.Add(ref _pending, -ready.Count);
+                }
             }
         }
     }
