@@ -28,7 +28,7 @@ The database enforces the invariants the code relies on:
 | One account per external identity in a tenant | `provider_links` primary key `(instance_id, provider, issuer, client_id, subject)` |
 | Project names unique in an organization, ignoring case | `projects` unique `(organization_id, name_key)` (`name_key` is the invariant upper case of the name) |
 | One pending invitation per address and target | `invitations` unique `(organization_id, target, email) WHERE status = 'pending'`; token digest unique |
-| One-use credentials (passcodes, sessions, challenges, refresh tokens, GitHub Actions `jti`) win once | `credential_claims` primary key `(instance_id, kind, key)` |
+| One-use credentials (passcodes, sessions, challenges, rotating refresh tokens, GitHub Actions `jti`) win once | `credential_claims` primary key `(instance_id, kind, key)` |
 | Passkey credential ids unique in a tenant | `passkeys` primary key `(instance_id, credential_id)` |
 | OIDC reference tokens unique | `oidc_tokens` unique `(instance_id, reference_id)` |
 | One SSO connection per organization and domain | `sso_connections` primary key `domain`, unique `organization_id` |
