@@ -59,7 +59,7 @@ namespace TerraScale.Dashboard.Features.Billing
             try { invoices = await invoicesRead; }
             catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or StripeException ||
                                           error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-            { errorMessage = "Payment history could not be loaded. Apply the filters to retry."; }
+            { errorMessage = "Payment history could not be loaded. Reload the page to retry."; }
             long? overage = null;
             try { overage = await overageRead; }
             catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or StripeException ||
