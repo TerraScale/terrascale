@@ -11,6 +11,7 @@ import { auth, dash, stateDir, onLocalStack } from '../support/stack';
 import { journey, ownerSession, saveCookies, saveSecret } from '../support/state';
 
 const djangoHash = 'pbkdf2_sha256$600000$seasalt$OAXyhAQ/4ZDA9V5RMExt3C1OwQdUpLZ99vm1McFlLRA=';
+const django52Hash = 'pbkdf2_sha256$1000000$seasalt$r1uLUxoxpP2Ued/qxvmje7UH9PUJBkRrvf9gGPL7Cps=';
 const nested = (depth: number): Record<string, unknown> => Array.from({ length: depth - 1 }).reduce<Record<string, unknown>>(value => ({ child: value }), { value: true });
 
 async function authRows(sql: string, args: string[]): Promise<unknown[][]> {
@@ -86,7 +87,7 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
     expect((await sdk.updateUser(management.writeKey, current.projectId, createdId, { public_metadata: { arrays: null, large: 'x'.repeat(4100) } })).ok).toBe(true);
     expect((await sdk.updateUser(management.writeKey, current.projectId, createdId, { public_metadata: { other: 'x'.repeat(4100) } })).ok).toBe(false);
     expect((await sdk.updateUser(management.writeKey, current.projectId, createdId, { public_metadata: { large: null } })).ok).toBe(true);
-    for (const marker of ['\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u2066', '\u2067', '\u2068', '\u2069']) {
+    for (const marker of ['\u200e', '\u200f', '\u061c', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u2066', '\u2067', '\u2068', '\u2069']) {
       const refused = await sdk.updateUser(management.writeKey, current.projectId, createdId, { first_name: 'Ada' + marker });
       expect(refused.ok).toBe(false);
     }
@@ -114,38 +115,52 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
         public_metadata: { team: 'compiler' }, private_metadata: { backend_secret: 'never-in-claims' } },
       { email: `import-invalid-${current.runId}@example.com`, password_hash: '$2b$99$malformed' },
       { email: `import-cost-${current.runId}@example.com`, password_hash: vector.password_hash.replace(/^(\$2[aby]\$)\d{2}/, (_: string, prefix: string) => prefix + '13') },
-      { email: `import-pbkdf-cost-${current.runId}@example.com`, password_hash: djangoHash.replace('$600000$', '$600001$') },
+      { email: `import-pbkdf-cost-${current.runId}@example.com`, password_hash: django52Hash.replace('$1000000$', '$1000001$') },
       { email: `import-argon-cost-${current.runId}@example.com`, password_hash: '$argon2id$v=19$m=38913,t=2,p=1$dHMtYXV0aC12ZWN0b3IxNg$DSktwS9SktskGJvD3C/lWK0F3U9f7EbVnqf4UsOE8FQ' },
       { email: `import-depth-${current.runId}@example.com`, public_metadata: nested(11) },
       { email: `import-bidi-${current.runId}@example.com`, first_name: 'Grace\u2066' },
       { email: `import-django-${current.runId}@example.com`, password_hash: djangoHash },
+      { email: `import-django52-${current.runId}@example.com`, password_hash: django52Hash },
 
     ] });
     expect(imported.ok).toBe(true);
     if (!imported.ok) throw new Error('import failed');
-    expect(imported.value.items).toHaveLength(2);
+    expect(imported.value.items).toHaveLength(3);
     expect(imported.value.errors.map(error => error.index)).toEqual([1, 2, 3, 4, 5, 6]);
     for (const error of imported.value.errors) expect(error.code).toBe('invalid_request');
     expect(imported.value.errors[1].message).toContain('04–12');
-    expect(imported.value.errors[2].message).toContain('600000');
+    expect(imported.value.errors[2].message).toContain('1000000');
     expect(imported.value.errors[3].message).toContain('77824');
-    extraIds.push(imported.value.items[1].user.id);
+    extraIds.push(...imported.value.items.slice(1).map(item => item.user.id));
     saveSecret('django-password', 'lètmein');
     saveSecret('django-hash', djangoHash);
-    const django = await request.newContext();
-    try {
-      const wrong = await django.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
-        headers: { Origin: auth }, form: { email: imported.value.items[1].user.email, password: 'lètmeinz' },
-      });
-      expect(wrong.status()).toBe(401);
-      const signedIn = await django.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
-        headers: { Origin: auth }, form: { email: imported.value.items[1].user.email, password: 'lètmein' },
-      });
-      expect(signedIn.status()).toBe(200);
-      expect(await signedIn.text()).toContain('You are signed in.');
-      for (const cookie of (await django.storageState()).cookies) saveSecret('django-cookie', cookie.value);
-    } finally {
-      await django.dispose();
+    saveSecret('django52-hash', django52Hash);
+    for (const item of imported.value.items.slice(1)) {
+      const django = await request.newContext();
+      try {
+        for (let sample = 0; sample < 3; sample++) {
+          const failures = [];
+          for (const email of [item.user.email, `unknown-${current.runId}@example.com`, imported.value.items[0].user.email]) {
+            const started = performance.now();
+            const response = await django.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
+              headers: { Origin: auth }, form: { email, password: 'lètmeinz' },
+            });
+            expect(response.status()).toBe(401);
+            failures.push(performance.now() - started);
+          }
+          expect(Math.min(...failures)).toBeGreaterThanOrEqual(295);
+          expect(Math.max(...failures) - Math.min(...failures)).toBeLessThan(150);
+          console.log(`password failure floor: ${failures.map(value => Math.round(value)).join(', ')} ms`);
+        }
+        const signedIn = await django.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
+          headers: { Origin: auth }, form: { email: item.user.email, password: 'lètmein' },
+        });
+        expect(signedIn.status()).toBe(200);
+        expect(await signedIn.text()).toContain('You are signed in.');
+        for (const cookie of (await django.storageState()).cookies) saveSecret('django-cookie', cookie.value);
+      } finally {
+        await django.dispose();
+      }
     }
     importedId = imported.value.items[0].user.id;
     const storedAlgorithm = async () => {
@@ -274,21 +289,22 @@ test('a tenant at its hashing cap leaves other tenants normal sign-in capacity',
     const page = await context.newPage();
     const management = await prepareAuthManagement(page, 'hasher-fairness');
     const sdk = createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' }).projects;
-    const vector = JSON.parse(readFileSync(join(__dirname, '../sdk/operations.json'), 'utf8')).operations.find((op: { id: string }) => op.id === 'auth.user_profiles');
     await sdk.disableUser(management.writeKey, current.projectId, management.user);
     await sdk.enableUser(management.writeKey, current.projectId, management.user);
-    const expensive = vector.password_hash.replace(/^(\$2[aby]\$)\d{2}/, (_: string, prefix: string) => prefix + '12');
+    const expensive = '$2b$12$abcdefghijklmnopqrstuuDcR.C7.jTI8Np2AcKw0NUM.aM/Z8Kl2';
+    const password = 'Journey import password 48!';
+    saveSecret('fairness-password', password);
     saveSecret('expensive-import-hash', expensive);
     const ids: string[] = [];
     const clients = await Promise.all(Array.from({ length: 9 }, () => request.newContext()));
     try {
-      const imported = await sdk.importUsers(management.writeKey, current.projectId, { users: Array.from({ length: 8 }, (_, index) => ({
+      const imported = await sdk.importUsers(management.writeKey, current.projectId, { users: Array.from({ length: 20 }, (_, index) => ({
         email: `hasher-${index}-${current.runId}@example.com`, password_hash: expensive,
       })) });
       expect(imported.ok).toBe(true);
       if (!imported.ok) throw new Error('fairness import failed');
       expect(imported.value.errors).toEqual([]);
-      expect(imported.value.items).toHaveLength(8);
+      expect(imported.value.items).toHaveLength(20);
       ids.push(...imported.value.items.map(item => item.user.id));
       const normal = async () => {
         const started = performance.now();
@@ -301,9 +317,25 @@ test('a tenant at its hashing cap leaves other tenants normal sign-in capacity',
       };
       const baseline = [];
       for (let sample = 0; sample < 3; sample++) baseline.push(await normal());
+      const attempt = async (index: number, client: number) => {
+        const started = performance.now();
+        const response = await clients[client].post(`${auth}/ui/${current.projectId}/sign-in/password`, {
+          headers: { Origin: auth }, form: { email: imported.value.items[index].user.email, password },
+        });
+        expect(response.status()).toBe(200);
+        expect(await response.text()).toContain('You are signed in.');
+        return performance.now() - started;
+      };
+      for (let sample = 0; sample < 3; sample++) {
+        const offset = sample * 4;
+        const single = await attempt(offset, 0);
+        const burst = await Promise.all([attempt(offset + 1, 1), attempt(offset + 2, 2), attempt(offset + 3, 3)]);
+        expect(Math.max(...burst)).toBeLessThan(single * 2);
+        console.log(`hasher tenant sample ${sample + 1}: single ${Math.round(single)} ms, three ${burst.map(value => Math.round(value)).join(', ')} ms`);
+      }
       for (let sample = 0; sample < 3; sample++) {
         let completed = 0;
-        const flood = imported.value.items.map((item, index) => clients[index].post(`${auth}/ui/${current.projectId}/sign-in/password`, {
+        const flood = imported.value.items.slice(12).map((item, index) => clients[index].post(`${auth}/ui/${current.projectId}/sign-in/password`, {
           headers: { Origin: auth }, form: { email: item.user.email, password: current.password },
         }).then(response => { completed++; return response; }));
         await Promise.race(flood);

@@ -2,12 +2,37 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Geralt;
 using BCryptNet = BCrypt.Net.BCrypt;
 
 namespace TerraScale.Authentication.Security;
 
 public static partial class ImportedPasswords
 {
+    public const int MaximumPbkdf2Iterations = 1_000_000;
+
+    public static TimeSpan MeasureMaximumDuration(TimeProvider clock)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        const string password = "ts-auth maximum import cost";
+        var started = clock.GetTimestamp();
+        _ = BCryptNet.HashPassword(password, 12);
+        var maximum = clock.GetElapsedTime(started);
+        started = clock.GetTimestamp();
+        _ = Rfc2898DeriveBytes.Pbkdf2(password, "ts-auth calibration salt"u8, MaximumPbkdf2Iterations, HashAlgorithmName.SHA256, 32);
+        maximum = TimeSpan.FromTicks(Math.Max(maximum.Ticks, clock.GetElapsedTime(started).Ticks));
+        var encoded = new char[Argon2id.HashSize];
+        for (var passes = 1; passes <= 10; passes++)
+        {
+            var memory = (int)Math.Min(65_536, 2L * Passwords.MemoryKib * Passwords.Passes / passes);
+            started = clock.GetTimestamp();
+            Argon2id.ComputeHash(encoded, "ts-auth maximum import cost"u8, passes, memory * 1024);
+            maximum = TimeSpan.FromTicks(Math.Max(maximum.Ticks, clock.GetElapsedTime(started).Ticks));
+        }
+
+        return TimeSpan.FromTicks(Math.Max(TimeSpan.FromMilliseconds(300).Ticks, maximum.Ticks * 3 / 2));
+    }
+
     public static bool Valid(string? hash)
     {
         if (hash is not { Length: > 0 and <= 512 })
@@ -22,7 +47,7 @@ public static partial class ImportedPasswords
 
         if (Pbkdf2().Match(hash) is { Success: true } pbkdf2)
         {
-            return Number(pbkdf2, "i", 10_000, 600_000, out _)
+            return Number(pbkdf2, "i", 10_000, MaximumPbkdf2Iterations, out _)
                 && Base64(pbkdf2.Groups["h"].Value, 32, 32, padded: true);
         }
 
@@ -51,7 +76,7 @@ public static partial class ImportedPasswords
 
         if (Pbkdf2().Match(hash) is { Success: true } match)
         {
-            _ = Number(match, "i", 10_000, 600_000, out var iterations);
+            _ = Number(match, "i", 10_000, MaximumPbkdf2Iterations, out var iterations);
             var salt = Encoding.UTF8.GetBytes(match.Groups["s"].Value);
             var expected = Convert.FromBase64String(match.Groups["h"].Value);
             var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, 32);

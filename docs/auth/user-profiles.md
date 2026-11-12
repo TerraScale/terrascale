@@ -8,8 +8,8 @@ An API-created user may have a password or no password; creation never sends ema
 
 Profiles include `first_name`, `last_name` (255 characters each), `image_url`
 (an absolute HTTPS URL, at most 2048 characters), and `external_id` (255 characters,
-unique within the project). Control characters and bidi overrides/isolates
-(U+202A–U+202E, U+2066–U+2069) are refused. Set a scalar to null to clear it; omit it to retain it.
+unique within the project). Control characters and bidirectional formatting characters
+(U+061C, U+200E–U+200F, U+202A–U+202E, U+2066–U+2069) are refused. Set a scalar to null to clear it; omit it to retain it.
 
 Each metadata value is a JSON object limited to 8192 UTF-8 bytes and a maximum
 container depth of 10, counting the root object and nested objects and arrays. Updates use
@@ -53,11 +53,11 @@ and an optional password_hash. Hashes are never returned. Accepted encodings:
 - Argon2id PHC: version 19, 16-byte salt and 32-byte tag, canonical unpadded Base64;
   memory 8–65536 KiB, passes 1–10, lanes 1–8, memory at least eight times lanes,
   memory × passes at most 77824 KiB (twice the current 19456 KiB × 2 policy).
-- Django PBKDF2-SHA256: `pbkdf2_sha256$iterations$salt$base64-hash`, 10000–600000
+- Django PBKDF2-SHA256: `pbkdf2_sha256$iterations$salt$base64-hash`, 10000–1000000
   iterations, a 1–128-character plain-text salt encoded as UTF-8 (not Base64-decoded),
-  and a 32-byte derived key encoded as padded Base64. The journey uses Django 4.2
+  and a 32-byte derived key encoded as padded Base64. The journey uses Django 4.2 and 5.2
   [known-answer vector](https://github.com/django/django/blob/stable/4.2.x/tests/auth_tests/test_hashers.py)
-  for `lètmein` and salt `seasalt`, following the
+  for `lètmein` and salt `seasalt` at 600000 and 1000000 iterations, following the
   [documented password format](https://docs.djangoproject.com/en/4.2/topics/auth/passwords/).
 
 After successful password verification, bcrypt, PBKDF2 and Argon2id hashes with
@@ -66,12 +66,20 @@ A concurrent upgrade re-reads the account and verifies its current hash, continu
 sign-in only if its authentication stamp and epoch still match and it is enabled.
 It never overwrites the winning hash or other concurrent state.
 
-Each tenant can hold one of the four replica-local hashing slots; its queue waits
-before taking a global slot. Queues are FIFO, bounded to 500 per tenant, and the
-combined admission deadline is five seconds. Unknown users use the current Argon2id
-dummy hash. Imported-user timing can differ until the first successful sign-in
-rehashes it. This keeps unknown-account work bounded independently of an imported
-hash mix; a tenant-wide typical cost would change as imports and rehashes arrive.
+Each tenant can hold three of the four replica-local hashing slots; its FIFO
+queue waits before taking a global slot. The combined admission deadline is five
+seconds. Queue capacity is floor(3 × 5 seconds / maximum measured hash duration),
+with a minimum of one, instead of admitting work that cannot meet the deadline.
+
+At startup, the replica measures bcrypt cost 12, PBKDF2 at 1000000 iterations and
+Argon2id at each accepted pass count with its largest accepted memory budget.
+The fixed failure floor is the largest measured duration plus 50% headroom, at
+least 300 ms. Queue sizing uses this same conservative duration. Every failed
+password check, including unknown users, invalid credentials and imported hashes,
+awaits the remaining floor after releasing its hashing slot. This deliberate timing
+equalization consumes no hashing CPU or slot while waiting. Successful checks
+are not padded. Unknown users verify the current Argon2id dummy hash.
+
 email_verified preserves the import's supplied value; password possession alone
 does not prove mailbox ownership. Social sign-in matches an existing account by email
 only when the provider asserts email_verified. Administrators must not mark imported

@@ -32,7 +32,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
         var email = Users.NormalizeEmail(request.Email) ?? throw Invalid("email is invalid.");
         if (request.PasswordHash is { } hash && !ImportedPasswords.Valid(hash))
         {
-            throw Invalid($"password_hash must be canonical bcrypt (cost 04–12), argon2id PHC (memory × passes at most {2L * Passwords.MemoryKib * Passwords.Passes} KiB), or Django pbkdf2_sha256$iterations$salt$base64-hash (10000–600000 iterations).");
+            throw Invalid($"password_hash must be canonical bcrypt (cost 04–12), argon2id PHC (memory × passes at most {2L * Passwords.MemoryKib * Passwords.Passes} KiB), or Django pbkdf2_sha256$iterations$salt$base64-hash (10000–{ImportedPasswords.MaximumPbkdf2Iterations} iterations).");
         }
 
         return this.InsertAsync(project, email, request.PasswordHash, request.EmailVerified, request.FirstName, request.LastName, request.ImageUrl,
@@ -132,7 +132,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
     };
 
     private static string? Text(string? value, int maximum) =>
-        value is null || value.Length <= maximum && !value.Any(character => char.IsControl(character) || character is >= '\u202a' and <= '\u202e' or >= '\u2066' and <= '\u2069') ? value : throw Invalid($"Profile field exceeds {maximum} characters or contains control or bidirectional formatting characters.");
+        value is null || value.Length <= maximum && !value.Any(character => char.IsControl(character) || character is '\u200e' or '\u200f' or '\u061c' or >= '\u202a' and <= '\u202e' or >= '\u2066' and <= '\u2069') ? value : throw Invalid($"Profile field exceeds {maximum} characters or contains control or bidirectional formatting characters.");
 
     private static string? Image(string? value) => value is null || Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && uri.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(uri.UserInfo) ? value : throw Invalid("image_url must be an absolute https URL.");

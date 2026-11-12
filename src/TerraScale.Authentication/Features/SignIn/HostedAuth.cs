@@ -173,7 +173,14 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
             return (null, wait);
         }
 
-        return (Users.NormalizeEmail(email) is { } normalized ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null, null);
+        var started = passwords.StartPasswordCheck();
+        var user = Users.NormalizeEmail(email) is { } normalized ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null;
+        if (user is null)
+        {
+            await passwords.PadFailureAsync(started, cancellationToken);
+        }
+
+        return (user, null);
     }
 
     private async Task<UserRecord?> VerifyPasswordAsync(string email, string password, CancellationToken cancellationToken)

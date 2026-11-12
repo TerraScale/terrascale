@@ -9,20 +9,40 @@ public sealed class PasswordHasher : IDisposable
     private const int Concurrency = 4;
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
     private readonly SemaphoreSlim slots = new(Concurrency);
-    private readonly PartitionedRateLimiter<string> tenants = PartitionedRateLimiter.Create<string, string>(tenant =>
-        RateLimitPartition.GetConcurrencyLimiter(tenant, _ => new ConcurrencyLimiterOptions
-        {
-            PermitLimit = 1,
-            QueueLimit = 500,
-            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-        }));
+    private readonly TimeProvider clock;
+    private readonly TimeSpan failureFloor;
+    private readonly PartitionedRateLimiter<string> tenants;
     private readonly string equalizer = Passwords.Hash("ts-auth sign-in timing equalizer");
+
+    public PasswordHasher(TimeProvider clock)
+    {
+        this.clock = clock;
+        this.failureFloor = ImportedPasswords.MeasureMaximumDuration(clock);
+        this.tenants = PartitionedRateLimiter.Create<string, string>(tenant =>
+            RateLimitPartition.GetConcurrencyLimiter(tenant, _ => new ConcurrencyLimiterOptions
+            {
+                PermitLimit = Concurrency - 1,
+                QueueLimit = Math.Max(1, (int)((Concurrency - 1) * Wait / this.failureFloor)),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            }));
+    }
 
     public Task<string> HashAsync(string tenant, string password, CancellationToken cancellationToken) =>
         this.RunAsync(tenant, () => Passwords.Hash(password), cancellationToken);
 
     public Task<bool> VerifyAsync(string tenant, string password, string? hash, CancellationToken cancellationToken) =>
         this.RunAsync(tenant, () => ImportedPasswords.Verify(password, hash ?? this.equalizer) && hash is not null, cancellationToken);
+
+    public long StartPasswordCheck() => this.clock.GetTimestamp();
+
+    public async Task PadFailureAsync(long started, CancellationToken cancellationToken)
+    {
+        var remaining = this.failureFloor - this.clock.GetElapsedTime(started);
+        if (remaining > TimeSpan.Zero)
+        {
+            await Task.Delay(remaining, this.clock, cancellationToken).ConfigureAwait(false);
+        }
+    }
 
     public void Dispose()
     {
