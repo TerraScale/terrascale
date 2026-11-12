@@ -68,13 +68,14 @@ It never overwrites the winning hash or other concurrent state.
 
 Each tenant can hold three of the four replica-local hashing slots; its FIFO
 queue waits before taking a global slot. The combined admission deadline is five
-seconds. Queue capacity is floor(3 × 5 seconds / maximum measured hash duration),
-with a minimum of one, instead of admitting work that cannot meet the deadline.
+seconds. Queue capacity is floor(3 × 5 seconds / measured duration of the current
+password algorithm), with a minimum of one, instead of admitting work that cannot
+meet the deadline.
 
 At startup, the replica measures bcrypt cost 12, PBKDF2 at 1000000 iterations and
 Argon2id at each accepted pass count with its largest accepted memory budget.
 The fixed failure floor is the largest measured duration plus 50% headroom, at
-least 300 ms. Queue sizing uses this same conservative duration. Every failed
+least 300 ms. Every failed
 password check, including unknown users, invalid credentials and imported hashes,
 awaits the remaining floor after releasing its hashing slot. This deliberate timing
 equalization consumes no hashing CPU or slot while waiting. Successful checks

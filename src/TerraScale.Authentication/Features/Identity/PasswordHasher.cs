@@ -11,18 +11,22 @@ public sealed class PasswordHasher : IDisposable
     private readonly SemaphoreSlim slots = new(Concurrency);
     private readonly TimeProvider clock;
     private readonly TimeSpan failureFloor;
+    private readonly TimeSpan currentHashDuration;
     private readonly PartitionedRateLimiter<string> tenants;
     private readonly string equalizer = Passwords.Hash("ts-auth sign-in timing equalizer");
 
     public PasswordHasher(TimeProvider clock)
     {
         this.clock = clock;
+        var started = clock.GetTimestamp();
+        _ = Passwords.Hash("ts-auth current policy cost");
+        this.currentHashDuration = clock.GetElapsedTime(started);
         this.failureFloor = ImportedPasswords.MeasureMaximumDuration(clock);
         this.tenants = PartitionedRateLimiter.Create<string, string>(tenant =>
             RateLimitPartition.GetConcurrencyLimiter(tenant, _ => new ConcurrencyLimiterOptions
             {
                 PermitLimit = Concurrency - 1,
-                QueueLimit = Math.Max(1, (int)((Concurrency - 1) * Wait / this.failureFloor)),
+                QueueLimit = Math.Max(1, (int)((Concurrency - 1) * Wait / this.currentHashDuration)),
                 QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
             }));
     }
