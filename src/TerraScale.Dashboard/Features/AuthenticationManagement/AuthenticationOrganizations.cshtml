@@ -96,8 +96,8 @@ else if (Model.OrganizationView == "domains")
 <label for="org-join">Domain joining</label><select class="ts-select" id="org-join" name="domain_join">
 @foreach (var mode in new[] { "off", "suggest", "auto" }) { <option value="@mode" selected="@(org?.DomainJoin == mode)">@mode</option> }
 </select>
-<label for="org-public">Public metadata</label><textarea class="ts-textarea" id="org-public" name="public_metadata">@org?.PublicMetadata</textarea>
-<label for="org-private">Private metadata</label><textarea class="ts-textarea" id="org-private" name="private_metadata">@org?.PrivateMetadata</textarea>
+<label for="org-public">Public metadata</label><textarea class="ts-input ts-mono" rows="3" spellcheck="false" id="org-public" name="public_metadata">@org?.PublicMetadata</textarea>
+<label for="org-private">Private metadata</label><textarea class="ts-input ts-mono" rows="3" spellcheck="false" id="org-private" name="private_metadata">@org?.PrivateMetadata</textarea>
 <button class="ts-btn ts-btn-primary" type="submit">@(org is null ? "Create organization" : "Save organization")</button>
 </form>
 @if (org is not null) {

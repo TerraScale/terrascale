@@ -96,7 +96,8 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     expect(demoted.ok).toBe(false);
     if (!demoted.ok) expect(demoted.status).toBe(409);
 
-    value(await organizations.createOrganizationInvitation(key, current.projectId, org, { email, role: 'member' }));
+    const invitation = value(await organizations.createOrganizationInvitation(key, current.projectId, org, { email, role: 'member' }));
+    expect(Date.parse(invitation.expires_at) - Date.parse(invitation.created_at)).toBe(7 * 24 * 60 * 60 * 1000);
     const invitationMail = await nextMail(email, 0);
     const invitationUrl = /https:\/\/[^\s<>]+\/organization-invitations\?token=[A-Za-z0-9]{48}/.exec(invitationMail.text)?.[0];
     expect(invitationUrl).toBeTruthy();
@@ -112,7 +113,9 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     await expect(page.getByRole('button', { name: 'Accept invitation' })).toBeVisible();
     await expect(page.locator('main')).toContainText(email);
     await audit.check('organization invitation');
+    const acceptance = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === invitationLink.pathname);
     await page.getByRole('button', { name: 'Accept invitation' }).click();
+    expect((await acceptance).status()).toBe(200);
     await expect(page.getByRole('status')).toHaveText('Invitation accepted');
     const replay = await page.request.post(auth + invitationLink.pathname, { headers: { Origin: auth }, form: { token: invitationLink.searchParams.get("token")! } });
     expect(replay.status()).toBe(404);
@@ -139,6 +142,7 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     const chooser = await authorize(page);
     expect(chooser.response.status()).toBe(200);
     expect(await chooser.response.text()).toContain(input.slug + '-two');
+    value(await organizations.updateOrganizationMember(key, current.projectId, org, invitedId, { user_id: null, role: "admin" }));
     const refresh = await page.request.post(auth + '/' + current.projectId + '/oauth/token', {
       form: { grant_type: 'refresh_token', refresh_token: selected.refresh_token, client_id: client },
     });
@@ -146,7 +150,7 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     const refreshed = await refresh.json();
     saveSecret('organization-refreshed', refreshed.access_token);
     saveSecret('organization-refreshed-refresh', refreshed.refresh_token);
-    expect(claims(refreshed.access_token)).toMatchObject({ org_id: org, org_role: 'member' });
+    expect(claims(refreshed.access_token)).toMatchObject({ org_id: org, org_role: 'admin' });
     value(await organizations.deleteOrganization(key, current.projectId, org));
     org = '';
     const revoked = await page.request.post(auth + '/' + current.projectId + '/oauth/token', {

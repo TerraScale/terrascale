@@ -89,7 +89,7 @@ export class TsAuthOrganizationsClient {
   createOrganization(credential, project, request, options = {}) {
     return this.#http.request({
       method: "POST", path: `v1/${requireId(project, "project")}/organizations`,
-      routeName: "tsauth.organizations.create_organization", projectAccessToken: credential,
+      routeName: "tsauth.projects.create_organization", projectAccessToken: credential,
       body: request,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
@@ -105,7 +105,7 @@ export class TsAuthOrganizationsClient {
   listOrganizations(credential, project, limit = 20, after = null, options = {}) {
     return this.#http.request({
       method: "GET", path: `v1/${requireId(project, "project")}/organizations?limit=${limit}${after === null ? "" : "&after=" + encodeURIComponent(after)}`,
-      routeName: "tsauth.organizations.list_organizations", projectAccessToken: credential,
+      routeName: "tsauth.projects.list_organizations", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -119,7 +119,7 @@ export class TsAuthOrganizationsClient {
   getOrganization(credential, project, org, options = {}) {
     return this.#http.request({
       method: "GET", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}`,
-      routeName: "tsauth.organizations.get_organization", projectAccessToken: credential,
+      routeName: "tsauth.projects.get_organization", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -134,7 +134,7 @@ export class TsAuthOrganizationsClient {
   updateOrganization(credential, project, org, request, options = {}) {
     return this.#http.request({
       method: "PUT", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}`,
-      routeName: "tsauth.organizations.update_organization", projectAccessToken: credential,
+      routeName: "tsauth.projects.update_organization", projectAccessToken: credential,
       body: request,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
@@ -149,7 +149,7 @@ export class TsAuthOrganizationsClient {
   deleteOrganization(credential, project, org, options = {}) {
     return this.#http.request({
       method: "DELETE", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}`,
-      routeName: "tsauth.organizations.delete_organization", projectAccessToken: credential,
+      routeName: "tsauth.projects.delete_organization", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -164,7 +164,7 @@ export class TsAuthOrganizationsClient {
   addOrganizationMember(credential, project, org, request, options = {}) {
     return this.#http.request({
       method: "POST", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/memberships`,
-      routeName: "tsauth.organizations.add_organization_member", projectAccessToken: credential,
+      routeName: "tsauth.projects.add_organization_member", projectAccessToken: credential,
       body: request,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
@@ -181,7 +181,7 @@ export class TsAuthOrganizationsClient {
   listOrganizationMembers(credential, project, org, limit = 20, after = null, options = {}) {
     return this.#http.request({
       method: "GET", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/memberships?limit=${limit}${after === null ? "" : "&after=" + encodeURIComponent(after)}`,
-      routeName: "tsauth.organizations.list_organization_members", projectAccessToken: credential,
+      routeName: "tsauth.projects.list_organization_members", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -197,7 +197,7 @@ export class TsAuthOrganizationsClient {
   updateOrganizationMember(credential, project, org, user, request, options = {}) {
     return this.#http.request({
       method: "PUT", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/memberships/${encodeURIComponent(user)}`,
-      routeName: "tsauth.organizations.update_organization_member", projectAccessToken: credential,
+      routeName: "tsauth.projects.update_organization_member", projectAccessToken: credential,
       body: request,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
@@ -213,7 +213,7 @@ export class TsAuthOrganizationsClient {
   deleteOrganizationMember(credential, project, org, user, options = {}) {
     return this.#http.request({
       method: "DELETE", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/memberships/${encodeURIComponent(user)}`,
-      routeName: "tsauth.organizations.delete_organization_member", projectAccessToken: credential,
+      routeName: "tsauth.projects.delete_organization_member", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -228,7 +228,7 @@ export class TsAuthOrganizationsClient {
   createOrganizationInvitation(credential, project, org, request, options = {}) {
     return this.#http.request({
       method: "POST", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/invitations`,
-      routeName: "tsauth.organizations.create_organization_invitation", projectAccessToken: credential,
+      routeName: "tsauth.projects.create_organization_invitation", projectAccessToken: credential,
       body: request,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
@@ -245,7 +245,7 @@ export class TsAuthOrganizationsClient {
   listOrganizationInvitations(credential, project, org, limit = 20, after = null, options = {}) {
     return this.#http.request({
       method: "GET", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/invitations?limit=${limit}${after === null ? "" : "&after=" + encodeURIComponent(after)}`,
-      routeName: "tsauth.organizations.list_organization_invitations", projectAccessToken: credential,
+      routeName: "tsauth.projects.list_organization_invitations", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -260,7 +260,7 @@ export class TsAuthOrganizationsClient {
   revokeOrganizationInvitation(credential, project, org, invitation, options = {}) {
     return this.#http.request({
       method: "DELETE", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/invitations/${encodeURIComponent(invitation)}`,
-      routeName: "tsauth.organizations.revoke_organization_invitation", projectAccessToken: credential,
+      routeName: "tsauth.projects.revoke_organization_invitation", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -275,7 +275,7 @@ export class TsAuthOrganizationsClient {
   addOrganizationDomain(credential, project, org, request, options = {}) {
     return this.#http.request({
       method: "POST", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/domains`,
-      routeName: "tsauth.organizations.add_organization_domain", projectAccessToken: credential,
+      routeName: "tsauth.projects.add_organization_domain", projectAccessToken: credential,
       body: request,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
@@ -290,7 +290,7 @@ export class TsAuthOrganizationsClient {
   listOrganizationDomains(credential, project, org, options = {}) {
     return this.#http.request({
       method: "GET", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/domains`,
-      routeName: "tsauth.organizations.list_organization_domains", projectAccessToken: credential,
+      routeName: "tsauth.projects.list_organization_domains", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -305,7 +305,7 @@ export class TsAuthOrganizationsClient {
   verifyOrganizationDomain(credential, project, org, domain, options = {}) {
     return this.#http.request({
       method: "POST", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/domains/${encodeURIComponent(domain)}/verify`,
-      routeName: "tsauth.organizations.verify_organization_domain", projectAccessToken: credential,
+      routeName: "tsauth.projects.verify_organization_domain", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -320,7 +320,7 @@ export class TsAuthOrganizationsClient {
   deleteOrganizationDomain(credential, project, org, domain, options = {}) {
     return this.#http.request({
       method: "DELETE", path: `v1/${requireId(project, "project")}/organizations/${encodeURIComponent(org)}/domains/${encodeURIComponent(domain)}`,
-      routeName: "tsauth.organizations.delete_organization_domain", projectAccessToken: credential,
+      routeName: "tsauth.projects.delete_organization_domain", projectAccessToken: credential,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }

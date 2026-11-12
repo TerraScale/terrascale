@@ -98,16 +98,16 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
 
     public Task<OrganizationClaims?> ClaimsAsync(string project, string org, string userId, CancellationToken cancellationToken) =>
         data.ReadAsync((db, token) => (from organization in db.ProjectOrganizations
-            join member in db.ProjectOrganizationMemberships on new { organization.ProjectId, OrganizationId = organization.Id } equals new { member.ProjectId, member.OrganizationId }
-            where organization.ProjectId == project && (organization.Id == org || organization.Slug == org) && member.UserId == userId
-            select new OrganizationClaims(organization.Id, organization.Slug, member.Role)).SingleOrDefaultAsync(token), cancellationToken);
+                                       join member in db.ProjectOrganizationMemberships on new { organization.ProjectId, OrganizationId = organization.Id } equals new { member.ProjectId, member.OrganizationId }
+                                       where organization.ProjectId == project && (organization.Id == org || organization.Slug == org) && member.UserId == userId
+                                       select new OrganizationClaims(organization.Id, organization.Slug, member.Role)).SingleOrDefaultAsync(token), cancellationToken);
 
     public async Task<IReadOnlyList<OrganizationClaims>> ChoicesAsync(string project, string userId, CancellationToken cancellationToken) =>
         await data.ReadAsync((db, token) => (from org in db.ProjectOrganizations
-            join member in db.ProjectOrganizationMemberships on new { org.ProjectId, OrganizationId = org.Id } equals new { member.ProjectId, member.OrganizationId }
-            where org.ProjectId == project && member.UserId == userId
-            orderby org.Slug
-            select new OrganizationClaims(org.Id, org.Slug, member.Role)).Take(101).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+                                             join member in db.ProjectOrganizationMemberships on new { org.ProjectId, OrganizationId = org.Id } equals new { member.ProjectId, member.OrganizationId }
+                                             where org.ProjectId == project && member.UserId == userId
+                                             orderby org.Slug
+                                             select new OrganizationClaims(org.Id, org.Slug, member.Role)).Take(101).ToListAsync(token), cancellationToken).ConfigureAwait(false);
 
     private async Task<UserRecord> UserAsync(string project, string? id, CancellationToken cancellationToken) =>
         await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == id && !row.Disabled).SingleOrDefaultAsync(token), cancellationToken)
@@ -133,8 +133,16 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
             throw Invalid("max_members must accommodate existing members; domain_join must be off, suggest or auto.");
         }
 
-        return org with { Name = name, Slug = slug, ImageUrl = request.ImageUrl, PublicMetadata = Metadata(request.PublicMetadata),
-            PrivateMetadata = Metadata(request.PrivateMetadata), MaxMembers = request.MaxMembers, DomainJoin = request.DomainJoin };
+        return org with
+        {
+            Name = name,
+            Slug = slug,
+            ImageUrl = request.ImageUrl,
+            PublicMetadata = Metadata(request.PublicMetadata),
+            PrivateMetadata = Metadata(request.PrivateMetadata),
+            MaxMembers = request.MaxMembers,
+            DomainJoin = request.DomainJoin
+        };
     }
 
     private static JsonElement EmptyMetadata()

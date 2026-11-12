@@ -367,7 +367,9 @@ class AsyncTerraScale:
         """POST /v1/{project}/organizations."""
         return await self._send(_organizations.create_organization_call(self._issuer, project, request))
 
-    async def list_organizations(self, project: str, limit: int | None = None, after: str | None = None) -> _organizations.OrganizationPage:
+    async def list_organizations(
+        self, project: str, limit: int | None = None, after: str | None = None
+    ) -> _organizations.OrganizationPage:
         """GET /v1/{project}/organizations."""
         return await self._send(_organizations.list_organizations_call(self._issuer, project, limit, after))
 
@@ -375,7 +377,9 @@ class AsyncTerraScale:
         """GET /v1/{project}/organizations/{org}."""
         return await self._send(_organizations.get_organization_call(self._issuer, project, org))
 
-    async def update_organization(self, project: str, org: str, request: _organizations.OrganizationRequest) -> _organizations.Organization:
+    async def update_organization(
+        self, project: str, org: str, request: _organizations.OrganizationRequest
+    ) -> _organizations.Organization:
         """PUT /v1/{project}/organizations/{org}."""
         return await self._send(_organizations.update_organization_call(self._issuer, project, org, request))
 
@@ -383,15 +387,21 @@ class AsyncTerraScale:
         """DELETE /v1/{project}/organizations/{org}."""
         await self._send(_organizations.delete_organization_call(self._issuer, project, org))
 
-    async def add_organization_member(self, project: str, org: str, request: _organizations.OrganizationMembershipRequest) -> _organizations.OrganizationMembership:
+    async def add_organization_member(
+        self, project: str, org: str, request: _organizations.OrganizationMembershipRequest
+    ) -> _organizations.OrganizationMembership:
         """POST /v1/{project}/organizations/{org}/memberships."""
         return await self._send(_organizations.add_organization_member_call(self._issuer, project, org, request))
 
-    async def list_organization_members(self, project: str, org: str, limit: int | None = None, after: str | None = None) -> _organizations.OrganizationMembershipPage:
+    async def list_organization_members(
+        self, project: str, org: str, limit: int | None = None, after: str | None = None
+    ) -> _organizations.OrganizationMembershipPage:
         """GET /v1/{project}/organizations/{org}/memberships."""
         return await self._send(_organizations.list_organization_members_call(self._issuer, project, org, limit, after))
 
-    async def update_organization_member(self, project: str, org: str, user: str, request: _organizations.OrganizationMembershipRequest) -> _organizations.OrganizationMembership:
+    async def update_organization_member(
+        self, project: str, org: str, user: str, request: _organizations.OrganizationMembershipRequest
+    ) -> _organizations.OrganizationMembership:
         """PUT /v1/{project}/organizations/{org}/memberships/{user}."""
         return await self._send(_organizations.update_organization_member_call(self._issuer, project, org, user, request))
 
@@ -399,11 +409,15 @@ class AsyncTerraScale:
         """DELETE /v1/{project}/organizations/{org}/memberships/{user}."""
         await self._send(_organizations.delete_organization_member_call(self._issuer, project, org, user))
 
-    async def create_organization_invitation(self, project: str, org: str, request: _organizations.OrganizationInvitationRequest) -> _organizations.OrganizationInvitation:
+    async def create_organization_invitation(
+        self, project: str, org: str, request: _organizations.OrganizationInvitationRequest
+    ) -> _organizations.OrganizationInvitation:
         """POST /v1/{project}/organizations/{org}/invitations."""
         return await self._send(_organizations.create_organization_invitation_call(self._issuer, project, org, request))
 
-    async def list_organization_invitations(self, project: str, org: str, limit: int | None = None, after: str | None = None) -> _organizations.OrganizationInvitationPage:
+    async def list_organization_invitations(
+        self, project: str, org: str, limit: int | None = None, after: str | None = None
+    ) -> _organizations.OrganizationInvitationPage:
         """GET /v1/{project}/organizations/{org}/invitations."""
         return await self._send(_organizations.list_organization_invitations_call(self._issuer, project, org, limit, after))
 
@@ -411,7 +425,9 @@ class AsyncTerraScale:
         """DELETE /v1/{project}/organizations/{org}/invitations/{invitation}."""
         await self._send(_organizations.revoke_organization_invitation_call(self._issuer, project, org, invitation))
 
-    async def add_organization_domain(self, project: str, org: str, request: _organizations.OrganizationDomainRequest) -> _organizations.OrganizationDomain:
+    async def add_organization_domain(
+        self, project: str, org: str, request: _organizations.OrganizationDomainRequest
+    ) -> _organizations.OrganizationDomain:
         """POST /v1/{project}/organizations/{org}/domains."""
         return await self._send(_organizations.add_organization_domain_call(self._issuer, project, org, request))
 

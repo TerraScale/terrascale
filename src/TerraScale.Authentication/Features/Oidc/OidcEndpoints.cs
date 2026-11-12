@@ -241,6 +241,7 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
                 return OidcResults.Forbid(Errors.InvalidRequest, "organization must appear once.");
             }
 
+            var suggestions = request.HasPromptValue(PromptValues.None) ? [] : await organizations.AutoJoinAsync(signedIn.User, cancellationToken);
             var selected = (string?)request.GetParameter("organization");
             if (selected is not null)
             {
@@ -252,7 +253,6 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
             }
             else
             {
-                var suggestions = request.HasPromptValue(PromptValues.None) ? [] : await organizations.AutoJoinAsync(signedIn.User, cancellationToken);
                 var choices = await organizations.ChoicesAsync(tenant, signedIn.User.Id, cancellationToken);
                 if (choices.Count > 1 || suggestions.Count > 0)
                 {

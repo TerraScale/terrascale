@@ -17,6 +17,7 @@ public sealed partial class ProjectOrganizationDirectory
     {
         domain = domain?.Trim().ToLowerInvariant();
         if (domain is not { Length: >= 4 and <= 253 } || !domain.Contains('.', StringComparison.Ordinal)
+            || domain.Split('.').Any(label => label.Length is < 1 or > 63 || label[0] == '-' || label[^1] == '-')
             || Uri.CheckHostName(domain) != UriHostNameType.Dns || domain.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('.' or '-')))
         {
             throw Invalid("domain must be a DNS domain without a scheme or path.");

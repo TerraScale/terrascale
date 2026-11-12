@@ -10,7 +10,7 @@ public sealed record OrganizationPageModel(string Tenant, string Nonce, string T
         ArgumentNullException.ThrowIfNull(context);
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        context.Response.Headers["Referrer-Policy"] = "no-referrer";
+        context.Response.Headers["Referrer-Policy"] = "strict-origin";
         return OrganizationPage.Create(model with { Nonce = nonce });
     }
 }
