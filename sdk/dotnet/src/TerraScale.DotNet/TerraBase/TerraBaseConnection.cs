@@ -522,5 +522,5 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    internal static Uri Origin(Uri? baseAddress) => TerraScaleOrigin.Parse(baseAddress, "BaseAddress", nameof(baseAddress), TerraScaleService.Api, netBird: true);
+    internal static Uri Origin(Uri? baseAddress) => TerraScaleOrigin.Parse(baseAddress, "BaseAddress", nameof(baseAddress), TerraScaleService.Api);
 }

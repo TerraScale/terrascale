@@ -90,5 +90,5 @@ public sealed record TerraScaleAuthClientOptions
     }
 
     internal static Uri Endpoint(Uri endpoint, string name) =>
-        TerraScaleOrigin.Parse(endpoint, "The ts-auth base address", name, TerraScaleService.Auth, netBird: false);
+        TerraScaleOrigin.Parse(endpoint, "The ts-auth base address", name, TerraScaleService.Auth);
 }

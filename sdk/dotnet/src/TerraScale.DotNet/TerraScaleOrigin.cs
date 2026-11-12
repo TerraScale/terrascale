@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 
 namespace TerraScale.DotNet;
 
@@ -30,8 +29,6 @@ internal sealed record TerraScaleService(string Host, string Name)
 
 internal static class TerraScaleOrigin
 {
-    private static readonly IPNetwork NetBirdNetwork = IPNetwork.Parse("100.64.0.0/10");
-
     private static readonly SearchValues<char> OriginCharacters =
         SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.:[]/");
 
@@ -39,15 +36,13 @@ internal static class TerraScaleOrigin
 
     private static readonly SearchValues<char> HexCharacters = SearchValues.Create("0123456789abcdef");
 
-    internal static Uri Parse(Uri? address, string label, string parameter, TerraScaleService service, bool netBird)
+    internal static Uri Parse(Uri? address, string label, string parameter, TerraScaleService service)
     {
         var (scheme, host, port) = Strict(address?.OriginalString)
             ?? throw new ArgumentException($"{label} must be exactly scheme://host[:port], such as https://{service.Host}.", parameter);
-        if (scheme == Uri.UriSchemeHttp && !(Loopback(host) || netBird && IsNetBird(host)))
+        if (scheme == Uri.UriSchemeHttp && !Loopback(host))
         {
-            throw new ArgumentException(netBird
-                ? $"{label} must use https; plain http is allowed only for localhost, 127.0.0.0/8, [::1] and NetBird 100.64.0.0/10 addresses."
-                : $"{label} must use https; plain http is allowed only for localhost, 127.0.0.0/8 and [::1].", parameter);
+            throw new ArgumentException($"{label} must use https; plain http is allowed only for localhost, 127.0.0.0/8 and [::1].", parameter);
         }
 
         if (!service.Serves(host))
@@ -172,7 +167,4 @@ internal static class TerraScaleOrigin
         && (host.StartsWith('[')
             ? IPAddress.TryParse(origin.IdnHost, out var sent) && IPAddress.TryParse(host[1..^1], out var named) && sent.Equals(named)
             : origin.IdnHost == host);
-
-    private static bool IsNetBird(string host) =>
-        IPAddress.TryParse(host, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork && NetBirdNetwork.Contains(ip);
 }

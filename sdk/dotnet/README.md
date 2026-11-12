@@ -242,11 +242,11 @@ The [published pricing catalog](https://terrascale.tech/pricing.json) meters dat
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ```csharp
-// Use the ts-orch NetBird service address; the caller configures the required peer credential on httpClient.
+// TerraBase's private listener on the same host; the caller configures the required peer credential on httpClient.
 // Qualify this pinned-contract example against the OCI server before use.
 var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
 {
-    BaseAddress = new Uri("http://100.64.0.1:8081"),
+    BaseAddress = new Uri("http://127.0.0.1:8081"),
 });
 
 TerraBaseOrganization organization = await management.CreateOrganizationAsync(
