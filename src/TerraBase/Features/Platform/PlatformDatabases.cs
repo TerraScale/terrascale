@@ -83,17 +83,17 @@ internal sealed class PlatformSeedProgress
         _pending is { } reason ? [new Measurement<int>(1, new KeyValuePair<string, object?>("reason", reason))] : [];
 }
 
-public sealed record PlatformConflicts(IReadOnlyList<Conflict> Conflicts);
+public sealed record PlatformConflicts;
 
-public sealed record PlatformPending(IReadOnlyList<Conflict> Conflicts, Unavailable Reason);
+public sealed record PlatformPending(Unavailable Reason);
 
-public sealed record PlatformOrphaned(IReadOnlyList<Conflict> Conflicts);
+public sealed record PlatformOrphaned;
 
 public readonly union EnsurePlatformResult(Done, PlatformConflicts, PlatformPending, PlatformOrphaned);
 
 public interface IPlatformCatalog
 {
-    ValueTask<EnsurePlatformResult> EnsurePlatformAsync(CancellationToken cancellationToken);
+    ValueTask<EnsurePlatformResult> EnsurePlatformAsync(Action<Conflict> found, CancellationToken cancellationToken);
 }
 
 internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, PlatformSeedProgress progress, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
@@ -123,22 +123,19 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
 
             try
             {
-                switch (await catalog.EnsurePlatformAsync(stoppingToken).ConfigureAwait(false))
+                switch (await catalog.EnsurePlatformAsync(conflict => Report(conflict, reported), stoppingToken).ConfigureAwait(false))
                 {
                     case Done:
                         progress.Finish();
                         logger.ZLogInformation($"Platform databases are seeded");
                         return;
-                    case PlatformConflicts settled:
-                        Report(settled.Conflicts, reported);
+                    case PlatformConflicts:
                         progress.Finish();
                         return;
-                    case PlatformOrphaned orphaned:
-                        Report(orphaned.Conflicts, reported);
+                    case PlatformOrphaned:
                         progress.Serve(PlatformDatabases.Orphaned.Code);
                         break;
                     case PlatformPending pending:
-                        Report(pending.Conflicts, reported);
                         progress.Wait(pending.Reason.Code);
                         if (failure != pending.Reason.Message)
                         {
@@ -163,14 +160,11 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
         }
     }
 
-    private void Report(IReadOnlyList<Conflict> conflicts, HashSet<string> reported)
+    private void Report(Conflict conflict, HashSet<string> reported)
     {
-        foreach (var conflict in conflicts)
+        if (reported.Add(conflict.Code))
         {
-            if (reported.Add(conflict.Code))
-            {
-                logger.ZLogError($"Platform databases conflict with existing records: {conflict.Code:@Code}; {conflict.Message:@Reason}");
-            }
+            logger.ZLogError($"Platform databases conflict with existing records: {conflict.Code:@Code}; {conflict.Message:@Reason}");
         }
     }
 }

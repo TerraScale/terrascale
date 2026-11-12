@@ -11,8 +11,9 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
     private const string PlatformCreator = PlatformDatabases.OrganizationId;
     private const string PlatformOrganizationName = "TerraScale";
 
-    public async ValueTask<EnsurePlatformResult> EnsurePlatformAsync(CancellationToken cancellationToken)
+    public async ValueTask<EnsurePlatformResult> EnsurePlatformAsync(Action<Conflict> found, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(found);
         var tenants = await ReadAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: false, cancellationToken), static error => error, cancellationToken)
             .ConfigureAwait(false);
         if (tenants is NotFound)
@@ -23,7 +24,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
 
         if (tenants is not Done)
         {
-            return Settled(tenants);
+            return Settled(tenants, found);
         }
 
         List<Conflict> conflicts = [];
@@ -33,6 +34,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
             switch (await SeedDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false))
             {
                 case Conflict conflict:
+                    found(conflict);
                     conflicts.Add(conflict);
                     break;
                 case Unavailable unavailable:
@@ -41,9 +43,9 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
             }
         }
 
-        return pending is not null ? new PlatformPending(conflicts, pending)
-            : conflicts.Contains(PlatformDatabases.Orphaned) ? new PlatformOrphaned(conflicts)
-            : conflicts.Count == 0 ? new Done() : new PlatformConflicts(conflicts);
+        return pending is not null ? new PlatformPending(pending)
+            : conflicts.Contains(PlatformDatabases.Orphaned) ? new PlatformOrphaned()
+            : conflicts.Count == 0 ? new Done() : new PlatformConflicts();
     }
 
     private async ValueTask<PlatformState> SeedDatabaseAsync(string name, (string Id, string ProjectId) database, CancellationToken cancellationToken)
@@ -56,19 +58,27 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         }
 
         var tenant = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Enterprise, database.ProjectId, database.Id);
-        return engine.HasDatabaseFiles(tenant)
+        return engine.HasDatabaseFiles(tenant, cancellationToken)
             && !await ReadAsync(transaction => OwnedFileAsync(transaction, tenant, cancellationToken), static _ => true, cancellationToken).ConfigureAwait(false)
                 ? PlatformDatabases.Orphaned
                 : await AddPlatformDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false);
     }
 
-    private static EnsurePlatformResult Settled(PlatformState state) => state switch
+    private static EnsurePlatformResult Settled(PlatformState state, Action<Conflict> found)
     {
-        Done done => done,
-        Conflict conflict => new PlatformConflicts([conflict]),
-        Unavailable unavailable => new PlatformPending([], unavailable),
-        NotFound => throw new UnreachableException(),
-    };
+        if (state is Conflict conflict)
+        {
+            found(conflict);
+        }
+
+        return state switch
+        {
+            Done done => done,
+            Conflict => new PlatformConflicts(),
+            Unavailable unavailable => new PlatformPending(unavailable),
+            NotFound => throw new UnreachableException(),
+        };
+    }
 
     private static async ValueTask<PlatformState> PlatformTenantsAsync(IStorageTransaction transaction, bool create, CancellationToken cancellationToken)
     {
