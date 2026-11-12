@@ -53,7 +53,7 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
         var cutoff = now.AddDays(-5);
         var endpoints = await data.ReadAsync((db, token) => db.WebhookEndpoints
             .Where(row => row.DisabledAt == null && row.FirstFailureAt <= cutoff && row.LeaseUntil <= now)
-            .Take(50).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+            .OrderBy(row => row.FirstFailureAt).Take(50).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
         foreach (var endpoint in endpoints)
         {
             var row = endpoint.Value;
