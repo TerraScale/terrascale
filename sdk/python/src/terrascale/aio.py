@@ -384,10 +384,16 @@ class AsyncTerraScale:
     async def create_user(self, request: models.CreateProjectUser, *, project: str | None = None) -> models.ProjectUser:
         return await self._send(create_user_call(self._issuer, project if project is not None else self.project, request))
 
-    async def update_user(self, user_id: str, request: models.UpdateProjectUser, *, project: str | None = None) -> models.ProjectUser:
-        return await self._send(update_user_call(self._issuer, project if project is not None else self.project, user_id, request))
+    async def update_user(
+        self, user_id: str, request: models.UpdateProjectUser, *, project: str | None = None
+    ) -> models.ProjectUser:
+        return await self._send(
+            update_user_call(self._issuer, project if project is not None else self.project, user_id, request)
+        )
 
-    async def import_users(self, users: list[models.ImportProjectUser], *, project: str | None = None) -> models.ImportProjectUsersResult:
+    async def import_users(
+        self, users: list[models.ImportProjectUser], *, project: str | None = None
+    ) -> models.ImportProjectUsersResult:
         return await self._send(import_users_call(self._issuer, project if project is not None else self.project, users))
 
     async def get_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:

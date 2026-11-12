@@ -404,7 +404,9 @@ class TerraScale:
     def update_user(self, user_id: str, request: models.UpdateProjectUser, *, project: str | None = None) -> models.ProjectUser:
         return self._send(update_user_call(self._issuer, project if project is not None else self.project, user_id, request))
 
-    def import_users(self, users: list[models.ImportProjectUser], *, project: str | None = None) -> models.ImportProjectUsersResult:
+    def import_users(
+        self, users: list[models.ImportProjectUser], *, project: str | None = None
+    ) -> models.ImportProjectUsersResult:
         return self._send(import_users_call(self._issuer, project if project is not None else self.project, users))
 
     def get_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
