@@ -121,7 +121,8 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
                     ? TerraBaseScopes.AuthRead : TerraBaseScopes.AuthWrite, this.HttpContext.Connection.RemoteIpAddress, cancellationToken);
                 if (!HttpMethods.IsGet(this.HttpContext.Request.Method))
                 {
-                    var operation = this.Definition.Name ?? throw new InvalidOperationException("A management operation must have a name.");
+                    var operation = this.HttpContext.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName
+                        ?? throw new InvalidOperationException("A management operation must have a name.");
                     await this.Tenants.AuditKeyWriteAsync(key, operation + ".requested", this.HttpContext.Request.Path, cancellationToken);
                 }
 
