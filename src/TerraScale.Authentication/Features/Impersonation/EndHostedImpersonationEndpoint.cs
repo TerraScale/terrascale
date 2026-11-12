@@ -29,7 +29,7 @@ public sealed class EndHostedImpersonationEndpoint(Impersonations impersonations
         var tenant = Tenancy.Current(this.HttpContext);
         if (await impersonations.ResolveAsync(tenant, this.HttpContext.Request.Cookies[Impersonations.Cookie(tenant)], cancellationToken) is { } live)
         {
-            await impersonations.EndAsync(tenant, live.Record.Id, live.Record.ActorId, cancellationToken);
+            await impersonations.EndAsync(tenant, live.Record.Id, live.Record.ActorId, "manual", cancellationToken);
         }
 
         this.HttpContext.Response.Cookies.Delete(Impersonations.Cookie(tenant), ImpersonationBrowser.CookieOptions(null));

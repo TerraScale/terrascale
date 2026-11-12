@@ -1,10 +1,10 @@
-using TerraScale.Authentication.Features.Impersonation;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Hosting;

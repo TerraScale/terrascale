@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         var impersonationIntent = StepUpFlow.Intent(http, context, "start_impersonation");
                         if (impersonationIntent is null)
                         {
-                            return await StepUpFlow.StartAsync(http, context, "start_impersonation", "ts-auth");
+                            return await StepUpFlow.StartAsync(http, context, "start_impersonation", "ts-auth", boundOrganizationId: project + ":" + targetUser);
                         }
 
                         var ticket = await projects.StartImpersonationAsync(session, project, targetUser, new(reason, clientId), impersonationIntent.Challenge.Proof, cancel);

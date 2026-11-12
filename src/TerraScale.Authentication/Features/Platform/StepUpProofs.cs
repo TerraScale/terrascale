@@ -83,7 +83,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         ArgumentNullException.ThrowIfNull(request);
         if (!Pair(request.Purpose, request.Audience)
             || Bound(request.Purpose) != (request.OrganizationId is not null)
-            || request.OrganizationId is not null && !PlatformDirectory.IsId(request.OrganizationId)
+            || request.OrganizationId is not null && !ValidBinding(request.Purpose, request.OrganizationId)
             || !Uri.TryCreate(request.ReturnUri, UriKind.Absolute, out var callback)
             || callback.AbsolutePath != "/auth/step-up/callback" || callback.Query.Length != 0 || callback.Fragment.Length != 0 || callback.UserInfo.Length != 0
             || options.DashboardClient?.RedirectUris.Any(uri => uri.GetLeftPart(UriPartial.Authority) == callback.GetLeftPart(UriPartial.Authority)) != true)
@@ -270,7 +270,12 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "change_plan" or "delete_passkey" or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "create_webhook_endpoint" or "rotate_webhook_secret" or "start_impersonation",
         _ => false,
     };
-    private static bool Bound(string purpose) => purpose is "delete_organization" or "start_ownership_transfer" or "change_plan";
+    private static bool ValidBinding(string purpose, string binding) =>
+        purpose == "start_impersonation"
+            ? binding.Split(':') is [var project, var target] && PlatformDirectory.IsId(project) && PlatformDirectory.IsId(target)
+            : PlatformDirectory.IsId(binding);
+
+    private static bool Bound(string purpose) => purpose is "start_impersonation" or "delete_organization" or "start_ownership_transfer" or "change_plan";
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]

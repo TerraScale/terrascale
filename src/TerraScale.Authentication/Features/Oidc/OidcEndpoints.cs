@@ -1,24 +1,24 @@
-using System.Text.Json;
-using TerraScale.Authentication.Features.Impersonation;
 using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Metadata;
+using Microsoft.AspNetCore;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
-using Microsoft.AspNetCore;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.DotNet.TerraBase;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
+using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
@@ -194,7 +194,10 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
 
             try
             {
-                var redeemed = await impersonations.RedeemAsync(tenant, request.ClientId, ticketParameter[0]!, cancellationToken);
+                var admin = await sessions.ResolveVersionedAsync(OidcIssuer.InstanceId,
+                    this.HttpContext.Request.Cookies[Tenancy.SessionCookie(OidcIssuer.InstanceId)], cancellationToken);
+                var redeemed = await impersonations.RedeemAsync(tenant, request.ClientId, ticketParameter[0]!, admin?.User,
+                    admin is { } liveAdmin ? Sessions.Live(liveAdmin.Session, liveAdmin.Version, clock.GetUtcNow()) : null, cancellationToken);
                 this.HttpContext.Response.Cookies.Append(Impersonations.Cookie(tenant), redeemed.Cookie, ImpersonationBrowser.CookieOptions(redeemed.Live.Record.ExpiresAt));
                 this.HttpContext.Response.Headers["Referrer-Policy"] = "no-referrer";
                 return OidcResults.SignIn(redeemed.Live.User, redeemed.Live.Record.RedeemedAt!.Value, request.GetScopes(),
@@ -598,7 +601,7 @@ public abstract class LogoutEndpoint(Impersonations impersonations, Sessions ses
         {
             if (acting is not null)
             {
-                await impersonations.EndAsync(tenant, acting.Record.Id, acting.Record.ActorId, cancellationToken);
+                await impersonations.EndAsync(tenant, acting.Record.Id, acting.Record.ActorId, "manual", cancellationToken);
             }
 
             this.HttpContext.Response.Cookies.Delete(Impersonations.Cookie(tenant), ImpersonationBrowser.CookieOptions(null));

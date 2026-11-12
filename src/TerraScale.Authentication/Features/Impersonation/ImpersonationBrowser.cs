@@ -23,8 +23,17 @@ public static class ImpersonationBrowser
         if (context.Request.Cookies.TryGetValue(Impersonations.Cookie(tenant), out var cookie))
         {
             context.Response.Headers.CacheControl = "no-store";
-            context.Items[Impersonations.Item] = await context.RequestServices.GetRequiredService<Impersonations>()
+            var live = await context.RequestServices.GetRequiredService<Impersonations>()
                 .ResolveAsync(tenant, cookie, context.RequestAborted);
+            if (live is null)
+            {
+                context.Response.Cookies.Delete(Impersonations.Cookie(tenant), CookieOptions(null));
+                context.Request.Cookies = new ImpersonationCookies(context.Request.Cookies, Impersonations.Cookie(tenant));
+                await next(context);
+                return;
+            }
+
+            context.Items[Impersonations.Item] = live;
             context.Request.Cookies = new ImpersonationCookies(context.Request.Cookies, Tenancy.SessionCookie(tenant));
             if (context.Request.Path.StartsWithSegments($"/ui/{tenant}/social")
                 || context.Request.Path.StartsWithSegments("/ui") && !HttpMethods.IsGet(context.Request.Method)

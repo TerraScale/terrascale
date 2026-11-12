@@ -19,7 +19,7 @@ public sealed class StartImpersonationEndpoint(TenantDirectory tenants, Platform
         var person = caller.RequirePerson();
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ImpersonationJson.Default.StartImpersonationRequest, cancellationToken);
-        person = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "start_impersonation", null, cancellationToken);
+        person = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "start_impersonation", project + ":" + this.RouteId("user"), cancellationToken);
         var issued = await impersonations.StartAsync(person, project, this.RouteId("user"), request, cancellationToken);
         return Results.Json(issued, ImpersonationJson.Default.ImpersonationTicket, statusCode: 201);
     }

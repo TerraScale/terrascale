@@ -10,7 +10,7 @@ public sealed class ListImpersonationsEndpoint(TenantDirectory tenants, Platform
     {
         Get(Root + "/impersonations");
         this.Describe("list_impersonations", "List active impersonations",
-            "Requires a person with the project admin role. Tickets last 60 seconds and bind one client; starting requires a start_impersonation step-up proof.",
+            "Requires a person with the project admin role. Returns up to 100 active impersonations in the project.",
             "Impersonation", null, 200, typeof(ImpersonationPage));
     }
 

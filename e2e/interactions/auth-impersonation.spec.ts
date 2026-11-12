@@ -3,7 +3,7 @@ import { Audit, auditedContext, expect, test } from '../support/audit';
 import { prepareAuthManagement } from '../support/auth-management';
 import { confirmWithPassword, hostedReady } from '../support/hosted';
 import { auth, dash, desktop, onLocalStack } from '../support/stack';
-import { journey, saveSecret } from '../support/state';
+import { journey, saveCookies, saveSecret } from '../support/state';
 
 test('project admin impersonates one client with an actor claim and can end it', async ({ page, browser }, info) => {
   await onLocalStack(async () => {
@@ -63,7 +63,15 @@ test('project admin impersonates one client with an actor claim and can end it',
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
       state, nonce, impersonation_ticket: ticket,
     };
-    const context = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
+    const stranger = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
+    try {
+      const refused = await stranger.request.get(auth + '/' + owner.projectId + '/oauth/authorize', { params: parameters, maxRedirects: 0 });
+      expect(new URL(refused.headers().location).searchParams.get('error')).toBe('invalid_request');
+    } finally {
+      await saveCookies(stranger);
+      await stranger.close();
+    }
+    const context = await auditedContext(browser, { viewport: desktop, storageState: await page.context().storageState() });
     const customer = await context.newPage();
     const customerAudit = new Audit(customer, info);
     try {
@@ -118,10 +126,66 @@ test('project admin impersonates one client with an actor claim and can end it',
         form: { grant_type: 'refresh_token', client_id: clients[0], refresh_token: tokens.refresh_token },
       });
       expect(refreshed.status()).toBe(400);
-      await customer.getByRole('button', { name: 'End impersonation' }).click();
+      await customer.goto(auth + '/ui/' + owner.projectId + '/sign-in');
+      await hostedReady(customer);
       await expect(customer.getByRole('button', { name: 'End impersonation' })).toHaveCount(0);
+      expect((await context.cookies(auth)).some(cookie => cookie.name === '__Host-tsauth_impersonation_' + owner.projectId)).toBe(false);
+      const signedIn = await context.request.post(auth + '/ui/' + owner.projectId + '/sign-in/password', {
+        headers: { Origin: auth }, form: { email: profile.email, password: owner.password }, maxRedirects: 0,
+      });
+      expect(signedIn.status()).toBe(200);
+      const normal = await context.request.get(auth + '/' + owner.projectId + '/oauth/authorize', {
+        params: Object.fromEntries(Object.entries({ ...parameters, prompt: 'none' }).filter(([key]) => key !== 'impersonation_ticket')), maxRedirects: 0,
+      });
+      expect(new URL(normal.headers().location).searchParams.has('code')).toBe(true);
+      saveSecret('impersonation-normal-code', new URL(normal.headers().location).searchParams.get('code')!);
+      await customerAudit.check('ended impersonation permits normal sign-in');
       await audit.check('ended impersonation');
+      const challenge = await page.request.post(auth + '/v1/terrascale/step-up', {
+        headers, data: { purpose: 'start_impersonation', audience: 'ts-auth', return_uri: dash + '/auth/step-up/callback',
+          organization_id: owner.projectId + ':' + management.user },
+      });
+      expect(challenge.status()).toBe(201);
+      const proof = await challenge.json();
+      saveSecret('impersonation-delete-proof', proof.proof);
+      const approved = await page.request.post(proof.step_up_url, { headers: { Origin: auth }, form: { password: owner.password } });
+      expect(approved.status()).toBe(200);
+      const requestHeaders = { ...headers, 'X-TerraScale-Step-Up-Proof': proof.proof };
+      const data = { reason: 'Verify deletion ends support access', client_id: clients[0] };
+      const wrongTarget = await page.request.post(root + '/users/' + actor + '/impersonations', { headers: requestHeaders, data });
+      expect(wrongTarget.status()).toBe(403);
+      expect((await wrongTarget.json()).error.code).toBe('step_up_required');
+      const nextTicket = await page.request.post(endpoint, { headers: requestHeaders, data });
+      expect(nextTicket.status()).toBe(201);
+      const next = await nextTicket.json();
+      saveSecret('impersonation-delete-ticket', next.ticket);
+      const nextAuthorization = await context.request.get(auth + '/' + owner.projectId + '/oauth/authorize', {
+        params: { ...parameters, impersonation_ticket: next.ticket }, maxRedirects: 0,
+      });
+      expect(new URL(nextAuthorization.headers().location).searchParams.has('code')).toBe(true);
+      saveSecret('impersonation-delete-code', new URL(nextAuthorization.headers().location).searchParams.get('code')!);
+      const deleted = await page.request.delete(root + '/users/' + management.user, { headers });
+      expect(deleted.status()).toBe(204);
+      const auditEvents = await page.request.get(auth + '/v1/terrascale/organizations/' + owner.organizationId + '/audit-events', { headers });
+      expect(auditEvents.status()).toBe(200);
+      const ends = (await auditEvents.json()).items.filter((event: { action: string; target: string }) =>
+        event.action === 'impersonation.ended' && event.target === management.user);
+      expect(ends).toEqual(expect.arrayContaining([expect.objectContaining({ actor, action: 'impersonation.ended', target: management.user })]));
+      expect(ends.some((event: { detail: string }) => event.detail.includes('end_reason=manual'))).toBe(true);
+      expect(ends.some((event: { detail: string }) => event.detail.includes('impersonation=' + next.id) && event.detail.includes('end_reason=target_deleted'))).toBe(true);
+      await customer.goto(auth + '/ui/' + owner.projectId + '/sign-in');
+      await hostedReady(customer);
+      await expect(customer.getByRole('button', { name: 'End impersonation' })).toHaveCount(0);
+      expect((await context.cookies(auth)).some(cookie => cookie.name === '__Host-tsauth_impersonation_' + owner.projectId)).toBe(false);
+      await expect.poll(async () => {
+        const response = await page.request.get(root + '/events', { headers, params: { limit: 100 } });
+        expect(response.status()).toBe(200);
+        return (await response.json()).items
+          .filter((event: { type: string; data: { user_id: string } }) => event.type === 'impersonation.ended' && event.data.user_id === management.user)
+          .map((event: { data: { reason: string } }) => event.data.reason);
+      }).toEqual(expect.arrayContaining(['manual', 'target_deleted']));
     } finally {
+      await saveCookies(context);
       await context.close();
     }
   });
