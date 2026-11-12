@@ -28,6 +28,7 @@ internal static class ManagementExtensions
         services.AddSingleton<SystemCatalog>();
         services.AddSingleton<PlanFanout>();
         services.AddSingleton<EnrollmentFanout>();
+        services.AddSingleton<ClosureFaults>();
         services.AddSingleton<ClosureFanout>();
         services.AddSingleton<RemoteDatabases>();
         services.AddSingleton<RegionSetPlacement>();

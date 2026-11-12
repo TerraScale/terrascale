@@ -8,7 +8,9 @@ internal static class ManagementErrors
 
     public static readonly Conflict NameTaken = new("name is already taken", "name_taken");
 
-    public static readonly Conflict NotEmpty = new("delete what it contains first", "not_empty");
+    public const string NotEmptyCode = "not_empty";
+
+    public static readonly Conflict NotEmpty = new("delete what it contains first", NotEmptyCode);
 
     public static readonly Conflict IdTaken = new("the id is already taken", "id_taken");
 

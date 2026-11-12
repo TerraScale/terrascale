@@ -1,89 +1,120 @@
 using System.Net;
+using System.Text.Json;
 using TerraBase.Configuration;
-using TerraBase.Features.FileStorage;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Management;
 
-internal enum RegionClosure
+internal enum RegionAnswer
 {
-    Acknowledged,
+    Accepted,
     Pending,
-    Unanswered,
+    Empty,
+    NotEmpty,
+    ClosureConflict,
+    BindingConflict,
+    Refused,
+    Invalid,
+    NotListed,
+    TimedOut,
+    Unreachable,
 }
 
+internal sealed record RegionReply(RegionAnswer Answer, Exception? Cause = null);
+
 internal sealed class ClosureFanout(
-    IRegionPeers peers, IRegionCatalog regions, TerraBaseOptions options, IHttpClientFactory http, InternalCredential credential, FileCleanupFaults faults)
+    IRegionPeers peers, IRegionCatalog regions, TerraBaseOptions options, IHttpClientFactory http, InternalCredential credential, ClosureFaults faults)
 {
     internal const string ScopeHeader = "X-TerraBase-Closure-Scope";
 
     internal const string RegionScope = "region";
+
+    internal const string CheckScope = "check";
 
     private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(5);
 
     public async ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) =>
         [.. (await regions.ServingAsync(cancellationToken).ConfigureAwait(false)).Where(region => region != options.Region)];
 
-    public void Failed(string? project, Exception error)
+    public void Failed(string? project, Exception error) => faults.Failed(project, error);
+
+    public void Refused(string project, string region) => faults.Unacknowledged(project, new(RegionAnswer.NotEmpty), region);
+
+    public async Task<RegionAnswer> CheckAsync(string region, string project, ProjectClosureRequest closure, CancellationToken cancellationToken) =>
+        (await AskAsync(region, CheckScope, project, closure, cancellationToken).ConfigureAwait(false)).Answer;
+
+    public async Task<RegionAnswer> SendAsync(string region, ProjectClosureRecord closure, CancellationToken cancellationToken)
     {
-        if (project is null)
+        var reply = await AskAsync(region, RegionScope, closure.ProjectId,
+            new ProjectClosureRequest(closure.FormatVersion, closure.ClosureId, closure.AuthorityOrganizationId), cancellationToken).ConfigureAwait(false);
+        if (reply.Answer == RegionAnswer.Empty)
         {
-            faults.Failed(FileCleanupFaults.ClosureRegions, null, null, error);
+            reply = new(RegionAnswer.Invalid);
         }
-        else
+
+        if (reply.Answer is not (RegionAnswer.Accepted or RegionAnswer.Pending or RegionAnswer.NotEmpty))
         {
-            faults.Unacknowledged(project, null, error);
+            faults.Unacknowledged(closure.ProjectId, reply, region);
         }
+
+        return reply.Answer;
     }
 
-    public async Task<RegionClosure> SendAsync(string region, ProjectClosureRecord closure, CancellationToken cancellationToken)
+    private async Task<RegionReply> AskAsync(string region, string scope, string project, ProjectClosureRequest closure, CancellationToken cancellationToken)
     {
         try
         {
             if ((await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(peer => peer.Region == region) is not { } peer)
             {
-                faults.Unacknowledged(closure.ProjectId, region, new InvalidOperationException("a project closure waits for a region that the peers file does not list"));
-                return RegionClosure.Unanswered;
+                return new(RegionAnswer.NotListed);
             }
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(PeerTimeout);
-            using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(peer.Address, "/admin/projects/" + Uri.EscapeDataString(closure.ProjectId) + "/closure"))
+            using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(peer.Address, "/admin/projects/" + Uri.EscapeDataString(project) + "/closure"))
             {
                 Version = HttpVersion.Version20,
                 VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-                Headers = { { ScopeHeader, RegionScope } },
-                Content = JsonContent.Create(new ProjectClosureRequest(closure.FormatVersion, closure.ClosureId, closure.AuthorityOrganizationId),
-                    ManagementJsonContext.Default.ProjectClosureRequest),
+                Headers = { { ScopeHeader, scope } },
+                Content = JsonContent.Create(closure, ManagementJsonContext.Default.ProjectClosureRequest),
             };
             credential.Sign(request.Headers);
             using var client = http.CreateClient(HomeLocator.HttpClientName);
             using var response = await client.SendAsync(request, timeout.Token).ConfigureAwait(false);
-            if (response.StatusCode == HttpStatusCode.Accepted)
+            return response.StatusCode switch
             {
-                return RegionClosure.Pending;
-            }
-
-            if (response.StatusCode != HttpStatusCode.OK)
-            {
-                faults.Unacknowledged(closure.ProjectId, region, new HttpRequestException("a region refused a project closure", null, response.StatusCode));
-                return RegionClosure.Pending;
-            }
-
-            var answer = await response.Content.ReadFromJsonAsync(ManagementJsonContext.Default.RegionClosureStatus, timeout.Token).ConfigureAwait(false);
-            if (answer is { Status: ProjectClosure.Accepted, EvidenceVersion: 2 } && answer.ClosureId == closure.ClosureId)
-            {
-                return RegionClosure.Acknowledged;
-            }
-
-            faults.Unacknowledged(closure.ProjectId, region, new InvalidDataException("a region accepted a project closure without version-2 evidence of this closure"));
-            return RegionClosure.Pending;
+                HttpStatusCode.Accepted => new(RegionAnswer.Pending),
+                HttpStatusCode.OK => new(Answered(
+                    await response.Content.ReadFromJsonAsync(ManagementJsonContext.Default.RegionClosureStatus, timeout.Token).ConfigureAwait(false), closure)),
+                HttpStatusCode.Conflict => new(Refusal(
+                    await response.Content.ReadFromJsonAsync(ManagementJsonContext.Default.RegionRefusal, timeout.Token).ConfigureAwait(false))),
+                _ => new(RegionAnswer.Refused, new HttpRequestException("a region refused a project closure", null, response.StatusCode)),
+            };
         }
         catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            faults.Unacknowledged(closure.ProjectId, region, error);
-            return RegionClosure.Unanswered;
+            return new(error switch
+            {
+                OperationCanceledException => RegionAnswer.TimedOut,
+                JsonException => RegionAnswer.Invalid,
+                _ => RegionAnswer.Unreachable,
+            }, error);
         }
     }
+
+    private static RegionAnswer Answered(RegionClosureStatus? answer, ProjectClosureRequest closure) => answer switch
+    {
+        { Status: ProjectClosure.Accepted, EvidenceVersion: 2 } when answer.ClosureId == closure.ClosureId => RegionAnswer.Accepted,
+        { Status: ProjectClosure.Empty } when answer.ClosureId == closure.ClosureId => RegionAnswer.Empty,
+        _ => RegionAnswer.Invalid,
+    };
+
+    private static RegionAnswer Refusal(RegionRefusal? refusal) => refusal?.Error?.Code switch
+    {
+        ManagementErrors.NotEmptyCode => RegionAnswer.NotEmpty,
+        ProjectClosure.ClosureConflictCode => RegionAnswer.ClosureConflict,
+        ProjectClosure.BindingConflictCode => RegionAnswer.BindingConflict,
+        _ => RegionAnswer.Refused,
+    };
 }

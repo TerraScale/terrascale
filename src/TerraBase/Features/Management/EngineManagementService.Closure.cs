@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -14,9 +16,32 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService
 {
     private readonly HashSet<string> _platformClosuresReported = [with(StringComparer.Ordinal)];
+    private const int ForwardedAtOnce = 8;
+
+    private static readonly TimeSpan ForwardPassBudget = TimeSpan.FromSeconds(10);
+
     private string? _closuresAfter;
 
     private string? _closureRegionsAfter;
+
+    private long _closuresPending;
+
+    private long _closuresOldestTicks;
+
+    private long _closuresPassPending;
+
+    private long _closuresPassOldestTicks;
+
+    private void RegisterClosureMetrics()
+    {
+        _recoveryMeter.CreateObservableGauge("terrabase.project_closure.pending", () => Interlocked.Read(ref _closuresPending),
+            description: "Project closures that a holder or a region has not confirmed.");
+        _recoveryMeter.CreateObservableGauge("terrabase.project_closure.oldest_pending_age_seconds", () =>
+        {
+            var ticks = Interlocked.Read(ref _closuresOldestTicks);
+            return ticks == 0 ? 0 : Math.Max(0, (time.GetUtcNow() - new DateTimeOffset(ticks, TimeSpan.Zero)).TotalSeconds);
+        }, description: "Seconds since the oldest unconfirmed project closure was requested.");
+    }
 
     public async ValueTask<CloseProjectResult> CloseProjectAsync(
         string projectId, string closureId, string authorityOrganizationId, int version, bool forwarded, CancellationToken cancellationToken)
@@ -27,20 +52,28 @@ internal sealed partial class EngineManagementService
         }
 
         var regions = await closureFanout.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        if (version == 1 && !forwarded && regions.Count > 0
+            && await RefusedBeforeFenceAsync(projectId, new(version, closureId, authorityOrganizationId), regions, cancellationToken).ConfigureAwait(false) is { } refusal)
+        {
+            return refusal;
+        }
+
         var result = await FenceProjectAsync(projectId, closureId, authorityOrganizationId, version, regions, forwarded, cancellationToken).ConfigureAwait(false);
         if (result is not ProjectClosureStatus { Status: ProjectClosure.Pending })
         {
             return result;
         }
 
-        await Task.WhenAll(EraseClosingAsync(projectId, forwarded ? ForwardedErasureBudget : ErasureBudget, cancellationToken),
-            forwarded ? Task.CompletedTask : AcknowledgeRegionsAsync(projectId, [], cancellationToken)).ConfigureAwait(false);
+        var until = time.GetUtcNow() + (forwarded ? ForwardedErasureBudget : ErasureBudget);
+        await Task.WhenAll(EraseClosingAsync(projectId, until, cancellationToken),
+            forwarded ? Task.CompletedTask : AcknowledgeRegionsAsync(projectId, [], new(StringComparer.Ordinal), cancellationToken)).ConfigureAwait(false);
         string? scanned = null;
         while (true)
         {
             var step = await WriteAsync<ClosureStep>(transaction => RefreshClosureAsync(transaction, projectId, forwarded, cancellationToken),
                 static error => new(error, null), cancellationToken).ConfigureAwait(false);
-            if (step.Result is not ProjectClosureStatus { Status: ProjectClosure.Pending } || step.Scan is null or "complete" || step.Scan == scanned)
+            if (step.Result is not ProjectClosureStatus { Status: ProjectClosure.Pending } || step.Scan is null or "complete" || step.Scan == scanned
+                || time.GetUtcNow() >= until)
             {
                 return step.Result;
             }
@@ -49,9 +82,75 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    private async Task EraseClosingAsync(string projectId, TimeSpan budget, CancellationToken cancellationToken)
+    public async ValueTask<CloseProjectResult> InspectClosureAsync(
+        string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken) =>
+        await ReadAsync<CloseProjectResult>(async transaction =>
+        {
+            var existing = await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
+            if (existing is not null && ClosureConflicts(existing, projectId, closureId, authorityOrganizationId, version))
+            {
+                return ProjectClosure.ClosureConflict;
+            }
+
+            if (!await ClosureOrganizationMatchesAsync(transaction, projectId, authorityOrganizationId, cancellationToken).ConfigureAwait(false))
+            {
+                return ProjectClosure.BindingConflict;
+            }
+
+            if (existing is not null)
+            {
+                return await ClosureStatusAsync(transaction, existing, forwarded: true, cancellationToken).ConfigureAwait(false);
+            }
+
+            return version == 1 && !await IsProjectEmptyAsync(transaction, projectId, cancellationToken).ConfigureAwait(false)
+                ? ManagementErrors.NotEmpty
+                : new ProjectClosureStatus(ProjectClosure.Empty, closureId, 0);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask<CloseProjectResult?> RefusedBeforeFenceAsync(
+        string projectId, ProjectClosureRequest closure, IReadOnlyList<string> regions, CancellationToken cancellationToken)
     {
-        var until = time.GetUtcNow() + budget;
+        var local = await InspectClosureAsync(projectId, closure.ClosureId!, closure.AuthorityOrganizationId!, closure.Version, cancellationToken).ConfigureAwait(false);
+        if (local is not ProjectClosureStatus status)
+        {
+            return local;
+        }
+
+        if (status.Status != ProjectClosure.Empty)
+        {
+            return null;
+        }
+
+        var answers = await Task.WhenAll(regions.Select(region => closureFanout.CheckAsync(region, projectId, closure, cancellationToken))).ConfigureAwait(false);
+        if (answers.Contains(RegionAnswer.NotEmpty))
+        {
+            return ManagementErrors.NotEmpty;
+        }
+
+        if (answers.Contains(RegionAnswer.ClosureConflict))
+        {
+            return ProjectClosure.ClosureConflict;
+        }
+
+        if (answers.Contains(RegionAnswer.BindingConflict))
+        {
+            return ProjectClosure.BindingConflict;
+        }
+
+        if (answers.All(answer => answer is RegionAnswer.Empty or RegionAnswer.Accepted or RegionAnswer.Pending))
+        {
+            return null;
+        }
+
+        return ProjectClosure.RegionUnanswered;
+    }
+
+    private static bool ClosureConflicts(ProjectClosureRecord existing, string projectId, string closureId, string authorityOrganizationId, int version) =>
+        existing.FormatVersion is not (1 or 2) || version < existing.FormatVersion || existing.ProjectId != projectId || existing.ClosureId != closureId
+        || existing.AuthorityOrganizationId != authorityOrganizationId;
+
+    private async Task EraseClosingAsync(string projectId, DateTimeOffset until, CancellationToken cancellationToken)
+    {
         await EraseClosingDatabasesAsync(projectId, until, cancellationToken).ConfigureAwait(false);
         await EraseClosingFilesAsync(projectId, until, cancellationToken).ConfigureAwait(false);
     }
@@ -73,7 +172,7 @@ internal sealed partial class EngineManagementService
         {
             if (await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false) is { } existing)
             {
-                if (existing.FormatVersion is not (1 or 2) || version < existing.FormatVersion || existing.ProjectId != projectId || existing.ClosureId != closureId || existing.AuthorityOrganizationId != authorityOrganizationId)
+                if (ClosureConflicts(existing, projectId, closureId, authorityOrganizationId, version))
                 {
                     return ProjectClosure.ClosureConflict;
                 }
@@ -172,69 +271,130 @@ internal sealed partial class EngineManagementService
     private async ValueTask<ProjectClosureStatus> ClosureStatusAsync(IStorageTransaction transaction, ProjectClosureRecord record, bool forwarded, CancellationToken cancellationToken)
     {
         var holders = CatalogHolders(options.MachineId);
-        holders.UnionWith(forwarded ? record.ExpectedHolders.Where(holder => !ProjectClosure.IsRegionHolder(holder)) : record.ExpectedHolders);
+        if (!forwarded)
+        {
+            holders.UnionWith(record.ExpectedHolders);
+        }
+
         var pending = 0;
+        List<string> notEmpty = [];
         foreach (var holder in holders)
         {
             var receipt = await GetAsync(transaction, ProjectClosure.Receipts(record.ProjectId), holder, ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken)
                 .ConfigureAwait(false);
-            if (receipt is null || !receipt.Confirms(record, holder))
+            if (receipt is not null && receipt.Confirms(record, holder))
             {
-                pending++;
+                continue;
+            }
+
+            pending++;
+            if (receipt is not null && ProjectClosure.IsRegionHolder(holder) && receipt.Refuses(record, holder))
+            {
+                notEmpty.Add(ProjectClosure.HolderRegion(holder));
             }
         }
 
-        return new ProjectClosureStatus(pending == 0 ? ProjectClosure.Accepted : ProjectClosure.Pending, record.ClosureId, pending);
+        return new ProjectClosureStatus(pending == 0 ? ProjectClosure.Accepted : ProjectClosure.Pending, record.ClosureId, pending)
+        {
+            NotEmptyRegions = [.. notEmpty.Order(StringComparer.Ordinal)],
+        };
     }
 
-    private async Task<IReadOnlyList<string>> AcknowledgeRegionsAsync(string projectId, HashSet<string> unanswered, CancellationToken cancellationToken)
+    private async Task<ClosureSeen> AcknowledgeRegionsAsync(
+        string projectId, IReadOnlyList<string> serving, ConcurrentDictionary<string, bool> silent, CancellationToken cancellationToken)
     {
-        var waiting = await ReadAsync<WaitingClosure?>(async transaction =>
-        {
-            if (await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)
-                is not { FormatVersion: 1 or 2 } closure || closure.ProjectId != projectId)
-            {
-                return null;
-            }
-
-            List<string> regions = [];
-            foreach (var holder in closure.ExpectedHolders.Where(ProjectClosure.IsRegionHolder))
-            {
-                var receipt = await GetAsync(transaction, ProjectClosure.Receipts(projectId), holder, ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken)
-                    .ConfigureAwait(false);
-                if (receipt is null || !receipt.Confirms(closure, holder))
-                {
-                    regions.Add(ProjectClosure.HolderRegion(holder));
-                }
-            }
-
-            return new(closure, regions);
-        }, static _ => null, cancellationToken).ConfigureAwait(false);
+        var waiting = await ReadAsync<WaitingClosure?>(transaction => WaitingClosureAsync(transaction, projectId, cancellationToken), static _ => null, cancellationToken)
+            .ConfigureAwait(false);
         if (waiting is null)
         {
-            return [];
+            return new(Pending: false, null);
         }
 
-        string[] asked = [.. waiting.Regions.Where(region => !unanswered.Contains(region))];
-        var answers = await Task.WhenAll(asked.Select(region => closureFanout.SendAsync(region, waiting.Closure, cancellationToken))).ConfigureAwait(false);
-        List<string> silent = [];
+        if (waiting.Pending && waiting.Closure.ExpectedHolders.Any(ProjectClosure.IsRegionHolder)
+            && serving.Any(region => !waiting.Closure.ExpectedHolders.Contains(ProjectClosure.RegionHolder(region))))
+        {
+            waiting = await WriteAsync<WaitingClosure?>(transaction => NameServingRegionsAsync(transaction, waiting.Closure, serving, cancellationToken),
+                static _ => null, cancellationToken).ConfigureAwait(false) ?? waiting;
+        }
+
+        var closure = waiting.Closure;
+        string[] asked = [.. waiting.Regions.Where(region => !silent.ContainsKey(region))];
+        var answers = await Task.WhenAll(asked.Select(region => closureFanout.SendAsync(region, closure, cancellationToken))).ConfigureAwait(false);
         for (var index = 0; index < asked.Length; index++)
         {
-            if (answers[index] == RegionClosure.Unanswered)
+            var region = asked[index];
+            switch (answers[index])
             {
-                silent.Add(asked[index]);
-            }
-            else if (answers[index] == RegionClosure.Acknowledged)
-            {
-                _ = await WriteAsync<bool>(transaction => RecordRegionReceiptAsync(transaction, waiting.Closure, asked[index], cancellationToken),
-                    static _ => false, cancellationToken).ConfigureAwait(false);
+                case RegionAnswer.Accepted:
+                    _ = await WriteAsync<bool>(transaction => RecordRegionReceiptAsync(transaction, closure, region, empty: true, cancellationToken),
+                        static _ => false, cancellationToken).ConfigureAwait(false);
+                    break;
+                case RegionAnswer.NotEmpty:
+                    if (await WriteAsync<bool>(transaction => RecordRegionReceiptAsync(transaction, closure, region, empty: false, cancellationToken),
+                        static _ => false, cancellationToken).ConfigureAwait(false))
+                    {
+                        closureFanout.Refused(projectId, region);
+                    }
+
+                    break;
+                case RegionAnswer.NotListed or RegionAnswer.TimedOut or RegionAnswer.Unreachable:
+                    _ = silent.TryAdd(region, true);
+                    break;
+                case RegionAnswer.Pending or RegionAnswer.Empty or RegionAnswer.ClosureConflict or RegionAnswer.BindingConflict or RegionAnswer.Refused or RegionAnswer.Invalid:
+                    break;
+                default:
+                    throw new UnreachableException();
             }
         }
 
-        return silent;
+        return new(waiting.Pending, closure.RequestedAt);
     }
 
-    private async ValueTask<bool> RecordRegionReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord sent, string region, CancellationToken cancellationToken)
+    private async ValueTask<WaitingClosure?> WaitingClosureAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken)
+    {
+        if (await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)
+            is not { FormatVersion: 1 or 2 } closure || closure.ProjectId != projectId)
+        {
+            return null;
+        }
+
+        List<string> regions = [];
+        foreach (var holder in closure.ExpectedHolders.Where(ProjectClosure.IsRegionHolder))
+        {
+            var receipt = await GetAsync(transaction, ProjectClosure.Receipts(projectId), holder, ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken)
+                .ConfigureAwait(false);
+            if (receipt is null || !receipt.Confirms(closure, holder))
+            {
+                regions.Add(ProjectClosure.HolderRegion(holder));
+            }
+        }
+
+        var status = await ClosureStatusAsync(transaction, closure, forwarded: false, cancellationToken).ConfigureAwait(false);
+        return new(closure, regions, status.Status == ProjectClosure.Pending);
+    }
+
+    private async ValueTask<WaitingClosure?> NameServingRegionsAsync(
+        IStorageTransaction transaction, ProjectClosureRecord seen, IReadOnlyList<string> serving, CancellationToken cancellationToken)
+    {
+        if (await WaitingClosureAsync(transaction, seen.ProjectId, cancellationToken).ConfigureAwait(false) is not { Pending: true } waiting
+            || waiting.Closure.ClosureId != seen.ClosureId || !waiting.Closure.ExpectedHolders.Any(ProjectClosure.IsRegionHolder))
+        {
+            return null;
+        }
+
+        string[] holders = [.. waiting.Closure.ExpectedHolders.Union(serving.Select(ProjectClosure.RegionHolder), StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+        if (holders.Length == waiting.Closure.ExpectedHolders.Length)
+        {
+            return waiting;
+        }
+
+        await PutAsync(transaction, ProjectClosure.Kind, seen.ProjectId, waiting.Closure with { ExpectedHolders = holders }, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken)
+            .ConfigureAwait(false);
+        logger.ZLogInformation($"The pending closure of project {seen.ProjectId:@Project} now names every serving region");
+        return await WaitingClosureAsync(transaction, seen.ProjectId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<bool> RecordRegionReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord sent, string region, bool empty, CancellationToken cancellationToken)
     {
         var holder = ProjectClosure.RegionHolder(region);
         if (await GetAsync(transaction, ProjectClosure.Kind, sent.ProjectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false) is not { } current
@@ -244,13 +404,21 @@ internal sealed partial class EngineManagementService
             return false;
         }
 
+        if (await GetAsync(transaction, ProjectClosure.Receipts(sent.ProjectId), holder, ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken).ConfigureAwait(false) is { } known
+            && (empty ? known.Confirms(current, holder) : known.Refuses(current, holder)))
+        {
+            return false;
+        }
+
         await PutAsync(transaction, ProjectClosure.Receipts(sent.ProjectId), holder,
-            new ProjectClosureReceipt(sent.ProjectId, sent.ClosureId, holder, Empty: true, time.GetUtcNow(), sent.FormatVersion, EvidenceVersion: 2),
+            new ProjectClosureReceipt(sent.ProjectId, sent.ClosureId, holder, empty, time.GetUtcNow(), sent.FormatVersion, EvidenceVersion: 2),
             ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
-    private sealed record WaitingClosure(ProjectClosureRecord Closure, IReadOnlyList<string> Regions);
+    private sealed record WaitingClosure(ProjectClosureRecord Closure, IReadOnlyList<string> Regions, bool Pending);
+
+    private sealed record ClosureSeen(bool Pending, DateTimeOffset? RequestedAt);
 
     internal async ValueTask ForwardClosuresAsync(CancellationToken cancellationToken)
     {
@@ -268,27 +436,74 @@ internal sealed partial class EngineManagementService
                 return;
             }
 
-            HashSet<string> unanswered = new(StringComparer.Ordinal);
-            foreach (var stored in page.Records)
+            var serving = await closureFanout.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+            var seen = new ClosureSeen?[page.Records.Count];
+            var handled = await ForwardPageAsync(page.Records, serving, seen, cancellationToken).ConfigureAwait(false);
+            foreach (var closure in seen.Take(handled))
             {
-                try
+                if (closure is { Pending: true })
                 {
-                    if (EntityPayload.Read(stored, ManagementJsonContext.Default.ProjectClosureRecord) is { } record && record.ExpectedHolders.Any(ProjectClosure.IsRegionHolder))
+                    _closuresPassPending++;
+                    if (closure.RequestedAt is { UtcTicks: var requested })
                     {
-                        unanswered.UnionWith(await AcknowledgeRegionsAsync(stored.Id, unanswered, cancellationToken).ConfigureAwait(false));
+                        _closuresPassOldestTicks = _closuresPassOldestTicks == 0 ? requested : Math.Min(_closuresPassOldestTicks, requested);
                     }
-                }
-                catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-                {
-                    closureFanout.Failed(stored.Id, error);
                 }
             }
 
-            _closureRegionsAfter = page.HasMore ? page.Records[^1].Id : null;
+            if (handled < page.Records.Count)
+            {
+                if (handled > 0)
+                {
+                    _closureRegionsAfter = page.Records[handled - 1].Id;
+                }
+
+                return;
+            }
+
+            if (page.HasMore)
+            {
+                _closureRegionsAfter = page.Records[^1].Id;
+                return;
+            }
+
+            Interlocked.Exchange(ref _closuresPending, _closuresPassPending);
+            Interlocked.Exchange(ref _closuresOldestTicks, _closuresPassOldestTicks);
+            _closureRegionsAfter = null;
+            _closuresPassPending = _closuresPassOldestTicks = 0;
         }
         catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             closureFanout.Failed(null, error);
+        }
+    }
+
+    private async ValueTask<int> ForwardPageAsync(
+        IReadOnlyList<StoredRecord> closures, IReadOnlyList<string> serving, ClosureSeen?[] seen, CancellationToken cancellationToken)
+    {
+        ConcurrentDictionary<string, bool> silent = new(StringComparer.Ordinal);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(ForwardPassBudget);
+        try
+        {
+            await Parallel.ForEachAsync(Enumerable.Range(0, closures.Count), new ParallelOptions { MaxDegreeOfParallelism = ForwardedAtOnce, CancellationToken = deadline.Token },
+                async (index, token) =>
+                {
+                    try
+                    {
+                        seen[index] = await AcknowledgeRegionsAsync(closures[index].Id, serving, silent, token).ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (error is not OperationCanceledException || !token.IsCancellationRequested)
+                    {
+                        closureFanout.Failed(closures[index].Id, error);
+                        seen[index] = new(Pending: true, null);
+                    }
+                }).ConfigureAwait(false);
+            return closures.Count;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return seen.TakeWhile(closure => closure is not null).Count();
         }
     }
 

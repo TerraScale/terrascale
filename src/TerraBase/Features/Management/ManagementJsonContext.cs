@@ -58,6 +58,7 @@ namespace TerraBase.Features.Management;
 [JsonSerializable(typeof(ProjectClosureRequest))]
 [JsonSerializable(typeof(ProjectClosureStatus))]
 [JsonSerializable(typeof(RegionClosureStatus))]
+[JsonSerializable(typeof(RegionRefusal))]
 [JsonSerializable(typeof(ProjectUsage))]
 [JsonSerializable(typeof(AllowanceUsagePage))]
 [JsonSerializable(typeof(NodeUsageMonths))]
