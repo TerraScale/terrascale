@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse } from '@playwright/test';
-import { test, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
-import { auth, dash, production } from '../support/stack';
+import { test, authenticatedCells, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
+import { dash, production } from '../support/stack';
 import { Audit, auditedContext } from '../support/audit';
 import { saveCookies, saveSecret } from '../support/state';
 import { confirmWithPassword, onboard, signUp, verify } from '../support/hosted';
@@ -269,11 +269,7 @@ test('R8 a TTL branch keeps its identity through catalog sync, a move and a rena
     await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
     await audit.check('placement branch owner upgraded');
     const key = await createApiKey(page, audit, name('identity-key'), 'database identity');
-    const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
-      form: { grant_type: 'client_credentials', client_id: key.slice(0, 26), client_secret: key, project: projectId, scope: 'sql:read sql:write databases:read databases:write' },
-    }));
-    saveSecret('identity-token', grant.access_token);
-    const cells = await playwright.request.newContext({ extraHTTPHeaders: { authorization: `Bearer ${grant.access_token}` }, timeout: 15_000 });
+    const cells = await authenticatedCells(playwright.request, request, key, projectId);
     try {
       const source = await create(cells, ['gru'], projectId);
       let branch: Database | undefined;

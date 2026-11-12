@@ -1,47 +1,52 @@
 import { randomBytes } from 'node:crypto';
-import { test as base, expect, type APIRequestContext, type APIResponse } from '@playwright/test';
+import { test as base, expect, type APIRequestContext, type APIResponse, type APIRequest } from '@playwright/test';
 import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 
 export const home = 'https://gru.api.terrascale.tech';
 export const replica = 'https://fra.api.terrascale.tech';
 export type Cells = Pick<APIRequestContext, 'get' | 'post' | 'put' | 'patch' | 'delete'>;
+export async function authenticatedCells(api: APIRequest, request: APIRequestContext, apiKey: string, projectId: string): Promise<Cells & { dispose(): Promise<void> }> {
+  const context = await api.newContext({ timeout: 15_000 });
+  let authorization = '';
+  let expires = 0;
+  let renewing: Promise<Record<string, string>> | undefined;
+  const exchange = async () => {
+    const response = await request.post(`${auth}/terrascale/oauth/token`, {
+      form: {
+        grant_type: 'client_credentials',
+        client_id: apiKey.slice(0, 26),
+        client_secret: apiKey,
+        project: projectId,
+        scope: 'sql:read sql:write databases:read databases:write',
+      },
+    });
+    expect(response.status(), '200 exchanged project credential').toBe(200);
+    const grant = await response.json() as { access_token: string; expires_in: number };
+    saveSecret('placement-token', grant.access_token);
+    authorization = `Bearer ${grant.access_token}`;
+    expires = Date.now() + grant.expires_in * 1000 - 10_000;
+    return { authorization };
+  };
+  const headers = async () => {
+    if (Date.now() < expires) return { authorization };
+    renewing ??= exchange().finally(() => { renewing = undefined; });
+    return renewing;
+  };
+  return {
+    get: async (url, options) => context.get(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
+    post: async (url, options) => context.post(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
+    put: async (url, options) => context.put(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
+    patch: async (url, options) => context.patch(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
+    delete: async (url, options) => context.delete(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
+    dispose: () => context.dispose(),
+  };
+}
+
 export const test = base.extend<{ cells: Cells }>({
   cells: async ({ playwright, request }, use) => {
     const current = journey();
-    const context = await playwright.request.newContext({ timeout: 15_000 });
-    let authorization = '';
-    let expires = 0;
-    let renewing: Promise<Record<string, string>> | undefined;
-    const exchange = async () => {
-      const response = await request.post(`${auth}/terrascale/oauth/token`, {
-        form: {
-          grant_type: 'client_credentials',
-          client_id: current.apiKey.slice(0, 26),
-          client_secret: current.apiKey,
-          project: current.projectId,
-          scope: 'sql:read sql:write databases:read databases:write',
-        },
-      });
-      expect(response.status(), '200 exchanged project credential').toBe(200);
-      const grant = await response.json() as { access_token: string; expires_in: number };
-      saveSecret('placement-token', grant.access_token);
-      authorization = `Bearer ${grant.access_token}`;
-      expires = Date.now() + grant.expires_in * 1000 - 10_000;
-      return { authorization };
-    };
-    const headers = async () => {
-      if (Date.now() < expires) return { authorization };
-      renewing ??= exchange().finally(() => { renewing = undefined; });
-      return renewing;
-    };
-    const cells: Cells = {
-      get: async (url, options) => context.get(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
-      post: async (url, options) => context.post(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
-      put: async (url, options) => context.put(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
-      patch: async (url, options) => context.patch(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
-      delete: async (url, options) => context.delete(url, { ...options, headers: { ...await headers(), ...options?.headers } }),
-    };
+    const cells = await authenticatedCells(playwright.request, request, current.apiKey, current.projectId);
     try {
       const seeded = `${home}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
       const existing = await cells.get(seeded);
@@ -49,7 +54,7 @@ export const test = base.extend<{ cells: Cells }>({
       else await status(existing, 404);
       await use(cells);
     } finally {
-      await context.dispose();
+      await cells.dispose();
     }
   },
 });
