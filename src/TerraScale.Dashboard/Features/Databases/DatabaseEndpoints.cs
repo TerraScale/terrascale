@@ -101,8 +101,7 @@ namespace TerraScale.Dashboard.Features.Databases
 
             try
             {
-                var regions = Regions(form, context);
-                var database = await databases.CreateAsync(context, form["name"].ToString(), regions[0], http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), [.. regions.Skip(1)]);
+                var database = await databases.CreateAsync(context, form["name"].ToString(), Regions(form, context), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()));
                 return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
             }
             catch (Exception error) when (KnownFailure(error))
@@ -118,13 +117,13 @@ namespace TerraScale.Dashboard.Features.Databases
 
         private static IReadOnlyList<string> Regions(IFormCollection form, AccountContext context)
         {
-            return Picked(form) ? DatabasePlacementEndpoints.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"))
+            return Picked(form) ? DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"))
                 : context.Project?.Region is { Length: > 0 } region ? [region] : throw new AccountAccessException(DatabasePlacementEndpoints.Minimum, 422);
         }
 
         private static IReadOnlyList<string> Chosen(IFormCollection form)
         {
-            try { return DatabasePlacementEndpoints.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder")); }
+            try { return DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder")); }
             catch (AccountAccessException) { return []; }
         }
 
@@ -219,7 +218,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return result;
         }
 
-        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseGrantForm? grantForm = null)
+        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseGrantForm? grantForm = null, DatabaseRegionsForm? regions = null)
         {
             DatabaseRecord database;
             try
@@ -338,7 +337,8 @@ namespace TerraScale.Dashboard.Features.Databases
                 Preview = preview,
                 StorageBytes = storage,
                 Grants = grants,
-                GrantForm = grantForm
+                GrantForm = grantForm,
+                RegionsForm = regions
             };
             if (tab == "replication" && http.Request.Headers["Datastar-Request"] == "true")
             {

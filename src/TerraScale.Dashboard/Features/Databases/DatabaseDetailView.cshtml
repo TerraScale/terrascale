@@ -87,6 +87,7 @@ for(var i = 0; i < (Model.Grants?.Count ?? 0); i++){var grant = Model.Grants![i]
 }
 }else if(Model.Tab == "replication"){
 <section class="ts-card ts-card-boxed" id="regions" aria-labelledby="regions-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="regions-title">Regions</h2></div></header><div class="ts-card-body">
+@if(Model.RegionsForm is { Notice.Length: > 0 } pending){<div class="ts-alert ts-alert-warning" id="regions-pending" role="status"><p class="ts-alert-body">@pending.Notice</p></div>}
 @if(Model.CanPlace){
 <form method="post" action="/api/v1/dashboard/databases/placement" class="ts-form" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" />
 @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.RegionMap, RegionMapModel>(Model.RegionMap))

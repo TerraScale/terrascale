@@ -110,14 +110,19 @@ namespace TerraScale.Dashboard.Platform.Mcp
             if (!credential.Scopes.Contains(permission, StringComparer.Ordinal)) throw new AccountAccessException("The API key does not grant " + permission + ".");
             if (tool == "check_sql") return Reply(SqlValidation.Analyze(sql), McpAgentJson.Default.SqlAnalysis);
             var regions = await databases.RegionsAsync(ct);
-            var region = DatabaseRegion.Resolve(regions, Text("region", Environment.GetEnvironmentVariable("TS_REGION") ?? regions[0].Id))
+            var region = DatabaseRegion.Resolve(regions, Environment.GetEnvironmentVariable("TS_REGION") ?? regions[0].Id)
                 ?? throw new AccountAccessException("Choose a region listed by TerraScale discovery.", 422);
-            var management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
             if (tool == "create_database")
             {
                 var ttl = DatabaseTtl.Seconds(Hours());
-                return Reply(Output(await management.CreateDatabaseAsync(scope.ProjectId, new(Name: Text("name"), HomeRegion: region.Id, TtlSeconds: ttl))), McpAgentJson.Default.McpDatabase);
+                IReadOnlyList<DatabaseRegion> placed = arguments?.TryGetValue("regions", out var listed) == true && listed.ValueKind == JsonValueKind.Array && listed.GetArrayLength() > 0
+                    ? DatabaseService.Capped([.. listed.EnumerateArray().Select(code => (code.ValueKind == JsonValueKind.String ? DatabaseRegion.Resolve(regions, code.GetString()!.Trim()) : null)
+                        is { } known && regions.Contains(known) ? known : throw new AccountAccessException("Choose regions listed by TerraScale discovery.", 422)).DistinctBy(known => known.Id)])
+                    : [region];
+                var creator = rpc.User<IManagementService>(scope.AccessToken, placed[0].Id).WithCancellationToken(ct);
+                return Reply(Output(await creator.CreateDatabaseAsync(scope.ProjectId, new(Name: Text("name"), Regions: [.. placed.Select(known => known.Id)], TtlSeconds: ttl))), McpAgentJson.Default.McpDatabase);
             }
+            var management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
             if (tool == "list_databases")
             {
                 var limit = Number("limit") ?? 100;
@@ -142,15 +147,15 @@ namespace TerraScale.Dashboard.Platform.Mcp
                         : Reply(result, McpAgentJson.Default.DatabaseSqlResult);
                 }
                 try { return await ExecuteAsync(region); }
-                catch (DatabaseWrongRegionException wrong) when (DatabaseRegion.Resolve(regions, wrong.HomeRegion) is { } home && home.Id != region.Id)
+                catch (DatabaseWrongRegionException wrong) when (DatabaseRegion.Resolve(regions, wrong.Route) is { } home && home.Id != region.Id)
                 {
                     // A 421 definitively refused execution. Never retry an ambiguous write failure.
                     return await ExecuteAsync(home);
                 }
             }
             var database = await management.GetDatabaseAsync(scope.ProjectId, databaseId);
-            region = DatabaseRegion.Resolve(await databases.RegionsAsync(ct), database.HomeRegion.Length > 0 ? database.HomeRegion : database.Region)
-                ?? throw new AccountAccessException("The database home region is unavailable.", 503);
+            region = DatabaseRegion.Resolve(await databases.RegionsAsync(ct), DatabaseBackend.Map(database).Route)
+                ?? throw new AccountAccessException("The regions serving this database are unavailable. Try again shortly.", 503);
             management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
             if (tool == "get_database") return Reply(Output(database), McpAgentJson.Default.McpDatabase);
             if (tool == "fork_database")
@@ -210,8 +215,12 @@ namespace TerraScale.Dashboard.Platform.Mcp
             return Reply(new McpRestoreStart(started.OperationId, started.Status, requested is { Length: > 0 } ? requested.Trim() : null), McpAgentJson.Default.McpRestoreStart);
         }
 
-        private static McpDatabase Output(TerraBaseManagedDatabase db) => new(db.Id, db.Name, "ready", db.HomeRegion.Length > 0 ? db.HomeRegion : db.Region,
-            [.. (db.ReplicaRegions ?? []).Prepend(db.HomeRegion)], db.CreatedAt, db.AllRegions, db.ExpiresAt);
+        private static McpDatabase Output(TerraBaseManagedDatabase item)
+        {
+            var db = DatabaseBackend.Map(item);
+            return new(db.Id, db.Name, "ready", db.Route, db.Regions ?? throw new HttpRequestException("The database service did not return its regions."),
+                db.CreatedAt, db.AllRegions, db.ExpiresAt);
+        }
         private static CallToolResult Reply<T>(T value, JsonTypeInfo<T> type) => new()
         {
             StructuredContent = JsonSerializer.SerializeToElement(value, type),

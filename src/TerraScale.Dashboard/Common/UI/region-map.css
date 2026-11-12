@@ -22,7 +22,7 @@
   --ts-region-map-crop: calc(78.57cqi + 56px);
 }
 
-.ts-region-map[data-mode="select"] {
+.ts-region-map[data-fit="form"] {
   --ts-region-map-chrome: 480px;
 }
 
@@ -35,7 +35,7 @@
   background: none;
 }
 
-.ts-region-map[data-mode="select"][data-bleed="true"] {
+.ts-region-map[data-fit="form"][data-bleed="true"] {
   --ts-region-map-chrome: 292px;
 }
 
