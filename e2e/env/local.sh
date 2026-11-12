@@ -14,6 +14,14 @@ orderly_seconds=30
 kill_seconds=10
 prepare() {
   export E2E_REVISION=${E2E_REVISION:-$(git -C "$repo" rev-parse HEAD)}
+  local missing=() tool
+  for tool in certutil psql; do
+    command -v "$tool" > /dev/null || missing+=("$tool")
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "missing ${missing[*]}: nix shell nixpkgs#nss.tools nixpkgs#postgresql -c bash e2e/env/local.sh" >&2
+    exit 1
+  fi
   mkdir -p "$E2E_STATE"
   chmod 700 "$E2E_STATE"
   bash "$here/tools.sh"
