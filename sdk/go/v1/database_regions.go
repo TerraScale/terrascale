@@ -2,24 +2,29 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 )
 
-// DatabaseRegions is one database's placement and the home-observed replica
-// pull progress, sampled at ObservedAt. A served pull does not attest that the
-// replica applied or verified it; observations reset when the database reopens.
+// DatabaseRegions is placement and writer-observed pull progress sampled at ObservedAt.
+// A served pull does not prove that a remote region applied or verified it.
 type DatabaseRegions struct {
+	_          struct{}
 	DatabaseID string          `json:"databaseId" ulid:"required"`
-	HomeRegion string          `json:"homeRegion"`
 	ObservedAt time.Time       `json:"observedAt"`
-	Replicas   []ReplicaStatus `json:"replicas"`
+	Regions    []ReplicaStatus `json:"regions"`
+	// Deprecated: raw earlier field, passed through for ts -json; absent once the server stops sending it.
+	HomeRegion json.RawMessage `json:"homeRegion,omitempty"`
+	// Deprecated: raw earlier field, passed through for ts -json; absent once the server stops sending it.
+	Replicas json.RawMessage `json:"replicas,omitempty"`
 }
 
-// ReplicaStatus is one replica's pull progress as observed by the home region.
-// Unknown observations are nil.
+// ReplicaStatus is one selected region's writer-observed pull progress; unknown observations are nil.
 type ReplicaStatus struct {
+	_      struct{}
 	Region string `json:"region"`
+	Role   string `json:"role,omitempty"`
 	// LagMs is the age of the oldest known commit missing from the last
 	// served revision; zero when caught up, nil without sufficient observations.
 	LagMs *float64 `json:"lagMs"`
@@ -31,8 +36,8 @@ type ReplicaStatus struct {
 	Revision *string `json:"revision"`
 }
 
-// Regions reads this database's home region and replica pull progress with the
-// databases:read scope. Answered by the home region; other regions redirect.
+// Regions reads selected regions and writer-observed pull progress with databases:read.
+// A region outside the placement answers 421 wrong_region with routing hints.
 func (d *Database) Regions(ctx context.Context) (*DatabaseRegions, error) {
 	return databaseCall[DatabaseRegions](ctx, d, http.MethodGet, nil, nil, "regions")
 }

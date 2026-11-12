@@ -19,9 +19,9 @@
       "branchedFrom": null,
       "createdAt": "2026-11-04T12:00:00+00:00",
       "region": "gru",
-      "homeRegion": "gru",
-      "replicaRegions": [
+      "regions": [
         "fra",
+        "gru",
         "sjc"
       ],
       "allRegions": true,

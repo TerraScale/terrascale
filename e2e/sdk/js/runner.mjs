@@ -37,6 +37,47 @@ async function status(work) {
 }
 
 const operations = {
+  async 'placement.create'() {
+    const created = await client.createDatabase(project, `e2e-js-${run}-placed`, { regions: ['gru', 'fra'] });
+    try {
+      same(created.regions, ['fra', 'gru'], 'created regions');
+      check(Number.isInteger(created.placementVersion), 'placement version is an integer');
+      const repeated = await client.setDatabasePlacement(project, created.id, { regions: ['fra', 'gru'] });
+      same(repeated.placementVersion, created.placementVersion, 'unchanged placement version');
+    } finally { await client.deleteDatabase(project, created.id); }
+  },
+  async 'placement.set'() {
+    const created = await client.createDatabase(project, `e2e-js-${run}-move`, { regions: ['gru'] });
+    let placed = client;
+    try {
+      await client.database(created.id).execute('CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
+      await client.database(created.id).execute('INSERT INTO placement_rows VALUES (1)');
+      const added = await client.setDatabasePlacement(project, created.id, { regions: ['gru', 'fra'] });
+      same(added.regions, ['fra', 'gru'], 'added region');
+      check(added.placementVersion > created.placementVersion, 'membership raises placement version');
+      const progress = await client.database(created.id).regions.regions();
+      same(progress.regions.map(row => row.region), ['fra', 'gru'], 'status regions');
+      same(progress.regions.find(row => row.region === 'gru').role, 'writer', 'writer role');
+      const deadline = Date.now() + 90_000;
+      let updated;
+      for (;;) {
+        try { updated = await client.setDatabasePlacement(project, created.id, { regions: ['fra'] }); break; }
+        catch (error) {
+          if (error.status !== 503 || error.code !== 'replica_not_ready' || Date.now() >= deadline) throw error;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      placed = createTerraBaseClientFromEnvironment({ baseUrl: 'https://fra.api.terrascale.tech', authBaseUrl: 'https://auth.terrascale.tech' });
+      same(updated.regions, ['fra'], 'dropped writer');
+      check(updated.placementVersion > added.placementVersion, 'writer change raises placement version');
+      const after = await placed.database(created.id).regions.regions();
+      same(after.regions.map(row => [row.region, row.role]), [['fra', 'writer']], 'moved status');
+      const error = await refused(() => client.database(created.id).regions.regions());
+      same([error.status, error.code], [421, 'wrong_region'], 'nonmember endpoint');
+      same(cells(await placed.database(created.id).query('SELECT value FROM placement_rows')), [[1]], 'data survived placement');
+      console.log('js placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region');
+    } finally { await placed.deleteDatabase(project, created.id); }
+  },
   async 'sql.execute.positional'(op) {
     await state.db.execute(fill(op.setup));
     same((await state.db.execute(fill(op.sql), op.args)).rowsAffected, op.rowsAffected, 'rows affected');
@@ -179,7 +220,7 @@ const operations = {
   },
 };
 
-const group = spec.operations.filter((op) => op.group === process.env.E2E_GROUP && !op.needs);
+const group = spec.operations.filter((op) => op.group === process.env.E2E_GROUP && (!op.needs || process.env.E2E_REGIONS === '2' && op.id.startsWith('placement.')));
 state.db = ['a', 'c'].includes(process.env.E2E_GROUP) ? client.database(process.env.TERRASCALE_DATABASE_NAME) : undefined;
 let failed = false;
 for (const op of group) {

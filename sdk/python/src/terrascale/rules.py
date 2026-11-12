@@ -78,9 +78,3 @@ def _policy_call(method: str, path: Sequence[str], parse: Callable[[httpx.Respon
                         request_id=response_request_id(r.headers)) from None
     return _PolicyCall(method, path, decode, body=body, params=params or {}, replay_safe=method == "GET")
 
-
-def _policy_failure(call: Call, error: APIError) -> APIError:
-    if not call.replay_safe and error.status >= 500 and not isinstance(error, CommitUncertainError):
-        return CommitUncertainError(error.status, error.code, "policy mutation may have committed; read before retrying",
-                                    request_id=error.request_id)
-    return error

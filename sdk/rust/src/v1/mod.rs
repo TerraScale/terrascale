@@ -39,7 +39,7 @@ mod types;
 
 pub use agent::{
     CreateDatabaseOptions, ForkDatabaseOptions, ManagedDatabase, ScopedKey, ScopedKeyAccess,
-    ScopedKeyOptions, MOVE_HOME_TIMEOUT,
+    ScopedKeyOptions,
 };
 pub use backups::{
     Backup, BackupList, BackupPolicy, BackupPolicyRequest, PointInTimePlan, PointInTimeRequest,

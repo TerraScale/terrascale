@@ -132,37 +132,34 @@ live server behavior remains unqualified.
 
 ### Placement
 
-A database has one home region and replica regions; a
-replica region can commit some SQL REST writes locally and every other write
-runs at the home. `CreateDatabaseOptions` accepts `HomeRegion`,
-`ReplicaRegions` and `AllRegions`; unset options are not sent.
-`Database.Regions` reads the home region and home-observed replica pull progress.
+Every region that holds a database is equal. `CreateDatabaseOptions` accepts
+`Regions` (at least one region id, no duplicates) and `AllRegions`; unset options
+are not sent. TerraBase picks which region writes and moves that on its own when
+the set changes. `Database.Regions` reads each region's pull progress; an entry's
+`Role` is `writer` for the region that commits writes.
 
 ```go
-db, err := c.CreateDatabase(ctx, projectID, "orders", tb.CreateDatabaseOptions{HomeRegion: "gru", ReplicaRegions: []string{"sjc"}})
-db, err = c.SetDatabasePlacement(ctx, projectID, db.ID, tb.DatabasePlacement{ReplicaRegions: []string{"sjc", "fra"}})
+db, err := c.CreateDatabase(ctx, projectID, "orders", tb.CreateDatabaseOptions{Regions: []string{"gru", "sjc"}})
+db, err = c.SetDatabasePlacement(ctx, projectID, db.ID, tb.DatabasePlacement{Regions: []string{"sjc", "fra"}})
 ```
 
-`SetDatabasePlacement` needs exactly one of `ReplicaRegions` (an empty non-nil
-slice removes every replica) or `AllRegions`. `MoveDatabaseHome` waits up to
-`MoveHomeTimeout` (5 minutes) and retries only `503 move_unresolved`, at most five
-times, after `Retry-After` or 1 second. `ManagedDatabase` carries `HomeRegion`,
-`ReplicaRegions` and `AllRegions`. [Contract fixtures](contracts/terrabase/placement/)
-qualify the HTTP boundary. All-regions placement (`AllRegions`) keeps a replica in every
-serving region, including regions added later; `MoveDatabaseHome` moves the home to a
-replica region (`ts db move-home`, `ts db placement ... -all-regions`).
+`SetDatabasePlacement` needs exactly one of `Regions` (at least one region) or
+`AllRegions`. `ManagedDatabase` carries `Regions` (every region that holds the
+database, sorted by region id; the order has no meaning) and `AllRegions`.
+[Contract fixtures](contracts/terrabase/placement/)
+qualify the HTTP boundary. All-regions placement (`AllRegions`) holds the database
+in every serving region, including regions added later (`ts db placement ... -all-regions`).
 
-A database's home region is the durable apply point for writes, a replica region can accept a local SQL REST write and the home applies it, and replicas can live in other serving regions. The default `TerraScale-Durability` is `local`. The server forwards a timed-out local publish with
-`TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once.
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-REST reads can use a ready local replica. Replicas are eventually
-consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
-preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
-placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
-serving region; otherwise set an explicit replica-region list.
+A region can accept a local SQL REST write and TerraBase applies it once. The default `TerraScale-Durability` is `local`. The server forwards a timed-out local publish with
+`TerraBase-Publish-Id` set to the same transaction id, and applies that write once.
+A push stream that returns NATS error 10074 is not retried, because the stream wants more copies than the cluster has.
+REST reads can use a ready local region. Copies are eventually
+consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
+preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
+placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
+serving region; otherwise set an explicit region list.
 
-The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
-storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ### File buckets
@@ -348,9 +345,9 @@ collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
 the management service credential on the admin listener.
 A rejected token or credential is `ErrInvalidKey`.
 
-Each database's home region is the durable apply point for writes, a replica region can accept a local SQL REST write, and replicas can live in other regions.
+Every region that holds a database is equal. TerraBase picks which region writes.
 The public region IDs are `gru`, `sjc` and `fra`. `ManagedDatabase` reports `Region` (the
-answering node) and `HomeRegion`.
+answering node) and `Regions`.
 `CreateDatabaseIn(ctx, org, project, name, "gru")` (or `Database.CreateIn`)
 creates a database in that region; an empty region uses the called region.
 Deleting a database leaves its branches independent.
@@ -625,8 +622,8 @@ ts db create app && ts sql app 'CREATE TABLE users (id TEXT PRIMARY KEY, email T
 ts sql app 'SELECT * FROM users LIMIT 10'
 ts keys create backend app         # printed once on stdout
 ts db info app
-ts db create orders -home-region gru -replica-regions sjc
-ts db placement orders -replica-regions fra,sjc
+ts db create orders -regions gru,sjc
+ts db placement orders -regions fra,sjc
 ts db regions orders
 ts backup create app && ts backup list app
 ts functions deploy app hello.js
@@ -720,3 +717,27 @@ It supports ordinary tables, indexes, views, triggers and column additions/remov
 constraint, table option and column order changes require explicit `ts migrate` migrations; no inferred table rebuilds.
 Engine extensions unsupported by the offline validator are refused before live writes.
 See the [agent databases guide](https://docs.terrascale.tech/guides/agent-databases#manage-schema-as-code).
+
+## Region-set placement
+
+Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
+and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
+with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
+Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
+`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+
+Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
+A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
+The SDK exposes `*tb.APIError.Code` with `tb.ErrReplicaNotReady` and `tb.ErrMoveInProgress` (also `errors.Is`). Neither code is automatically retried;
+general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
+The caller bounds this repeat loop to 90 seconds and propagates other errors:
+
+`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second); defer cancel()
+for { _, err := client.SetDatabasePlacement(ctx, project, database, tb.DatabasePlacement{Regions: []string{"fra"}}); if err == nil { break }; if !errors.Is(err, tb.ErrReplicaNotReady) { return err }
+    select { case <-ctx.Done(): return ctx.Err(); case <-time.After(time.Second): } }
+```

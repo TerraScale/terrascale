@@ -137,7 +137,7 @@ may have committed, so nothing resends it. Read what it would have written befor
   keep explicit transactions short.
 - In a region that holds a replica of the database, reads outside a transaction run on the local replica, so a read
   right after a write made through another region can miss it. Writes, and reads inside an explicit transaction, run
-  at the database's home. To read your own writes everywhere, add `TerraScale-Write: home` to every request with a
+  at the region that orders the database's writes. To read your own writes everywhere, add `TerraScale-Write: home` to every request with a
   `DelegatingHandler` on the `HttpClient` you build the `TerraBaseSqlDatabase` with; the provider has no per-query
   switch for it.
 
@@ -244,10 +244,10 @@ in SQL (`session.ExpiresAt > now`).
   connection. TerraBase has no such functions, so these queries fail with `no such function`. Store money as `long`
   minor units.
 - Integer keys get `AUTOINCREMENT` by EF Core's SQLite convention, and TerraBase sends inserts into such tables to
-  the database's home region. Use client-generated ULID string keys.
+  the region that orders the database's writes. Use client-generated ULID string keys.
 - Regions route writes by statement shape ([write routing](../../../docs/terrabase/sql/write-routing.md)). Inserts of
   ULID-keyed rows can commit in the region; an update with a concurrency token is not "by key", and a save that
-  mixes an update or delete with later writes reads between writes, so those saves run at the database's home.
+  mixes an update or delete with later writes reads between writes, so those saves run at the region that orders the database's writes.
 - `sqlite_master` lists table names in lower case.
 - There are no sequences, schemas or spatial types.
 - EF Core's SQLite query pipeline reads the version of the bundled native SQLite library when it starts; the

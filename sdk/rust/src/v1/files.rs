@@ -126,6 +126,7 @@ fn capability_error(error: Error) -> Error {
         None,
         error.request_id().filter(|id| is_valid_id(id)),
         body.as_bytes(),
+        false,
     )
 }
 

@@ -63,8 +63,7 @@ Options go before or after the command and its operands; -- ends options.
                                           an SDK snippet; -lang overrides the
                                           detected language, -yes skips asking
   db list | create <db> | delete <db>     manage the project's databases
-                                          create placement: -home-region <region>,
-                                          -replica-regions <a,b> | -all-regions
+                                          create placement: -regions <a,b> | -all-regions
                                           delete requires typing the database
                                           name; -yes before db delete consents
                                           explicitly for unattended use
@@ -82,11 +81,9 @@ Options go before or after the command and its operands; -- ends options.
   db export <db> [-o file]               download the database as a SQL dump
   db import <db> <file|->                load a SQL dump; not atomic: each batch
                                           commits on its own; resume with -from n
-  db placement <db> (-replica-regions <a,b> | -all-regions)
-                                          set the database's replica regions
-  db move-home <db> <region>              move the home to a replica region
-  db regions <db>                         print the home region and each
-                                          replica's pull progress
+  db placement <db> (-regions <a,b> | -all-regions)
+                                          set the regions that hold the database
+  db regions <db>                         print each region's pull progress
   backup list | create <db>               list or take a database's backups
   backup policy <db>                      read the snapshot schedule and retention
   backup policy-set <db> <cron|none> <days> set five-field UTC cron and 1..35 days
@@ -229,7 +226,6 @@ var commands = map[string][]int{
 	"db url":             {1},
 	"db import":          {2},
 	"db placement":       {1},
-	"db move-home":       {2},
 	"db regions":         {1},
 	"backup list":        {1},
 	"backup create":      {1},
@@ -299,9 +295,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
 	scope := fs.String("scope", "", "keys create: read or read-write")
-	homeRegion := fs.String("home-region", "", "db create: requested home region")
-	replicaRegions := fs.String("replica-regions", "", "db create, db placement: comma-separated replica regions")
-	allRegions := fs.Bool("all-regions", false, "db create, db placement: a replica in every serving region")
+	homeRegion := fs.String("home-region", "", "db create: earlier placement flag; use -regions")
+	replicaRegions := fs.String("replica-regions", "", "db create, db placement: earlier placement flag; use -regions")
+	regions := fs.String("regions", "", "db create, db placement: comma-separated regions that hold the database")
+	allRegions := fs.Bool("all-regions", false, "db create, db placement: every serving region")
 	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
 	from := fs.String("from", "", "db branch create: source database")
 	ttl := fs.String("ttl", "", "db branch create: lifetime, default 7d")
@@ -358,7 +355,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return err
 		}
 	}
-	var yesSet, scopeSet, keyOptionsSet, placementSet, replicasSet, allRegionsSet, expectedIDSet, langSet bool
+	var yesSet, scopeSet, keyOptionsSet, regionsSet, allRegionsSet, homeSet, replicasSet, expectedIDSet, langSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "expected-id":
@@ -368,9 +365,11 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		case "expires", "allow-cidr":
 			keyOptionsSet = true
 		case "home-region":
-			placementSet = true
+			homeSet = true
 		case "replica-regions":
 			replicasSet = true
+		case "regions":
+			regionsSet = true
 		case "all-regions":
 			allRegionsSet = true
 		}
@@ -391,10 +390,23 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if name == "db branch" && operands[0] == operands[1] {
 		return fmt.Errorf("branch source and target names must differ: %w", errUsage)
 	}
-	if placementSet && (name != "db create" || !validRegion(*homeRegion)) {
-		return fmt.Errorf("-home-region needs db create and a region name: %w", errUsage)
+	if homeSet && (name != "db create" || !validRegion(*homeRegion)) || replicasSet && name != "db create" && name != "db placement" || regionsSet && (homeSet || replicasSet) || replicasSet && allRegionsSet {
+		return fmt.Errorf("earlier placement flags require db create or db placement, separately from -regions and -all-regions: %w", errUsage)
 	}
-	placement, err := placementOptions(name, operands, replicasSet, *replicaRegions, allRegionsSet && *allRegions, allRegionsSet)
+	var earlier []string
+	if replicasSet && *replicaRegions != "" {
+		earlier = strings.Split(*replicaRegions, ",")
+		for i, region := range earlier {
+			if !validRegion(region) || slices.Contains(earlier[:i], region) || region == *homeRegion {
+				return fmt.Errorf("-replica-regions needs distinct region ids other than -home-region: %w", errUsage)
+			}
+		}
+	}
+	placementName := name
+	if replicasSet {
+		placementName = "db create"
+	}
+	placement, err := placementOptions(placementName, regionsSet, *regions, allRegionsSet && *allRegions, allRegionsSet)
 	if err != nil {
 		return err
 	}
@@ -498,12 +510,14 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			}, out)
 		}
 		switch {
-		case name == "db create" && (placementSet || replicasSet || allRegionsSet):
-			return createPlaced(ctx, s.tb, s.project, operands[0], *homeRegion, placement, out)
+		case name == "db create" && (homeSet || replicasSet):
+			return createEarlierPlaced(ctx, s.tb, s.project, operands[0], *homeRegion, earlier, placement.AllRegions, out)
+		case name == "db placement" && replicasSet:
+			return setEarlierPlacement(ctx, s.tb, s.project, operands[0], earlier, out)
+		case name == "db create" && (regionsSet || allRegionsSet):
+			return createPlaced(ctx, s.tb, s.project, operands[0], placement, out)
 		case name == "db placement":
 			return setPlacement(ctx, s.tb, s.project, operands[0], placement, out)
-		case name == "db move-home":
-			return moveHome(ctx, s.tb, s.project, operands[0], operands[1], out, prompt)
 		}
 		return s.dispatch(ctx, name, fn, operands, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out)
 	}
@@ -1035,11 +1049,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 				items = append(items, db)
 				continue
 			}
-			home := ""
-			if db.HomeRegion != nil {
-				home = *db.HomeRegion
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\n", db.Name, db.ID, home)
+			fmt.Fprintf(w, "%s\t%s\t%s\n", db.Name, db.ID, strings.Join(db.Regions, ","))
 		}
 		if jsonMode(out) {
 			return emitJSON(out, items)
@@ -1093,9 +1103,8 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "REGION\tROLE\tLAG MS\tLAST PULL\tLAST VERIFIED\tREVISION")
-		fmt.Fprintf(w, "%s\thome\t\t\t\t\n", r.HomeRegion)
-		for _, rep := range r.Replicas {
-			lag, pull, verified, revision := "-", "-", "-", "-"
+		for _, rep := range r.Regions {
+			lag, pull, verified, revision, role := "-", "-", "-", "-", rep.Role
 			if rep.LagMs != nil {
 				lag = fmt.Sprintf("%.0f", *rep.LagMs)
 			}
@@ -1108,7 +1117,10 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			if rep.Revision != nil {
 				revision = *rep.Revision
 			}
-			fmt.Fprintf(w, "%s\treplica\t%s\t%s\t%s\t%s\n", rep.Region, lag, pull, verified, revision)
+			if role == "" {
+				role = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", rep.Region, role, lag, pull, verified, revision)
 		}
 		return w.Flush()
 	case "db rename", "databases rename":

@@ -19,13 +19,13 @@ public sealed partial class TerraBaseProjectClient
     }
 
     /// <summary>
-    /// Creates a database in the called region, or in <paramref name="homeRegion"/>. A database lives in exactly one region.
+    /// Creates a database in the called region, or in <paramref name="placement"/>. Every region is equal.
     /// Sent once; a regional pin may refuse a different region.
     /// </summary>
-    public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, string? homeRegion = null, CancellationToken cancellationToken = default)
+    public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, TerraBaseDatabasePlacement? placement = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
-        var body = TerraBaseConnection.Json(new TerraBaseCreateDatabaseRequest(name, homeRegion), Json.TerraBaseCreateDatabaseRequest);
+        var body = TerraBaseConnection.Json(new TerraBaseCreateDatabaseRequest(name, placement?.Regions, placement?.AllRegions), Json.TerraBaseCreateDatabaseRequest);
         return (await connection.SendAsync(HttpMethod.Post, path + "/databases", body, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 
@@ -34,7 +34,7 @@ public sealed partial class TerraBaseProjectClient
         (await connection.SendAsync(HttpMethod.Get, path + "/databases" + TerraBaseConnection.Query(("after", after), ("limit", TerraBaseConnection.Number(limit))),
             null, Json.TerraBasePageTerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>Reads a database by name, including the answering region and its home region.</summary>
+    /// <summary>Reads a database by name, including the answering region and the regions that hold it.</summary>
     public async Task<TerraBaseManagedDatabase> GetDatabaseAsync(string databaseName, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, DatabasePath(databaseName), null, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
 
@@ -61,4 +61,4 @@ public sealed partial class TerraBaseProjectClient
 
 }
 
-internal sealed record TerraBaseCreateDatabaseRequest(string Name, string? HomeRegion);
+internal sealed record TerraBaseCreateDatabaseRequest(string Name, IReadOnlyList<string>? Regions, bool? AllRegions);

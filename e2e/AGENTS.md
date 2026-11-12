@@ -334,3 +334,15 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
   (single use, under 16 characters). Every secret of a PR run is generated in that run and dies with the VM: `ci.yml`
   passes no secret to `journey.yml`, which grants `contents: read` only, checks out with `persist-credentials: false`
   and uses no repository secret. Never print a secret.
+
+
+## SDK placement runners
+
+With the two-region stack running, `bash env/local.sh exec npx playwright test placement/sdk.spec.ts --project placement`
+runs group B and both placement operations in each SDK. `E2E_REGIONS=2` makes only the `placement.*` needs markers
+runnable in the runners and in `support/sdk.ts`; the backup requirement stays separate.
+Each runner creates with gru/fra, adds fra to gru, repeats the identical fra-only request for at most 90 seconds,
+reads status, proves the retained data and the removed endpoint's 421, and deletes its database through fra.
+The two-region group B books an upper bound of 110 requests to cover the bounded repeat loop; the metrics check
+still refuses tenant_busy and verifies that every operation ran. The local edge does not implement production's
+421 replay, so the runners explicitly use fra after verifying wrong_region.

@@ -14,10 +14,10 @@ import (
 )
 
 type CreateDatabaseOptions struct {
-	HomeRegion     string   `json:"homeRegion,omitempty"`
-	ReplicaRegions []string `json:"replicaRegions,omitzero"`
-	AllRegions     bool     `json:"allRegions,omitzero"`
-	TTLSeconds     *int64   `json:"ttlSeconds,omitempty"`
+	_          struct{}
+	Regions    []string `json:"regions,omitzero"`
+	AllRegions bool     `json:"allRegions,omitzero"`
+	TTLSeconds *int64   `json:"ttlSeconds,omitempty"`
 }
 
 type ForkDatabaseOptions struct {
@@ -55,8 +55,11 @@ func (c *Client) CreateDatabase(ctx context.Context, project, name string, opts 
 	if err := checkAgentTTL(opts.TTLSeconds, 31536000); err != nil {
 		return nil, err
 	}
-	if opts.ReplicaRegions != nil && opts.AllRegions {
-		return nil, errors.New("terrabase: set ReplicaRegions or AllRegions, not both")
+	if opts.Regions != nil && opts.AllRegions {
+		return nil, errors.New("terrabase: set Regions or AllRegions, not both")
+	}
+	if err := checkPlacementRegions(opts.Regions); err != nil {
+		return nil, err
 	}
 	req, err := projectRequest(http.MethodPost, project, nil, "databases")
 	if err != nil {

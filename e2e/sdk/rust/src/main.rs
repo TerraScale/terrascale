@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use terrascale::v1::{
-    is_valid_id, new_id, Client, CreateDatabaseOptions, Database, Error, ForkDatabaseOptions,
-    ManagedDatabase, ScopedKeyAccess, ScopedKeyOptions, SqlRecord, SqlSession, SqlStatement,
-    SqlStatementResult, SqlValue,
+    is_valid_id, new_id, Client, CreateDatabaseOptions, Database, DatabasePlacement, Error,
+    ForkDatabaseOptions, ManagedDatabase, ScopedKeyAccess, ScopedKeyOptions, SqlRecord, SqlSession,
+    SqlStatement, SqlStatementResult, SqlValue,
 };
 
 type Outcome = Result<(), String>;
@@ -621,6 +621,8 @@ impl Runner {
                     ),
                 }
             }
+            "placement.create" => self.placement_create().await,
+            "placement.set" => self.placement_set().await,
             "agent.delete" => {
                 let agent = self.agent.as_ref().ok_or("no agent database")?.id.clone();
                 self.client.delete_database(&agent).await.map_err(e)?;
@@ -638,6 +640,114 @@ impl Runner {
             }
             other => Err(format!("no implementation for {other}")),
         }
+    }
+    async fn placement_create(&self) -> Outcome {
+        let created = self
+            .client
+            .create_database(
+                &format!("e2e-rust-{}-placed", self.run),
+                &CreateDatabaseOptions {
+                    regions: Some(vec!["gru".into(), "fra".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            same(
+                json!(created.regions),
+                &json!(["fra", "gru"]),
+                "created regions",
+            )?;
+            let repeated = self
+                .client
+                .set_database_placement(
+                    &created.id,
+                    &DatabasePlacement {
+                        regions: Some(vec!["fra".into(), "gru".into()]),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            same(
+                json!(repeated.placement_version),
+                &json!(created.placement_version),
+                "unchanged placement version",
+            )
+        }
+        .await;
+        self.client
+            .delete_database(&created.id)
+            .await
+            .map_err(|error| error.to_string())?;
+        result
+    }
+
+    async fn placement_set(&self) -> Outcome {
+        let created = self
+            .client
+            .create_database(
+                &format!("e2e-rust-{}-move", self.run),
+                &CreateDatabaseOptions {
+                    regions: Some(vec!["gru".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let regional = Client::for_project_api_key(
+            self.project.clone(),
+            std::env::var("TERRASCALE_API_KEY").map_err(|error| error.to_string())?,
+        )
+        .endpoint("https://fra.api.terrascale.tech")
+        .auth_base_url("https://auth.terrascale.tech")
+        .add_root_ca_pem(self.ca.clone())
+        .build()
+        .map_err(|error| error.to_string())?;
+        let mut moved = false;
+        let result = async {
+            let db = self.client.database(&created.id);
+            db.sql().execute("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)", &[]).await.map_err(|error| error.to_string())?;
+            db.sql().execute("INSERT INTO placement_rows VALUES (1)", &[]).await.map_err(|error| error.to_string())?;
+            let added = self.client.set_database_placement(&created.id,
+                &DatabasePlacement { regions: Some(vec!["gru".into(), "fra".into()]), ..Default::default() }).await.map_err(|error| error.to_string())?;
+            same(json!(added.regions), &json!(["fra", "gru"]), "added region")?;
+            if added.placement_version <= created.placement_version { return Err("membership did not raise placement version".into()); }
+            let progress = db.get_database_regions().await.map_err(|error| error.to_string())?;
+            same(json!(progress.regions.iter().map(|row| &row.region).collect::<Vec<_>>()), &json!(["fra", "gru"]), "status regions")?;
+            same(json!(progress.regions[1].role), &json!("writer"), "writer role")?;
+            let change = DatabasePlacement { regions: Some(vec!["fra".into()]), ..Default::default() };
+            let updated = tokio::time::timeout(Duration::from_secs(90), async {
+                loop {
+                    match self.client.set_database_placement(&created.id, &change).await {
+                        Ok(updated) => break Ok(updated),
+                        Err(error) if error.code() == Some("replica_not_ready") && error.status() == Some(503) =>
+                            tokio::time::sleep(Duration::from_secs(1)).await,
+                        Err(error) => break Err(error),
+                    }
+                }
+            }).await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())?;
+            moved = true;
+            same(json!(updated.regions), &json!(["fra"]), "dropped writer")?;
+            if updated.placement_version <= added.placement_version { return Err("writer did not raise placement version".into()); }
+            let after = regional.database(&created.id).get_database_regions().await.map_err(|error| error.to_string())?;
+            same(json!(after.regions.iter().map(|row| (&row.region, &row.role)).collect::<Vec<_>>()), &json!([["fra", "writer"]]), "moved status")?;
+            match db.get_database_regions().await {
+                Err(error) if error.status() == Some(421) && error.code() == Some("wrong_region") => (),
+                other => return Err(format!("nonmember endpoint: {other:?}")),
+            }
+            let rows = regional.database(&created.id).sql().query("SELECT value FROM placement_rows", &[]).await.map_err(|error| error.to_string())?;
+            same(records(&rows), &json!([[1]]), "data survived placement")?;
+            println!("rust placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region");
+            Ok(())
+        }.await;
+        let placed = if moved { &regional } else { &self.client };
+        placed
+            .delete_database(&created.id)
+            .await
+            .map_err(|error| error.to_string())?;
+        result
     }
 }
 
@@ -682,10 +792,11 @@ async fn run() -> i32 {
     };
     let mut failed = false;
     let operations = spec["operations"].as_array().cloned().unwrap_or_default();
-    for op in operations
-        .iter()
-        .filter(|op| op["group"] == group.as_str() && op.get("needs").is_none())
-    {
+    for op in operations.iter().filter(|op| {
+        op["group"] == group.as_str()
+            && (op.get("needs").is_none()
+                || env("E2E_REGIONS") == "2" && text(op, "id").starts_with("placement."))
+    }) {
         let started = Instant::now();
         let mut line = BTreeMap::from([("id", op["id"].clone()), ("ok", json!(true))]);
         if let Err(error) = runner.do_op(op).await {

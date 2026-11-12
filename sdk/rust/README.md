@@ -92,7 +92,7 @@ headers.
 ## Databases
 
 `Database::create` creates a database; `create_with_placement` takes a `DatabasePlacement` naming its
-`home_region`. Without a home region the called region is the home. `Client::list_databases`,
+`regions`. Without regions the called region holds the database. `Client::list_databases`,
 `Database::get_database`, `Client::rename_database`, `Database::branch_database` (plus `branch_database_if_id`/`delete_database_if_id` guarded by the immutable database ID) and backups/point-in-time restore
 use the same project client. Backup operations are typed: `create_backup`/`list_backups` return
 `Backup`/`BackupList`, `get_backup_policy`/`set_backup_policy` use `BackupPolicy` and
@@ -102,28 +102,28 @@ use the same project client. Backup operations are typed: `create_backup`/`list_
 `get_backup_destination`/`set_backup_destination` use `ProjectBackupDestination`; its request's
 credentials are write-only and never printed.
 
-A database has one home region and can have replicas in other serving regions.
-A replica region can accept a local SQL REST write; the home applies it. The default
-`TerraScale-Durability` is `local`. REST reads can use a ready local replica. Replicas are eventually
-consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
-preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
-placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
-serving region; otherwise set an explicit replica-region list.
+Every region that holds a database is equal.
+A region can accept a local SQL REST write; TerraBase applies it once. The default
+`TerraScale-Durability` is `local`. REST reads can use a ready local region. Copies are eventually
+consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
+preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
+placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
+serving region; otherwise set an explicit region list.
 
-The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
-storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ### Placement
 
-A database has one home region; a replica region can commit some SQL REST writes locally, and every other write runs at the home.
-`CreateDatabaseOptions` and `DatabasePlacement` accept `home_region`, `replica_regions` and `all_regions`;
-unset options are not sent. `Client::set_database_placement(database, &DatabasePlacement)` needs exactly one
-of `replica_regions` (an empty list removes every replica) or `all_regions`, and no `home_region`.
-`Client::move_database_home(database, region)` moves the home to one of its replica regions; it waits up to
-`MOVE_HOME_TIMEOUT` (5 minutes) and retries only `503 move_unresolved`, at most five times, after
-`Retry-After` or 1 second. `ManagedDatabase` carries `home_region`, `replica_regions` and `all_regions`.
-`Database::get_database_regions` reads the home region and home-observed replica pull progress.
+Every region that holds a database is equal. TerraBase picks which region writes and moves that on its own
+when the set changes.
+`CreateDatabaseOptions` and `DatabasePlacement` accept `regions` and `all_regions`;
+unset options are not sent. `regions` names at least one region id, with no duplicates.
+`Client::set_database_placement(database, &DatabasePlacement)` needs exactly one
+of `regions` or `all_regions`. `ManagedDatabase` carries `regions` (every region that holds the database,
+sorted by region id; the order has no meaning) and `all_regions`.
+`Database::get_database_regions` reads each region's pull progress; an entry's `role` is `Some("writer")`
+for the region that commits writes.
 Contract fixtures in `contracts/terrabase/placement/` qualify the HTTP boundary.
 
 ```rust,no_run
@@ -132,19 +132,18 @@ use terrascale::v1::{Client, CreateDatabaseOptions, DatabasePlacement};
 # async fn example(project: &str, api_key: &str) -> terrascale::v1::Result<()> {
 let client = Client::for_project_api_key(project, api_key).build()?;
 let database = client.create_database("orders", &CreateDatabaseOptions {
-    home_region: Some("gru".into()),
-    replica_regions: Some(vec!["sjc".into()]),
+    regions: Some(vec!["gru".into(), "sjc".into()]),
     ..Default::default()
 }).await?;
 client.set_database_placement(&database.id, &DatabasePlacement {
-    replica_regions: Some(vec!["sjc".into(), "fra".into()]),
+    regions: Some(vec!["fra".into(), "gru".into(), "sjc".into()]),
     ..Default::default()
 }).await?;
 # Ok(()) }
 ```
 
-All-regions placement (`all_regions`) keeps a replica in every serving region, including regions added later;
-`move_database_home` moves the home to a replica region (`ts db move-home`, `ts db placement ... -all-regions`).
+All-regions placement (`all_regions`) holds the database in every serving region, including regions added later
+(`ts db placement ... -all-regions`).
 
 ## Databases for agents
 
@@ -181,7 +180,9 @@ from 60 to 2,592,000 seconds, default to 3600 and cannot outlive the parent key.
 an organization key; for a project key it must match that key's project. Scoped keys cannot manage
 databases, mint keys or reach another database. Revoking or rotating the parent revokes its scoped keys.
 The returned `ScopedKey.key` is shown once and can be passed directly to another client's API-key builder.
-Refusals use the existing HTTP error types; mutations are never replayed after an uncertain result.
+Refusals use the existing HTTP error types.
+
+A failed write is uncertain if no response arrives after sending, if a 5xx response has no server error code, or if the server code is `commit_uncertain`, `write_outcome_unknown` or `internal_error`. Other coded 5xx responses and SQL errors (the request rolled back) are definite refusals. Reads are never uncertain. Reconcile state before repeating an uncertain write; a malformed success acknowledgement is also uncertain.
 
 Qualification: this surface is checked against the local contract fixtures in
 `contracts/terrabase/agent/`, equivalent to the shared SQL API contract. Live server qualification is pending.
@@ -201,3 +202,27 @@ uses the existing replay-safe backoff and `Retry-After` policy without discardin
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
+
+## Region-set placement
+
+Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
+and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
+with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
+Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
+`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+
+Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
+A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
+The SDK exposes `Error::code()` returning `Some("replica_not_ready")` or `Some("move_in_progress")`, preserved by `Error::Response` around `Error::Api`. Neither code is automatically retried;
+general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
+The caller bounds this repeat loop to 90 seconds and propagates other errors:
+
+`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
+
+```rust
+let change = DatabasePlacement { regions: Some(vec!["fra".into()]), ..Default::default() };
+tokio::time::timeout(Duration::from_secs(90), async { loop { match client.set_database_placement(database, &change).await {
+    Ok(db) => break Ok(db), Err(e) if e.code() == Some("replica_not_ready") => tokio::time::sleep(Duration::from_secs(1)).await, Err(e) => break Err(e) } } }).await??;
+```

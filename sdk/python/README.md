@@ -192,42 +192,42 @@ await them on `AsyncTerraScale`.
 ## Placement
 
 ```python
-db = ts.create_database("orders", home_region="gru", replica_regions=["sjc"])
-ts.set_database_placement(db.id, replica_regions=["sjc", "fra"])
+db = ts.create_database("orders", regions=["gru", "sjc"])
+ts.set_database_placement(db.id, regions=["fra", "gru", "sjc"])
 ```
 
-`Database` carries `home_region`, `replica_regions` and `all_regions`. `db.regions()` reads the home region and
-home-observed replica pull progress. `set_database_placement` takes exactly one of
-`replica_regions` or `all_regions`. `move_database_home` waits for the move with no read timeout and resends only on
-`503 move_unresolved` (at most 5 times, after `Retry-After` or 1 s). Tests cover the recorded fixtures in
+Every region that holds a database is equal. `Database` carries `regions` (every region that holds it, sorted by
+region id; the order has no meaning) and `all_regions`. `db.regions()` reads each region's pull progress; an entry's
+`role` is `writer` for the region that commits writes. `create_database` and `set_database_placement` take `regions`
+(at least one, no duplicates) or `all_regions`, and not both. TerraBase picks which region writes and moves that on
+its own when the set changes. Tests cover the recorded fixtures in
 `sdk/dotnet/contracts/terrabase/placement/`; live producer qualification has not run. All-regions placement
-(`all_regions`) keeps a replica in every serving region, including regions added later; `move_database_home` moves
-the home to a replica region (`ts db move-home`, `ts db placement ... -all-regions`).
+(`all_regions`) holds the database in every serving region, including regions added later
+(`ts db placement ... -all-regions`).
 
 ## API
 
 | Surface | Methods |
 | --- | --- |
-| Client | `TerraScale(api_key=, project=, token=, base_url=, region=, issuer=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=, ttl_seconds=)`, `rename_database(id, name)`, `fork_database`, `set_database_ttl`, `clear_database_ttl`, `delete_database`, `delete_database_if_id`, `create_scoped_key`, `rotate_api_key`, `create_api_key(organization, name, scopes, project=, database=, expires_at=, allowed_cidrs=)`, `list_api_keys(organization, project=, limit=, cursor=)`, `revoke_api_key(organization, key, project=)`, `create_project_client(name, client_type, redirect_uris, step_up_proof=, project=)`, `list_project_clients(project=)`, `update_project_client(client_id, name, redirect_uris, step_up_proof=, project=)`, `rotate_project_client_secret(client_id, step_up_proof=, grace_seconds=, project=)`, `delete_project_client(client_id, project=)` |
+| Client | `TerraScale(api_key=, project=, token=, base_url=, region=, issuer=)`, `database(name)`, `list_databases()`, `create_database(name, regions=, ttl_seconds=)`, `rename_database(id, name)`, `fork_database`, `set_database_ttl`, `set_database_placement`, `clear_database_ttl`, `delete_database`, `delete_database_if_id`, `create_scoped_key`, `rotate_api_key`, `create_api_key(organization, name, scopes, project=, database=, expires_at=, allowed_cidrs=)`, `list_api_keys(organization, project=, limit=, cursor=)`, `revoke_api_key(organization, key, project=)`, `create_project_client(name, client_type, redirect_uris, step_up_proof=, project=)`, `list_project_clients(project=)`, `update_project_client(client_id, name, redirect_uris, step_up_proof=, project=)`, `rotate_project_client_secret(client_id, step_up_proof=, grace_seconds=, project=)`, `delete_project_client(client_id, project=)` |
 | Database | `info()`, `delete()`, `delete_if_id(expected_id)`, `branch(name)`, `branch_if_id(name, expected_id)`, `list_database_logs(status=None)`, `execute`, `query`, `batch` (see [SQL](#sql)) |
 
 **IDs** are canonical ULIDs (`terrascale.new_id()`).
 
 `database.list_database_logs(status=None)` reads the newest 100 recorded requests within 24 hours; `status` is `"2xx"`, `"3xx"`, `"4xx"` or `"5xx"`. Recording is best effort, without a cursor or export guarantee.
 
-**Regions**: `create_database("eu", home_region="fra")` selects the home region;
-without `home_region` the called region is the home.
+**Regions**: `create_database("eu", regions=["fra"])` selects the regions that hold the database;
+without `regions` the called region holds it.
 
-A database has one home region and can have encrypted replicas in other serving regions.
-A replica region can accept a local SQL REST write; the home applies it. The default
-`TerraScale-Durability` is `local`. REST reads can use a ready local replica. Replicas are eventually
-consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
-preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
-placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
-serving region; otherwise set an explicit replica-region list.
+Every region that holds a database is equal.
+A region can accept a local SQL REST write; TerraBase applies it once. The default
+`TerraScale-Durability` is `local`. REST reads can use a ready local region. Copies are eventually
+consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
+preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
+placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
+serving region; otherwise set an explicit region list.
 
-The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
-storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ## Errors
@@ -260,9 +260,11 @@ The token exchange retries transport failures, 429 and 5xx the same way; one
 exchange runs at a time and concurrent callers share its result. A connect or
 connection-pool failure never reached the server, so writes retry it too; when
 attempts run out the `TerraScaleError` names the cause and says the request was
-not sent. SQL statements and other writes are never replayed after an ambiguous
-failure: a transport failure after sending, 5xx or malformed acknowledgement
-raises `CommitUncertainError`; reconcile state before retrying. Malformed read responses raise `InvalidResponseError`.
+not sent.
+
+A failed write is uncertain if no response arrives after sending, if a 5xx response has no server error code, or if the server code is `commit_uncertain`, `write_outcome_unknown` or `internal_error`. Other coded 5xx responses and SQL errors (the request rolled back) are definite refusals. Reads are never uncertain. Reconcile state before repeating an uncertain write; a malformed success acknowledgement is also uncertain.
+
+Malformed read responses raise `InvalidResponseError`.
 The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Development
@@ -288,3 +290,30 @@ backoff and `Retry-After` policy without discarding the cached token.
 Built-in project API-key tokens renew in the background from 60 seconds before expiry
 (or at half-life for short tokens). Concurrent callers share one exchange and continue
 using a valid token; only missing, actually expired, or refused tokens require a wait.
+
+## Region-set placement
+
+Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
+and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
+with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
+Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
+`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+
+Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
+A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
+The SDK exposes `ServiceUnavailableError.code == "replica_not_ready"` and `ConflictError.code == "move_in_progress"`. Neither code is automatically retried;
+general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
+The caller bounds this repeat loop to 90 seconds and propagates other errors:
+
+`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
+
+```python
+deadline = time.monotonic() + 90
+while True:
+    try: client.set_database_placement(database, regions=["fra"]); break
+    except ServiceUnavailableError as e:
+        if e.code != "replica_not_ready" or time.monotonic() >= deadline: raise
+        time.sleep(1)
+```

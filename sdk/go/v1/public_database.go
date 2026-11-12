@@ -107,9 +107,12 @@ func (d *Database) CreateIn(ctx context.Context, region string) (*ManagedDatabas
 		return nil, err
 	}
 	body := struct {
-		Name       string `json:"name"`
-		HomeRegion string `json:"homeRegion,omitempty"`
-	}{d.name, region}
+		Name    string   `json:"name"`
+		Regions []string `json:"regions,omitempty"`
+	}{d.name, nil}
+	if region != "" {
+		body.Regions = []string{region}
+	}
 	return publicCall[ManagedDatabase](ctx, d.c, req, body)
 }
 

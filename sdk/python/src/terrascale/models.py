@@ -52,9 +52,10 @@ class Regions:
 
 @dataclass(frozen=True)
 class ReplicaStatus:
-    """One replica's pull progress as observed by the database's home region; unknowns are None."""
+    """One region's pull progress observed by the writer; unknown observations are None."""
 
     region: str
+    role: str | None = None
     lag_ms: float | None = None
     last_pulled_at: str | None = None
     last_verified: str | None = None
@@ -63,24 +64,26 @@ class ReplicaStatus:
 
 @dataclass(frozen=True)
 class DatabaseRegions:
-    """The database's home region and home-observed replica pull progress, sampled at observed_at."""
+    """Selected regions and writer-observed pull progress sampled at observed_at."""
 
     database_id: str
-    home_region: str
     observed_at: str
-    replicas: list[ReplicaStatus] = field(default_factory=list)
+    regions: list[ReplicaStatus] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> DatabaseRegions:
-        if any(not isinstance(body[k], str) or not body[k] for k in ("homeRegion", "observedAt")):
+        if any(not isinstance(body[k], str) or not body[k] for k in ("observedAt",)):
             raise ValueError("invalid database regions")
-        replicas = body.get("replicas", [])
+        replicas = body["regions"]
         if not isinstance(replicas, list):
             raise ValueError("invalid database regions replicas")
         statuses = []
         for item in replicas:
             if not isinstance(item, dict) or not isinstance(item.get("region"), str) or not item["region"]:
                 raise ValueError("invalid database regions replicas")
+            role = item.get("role")
+            if role is not None and (not isinstance(role, str) or not role):
+                raise ValueError("invalid replica role")
             lag = item.get("lagMs")
             if lag is not None and not isinstance(lag, (int, float)):
                 raise ValueError("invalid replica lagMs")
@@ -93,55 +96,59 @@ class DatabaseRegions:
             revision = item.get("revision")
             if revision is not None and (not isinstance(revision, str) or not revision):
                 raise ValueError("invalid replica revision")
-            statuses.append(ReplicaStatus(region=item["region"], lag_ms=lag,
+            statuses.append(ReplicaStatus(region=item["region"], role=role, lag_ms=lag,
                                           last_pulled_at=timestamps["lastPulledAt"],
                                           last_verified=timestamps["lastVerified"], revision=revision))
-        return cls(database_id=validate_id(body["databaseId"]), home_region=body["homeRegion"],
-                   observed_at=body["observedAt"], replicas=statuses)
+        return cls(database_id=validate_id(body["databaseId"]), observed_at=body["observedAt"], regions=statuses)
 
 
 @dataclass(frozen=True)
 class Database:
-    """A managed database in its home region, with optional cross-region name conflict metadata."""
+    """Lifecycle metadata with the answering region, complete region set and placement epoch."""
 
     id: str
     project_id: str
     name: str
     created_at: str
     region: str
-    home_region: str
     branched_from: str | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
     previous_name: str | None = None
     conflict_of: str | None = None
     expires_at: str | None = None
-    replica_regions: list[str] = field(default_factory=list)
+    regions: list[str] = field(default_factory=list)
     all_regions: bool = False
+    placement_version: int = 0
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Database:
-        if any(not isinstance(body[k], str) or not body[k] for k in ("name", "createdAt", "region", "homeRegion")):
+        if any(not isinstance(body[k], str) or not body[k] for k in ("name", "createdAt", "region")):
             raise ValueError("invalid database metadata")
         if body.get("expiresAt") is not None and (not isinstance(body["expiresAt"], str) or not body["expiresAt"]):
             raise ValueError("invalid database expiry")
-        replicas = body.get("replicaRegions", [])
-        if not isinstance(replicas, list) or any(not isinstance(r, str) or not r for r in replicas):
-            raise ValueError("invalid database replica regions")
+        regions = body.get("regions", [])
+        if not isinstance(regions, list) or any(not isinstance(r, str) or not r for r in regions):
+            raise ValueError("invalid database regions")
+        if len(set(regions)) != len(regions):
+            raise ValueError("invalid database regions")
         if not isinstance(body.get("allRegions", False), bool):
             raise ValueError("invalid database allRegions")
+        version = body["placementVersion"]
+        if not isinstance(version, int) or isinstance(version, bool):
+            raise ValueError("invalid database placementVersion")
         return cls(
             id=validate_id(body["id"]),
             project_id=validate_id(body["projectId"]),
             name=body["name"],
             created_at=body["createdAt"],
             region=body["region"],
-            home_region=body["homeRegion"],
             branched_from=body["branchedFrom"],
             previous_name=body.get("previousName"),
             conflict_of=validate_id(body["conflictOf"]) if body.get("conflictOf") is not None else None,
             expires_at=body.get("expiresAt"),
-            replica_regions=list(replicas),
+            regions=sorted(regions),
             all_regions=body.get("allRegions", False),
+            placement_version=version,
             raw=body,
         )
 

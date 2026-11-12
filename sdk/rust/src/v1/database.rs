@@ -34,7 +34,7 @@ impl Database {
 
     /// Streams the database as one SQL dump (BEGIN … COMMIT) from one read
     /// snapshot; the same SQL dialect runs it back into a fresh database.
-    /// Requires `sql:read`; the database's home region serves the export.
+    /// Requires `sql:read`; the region that orders the database's writes serves the export.
     pub async fn export(&self) -> Result<impl futures_util::Stream<Item = Result<bytes::Bytes>>> {
         check_name("database", &self.name)?;
         let response = self
@@ -63,7 +63,7 @@ impl Database {
     }
 }
 
-/// Database metadata from the project management API. A database lives in one region.
+/// Lifecycle metadata, including the answering region, complete region set and placement epoch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectDatabaseInfo {
@@ -87,9 +87,9 @@ pub struct ProjectDatabaseInfo {
     #[serde(default)]
     pub expires_at: Option<String>,
     pub region: String,
-    pub home_region: String,
     #[serde(default)]
-    pub replica_regions: Vec<String>,
+    pub regions: Vec<String>,
     #[serde(default)]
     pub all_regions: bool,
+    pub placement_version: i64,
 }

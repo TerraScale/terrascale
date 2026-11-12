@@ -16,15 +16,12 @@ pub struct ManagementPage<T> {
     pub next: Option<String>,
 }
 
-/// Placement of a database: its home region, which commits writes, and its replica regions.
-/// Omitting `home_region` at creation uses the region that serves the request.
+/// Complete region set or every-region placement; never combined with earlier placement fields.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabasePlacement {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub home_region: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub replica_regions: Option<Vec<String>>,
+    pub regions: Option<Vec<String>>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub all_regions: bool,
 }
@@ -88,7 +85,7 @@ impl Client {
 }
 
 impl Database {
-    /// `POST P/databases` in an explicit home region.
+    /// `POST P/databases` with the complete selected region set or every-region placement.
     pub async fn create_with_placement(
         &self,
         placement: &DatabasePlacement,
@@ -120,7 +117,7 @@ impl Database {
             .await
     }
 
-    /// `DELETE D` in the database's home region. HTTP 204
+    /// `DELETE D` in the region that orders the database's writes. HTTP 204
     /// confirms logical deletion and local cleanup; remote erasure is retried
     /// durably and may complete later.
     pub async fn delete_database(&self) -> Result<()> {

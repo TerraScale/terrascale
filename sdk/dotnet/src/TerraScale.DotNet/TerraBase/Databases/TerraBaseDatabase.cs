@@ -73,7 +73,17 @@ public sealed class TerraBaseDatabaseClient
 /// <param name="Id">Database id, a canonical uppercase ULID.</param>
 /// <param name="ProjectId">Owning project.</param>
 /// <param name="Name">Database name, unique within the project.</param>
-public sealed record TerraBaseDatabaseInfo(string Id, string ProjectId, string Name);
+public sealed record TerraBaseDatabaseInfo(string Id, string ProjectId, string Name)
+{
+    /// <summary>Every selected region, sorted by id without ordering meaning.</summary>
+    public IReadOnlyList<string> Regions { get; init; } = [];
+
+    /// <summary>Placement epoch; unchanged by an identical region set.</summary>
+    public long PlacementVersion { get; init; }
+
+    /// <summary>Whether every serving region holds this database.</summary>
+    public bool AllRegions { get; init; }
+}
 
 /// <summary>One TerraBase database. Thread-safe; obtain it from <see cref="TerraBaseDatabaseClient.Database"/>.</summary>
 public sealed partial class TerraBaseDatabase
@@ -111,7 +121,7 @@ public sealed partial class TerraBaseDatabase
         (await connection.SendAsync(HttpMethod.Get, path + "/usage" + TerraBaseProjectClient.UsageQuery(granularity, from, to),
             null, Json.TerraBaseDatabaseUsage, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>getDatabaseRegions: reads the database's home region and home-observed replica pull progress; not application acknowledgements.</summary>
+    /// <summary>getDatabaseRegions: reads selected regions and writer-observed pull progress; not application acknowledgements.</summary>
     public async Task<TerraBaseDatabaseRegions> GetRegionsAsync(CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, path + "/regions", null, Json.TerraBaseDatabaseRegions, null, cancellationToken).ConfigureAwait(false)).Value;
 

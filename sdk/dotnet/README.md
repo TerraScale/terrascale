@@ -133,18 +133,18 @@ with synthetic values. Both supported .NET frameworks replay them; live producer
 ## Placement
 
 ```csharp
-var db = await client.CreateDatabaseAsync(project, "orders", homeRegion: "gru", replicaRegions: ["sjc"]);
-await client.SetDatabasePlacementAsync(project, db.Id, allRegions: true);
-await client.MoveDatabaseHomeAsync(project, db.Id, "sjc");
+var db = await client.CreateDatabaseAsync(project, "orders", placement: TerraBaseDatabasePlacement.In("gru", "sjc"));
+await client.SetDatabasePlacementAsync(project, db.Id, placement: TerraBaseDatabasePlacement.In("fra", "gru", "sjc"));
 ```
 
-`TerraBaseManagedDatabase` carries `HomeRegion`, `ReplicaRegions` and `AllRegions`. `SetDatabasePlacementAsync` takes
-exactly one of `replicaRegions` or `allRegions`. `MoveDatabaseHomeAsync` waits up to 10 minutes (set the caller's
-`HttpClient.Timeout` to at least that) and resends only on `503 move_unresolved`, at most 5 times after `Retry-After` or
-1 s. `Database(projectId, name).GetRegionsAsync` reads the home region and home-observed replica pull progress.
+Every region that holds a database is equal. `TerraBaseManagedDatabase` carries `Regions` (every region that holds it,
+sorted by region id; the order has no meaning) and `AllRegions`. `CreateDatabaseAsync` and `SetDatabasePlacementAsync`
+take a `TerraBaseDatabasePlacement` value made with `In` (one to nine distinct regions) or `EveryRegion`. TerraBase picks which region writes and
+moves that on its own when the set changes. `Database(projectId, name).GetRegionsAsync` reads each region's pull
+progress; an entry's `Role` is `writer` for the region that commits writes.
 Tests replay `contracts/terrabase/placement/`; live producer qualification has not run. All-regions placement
-(`AllRegions`) keeps a replica in every serving region, including regions added later; `MoveDatabaseHomeAsync` moves
-the home to a replica region (`ts db move-home`, `ts db placement ... -all-regions`).
+(`AllRegions`) holds the database in every serving region, including regions added later
+(`ts db placement ... -all-regions`).
 
 ## Database request observations
 
@@ -206,7 +206,7 @@ HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See 
 `TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public HTTPS client listener.
 `TerraBaseSqlClient` runs SQL; see [SQL](#sql). `TerraBaseDatabaseClient` addresses projects and databases:
 `Project(projectId)` creates, lists, reads, renames and deletes databases and reads usage, analytics, saved queries and
-backup destinations; `Database(projectId, name)` reads usage and analytics, home-region and replica progress (`GetRegionsAsync`), branches (including `BranchIfIdAsync`/`DeleteIfIdAsync` guarded by the immutable database ID), backs up and restores, and
+backup destinations; `Database(projectId, name)` reads usage and analytics, selected regions and pull progress (`GetRegionsAsync`), branches (including `BranchIfIdAsync`/`DeleteIfIdAsync` guarded by the immutable database ID), backs up and restores, and
 deploys and invokes functions. `TerraBaseManagementClient` covers the Management API: organizations, the current
 organization, plans, projects (including close and erase), history erasure, members, invitations, ownership transfer,
 audit retention and audit events. Databases and branches are not management operations; they live on
@@ -228,18 +228,17 @@ TerraBaseManagedDatabase app = await client.Project(projectId).CreateDatabaseAsy
 TerraBaseManagedDatabase copy = await client.Database(projectId, "app").BranchAsync("app-copy", cancellationToken);
 ```
 
-`HomeRegion` names the home region. `CreateDatabaseAsync` without a home region uses the called region.
+`Regions` names every region that holds the database. `CreateDatabaseAsync` without regions uses the called region.
 
-A database has one home region and can have replicas in other serving regions.
-A replica region can accept a local SQL REST write; the home applies it. The default
-`TerraScale-Durability` is `local`. REST reads can use a ready local replica. Replicas are eventually
-consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
-preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
-placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
-serving region; otherwise set an explicit replica-region list.
+Every region that holds a database is equal.
+A region can accept a local SQL REST write; TerraBase applies it once. The default
+`TerraScale-Durability` is `local`. REST reads can use a ready local region. Copies are eventually
+consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
+preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
+placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
+serving region; otherwise set an explicit region list.
 
-The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
-storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ```csharp
@@ -382,3 +381,27 @@ not establish server admission or plan enforcement; retain scope, role, region a
 Built-in project API-key tokens renew in the background from 60 seconds before expiry
 (or at half-life for short tokens). Concurrent callers share one exchange and continue
 using a valid token; only missing, actually expired, or refused tokens require a wait.
+
+## Region-set placement
+
+Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
+and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
+with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
+Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
+`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+
+Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
+A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
+The SDK exposes `TerraBaseUnavailableException.ErrorCode == "replica_not_ready"` and `TerraBaseConflictException.ErrorCode == "move_in_progress"`. Neither code is automatically retried;
+general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
+The caller bounds this repeat loop to 90 seconds and propagates other errors:
+
+`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
+
+```csharp
+using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, placement: TerraBaseDatabasePlacement.In("fra"), cancellationToken: deadline.Token); break; }
+    catch (TerraBaseException e) when (e.ErrorCode == "replica_not_ready") { await Task.Delay(1000, deadline.Token); } }
+```

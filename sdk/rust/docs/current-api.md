@@ -27,12 +27,12 @@ metrics, file buckets and files, and functions. Generic methods accept serializa
 bodies and decode caller-selected response types, preserving all producer fields with
 `serde_json::Value`.
 
-Each database lives in one home region. `DatabasePlacement::home_region` selects it on create;
-without it the called region is the home. Restore acknowledgements use `RestoredDatabase`
+Every region that holds a database is equal. `DatabasePlacement::regions` selects them on create;
+without them the called region holds the database. Restore acknowledgements use `RestoredDatabase`
 without a serving `region`; `placement_version` is an exact i64. Serving `ProjectDatabaseInfo`
 responses require `region`.
 
-Call `delete_database` in the database's home region. HTTP 204 confirms logical deletion and
+Call `delete_database` against the database. HTTP 204 confirms logical deletion and
 local cleanup; remote erasure is retried durably and may complete later.
 
 ## Errors and retries

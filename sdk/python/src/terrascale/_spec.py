@@ -50,7 +50,6 @@ class Call:
     success: tuple[int, ...] = (200,)
     base_url: str | None = None
     timeout: httpx.Timeout | None = None
-    resend_codes: frozenset[str] = frozenset()
     anonymous: bool = False
 
     def decode(self, response: httpx.Response) -> Any:
@@ -158,26 +157,28 @@ def ttl(value: int, maximum: int = 31_536_000) -> int:
     return value
 
 
-def placement(replica_regions: Sequence[str] | None, all_regions: bool | None) -> dict[str, Any]:
-    if replica_regions is not None and all_regions is not None:
-        raise ValueError("pass replica_regions or all_regions, not both")
+def placement(regions: Sequence[str] | None, all_regions: bool | None) -> dict[str, Any]:
+    if regions is not None and all_regions is not None:
+        raise ValueError("pass regions or all_regions, not both")
     if all_regions is not None:
         if not isinstance(all_regions, bool):
             raise ValueError("all_regions must be a bool")
         return {"allRegions": all_regions}
-    if replica_regions is not None:
-        if isinstance(replica_regions, str):
-            raise ValueError("replica_regions must be a sequence of region ids")
-        return {"replicaRegions": [region(r) for r in replica_regions]}
+    if regions is not None:
+        if isinstance(regions, str) or not 1 <= len(regions) <= 9:
+            raise ValueError("regions must be a sequence of one to nine region ids")
+        checked = [region(r) for r in regions]
+        if len(set(checked)) != len(checked):
+            raise ValueError("regions must not contain duplicates")
+        return {"regions": checked}
     return {}
 
 
-def create_database(project: str, db: str, home_region: str | None, ttl_seconds: int | None = None,
-                    replica_regions: Sequence[str] | None = None, all_regions: bool | None = None) -> Call:
+def create_database(
+    project: str, db: str, ttl_seconds: int | None = None, regions: Sequence[str] | None = None, all_regions: bool | None = None
+) -> Call:
     body: dict[str, Any] = {"name": database_name(db)}
-    if home_region is not None:
-        body["homeRegion"] = region(home_region)
-    body.update(placement(replica_regions, all_regions))
+    body.update(placement(regions, all_regions))
     if ttl_seconds is not None:
         body["ttlSeconds"] = ttl(ttl_seconds)
     return Call("POST", ["v1", "projects", project, "databases"],
@@ -242,22 +243,11 @@ def set_database_ttl(project: str, db: str, ttl_seconds: int) -> Call:
                 lambda r: models.Database.from_json(r.json()), body={"ttlSeconds": ttl(ttl_seconds)})
 
 
-def set_database_placement(project: str, db: str, replica_regions: Sequence[str] | None,
-                           all_regions: bool | None) -> Call:
-    body = placement(replica_regions, all_regions)
+def set_database_placement(project: str, db: str, regions: Sequence[str] | None, all_regions: bool | None) -> Call:
+    body = placement(regions, all_regions)
     if not body:
-        raise ValueError("pass replica_regions or all_regions")
+        raise ValueError("pass regions or all_regions")
     return Call("PATCH", _db(project, database_selector(db)), lambda r: models.Database.from_json(r.json()), body=body)
-
-
-MOVE_TIMEOUT = httpx.Timeout(30.0, read=None)
-MOVE_RESENDS = 5
-
-
-def move_database_home(project: str, db: str, home_region: str) -> Call:
-    return Call("POST", _db(project, database_selector(db), "move-home"),
-                lambda r: models.Database.from_json(r.json()), body={"homeRegion": region(home_region)},
-                timeout=MOVE_TIMEOUT, resend_codes=frozenset({"move_unresolved"}))
 
 
 def clear_database_ttl(project: str, db: str) -> Call:

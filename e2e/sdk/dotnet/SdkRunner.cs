@@ -42,7 +42,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         var failed = false;
         foreach (var op in spec.RootElement.GetProperty("operations").EnumerateArray())
         {
-            if (Text(op, "group") != group || op.TryGetProperty("needs", out _))
+            if (Text(op, "group") != group || op.TryGetProperty("needs", out _) && !(Environment.GetEnvironmentVariable("E2E_REGIONS") == "2" && Text(op, "id").StartsWith("placement.", StringComparison.Ordinal)))
             {
                 continue;
             }
@@ -90,6 +90,8 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         "agent.clear_ttl" => ClearTtlAsync(cancellationToken),
         "agent.scoped_key" => ScopedKeyAsync(op, cancellationToken),
         "agent.delete" => DeleteAsync(op, cancellationToken),
+        "placement.create" => PlacementCreateAsync(cancellationToken),
+        "placement.set" => PlacementSetAsync(cancellationToken),
         "agent.fork" => ForkAsync(op, cancellationToken),
         "agent.scoped_key_outside" => ScopedKeyOutsideAsync(op, cancellationToken),
         var other => throw new InvalidOperationException($"No implementation for {other}."),
@@ -334,6 +336,75 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
 
     private TerraBaseSqlStatement[] Statements(JsonElement op, string key) =>
         [.. op.GetProperty(key).EnumerateArray().Select(sql => new TerraBaseSqlStatement(Fill(sql.GetString() ?? throw new InvalidOperationException($"{key} holds a non-string."))))];
+
+
+    private async Task PlacementCreateAsync(CancellationToken cancellationToken)
+    {
+        var created = await client.CreateDatabaseAsync(project, $"e2e-dotnet-{run}-placed", placement: TerraBaseDatabasePlacement.In("gru", "fra"), cancellationToken: cancellationToken);
+        try
+        {
+            Same(string.Join(",", created.Regions), "fra,gru", "created regions");
+            var repeated = await client.SetDatabasePlacementAsync(project, created.Id, placement: TerraBaseDatabasePlacement.In("fra", "gru"), cancellationToken: cancellationToken);
+            if (repeated.PlacementVersion != created.PlacementVersion) throw new InvalidOperationException("An unchanged placement changed its version.");
+        }
+        finally
+        {
+            await client.DeleteDatabaseAsync(project, created.Id, cancellationToken);
+        }
+    }
+
+    private async Task PlacementSetAsync(CancellationToken cancellationToken)
+    {
+        var created = await client.CreateDatabaseAsync(project, $"e2e-dotnet-{run}-move", placement: TerraBaseDatabasePlacement.In("gru"), cancellationToken: cancellationToken);
+        using var http = new HttpClient(TerraBaseHttp.CreateHandler());
+        var regional = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions
+        {
+            ApiKey = Required("TERRASCALE_API_KEY"),
+            BaseAddress = new Uri("https://fra.api.terrascale.tech"),
+            AuthAddress = new Uri("https://auth.terrascale.tech"),
+        });
+        var placed = client;
+        try
+        {
+            await client.Database(project, created.Id).ExecuteAsync("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)", cancellationToken: cancellationToken);
+            await client.Database(project, created.Id).ExecuteAsync("INSERT INTO placement_rows VALUES (1)", cancellationToken: cancellationToken);
+            var added = await client.SetDatabasePlacementAsync(project, created.Id, placement: TerraBaseDatabasePlacement.In("gru", "fra"), cancellationToken: cancellationToken);
+            Same(string.Join(",", added.Regions), "fra,gru", "added region");
+            if (added.PlacementVersion <= created.PlacementVersion) throw new InvalidOperationException("Membership did not raise placement version.");
+            var progress = await client.Database(project, created.Id).GetRegionsAsync(cancellationToken);
+            Same(string.Join(",", progress.Regions.Select(row => row.Region)), "fra,gru", "status regions");
+            Same(progress.Regions.Single(row => row.Region == "gru").Role ?? "", "writer", "writer role");
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(TimeSpan.FromSeconds(90));
+            TerraBaseManagedDatabase updated;
+            for (; ; )
+            {
+                try
+                {
+                    updated = await client.SetDatabasePlacementAsync(project, created.Id, placement: TerraBaseDatabasePlacement.In("fra"), cancellationToken: deadline.Token);
+                    break;
+                }
+                catch (TerraBaseUnavailableException error) when (error.ErrorCode == "replica_not_ready")
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), deadline.Token);
+                }
+            }
+            placed = regional;
+            Same(string.Join(",", updated.Regions), "fra", "dropped writer");
+            if (updated.PlacementVersion <= added.PlacementVersion) throw new InvalidOperationException("Writer did not raise placement version.");
+            var after = await regional.Database(project, created.Id).GetRegionsAsync(cancellationToken);
+            Same(string.Join(",", after.Regions.Select(row => $"{row.Region}:{row.Role}")), "fra:writer", "moved status");
+            var refused = await RefusedAsync<TerraBaseWrongRegionException>(() => client.Database(project, created.Id).GetRegionsAsync(cancellationToken));
+            Same(refused.ErrorCode ?? "", "wrong_region", "nonmember endpoint");
+            var rows = await regional.Database(project, created.Id).QueryAsync("SELECT value FROM placement_rows", cancellationToken: cancellationToken);
+            if (rows.Count != 1 || rows[0].GetInt64(0) != 1) throw new InvalidOperationException("Data did not survive placement.");
+            Console.WriteLine("dotnet placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region");
+        }
+        finally
+        {
+            await placed.DeleteDatabaseAsync(project, created.Id, cancellationToken);
+        }
+    }
 
     private static string Required(string name) =>
         Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : throw new InvalidOperationException($"{name} is not set.");

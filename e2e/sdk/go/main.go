@@ -345,6 +345,10 @@ func (r *runner) do(op operation) error {
 		return same(cells(rows), grid(op.Rows), "conflict rows")
 	case "ids.new_validate":
 		return same([]bool{v1.ValidateID(v1.NewID()) == nil, v1.ValidateID(op.Invalid) == nil}, []bool{true, false}, "validation")
+	case "placement.create":
+		return r.placementCreate()
+	case "placement.set":
+		return r.placementSet()
 	case "agent.create_ttl":
 		ttl := op.TTLSeconds
 		before := time.Now().UTC()
@@ -480,7 +484,7 @@ func main() {
 	}
 	failed := false
 	for _, op := range spec.Operations {
-		if op.Group != group || op.Needs != "" {
+		if op.Group != group || op.Needs != "" && !(os.Getenv("E2E_REGIONS") == "2" && strings.HasPrefix(op.ID, "placement.")) {
 			continue
 		}
 		started := time.Now()
@@ -496,4 +500,100 @@ func main() {
 	if failed {
 		os.Exit(1)
 	}
+}
+
+func (r *runner) placementCreate() (result error) {
+	created, err := r.client.CreateDatabase(r.ctx, r.project, "e2e-go-"+r.run+"-placed", v1.CreateDatabaseOptions{Regions: []string{"gru", "fra"}})
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, r.client.DeleteDatabase(r.ctx, r.project, created.ID)) }()
+	if err := same(created.Regions, []string{"fra", "gru"}, "created regions"); err != nil {
+		return err
+	}
+	repeated, err := r.client.SetDatabasePlacement(r.ctx, r.project, created.ID, v1.DatabasePlacement{Regions: []string{"fra", "gru"}})
+	if err != nil {
+		return err
+	}
+	return same(repeated.PlacementVersion, created.PlacementVersion, "unchanged placement version")
+}
+
+func (r *runner) placementSet() (result error) {
+	created, err := r.client.CreateDatabase(r.ctx, r.project, "e2e-go-"+r.run+"-move", v1.CreateDatabaseOptions{Regions: []string{"gru"}})
+	if err != nil {
+		return err
+	}
+	placed := r.client
+	defer func() { result = errors.Join(result, placed.DeleteDatabase(r.ctx, r.project, created.ID)) }()
+	db := r.client.Database(r.project, created.ID)
+	if _, err := db.Execute(r.ctx, "CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)"); err != nil {
+		return err
+	}
+	if _, err := db.Execute(r.ctx, "INSERT INTO placement_rows VALUES (1)"); err != nil {
+		return err
+	}
+	added, err := r.client.SetDatabasePlacement(r.ctx, r.project, created.ID, v1.DatabasePlacement{Regions: []string{"gru", "fra"}})
+	if err != nil {
+		return err
+	}
+	if err := same(added.Regions, []string{"fra", "gru"}, "added region"); err != nil {
+		return err
+	}
+	if added.PlacementVersion <= created.PlacementVersion {
+		return errors.New("membership did not raise placement version")
+	}
+	progress, err := db.Regions(r.ctx)
+	if err != nil {
+		return err
+	}
+	if len(progress.Regions) != 2 || progress.Regions[0].Region != "fra" || progress.Regions[1].Region != "gru" || progress.Regions[1].Role != "writer" {
+		return fmt.Errorf("wrong status regions: %+v", progress.Regions)
+	}
+	ctx, cancel := context.WithTimeout(r.ctx, 90*time.Second)
+	defer cancel()
+	var updated *v1.ManagedDatabase
+	for {
+		updated, err = r.client.SetDatabasePlacement(ctx, r.project, created.ID, v1.DatabasePlacement{Regions: []string{"fra"}})
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, v1.ErrReplicaNotReady) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	placed, err = v1.New(v1.Config{APIKey: os.Getenv("TERRASCALE_API_KEY"), BaseURL: "https://fra.api.terrascale.tech", TSAuthBaseURL: "https://auth.terrascale.tech"})
+	if err != nil {
+		return err
+	}
+	if err := same(updated.Regions, []string{"fra"}, "dropped writer"); err != nil {
+		return err
+	}
+	if updated.PlacementVersion <= added.PlacementVersion {
+		return errors.New("writer did not raise placement version")
+	}
+	after, err := placed.Database(r.project, created.ID).Regions(r.ctx)
+	if err != nil {
+		return err
+	}
+	if len(after.Regions) != 1 || after.Regions[0].Region != "fra" || after.Regions[0].Role != "writer" {
+		return errors.New("wrong moved status")
+	}
+	_, err = db.Regions(r.ctx)
+	if !errors.Is(err, v1.ErrWrongRegion) {
+		return fmt.Errorf("nonmember endpoint should return wrong_region, got %v", err)
+	}
+	rows, err := placed.Database(r.project, created.ID).Query(r.ctx, "SELECT value FROM placement_rows")
+	if err != nil {
+		return err
+	}
+	if err := same(cells(rows), [][]any{{int64(1)}}, "data survived placement"); err != nil {
+		return err
+	}
+	fmt.Println("go placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region")
+	return nil
 }

@@ -5,14 +5,14 @@ Rename sends only `{"name":"production"}` to
 The selector accepts an immutable ULID or the current name; prefer the ULID so
 handles survive renames. Success returns 200 with database metadata.
 
-The database keeps its ULID, data, home region, backups and keys. Update name-based
+The database keeps its ULID, data, placement, backups and keys. Update name-based
 connection strings and handles. After convergence, the old name has no alias: it
 returns 404 or resolves to a database that later claims it.
 
 Invalid names return 400 `invalid_request`; a known
 same-region duplicate returns 409 `name_taken`; a platform database returns 409
 `platform_placement_locked`; an unknown database returns 404 `unknown_database`.
-Only the home region accepts rename; other regions return 421 `wrong_region`
+Only the region that writes accepts rename; other regions return 421 `wrong_region`
 with `X-TerraBase-Database-Home`. Reconcile uncertain mutations by ULID before an
 explicit retry. The SDK does not automatically replay uncertain renames.
 

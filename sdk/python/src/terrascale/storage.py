@@ -6,9 +6,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ._spec import Call, name
-from .errors import APIError
 from .ids import validate_id
-from .rules import BucketRules, _policy_call, _policy_failure
+from .rules import BucketRules, _policy_call
 
 if TYPE_CHECKING:
     from .aio import AsyncTerraScale
@@ -78,10 +77,7 @@ class Storage(_Requests):
         self._client = client
 
     def _send(self, call: Call) -> Any:
-        try:
-            return self._client._send(call)
-        except APIError as error:
-            raise _policy_failure(call, error) from None
+        return self._client._send(call)
 
     def list_buckets(self, *, after: str | None = None) -> FileBucketPage:
         return self._send(self._list(after))
@@ -104,10 +100,7 @@ class AsyncStorage(_Requests):
         self._client = client
 
     async def _send(self, call: Call) -> Any:
-        try:
-            return await self._client._send(call)
-        except APIError as error:
-            raise _policy_failure(call, error) from None
+        return await self._client._send(call)
 
     async def list_buckets(self, *, after: str | None = None) -> FileBucketPage:
         return await self._send(self._list(after))

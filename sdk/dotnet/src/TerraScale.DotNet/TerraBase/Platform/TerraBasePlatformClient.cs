@@ -31,8 +31,8 @@ public sealed record TerraBasePlatformClientOptions
 /// <summary>A platform database (<c>ts-auth</c> or <c>ts-dashboard</c>).</summary>
 /// <param name="Name">Its name.</param>
 /// <param name="Id">Its fixed id.</param>
-/// <param name="HomeRegion">The one region that holds and serves it.</param>
-public sealed record TerraBasePlatformDatabase(string Name, string Id, string HomeRegion);
+/// <param name="HomeRegion">Optional routing hint naming the region that orders writes.</param>
+public sealed record TerraBasePlatformDatabase(string Name, string Id, string? HomeRegion = null);
 
 /// <summary>The platform databases.</summary>
 /// <param name="Items">Every platform database.</param>

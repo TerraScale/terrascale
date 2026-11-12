@@ -148,6 +148,11 @@ public sealed class TerraBaseSqlDatabase
         this.path = path;
     }
 
+    /// <summary>Reads selected regions and writer-observed pull progress; a pull is not an application acknowledgement.</summary>
+    public async Task<TerraBaseDatabaseRegions> GetRegionsAsync(CancellationToken cancellationToken = default) =>
+        (await connection.SendAsync(HttpMethod.Get, path + "/regions", null,
+            TerraBaseJsonContext.Wire.TerraBaseDatabaseRegions, null, cancellationToken).ConfigureAwait(false)).Value;
+
     /// <summary>Runs one statement with positional arguments.</summary>
     public Task<TerraBaseSqlStatementResult> ExecuteAsync(string sql, IReadOnlyList<TerraBaseSqlValue>? args = null, CancellationToken cancellationToken = default) =>
         ExecuteAsync(new TerraBaseSqlStatement(sql, args), cancellationToken);
@@ -193,7 +198,7 @@ public sealed class TerraBaseSqlDatabase
     /// <summary>
     /// Streams the database as one SQL dump (BEGIN, every user table's CREATE TABLE and rows, then indexes, views and
     /// triggers, then COMMIT) from one read snapshot; the same SQL dialect runs it back into a fresh database. Needs
-    /// sql:read; the database's home region serves the export. The caller owns and disposes the stream.
+    /// sql:read; the region that orders the database's writes serves the export. The caller owns and disposes the stream.
     /// </summary>
     public Task<Stream> ExportDatabaseAsync(CancellationToken cancellationToken = default) =>
         connection.OpenStreamAsync(path + "/export", "text/plain", cancellationToken);

@@ -51,7 +51,7 @@ only that database. Server contract: `docs/terrabase/agent-databases.md`; record
 | `createScopedKey({ project?, database, access, ttlSeconds? })` | `POST https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys`, or the same path on the ts-auth the client names, `Authorization: Basic base64(keyId:key)` of the client's `ApiKey`, `{"project","database","access","ttl_seconds"}` | `ScopedKey` (201) |
 
 `ManagedDatabase` is the existing database body (`id`, `projectId`, `name`, `branchedFrom`, `createdAt`, `region`,
-`homeRegion`, …) plus `expiresAt` (RFC 3339, or null without a TTL).
+`regions`, …) plus `expiresAt` (RFC 3339, or null without a TTL).
 
 - `ttlSeconds` is 60 to 31,536,000 (365 days). The database, its backups and its data keys are deleted (crypto-shredded)
   within seconds after `expiresAt`; deletion is the same as `deleteDatabase`. A TTL database counts against the plan's
@@ -80,37 +80,49 @@ Durations are seconds in every SDK (`TimeSpan`/`Duration` accepted where idiomat
 
 ## Placement: where a database lives
 
-A replica region can accept a local SQL REST write; the home is the durable apply point, and the default
-`TerraScale-Durability` is `local`. The server forwards a timed-out local publish with `TerraBase-Publish-Id`
-set to the same transaction id, and the home applies that write once. All-regions
-mode places a replica in every serving region, including regions that join later. A database can move its home to one
-of its replica regions. Server contract: `docs/terrabase/placement.md`; recorded fixtures:
-`sdk/dotnet/contracts/terrabase/placement/`. Routes need `databases:write`.
+Placement selects one set of regions; TerraBase internally keeps a writer and synchronizes the others. It does not
+add independent multi-writer consensus or change SQL write routing. Server contract: `docs/terrabase/placement.md`.
+Routes need `databases:write`; reading status needs `databases:read`.
 
 | Method | Request | Returns |
 |---|---|---|
-| `createDatabase(project, name, { homeRegion?, replicaRegions?, allRegions?, ttlSeconds? })` | `POST /v1/projects/{project}/databases` `{"name","homeRegion","replicaRegions","allRegions","ttlSeconds"}` | `ManagedDatabase` (201) |
-| `setDatabasePlacement(project, database, { replicaRegions?, allRegions? })` | `PATCH …/databases/{database}` `{"replicaRegions"}` or `{"allRegions"}` | `ManagedDatabase` (200) |
-| `moveDatabaseHome(project, database, homeRegion)` | `POST …/databases/{database}/move-home` `{"homeRegion"}` | `ManagedDatabase` (200) |
+| `createDatabase(project, name, { regions?, allRegions?, ttlSeconds? })` | `POST /v1/projects/{project}/databases` with `{"name":"main","regions":["gru","fra"]}` | `ManagedDatabase` (201) |
+| `setDatabasePlacement(project, database, { regions?, allRegions? })` | `PATCH …/databases/{database}` with `{"regions":["fra"]}` or `{"allRegions":true}` | `ManagedDatabase` (200) |
 
-`ManagedDatabase` carries `homeRegion`, `replicaRegions` (sorted; with `allRegions` every serving region other than the
-home) and `allRegions` (boolean).
+`regions` is a nonempty set of distinct serving region ids, at most nine including the writer and any intermediate
+superset (eight replicas besides the writer). Unknown, non-serving, duplicate, empty or oversized sets return
+`400 invalid_request`. Send `regions` separately from `homeRegion`, `replicaRegions` and `allRegions`;
+send a rename separately. Omitted options are not sent. `allRegions: true` without `regions` includes every serving
+region, including ones that join later. Explicit `regions` turns that mode off.
 
-- Omitted options are not sent. `replicaRegions` names at most 8 distinct serving regions other than the home and
-  turns all-regions mode off; `allRegions: true` turns it on. Sending both is refused, and `setDatabasePlacement` needs
-  one of them.
-- `moveDatabaseHome` waits until the move is done (seconds). `homeRegion` must be a replica region; the old home becomes
-  a replica. Writes pause briefly while the home switches; no acknowledged write is lost.
-- Placement requests go to the home region. Behind `api.terrascale.tech` the edge routes them; a direct regional call
-  elsewhere answers `421 wrong_region` naming the home.
-- Errors keep each SDK's HTTP error types: `400 invalid_request` (bad regions, target not a replica), `409
-  move_in_progress`, `421 wrong_region`, `503 replica_not_ready` (the target replica could not catch up; nothing
-  changed) and `503 move_unresolved` (the move outcome is being settled; retry the same call).
+On create the first requested region is the initial writer. Response `regions` are sorted by id; their order carries
+no meaning and does not identify the writer. Responses carry integer `placementVersion`: membership or writer changes
+raise it; an unchanged region set retains it. Transitional response fields are accepted and ignored, and their future
+absence is accepted too. During the transition an old-field PATCH still bumps the version when repeated,
+and returns `409 move_in_progress` while a move is pending so membership cannot consume the move's reserved
+version or diverge from the placement sent to its target.
+
+If an update excludes the current writer, missing requested regions are added and stay added. A call that adds regions
+returns `503 replica_not_ready`, retaining the old writer, existing members and requested additions. Nothing is unstaged
+on any refusal. When no regions need adding, including on the first call, TerraBase reads pull observations and tries
+one candidate: the first requested region in region-id order that has replicated this database at least once.
+The move brings it up to date or refuses with `503 replica_not_ready`. Promotion then removes every unselected region
+and returns 200. Repeat the identical request after replication (about 30 seconds for a newly added region).
+No ready candidate or a repeat during the same regions move returns `503 replica_not_ready`; a different move
+returns `409 move_in_progress`. SDKs preserve these distinct codes and do not automatically retry either refusal.
+The intermediate superset must also fit the nine-member limit before any membership is written; remove other
+non-writers first to make room. Unresolved moves settle through the existing move mechanism.
+
+A direct request through a region no longer selected returns `421 wrong_region`, with routing hints in
+`X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions`; the global API edge replays it.
+Each SDK preserves the code and available diagnostics; callers using a pinned endpoint choose a current region.
+`GET …/databases/{database}/regions` returns `databaseId`, `observedAt` and `regions` entries with `region`,
+nullable `role` (`"writer"` on the writer), `revision`, `lastPulledAt`, `lagMs` and `lastVerified`.
+Pull observations describe completed served pulls, not application or checksum acknowledgements.
 
 | .NET | JS/TS | Go | Python | Rust |
 |---|---|---|---|---|
 | `client.SetDatabasePlacementAsync` | `client.setDatabasePlacement` | `client.SetDatabasePlacement` | `client.set_database_placement` | `client.set_database_placement` |
-| `client.MoveDatabaseHomeAsync` | `client.moveDatabaseHome` | `client.MoveDatabaseHome` | `client.move_database_home` | `client.move_database_home` |
 
 ## REST: one request, one transaction
 
@@ -178,7 +190,7 @@ Retries: REST resends `409 serialization_conflict` at most twice with jitter (th
 the SDK's existing pre-execution refusals (`503` with Retry-After); nothing else. Sessions never resend.
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
-Failures before execution keep each SDK's generic HTTP error types (401, 404, 421 wrong region with the home region,
+Failures before execution keep each SDK's generic HTTP error types (401, 404, 421 wrong_region with routing hints,
 429, 503). A refused WebSocket upgrade raises the same types.
 
 ## IDs

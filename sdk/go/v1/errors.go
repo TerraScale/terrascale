@@ -54,7 +54,10 @@ const (
 	// ErrWrongRegion is a 421: the database is not placed in the called
 	// region. APIError.HomeRegion and Regions name where it is. The client
 	// never retries it elsewhere: it sends the request to a region in Regions.
-	ErrWrongRegion ErrorCode = "wrong_region"
+	ErrWrongRegion     ErrorCode = "wrong_region"
+	ErrReplicaNotReady ErrorCode = "replica_not_ready"
+	ErrMoveInProgress  ErrorCode = "move_in_progress"
+	ErrMoveUnresolved  ErrorCode = "move_unresolved"
 )
 
 // Codes synthesized for Management responses whose body is a plain JSON
@@ -83,9 +86,7 @@ type APIError struct {
 	Body json.RawMessage
 	// RequestID is the response's X-Request-ID, when supplied by the service.
 	RequestID string
-	// HomeRegion and Regions are the database's home and every region that
-	// holds it, as region ids (X-TerraBase-Database-Home and
-	// X-TerraBase-Database-Regions), on a 421 ErrWrongRegion.
+	// HomeRegion is the routing hint naming the region that orders writes.
 	HomeRegion string
 	Regions    []string
 	// Region and Machine identify the accepting node on write_outcome_unknown.

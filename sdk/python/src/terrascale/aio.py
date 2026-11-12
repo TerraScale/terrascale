@@ -119,7 +119,6 @@ class AsyncTerraScale:
         refreshed = False
         attempt = 0
         conflicts = 0
-        resends = 0
         while True:
             direct = "Authorization" in call.headers
             token = "" if direct or call.anonymous else await self._bearer()
@@ -158,10 +157,6 @@ class AsyncTerraScale:
                 # Refresh an ordinary token refusal once, never a permanent key refusal.
                 self._source.invalidate(token)
                 refreshed = True
-                continue
-            if err.status == 503 and err.code in call.resend_codes and resends < _spec.MOVE_RESENDS:
-                resends += 1
-                await asyncio.sleep(err.retry_after if err.retry_after is not None else 1.0)
                 continue
             if isinstance(err, SqlError) and err.code == SqlErrorCodes.SERIALIZATION_CONFLICT and conflicts < 2:
                 conflicts += 1
@@ -230,7 +225,7 @@ class AsyncTerraScale:
         """Rename by immutable ULID or current name with ``databases:write``; return metadata.
 
         See docs/database-rename.md for producer availability and conflict handling.
-        ID, data, keys and home region stay unchanged. Invalid names return
+        ID, data, keys and placement stay unchanged. Invalid names return
         400 (or local ValueError); known same-region duplicates return 409.
         After convergence the old name has no alias and may be claimed again.
         Update name-based connection strings and handles; ID-based strings remain stable. Reconcile uncertain failures
@@ -239,12 +234,15 @@ class AsyncTerraScale:
         return await self._send(_spec.rename_database(self.project, database_id, name))
 
     async def create_database(
-        self, name: str, *, home_region: str | None = None, ttl_seconds: int | None = None,
-        replica_regions: Sequence[str] | None = None, all_regions: bool | None = None,
+        self,
+        name: str,
+        *,
+        ttl_seconds: int | None = None,
+        regions: Sequence[str] | None = None,
+        all_regions: bool | None = None,
     ) -> models.Database:
-        """Create a database in ``home_region`` (a region id such as ``"gru"``), or in the region that answers."""
-        return await self._send(
-            _spec.create_database(self.project, name, home_region, ttl_seconds, replica_regions, all_regions))
+        """Create in the selected regions, or the answering region; TTL expiry deletes the database and backups."""
+        return await self._send(_spec.create_database(self.project, name, ttl_seconds, regions, all_regions))
 
     async def fork_database(
         self, source: str, name: str, *, point_in_time: str | None = None, ttl_seconds: int | None = None,
@@ -261,21 +259,21 @@ class AsyncTerraScale:
         return await self._send(_spec.set_database_ttl(self.project, database, ttl_seconds))
 
     async def set_database_placement(
-        self, database: str, *, replica_regions: Sequence[str] | None = None, all_regions: bool | None = None,
+        self,
+        database: str,
+        *,
+        regions: Sequence[str] | None = None,
+        all_regions: bool | None = None,
     ) -> models.Database:
-        """Set the replica regions, or turn all-regions mode on or off; pass exactly one."""
-        return await self._send(_spec.set_database_placement(self.project, database, replica_regions, all_regions))
-
-    async def move_database_home(self, database: str, home_region: str) -> models.Database:
-        """Move the home to one of the database's replica regions and wait until the move is done."""
-        return await self._send(_spec.move_database_home(self.project, database, home_region))
+        """Set every region holding the database, or all regions; placement refusals are never automatically retried."""
+        return await self._send(_spec.set_database_placement(self.project, database, regions, all_regions))
 
     async def clear_database_ttl(self, database: str) -> models.Database:
         """Remove the database's expiry."""
         return await self._send(_spec.clear_database_ttl(self.project, database))
 
     async def delete_database(self, database: str) -> None:
-        """Delete by name or ULID in the database's home region."""
+        """Delete the database and backups; a region outside its placement returns 421 wrong_region."""
         await self._send(_spec.delete_database(self.project, database))
 
     async def delete_database_if_id(self, database: str, expected_id: str) -> None:
@@ -285,7 +283,7 @@ class AsyncTerraScale:
     def export_database(self, database: str) -> AsyncIterator[bytes]:
         """Stream the database as one SQL dump (BEGIN … COMMIT) with ``sql:read``.
 
-        The database's home region serves the export; consume the iterator to
+        The region that orders the database's writes serves the export; consume the iterator to
         read the dump and close it when done.
         """
         return self._stream(_spec.export_database(self.project, _spec.database_selector(database)))
@@ -440,11 +438,11 @@ class AsyncDatabase:
 
 
     async def regions(self) -> models.DatabaseRegions:
-        """The database's home region and home-observed replica pull progress; not application acknowledgements."""
+        """Read selected regions and writer-observed pull progress with databases:read; observations are not acknowledgements."""
         return await self._c._send(_spec.get_database_regions(*self._p))
 
     async def delete(self) -> None:
-        """Delete in the database's home region. HTTP 204 confirms logical deletion and local cleanup;
+        """Delete in the region that orders the database's writes. HTTP 204 confirms logical deletion and local cleanup;
         remote erasure is retried durably and may complete later."""
         await self._c._send(_spec.delete_database(*self._p))
 
