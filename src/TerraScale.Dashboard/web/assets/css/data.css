@@ -294,6 +294,10 @@ code:not(pre code) {
   height: auto;
 }
 
+.ts-chart-shell:has(> .ts-skeleton-chart:not([hidden])) {
+  min-height: 200px;
+}
+
 .ts-chart-shell:has(> .ts-skeleton-chart:not([hidden])) > [data-show] {
   visibility: hidden;
 }
