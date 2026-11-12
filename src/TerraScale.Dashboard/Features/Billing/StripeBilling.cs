@@ -754,6 +754,7 @@ namespace TerraScale.Dashboard.Features.Billing
             };
             if (plan.PriceCents > 0)
             {
+                options.AllowedPaymentMethodTypes = ["card", "link"];
                 options.PaymentMethodCollection = "always";
                 options.TaxIdCollection = new() { Enabled = true };
                 options.CustomerUpdate = new() { Address = "auto", Name = "auto" };

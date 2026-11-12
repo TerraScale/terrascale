@@ -8,6 +8,7 @@ const objects = new Map();
 const checkouts = new Map();
 const replays = new Map();
 const failures = new Map();
+const authFailures = new Set();
 const refundStatuses = new Map();
 const log = { calls: [], events: [], cancels: [], refunds: [], unexpected: [] };
 
@@ -70,7 +71,12 @@ const api = [
     session.url = `https://checkout.stripe.com/c/pay/${session.id}`;
     checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url'), cancel: form.get('cancel_url') });
     return session;
-  }, {}, { expires_at: within(hour / 2, 24 * hour) }],
+  }, {}, {
+    expires_at: within(hour / 2, 24 * hour),
+    'allowed_payment_method_types[0]': (value) => value === 'card',
+    'allowed_payment_method_types[1]': (value) => value === 'link',
+    'allowed_payment_method_types[2]': (value) => value === null,
+  }],
   ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }],
   ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session)],
   ['POST', /^\/v1\/checkout\/sessions\/(cs_test_\w+)\/expire$/, (form, [session]) => {
@@ -157,6 +163,20 @@ function unexpected(response, request, url, reason, status = 404, error = { type
 
 async function handle(request, response, body) {
   const url = new URL(request.url, `https://${request.headers.host}`);
+  if (url.hostname === 'auth.terrascale.tech' && request.method === 'POST' && url.pathname === '/v1/terrascale/organizations') {
+    const result = await fetch('http://127.0.0.1:8090' + url.pathname, {
+      method: 'POST', headers: { authorization: request.headers.authorization, 'content-type': 'application/json' }, body,
+    });
+    const answer = await result.json();
+    if (result.ok && authFailures.delete(JSON.parse(body).idempotency_key)) {
+      return reply(response, 503, { error: 'Journey dropped the response after organization creation.' });
+    }
+    return reply(response, result.status, answer);
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/auth-failure') {
+    authFailures.add(JSON.parse(body).checkout);
+    return reply(response, 200, {});
+  }
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/log') return reply(response, 200, log);
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/failure') {
     const failure = JSON.parse(body);

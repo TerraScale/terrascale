@@ -380,7 +380,7 @@ namespace TerraScale.Dashboard.Features.Profile
         private static bool Transient(Exception error, HttpContext http)
         {
             return error is HttpRequestException or IOException or TimeoutException ||
-                error is StripeException stripe && StripeBilling.TransientStripeFailure(stripe) ||
+                error is StripeException stripe && !StripeBilling.MissingStripeObject(stripe) ||
             error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested;
         }
     }

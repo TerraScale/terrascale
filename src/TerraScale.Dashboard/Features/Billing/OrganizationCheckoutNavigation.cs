@@ -93,7 +93,7 @@ public sealed partial class StripeBilling
         var result = new OrganizationCheckoutCompletion();
         await using var db = await storage.CreateDbContextAsync(cancellationToken);
         var drafts = await db.PendingOrganizationCheckouts.AsNoTracking()
-            .Where(row => row.UserId == session.UserId).OrderBy(row => row.State == "refund_pending").ThenBy(row => row.CreatedAt).ToListAsync(cancellationToken);
+            .Where(row => row.UserId == session.UserId).OrderBy(row => row.State == OrganizationCheckoutStates.RefundPending).ThenBy(row => row.CreatedAt).ToListAsync(cancellationToken);
         foreach (var draft in drafts)
         {
             if (http.Request.Path == "/billing/checkout/return" && http.Request.Query["session_id"] != draft.CheckoutId)
@@ -108,7 +108,7 @@ public sealed partial class StripeBilling
                     return new OrganizationCheckoutCompletion(await CompletePendingOrganizationAsync(session, http, draft, cancellationToken));
                 }
                 catch (Exception error) when (error is OrganizationCheckoutRefusedException or AccountAccessException { Code: "organization_deleted" }
-                    || error is StripeException stripe && PermanentStripeFailure(stripe))
+                    || error is StripeException stripe && MissingStripeObject(stripe))
                 {
                     var reason = error is StripeException ? "Organization checkout is unavailable. Start again." : error.Message;
                     return await CancelPendingOrganizationAsync(session, http, draft.DraftId, reason, cancellationToken);
@@ -196,10 +196,6 @@ public sealed partial class StripeBilling
     internal static bool MissingStripeObject(StripeException error) =>
         error.HttpStatusCode == HttpStatusCode.NotFound || error.StripeError?.Code == "resource_missing";
 
-    private static bool PermanentStripeFailure(StripeException error) => MissingStripeObject(error);
-
-    internal static bool TransientStripeFailure(StripeException error) => !PermanentStripeFailure(error);
-
     internal async Task<PendingOrganizationCheckout?> OrganizationDraftForCancellationAsync(string userId, string draftId, CancellationToken cancellationToken)
     {
         var draft = await ReadPendingOrganizationAsync(draftId, cancellationToken);
@@ -251,7 +247,7 @@ public sealed partial class StripeBilling
     internal async Task<OrganizationCheckoutCompletion> CancelPendingOrganizationAsync(SessionRecord session, HttpContext http, string draftId,
         string reason, CancellationToken cancellationToken)
     {
-        while (true)
+        for (var attempt = 0; attempt < 3; attempt++)
         {
             var draft = await ReadPendingOrganizationAsync(draftId, cancellationToken);
             if (draft is null)
@@ -271,15 +267,15 @@ public sealed partial class StripeBilling
             {
                 return new OrganizationCheckoutCompletion();
             }
-            if (draft.State == "creating")
+            if (draft.State == OrganizationCheckoutStates.Creating)
             {
                 await OrganizationCheckoutNavigation.RefusedAsync(http, session.UserId, "The organization is being created. Checkout cannot be canceled.", cancellationToken);
                 return new OrganizationCheckoutCompletion(await CompleteCreatingOrganizationAsync(session, draft, cancellationToken),
                     "The organization is being created. Checkout cannot be canceled.");
             }
-            if (draft.State == "pending")
+            if (draft.State == OrganizationCheckoutStates.Pending)
             {
-                draft.State = "canceling";
+                draft.State = OrganizationCheckoutStates.Canceling;
                 draft.RefusalReason = reason;
                 if (!await storage.ReplaceAsync(draft, cancellationToken))
                 {
@@ -297,7 +293,7 @@ public sealed partial class StripeBilling
                 {
                     return new OrganizationCheckoutCompletion();
                 }
-                if (current.State == "creating")
+                if (current.State == OrganizationCheckoutStates.Creating)
                 {
                     continue;
                 }
@@ -326,21 +322,22 @@ public sealed partial class StripeBilling
                 return new OrganizationCheckoutCompletion();
             }
         }
+        throw new IOException("Organization cancellation changed concurrently. Retry organization setup.");
     }
 
     private async Task<bool> RecordUnsettledRefundAsync(string draftId, string status, CancellationToken cancellationToken)
     {
         while (await ReadPendingOrganizationAsync(draftId, cancellationToken) is { } current)
         {
-            if (current.State == "creating")
+            if (current.State == OrganizationCheckoutStates.Creating)
             {
                 throw new AccountAccessException("The organization is being created.", 409);
             }
-            if (current.State == "refund_pending" && current.RefundStatus == status && current.RefundNoticeAt is not null)
+            if (current.State == OrganizationCheckoutStates.RefundPending && current.RefundStatus == status && current.RefundNoticeAt is not null)
             {
                 return false;
             }
-            current.State = "refund_pending";
+            current.State = OrganizationCheckoutStates.RefundPending;
             current.RefundStatus = status;
             current.RefundNoticeAt = time.GetUtcNow().UtcDateTime;
             if (await storage.ReplaceAsync(current, cancellationToken))

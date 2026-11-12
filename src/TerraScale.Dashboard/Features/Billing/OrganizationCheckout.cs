@@ -54,11 +54,11 @@ public sealed partial class StripeBilling
             throw new OnboardingValidationException("Cancel the pending checkout in the organization setup wizard before starting another.");
         }
 
-        if (draft.State == "creating")
+        if (draft.State == OrganizationCheckoutStates.Creating)
         {
             return CheckoutReturnUrl(draft.CheckoutId);
         }
-        if (draft.State != "pending")
+        if (draft.State != OrganizationCheckoutStates.Pending)
         {
             throw new OnboardingValidationException("Checkout cancellation is being completed. Open the organization page to continue.");
         }
@@ -72,7 +72,7 @@ public sealed partial class StripeBilling
     internal async Task<PendingOrganizationCheckout?> PendingOrganizationAsync(string userId, CancellationToken cancellationToken)
     {
         await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        return await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.UserId == userId && row.State != "refund_pending", cancellationToken);
+        return await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.UserId == userId && row.State != OrganizationCheckoutStates.RefundPending, cancellationToken);
     }
 
     private async Task<Stripe.Checkout.Session> CreateDraftCheckoutAsync(SessionRecord session, string draftId, string name, BillingPlan plan, string interval, DateTime createdAt, CancellationToken cancellationToken)
@@ -134,11 +134,11 @@ public sealed partial class StripeBilling
 
     private async Task<string?> CompletePendingOrganizationAsync(SessionRecord session, HttpContext request, PendingOrganizationCheckout draft, CancellationToken cancellationToken)
     {
-        if (draft.State == "creating")
+        if (draft.State == OrganizationCheckoutStates.Creating)
         {
             return await CompleteCreatingOrganizationAsync(session, draft, cancellationToken);
         }
-        if (draft.State is "canceling" or "refund_pending")
+        if (draft.State is OrganizationCheckoutStates.Canceling or OrganizationCheckoutStates.RefundPending)
         {
             throw new OrganizationCheckoutRefusedException(draft.RefusalReason);
         }
@@ -176,7 +176,7 @@ public sealed partial class StripeBilling
         if (checkout.PaymentStatus == "paid")
         {
             draft = await RecordPaidDraftAsync(draft, cancellationToken);
-            if (draft.State != "pending")
+            if (draft.State != OrganizationCheckoutStates.Pending)
             {
                 return await CompletePendingOrganizationAsync(session, request, draft, cancellationToken);
             }
@@ -215,19 +215,19 @@ public sealed partial class StripeBilling
             throw new OrganizationCheckoutRefusedException("The payment didn't go through. Start organization setup again.");
         }
 
-        while (true)
+        for (var attempt = 0; attempt < 3; attempt++)
         {
             var current = await ReadPendingOrganizationAsync(draft.DraftId, cancellationToken);
             if (current is null)
             {
                 return (await CheckoutAsync(draft.CheckoutId, cancellationToken))?.OrganizationId;
             }
-            if (current.State != "pending")
+            if (current.State != OrganizationCheckoutStates.Pending)
             {
                 return await CompletePendingOrganizationAsync(session, request, current, cancellationToken);
             }
 
-            current.State = "creating";
+            current.State = OrganizationCheckoutStates.Creating;
             current.PaidAt = time.GetUtcNow().UtcDateTime;
             current.CustomerId = customerId;
             current.SubscriptionId = subscriptionId;
@@ -239,6 +239,7 @@ public sealed partial class StripeBilling
                 return await CompleteCreatingOrganizationAsync(session, current, cancellationToken);
             }
         }
+        throw new IOException("Organization creation claim changed concurrently. Retry organization setup.");
     }
 
     private async Task<string> CompleteCreatingOrganizationAsync(SessionRecord session, PendingOrganizationCheckout draft, CancellationToken cancellationToken)

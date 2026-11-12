@@ -182,6 +182,22 @@ test('organization checkout creates nothing before payment and completes exactly
     method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + paidSession.subscription, status: 404, remaining: 2 }),
   });
   expect(failure.status).toBe(200);
+  const authFailure = await fetch(stripeStandIn + '/auth-failure', {
+    method: 'POST', body: JSON.stringify({ checkout: checkoutId }),
+  });
+  expect(authFailure.status).toBe(200);
+  const interrupted = await page.request.get(paid.headers().location, { maxRedirects: 0 });
+  expect(interrupted.status()).toBe(303);
+  expect(interrupted.headers().location).toBe('/organization');
+  const unfinished = (await owner.organizations()).filter((org) => org.name === name);
+  expect(unfinished).toHaveLength(1);
+  const ordinary = await page.request.get('/organization', {
+    headers: { 'Datastar-Request': 'true', accept: 'text/html' },
+  });
+  expect(ordinary.status()).toBe(200);
+  const ordinaryHtml = await ordinary.text();
+  expect(ordinaryHtml).toContain('data-organization-option="' + before[0].id + '"');
+  expect(ordinaryHtml).not.toContain('data-organization-option="' + unfinished[0].id + '"');
   await page.goto(paid.headers().location);
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/organization' && url.searchParams.get('newOrganization') === 'project');
   const afterFailure = await stripeLog();
@@ -216,7 +232,8 @@ test('organization checkout creates nothing before payment and completes exactly
   expect((await events.json()).items.filter((event: { action: string }) => event.action === 'organization.created')).toHaveLength(1);
   await expect(page.locator('#create-organization[open]')).toBeVisible();
   await audit.check('confirmed organization project step after repeated completion');
-  console.log('organization checkout: absent before payment; one organization, one owner membership and one creation audit after repeated completion and keyed auth create');
+  await expect(wizard.getByRole('button', { name: 'Cancel pending checkout', exact: true })).toHaveCount(0);
+  console.log('organization checkout: response lost after real ts-auth create; ordinary signed-in request hides creating organization; resumed Pro with billing binding; exactly one organization, one owner membership, one creation audit and no pending checkout');
   const canceledName = 'Canceled payment ' + owner.run;
   await page.goto('/organization?newOrganization=organization');
   const canceledWizard = page.locator('#create-organization[open]');

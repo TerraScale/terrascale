@@ -10,9 +10,11 @@ Stripe creates the session before the pending row is inserted. A draft ULID iden
 | --- | --- | --- | --- |
 | Before mark: pending | Verify the session, owner, paid status, plan/interval, subscription and payment method; save the known-paid marker before further Stripe reads | Atomically claim canceling with the original refusal reason before touching money; expire, cancel and refund; remove only after cleanup succeeds | Claim the same cancellation state and finish cleanup |
 | Marked: creating | Its own save stores verified plan ID, customer, subscription, active/trialing status and renewal. Resume keyed ts-auth creation using those facts, without reading Stripe | Refuse cancellation and resume completion. Never cancel, refund or remove this row as cleanup, including for permanent vendor answers | Finish completion first. While it fails, retain the durable deletion operation on the existing retry page and do not start ts-auth account deletion |
-| Completed: pending row absent | One dashboard save inserts organization, billing binding, customer and checkout index and removes the marked row. Reread the winner on a concurrency loss | A stale wizard cancel reports the organization already created and cannot cancel checkout | Refresh the sole-organization scope, then use normal ts-auth account/organization deletion and subscription termination without a checkout refund |
+| Completed: pending row absent | One dashboard save inserts or promotes the organization, adds billing binding, customer and checkout index and removes the marked row. Reread the winner on a concurrency loss, for at most three attempts | A stale wizard cancel reports the organization already created and cannot cancel checkout | Refresh the sole-organization scope, then use normal ts-auth account/organization deletion and subscription termination without a checkout refund |
 
 The dashboard organization and billing rows share DashboardDbContext in ts-dashboard. OrganizationStore stages its aggregate alongside the billing rows in one SaveChangesAsync with no explicit transaction. No organization entitlement is committed before its binding and customer exist.
+
+The creating row records the organization ID returned by keyed ts-auth creation. If that response is lost before the ID is saved, an ordinary signed-in request resolves the same key and hides the unfinished organization without writing a billing-required placeholder. Completion promotes an existing live row without billing in the same atomic save. A matching existing binding makes completion idempotent; a different checkout or subscription is refused rather than overwritten.
 
 After the commit, metadata repair only adds our organization ID to the subscription and customer. Later navigations and MCP calls compare their metadata and repeat missing writes until they succeed. Vendor failures are logged through OptionalPanel and exported in terrascale_organization_checkout_failures_total, with creating and metadata phases. Metadata failure never blocks or undoes a completed organization.
 
@@ -30,8 +32,8 @@ An unsettled refund moves the row to refund_pending, retaining its original reas
 
 The keyed ts-auth create still refuses deleted/closing organization IDs. Finished deletion markers remain for at least 24 hours after history completion, then follow the existing credential fence and dashboard verification.
 
-## Payment methods and parked late-payment gap
+## Payment methods
 
-Organization Checkout sets neither payment_method_types nor an automatic_payment_methods override. It uses Stripe Checkout's dynamic selection and the Stripe account's Dashboard payment-method defaults, subject to currency, customer and subscription-mode eligibility. Checkout always requests a payment method; it does not restrict the session to cards. The repository does not enumerate the live account's enabled methods. Delayed methods, such as eligible bank debits, are possible when enabled there.
+The shared paid-plan Checkout policy sets Stripe's allowed_payment_method_types to card and link for organization creation and existing-organization subscriptions. Stripe offers only eligible methods from that allowlist.
 
-A normal unpaid incomplete subscription remains pending. If a refusal cancels an unpaid subscription and removes its draft, a delayed payment can subsequently succeed. Draft customers have no committed customer index, so the current payment-event handler returns without completing an organization or scheduling that late refund. A retained refund row is reconciled on later navigation, but an already removed unpaid draft has no automatic late-payment refund path. PARKED: reconcile late success after unpaid refusal/cancellation, or separately review the account's enabled payment methods. This PR does not change payment methods.
+Checkout accepts cards and Link only: a delayed payment method could settle after the draft is gone.

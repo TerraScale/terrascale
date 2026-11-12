@@ -73,23 +73,34 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
 
     internal async Task<OrganizationRecord> CompleteCheckoutAsync(OrganizationRecord organization, PendingOrganizationCheckout draft, CancellationToken cancellationToken)
     {
-        while (true)
+        for (var attempt = 0; attempt < 3; attempt++)
         {
+            var stored = await FindAsync(organization.Id, cancellationToken);
+            if (stored is { Erased: true })
+            {
+                throw new AccountAccessException("Organization deletion is pending.", 409);
+            }
+
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
             var pending = await db.PendingOrganizationCheckouts.SingleOrDefaultAsync(row => row.DraftId == draft.DraftId, cancellationToken);
-            if (pending is null)
+            var binding = await db.Billing.AsNoTracking().SingleOrDefaultAsync(row => row.OrganizationId == organization.Id, cancellationToken);
+            if (binding is not null)
             {
-                var binding = await db.Billing.AsNoTracking().SingleOrDefaultAsync(row => row.OrganizationId == organization.Id, cancellationToken);
-                var stored = await FindAsync(organization.Id, cancellationToken);
-                if (stored is not { Erased: false } || binding?.RequestId != draft.DraftId || binding.CheckoutId != draft.CheckoutId
+                if (stored is not { Erased: false } || binding.RequestId != draft.DraftId || binding.CheckoutId != draft.CheckoutId
                     || binding.CustomerId != draft.CustomerId || binding.SubscriptionId != draft.SubscriptionId)
                 {
-                    throw new AccountAccessException("Organization completion changed concurrently. Retry organization setup.", 409);
+                    throw new IOException("Organization already has a billing binding for another checkout or subscription.");
                 }
 
+                if (pending is not null)
+                {
+                    db.Remove(pending);
+                    try { await db.SaveChangesAsync(cancellationToken); }
+                    catch (DbUpdateConcurrencyException) { continue; }
+                }
                 return stored.Organization;
             }
-            if (pending.State != "creating" || pending.UserId != draft.UserId)
+            if (pending is null || pending.State != OrganizationCheckoutStates.Creating || pending.UserId != draft.UserId || pending.OrganizationId != organization.Id)
             {
                 throw new AccountAccessException("Organization is not ready to be created.", 409);
             }
@@ -113,7 +124,15 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 RenewalAt = pending.RenewalAt is { } renewal ? RowSync.At(renewal) : null,
                 ReturnPath = "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organization.Id)
             };
-            StageCreate(db, organization);
+            if (stored is null)
+            {
+                StageCreate(db, organization);
+            }
+            else
+            {
+                stored.Rows.Attach(db);
+                Apply(db, stored.Rows, Write(organization, AccountService.NewId(), null));
+            }
             db.Add(billing);
             db.Add(new StripeCustomerRow
             {
@@ -143,12 +162,13 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             }
             catch (DbUpdateConcurrencyException)
             {
-                if (await FindAsync(organization.Id, cancellationToken) is { Erased: true })
+                if (attempt == 2)
                 {
-                    throw new AccountAccessException("Organization deletion is pending.", 409);
+                    throw new IOException("Organization completion changed concurrently. Retry organization setup.");
                 }
             }
         }
+        throw new IOException("Organization completion changed concurrently. Retry organization setup.");
     }
 
     public async Task ReplaceAsync(StoredOrganization stored, CancellationToken cancellationToken)
@@ -187,7 +207,7 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             throw new IOException("Organization erasure identity is invalid.");
         }
 
-        for (var attempt = 0; ; attempt++)
+        for (var attempt = 0; attempt < 3; attempt++)
         {
             var stored = await FindAsync(id, cancellationToken);
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
@@ -209,8 +229,18 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 Apply(db, stored.Rows, next);
             }
 
-            try { await (stored is null ? RowSync.CreateAsync(db, cancellationToken) : RowSync.ReplaceAsync(db, cancellationToken)); }
-            catch (DbUpdateConcurrencyException) when (attempt < 3) { }
+            try
+            {
+                await (stored is null ? RowSync.CreateAsync(db, cancellationToken) : RowSync.ReplaceAsync(db, cancellationToken));
+                return;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                if (attempt == 2)
+                {
+                    throw new IOException("Organization deletion changed concurrently. Retry deletion.");
+                }
+            }
         }
     }
 

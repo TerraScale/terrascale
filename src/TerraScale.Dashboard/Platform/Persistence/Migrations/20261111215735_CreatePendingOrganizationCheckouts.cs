@@ -22,6 +22,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     checkout_id = table.Column<string>(type: "TEXT", nullable: false),
                     created_at = table.Column<DateTime>(type: "TEXT", nullable: false),
                     state = table.Column<string>(type: "TEXT", nullable: false),
+                    organization_id = table.Column<string>(type: "TEXT", nullable: false),
                     refusal_reason = table.Column<string>(type: "TEXT", nullable: false),
                     refund_status = table.Column<string>(type: "TEXT", nullable: false),
                     refund_notice_at = table.Column<DateTime>(type: "TEXT", nullable: true),
@@ -40,6 +41,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     table.CheckConstraint("ck_pending_organization_checkouts_id", "length(user_id) = 26 AND length(draft_id) = 26");
                     table.CheckConstraint("ck_pending_organization_checkouts_interval", "interval IN ('monthly', 'annual')");
                     table.CheckConstraint("ck_pending_organization_checkouts_name", "length(name) BETWEEN 1 AND 128");
+                    table.CheckConstraint("ck_pending_organization_checkouts_organization", "organization_id = '' OR length(organization_id) = 26");
                     table.CheckConstraint("ck_pending_organization_checkouts_plan", "length(plan) BETWEEN 1 AND 128");
                     table.CheckConstraint("ck_pending_organization_checkouts_refusal", "state NOT IN ('canceling', 'refund_pending') OR length(refusal_reason) > 0");
                     table.CheckConstraint("ck_pending_organization_checkouts_state", "state IN ('pending', 'creating', 'canceling', 'refund_pending')");
