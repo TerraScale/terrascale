@@ -44,6 +44,9 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     public string? MfaMethod { get; init; }
 
     [JsonIgnore]
+    public bool InboxProven { get; init; }
+
+    [JsonIgnore]
     public string? SessionId { get; init; }
 
     [JsonIgnore]

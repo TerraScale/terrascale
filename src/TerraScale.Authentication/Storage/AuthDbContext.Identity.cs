@@ -50,6 +50,7 @@ public sealed partial class AuthDbContext
             user.Ignore(row => row.StepUpBindings);
             user.Ignore(row => row.MultiFactor);
             user.Ignore(row => row.SessionId);
+            user.Ignore(row => row.InboxProven);
             user.Ignore(row => row.MfaMethod);
         });
 

@@ -14,6 +14,7 @@
 {
 <label class="ts-check"><input type="checkbox" name="@name" checked="@Checked(name, saved)" /><span>@label</span></label>
 }
+<p role="note">Turning off authenticator apps lets TOTP users sign in with only their password when MFA is not required.</p>
 <div class="ts-field"><label class="ts-label" for="auth-inactivity">Inactivity timeout (minutes)</label><input class="ts-input" id="auth-inactivity" name="inactivity_timeout_minutes" type="number" min="15" max="43200" step="1" placeholder="Off" value="@idle" /></div>
 <button class="ts-btn ts-btn-primary" type="submit">Save MFA and sessions</button>
 </fieldset>

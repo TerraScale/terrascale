@@ -162,7 +162,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         }
 
         var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, form.Code ?? string.Empty, PasscodePurpose.SignIn, cancellationToken);
-        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
+        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user with { InboxProven = true }, next, cancellationToken) is { } step)
         {
             return step;
         }
@@ -453,7 +453,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
             user = created;
         }
 
-        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
+        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user with { InboxProven = true }, next, cancellationToken) is { } step)
         {
             return step;
         }
@@ -745,8 +745,28 @@ internal static class SignInFlow
         var policy = Tenancy.IsProject(user.InstanceId)
             ? (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(user.InstanceId, cancellationToken)).Configuration ?? ConfigurationBody.Default
             : ConfigurationBody.Default;
-        var enrolled = (await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled && policy.AllowTotp;
-        if (!enrolled && !policy.RequireMfa || await mfa.ChallengeAsync(user, cancellationToken) is not { } challenge)
+        var enrolled = await mfa.HasAllowedFactorAsync(user, cancellationToken);
+        if (!policy.RequireMfa && (!policy.AllowTotp || !(await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled))
+        {
+            return null;
+        }
+
+        if (!enrolled && !user.InboxProven)
+        {
+            var hosted = context.RequestServices.GetRequiredService<HostedAuth>();
+            using var reservation = context.RequestServices.GetRequiredService<SignInMail>().Reserve();
+            if (await hosted.LimitMailAsync(user.Email, Ip(context), cancellationToken) is { } refusal)
+            {
+                return refusal.BudgetExhausted
+                    ? BudgetExhausted(context, SignInStep.Code, refusal.Wait, user.Email, next)
+                    : Limited(context, SignInStep.Code, refusal.Wait, user.Email, next);
+            }
+
+            await reservation.EnqueueCodeAsync(user.InstanceId, user.Email, PasscodePurpose.SignIn, AuthEmails.Locale(context.Request));
+            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, user.InstanceId, user.Email, next));
+        }
+
+        if (await mfa.ChallengeAsync(user, !enrolled, cancellationToken) is not { } challenge)
         {
             return null;
         }
@@ -789,8 +809,10 @@ internal static class SignInFlow
             return sso;
         }
 
-        // The browser's previous session, if any, ends with this sign-in.
-        await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
+        if (!Tenancy.IsProject(tenant))
+        {
+            await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
+        }
         BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
         return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
     }

@@ -14,7 +14,9 @@ internal static class RequiredMfaEnrollment
         var tenant = SignInFlow.Tenant(context);
         var policy = (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, cancellationToken)).Configuration ?? ConfigurationBody.Default;
         if (!Tenancy.IsProject(tenant) || !policy.RequireMfa || factor == "totp" && !policy.AllowTotp || factor == "passkey" && !policy.AllowPasskey
-            || await context.RequestServices.GetRequiredService<TotpCredentials>().ChallengedAsync(tenant, challenge, cancellationToken) is not { } pending)
+            || await context.RequestServices.GetRequiredService<TotpCredentials>().ChallengedAsync(tenant, challenge, "enrollment", cancellationToken) is not { } pending
+            || !pending.User.InboxProven
+            || await context.RequestServices.GetRequiredService<TotpCredentials>().HasAllowedFactorAsync(pending.User, cancellationToken))
         {
             throw new ApiException(403, "mfa_required", "Start sign-in again and enroll an allowed factor.");
         }

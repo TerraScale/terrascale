@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using OtpNet;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Identity;
@@ -16,7 +17,7 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Mfa;
 
-public sealed class TotpCredentials(AuthData data, Credentials credentials, Users users, AttemptLimiter limiter, AuthOptions options, TimeProvider clock, ProjectAuthSettings settings)
+public sealed class TotpCredentials(AuthData data, Credentials credentials, Users users, AttemptLimiter limiter, AuthOptions options, TimeProvider clock, ProjectAuthSettings settings, IEmailSender email)
 {
     private static readonly TimeSpan EnrollmentLifetime = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan RecoveryLifetime = TimeSpan.FromDays(365);
@@ -45,19 +46,21 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         }
     }
 
-    public async Task<string?> ChallengeAsync(UserRecord user, CancellationToken cancellationToken = default)
+    public async Task<string?> ChallengeAsync(UserRecord user, bool enrollment, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
-        if (await this.CurrentUserAsync(user, cancellationToken).ConfigureAwait(false) is null)
+        if (await this.CurrentUserAsync(user, cancellationToken).ConfigureAwait(false) is null
+            || enrollment && (!user.InboxProven
+                || await this.HasAllowedFactorAsync(user, cancellationToken).ConfigureAwait(false)))
         {
             return null;
         }
 
-        var challenge = new MfaChallenge(AuthIds.New(), user.Id, user.AuthEpoch, user.AuthStamp, clock.GetUtcNow() + ChallengeLifetime, user.AuthenticationBindings);
+        var challenge = new MfaChallenge(AuthIds.New(), user.Id, user.AuthEpoch, user.AuthStamp, clock.GetUtcNow() + ChallengeLifetime, user.AuthenticationBindings, enrollment ? "enrollment" : "verification", user.InboxProven);
         return SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, MfaJson.Default.MfaChallenge), "mfa-challenge:" + user.InstanceId);
     }
 
-    public async Task<ChallengedSignIn?> ChallengedAsync(string instanceId, string? sealedChallenge, CancellationToken cancellationToken = default)
+    public async Task<ChallengedSignIn?> ChallengedAsync(string instanceId, string? sealedChallenge, string purpose, CancellationToken cancellationToken = default)
     {
         MfaChallenge? challenge;
         try
@@ -71,7 +74,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             return null;
         }
 
-        if (challenge is null || challenge.ExpiresAt <= clock.GetUtcNow() || !TerraScaleIds.IsValid(challenge.UserId) || !TerraScaleIds.IsValid(challenge.Id)
+        if (challenge is null || challenge.Purpose != purpose || challenge.ExpiresAt <= clock.GetUtcNow() || !TerraScaleIds.IsValid(challenge.UserId) || !TerraScaleIds.IsValid(challenge.Id)
             || challenge.Bindings.Count >= Credentials.MaxBindings)
         {
             return null;
@@ -82,8 +85,17 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         return !await credentials.IsClaimedAsync(instanceId, completion, cancellationToken).ConfigureAwait(false)
             && await users.GetAsync(instanceId, challenge.UserId, cancellationToken).ConfigureAwait(false) is { Disabled: false } user
             && user.AuthEpoch == challenge.AuthEpoch && user.AuthStamp == challenge.AuthStamp
-                ? new ChallengedSignIn(user with { AuthenticationBindings = [.. challenge.Bindings, completion] }, completion, challenge.ExpiresAt)
+                ? new ChallengedSignIn(user with { AuthenticationBindings = [.. challenge.Bindings, completion], InboxProven = challenge.InboxProven }, completion, challenge.ExpiresAt)
                 : null;
+    }
+
+    internal async Task<bool> HasAllowedFactorAsync(UserRecord user, CancellationToken cancellationToken)
+    {
+        var policy = Tenancy.IsProject(user.InstanceId)
+            ? (await settings.GetAsync(user.InstanceId, cancellationToken).ConfigureAwait(false)).Configuration ?? ConfigurationBody.Default
+            : ConfigurationBody.Default;
+        return policy.AllowTotp && (await this.StatusAsync(user.InstanceId, user.Id, cancellationToken).ConfigureAwait(false)).Enabled
+            || Tenancy.IsProject(user.InstanceId) && policy.AllowPasskey && await data.ReadAsync((db, token) => db.Passkeys.AnyAsync(key => key.InstanceId == user.InstanceId && key.UserId == user.Id, token), cancellationToken).ConfigureAwait(false);
     }
 
     public Task<bool> CompleteAsync(ChallengedSignIn challenged, string code, CancellationToken cancellationToken = default)
@@ -194,9 +206,13 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             RecoveryExpiresAt = recoveryExpires,
         };
         var advanced = Users.BindAuthenticationState(user with { AuthEpoch = checked(user.AuthEpoch + 1), AuthStamp = AuthIds.New() });
-        return await this.CommitAsync(user, active, current.Version, advanced, authorization, cancellationToken).ConfigureAwait(false)
-            ? new IssuedRecoveryCodes(advanced, codes, recoveryExpires)
-            : null;
+        if (!await this.CommitAsync(user, active, current.Version, advanced, authorization, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        await FactorEnrollmentNotice.SendAsync(email, advanced, cancellationToken).ConfigureAwait(false);
+        return new IssuedRecoveryCodes(advanced, codes, recoveryExpires);
     }
 
     public Task<bool> VerifyAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
@@ -392,7 +408,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
 
 public sealed record ChallengedSignIn(UserRecord User, CredentialBinding Completion, DateTimeOffset ExpiresAt);
 
-internal sealed record MfaChallenge(string Id, string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings);
+internal sealed record MfaChallenge(string Id, string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings, string Purpose, bool InboxProven);
 
 internal sealed record MfaAuthorization(Change Operation, DateTimeOffset ExpiresAt);
 

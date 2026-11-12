@@ -6,6 +6,7 @@ using Fido2NetLib;
 using Fido2NetLib.Objects;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
@@ -16,7 +17,7 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.WebAuthn;
 
-public sealed class PasskeyCredentials(AuthData data, Credentials credentials, Users users, AttemptLimiter limiter, Fido2NetLib.Fido2 fido2, AuthOptions options, TimeProvider clock)
+public sealed class PasskeyCredentials(AuthData data, Credentials credentials, Users users, AttemptLimiter limiter, Fido2NetLib.Fido2 fido2, AuthOptions options, TimeProvider clock, IEmailSender email)
 {
     public const string CredentialKind = "passkey_credential";
     private const string ChallengeKind = "passkey-challenge";
@@ -157,9 +158,13 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             changes.Add(Credentials.Claim(user.InstanceId, signIn.Completion));
         }
 
-        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false)
-            ? entry
-            : null;
+        if (!await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        await FactorEnrollmentNotice.SendAsync(email, user, cancellationToken).ConfigureAwait(false);
+        return entry;
     }
 
     public async Task<(AssertionOptions Options, string Challenge)?> SignInOptionsAsync(string instanceId, string email, CancellationToken cancellationToken = default)
@@ -335,7 +340,7 @@ public sealed record PasskeyAttestationInnerRequest(
 
 public sealed record PasskeySignInRequest(string? Challenge, string? Email, string? Next = null, PasskeyAssertionRequest? Response = null);
 
-public sealed record PasskeyAssertionRequest(string? Id, string? RawId, string? Type, PasskeyAssertionInnerRequest? Response);
+public sealed record PasskeyAssertionRequest(string? Id, [property: JsonPropertyName("rawId")] string? RawId, string? Type, PasskeyAssertionInnerRequest? Response);
 
 public sealed record PasskeyAssertionInnerRequest(
     [property: JsonPropertyName("clientDataJSON")] string? ClientDataJson,

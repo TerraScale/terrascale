@@ -19,6 +19,7 @@ case $service in
     dotnet build src/TerraScale.Authentication/TerraScale.Authentication.csproj --configuration Release --no-restore -p:SourceRevisionId="$revision"
     rm -rf "$out/ts-auth"
     cp -a src/TerraScale.Authentication/bin/Release/net11.0 "$out/ts-auth"
+    bash e2e/env/upgrade-auth.sh "$root" "$out/ts-auth-upgrade"
     ;;
   dashboard)
     dotnet restore src/TerraScale.Dashboard/TerraScale.Dashboard.csproj --locked-mode

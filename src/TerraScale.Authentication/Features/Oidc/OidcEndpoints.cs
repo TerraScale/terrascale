@@ -337,9 +337,9 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
             return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
         }
 
-        if (Tenancy.IsProject(tenant))
+        if (Tenancy.IsProject(tenant) && principal.GetClaim("ts_auth_session") is { } sessionId)
         {
-            if (await sessions.ResolveIdAsync(tenant, user.Id, principal.GetClaim("ts_auth_session"), cancellationToken) is not { } live)
+            if (await sessions.ResolveIdAsync(tenant, user.Id, sessionId, cancellationToken) is not { } live)
             {
                 await ProjectSessionPolicy.RevokeAsync(tokens, principal, cancellationToken);
                 return OidcResults.Forbid(Errors.InvalidGrant, "The project session is no longer active.");

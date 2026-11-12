@@ -345,13 +345,20 @@ break;
 case SignInStep.Mfa:
 <form method="post" action="@Model.Link("sign-in/mfa", form: true)">
 <input type="hidden" name="next" value="@Model.Next">
-<input type="hidden" name="email" value="@Model.Email">
+<input type="hidden" id="sign-in-email" name="email" value="@Model.Email">
 <input type="hidden" name="challenge" value="@Model.Challenge">
+@if (Model.AllowTotp)
+{
 <div class="field">
 <label for="mfa-code">@Model.Copy.AuthOrRecoveryCode</label>
 <input id="mfa-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required autofocus>
 </div>
 <button type="submit">@Model.Copy.VerifySignIn</button>
+}
+@if (Model.AllowPasskey)
+{
+<button type="button" id="passkey-sign-in" class="secondary" hidden data-i18n="@Model.Copy.PasskeyI18n" data-options="/ui/@Model.Slug/sign-in/passkey/options" data-verify="@Model.Link("sign-in/passkey", form: true)" data-sign-in="@Model.Link("sign-in")"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-lock-keyhole"></use></svg>@Model.Copy.Passkey</button>
+}
 </form>
 <div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.StartOver</a></div>
 break;
@@ -459,7 +466,7 @@ case SignInStep.MfaEnroll:
 }
 @if (Model.AllowPasskey)
 {
-<form id="passkey-add" data-i18n="@Model.Copy.PasskeyI18n" data-enrollment="@Model.Challenge" data-complete="@(Model.Next ?? $"/ui/{Model.Slug}/security")" data-options="/ui/@Model.Slug/security/passkeys/options" data-verify="/ui/@Model.Slug/security/passkeys/verify">
+<form id="passkey-add" method="post" action="/ui/@Model.Slug/security/passkeys/options" data-i18n="@Model.Copy.PasskeyI18n" data-enrollment="@Model.Challenge" data-complete="@(Model.Next ?? $"/ui/{Model.Slug}/security")" data-options="/ui/@Model.Slug/security/passkeys/options" data-verify="/ui/@Model.Slug/security/passkeys/verify">
 <button type="submit" class="secondary">@Model.Copy.AddPasskey</button>
 </form>
 <a class="btn secondary" href="@Model.Link("sign-in")">@Model.Copy.SignIn</a>

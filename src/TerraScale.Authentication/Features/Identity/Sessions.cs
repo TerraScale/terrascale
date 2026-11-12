@@ -254,16 +254,16 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
                 return null;
             }
 
-            if (project is not null)
+            if (project?.InactivityTimeoutMinutes is not null
+                && (session.LastActivityAt ?? session.CreatedAt) <= clock.GetUtcNow().AddSeconds(-60))
             {
-                session = session with { LastActivityAt = clock.GetUtcNow() };
-                var touched = Change.Update(session, version);
-                if (!await data.SaveAsync([Change.Assert(authenticated), touched], cancellationToken).ConfigureAwait(false))
+                var active = session with { LastActivityAt = clock.GetUtcNow() };
+                var touched = Change.Update(active, version);
+                if (await data.SaveAsync([Change.Assert(authenticated), touched], cancellationToken).ConfigureAwait(false))
                 {
-                    continue;
+                    session = active;
+                    version = touched.Version!;
                 }
-
-                version = touched.Version!;
             }
 
             return (session, version, authenticated);

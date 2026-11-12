@@ -11,6 +11,7 @@ using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Hosting;
@@ -18,7 +19,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-public sealed record ProjectStepUpRequest(string ClientId, string? Password = null, string? Code = null)
+public sealed record ProjectStepUpRequest(string ClientId, string? Password = null, string? Code = null, string? Challenge = null, PasskeyAssertionRequest? Passkey = null)
 {
     public override string ToString() => nameof(ProjectStepUpRequest);
 }
@@ -28,14 +29,14 @@ public sealed record ProjectStepUpBody(string Proof, DateTimeOffset ExpiresAt)
 }
 
 public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication, Sessions sessions, HostedAuth hosted, TotpCredentials mfa,
-    StepUpProofs proofs, AuthData data, KeyRing ring, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
+    StepUpProofs proofs, PasskeyCredentials passkeys, ProjectAuthSettings settings, AuthData data, KeyRing ring, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
         Post("/v1/{project}/step-up");
         Name("project_step_up");
         Summary("Reverify a project end user");
-        Description("Requires a live project sign-in access token for client_id and either the password or a current allowed TOTP/recovery code. Returns a five-minute ES256 JWT with typ step-up+jwt, the project issuer, client audience, sub, auth_time and amr. Verify its type, signature with the project's JWKS, issuer, audience and expiry. The next refresh reflects the fresh auth_time without extending the absolute session. Subject to the hosted IP and account attempt budgets.");
+        Description("Requires a live project sign-in access token for client_id. Reverify an allowed TOTP/recovery code or a user-verified passkey using challenge and passkey from hosted passkey sign-in options. Password alone is accepted only when MFA is not required; password may also accompany the second factor. Returns a five-minute ES256 JWT with typ step-up+jwt, project issuer, client audience, sub, sid, auth_time and RFC 8176 amr. Verify type, signature with the project's JWKS, issuer, audience and expiry. The next refresh reflects fresh auth_time without extending the absolute session. Subject to the hosted IP and account attempt budgets.");
         Tags("Project tenants");
         Metadata(new AcceptsMetadata(["application/json"], typeof(ProjectStepUpRequest)), new RequiresSecurity(SecuritySchemes.OAuthAccessBearer));
         Produces<ProjectStepUpBody>();
@@ -68,8 +69,10 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
             return HostedAuth.TooMany(wait);
         }
 
+        var policy = (await settings.GetAsync(project, cancellationToken)).Configuration ?? ConfigurationBody.Default;
         var method = "pwd";
-        if (request.Password is not null && request.Code is null)
+        var passwordVerified = false;
+        if (request.Password is not null)
         {
             var checkedPassword = await hosted.CheckPasswordAsync(caller.Email, request.Password, cancellationToken);
             if (checkedPassword.Wait is { } passwordWait)
@@ -81,18 +84,41 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
             {
                 throw Denied();
             }
+
+            passwordVerified = true;
         }
-        else if (request.Code is not null && request.Password is null)
+
+        if (request.Code is not null && request.Passkey is null && request.Challenge is null)
         {
-            method = request.Code.Length == 6 ? "totp" : "recovery";
+            var factor = request.Code.Length == 6 ? "totp" : "recovery";
             if (await mfa.PrimaryUserAsync(project, caller.Id, caller.AuthEpoch.ToString(CultureInfo.InvariantCulture),
-                    caller.AuthStamp, method, cancellationToken) is null
+                    caller.AuthStamp, factor, cancellationToken) is null
                 || !await mfa.VerifyAsync(caller, request.Code, cancellationToken))
             {
                 throw Denied();
             }
+
+            method = "otp";
         }
-        else
+        else if (request.Passkey is not null && request.Code is null && request.Challenge is not null && policy.AllowPasskey)
+        {
+            try
+            {
+                if (PasskeySignInEndpoint.Map(request.Passkey) is not { } assertion
+                    || await passkeys.VerifySignInAsync(project, request.Challenge, caller.Email, assertion, cancellationToken) is not { } verified
+                    || verified.Id != caller.Id || verified.AuthEpoch != caller.AuthEpoch || verified.AuthStamp != caller.AuthStamp)
+                {
+                    throw Denied();
+                }
+            }
+            catch (FormatException)
+            {
+                throw Denied();
+            }
+
+            method = "swk";
+        }
+        else if (!passwordVerified || policy.RequireMfa || request.Code is not null || request.Passkey is not null || request.Challenge is not null)
         {
             throw Denied();
         }
@@ -125,7 +151,8 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
                     ["sub"] = caller.Id,
                     ["jti"] = AuthIds.New(),
                     ["auth_time"] = now.ToUnixTimeSeconds(),
-                    ["amr"] = new[] { method },
+                    ["sid"] = live.Session.Id,
+                    ["amr"] = passwordVerified && method != "pwd" ? new[] { "pwd", method, "mfa" } : new[] { method },
                 },
             });
             return Results.Json(new ProjectStepUpBody(proof, expires), ProjectTenantJson.Default.ProjectStepUpBody);
@@ -161,10 +188,10 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         }
         catch (Exception error) when (error is JsonException or BadHttpRequestException)
         {
-            throw new ApiException(400, "invalid_request", "Supply a JSON object with client_id and either password or code.");
+            throw new ApiException(400, "invalid_request", "Supply a JSON object with client_id and password, code, or challenge and passkey.");
         }
 
-        throw new ApiException(400, "invalid_request", "Supply a JSON object of at most 16384 bytes with client_id and either password or code.");
+        throw new ApiException(400, "invalid_request", "Supply a JSON object of at most 16384 bytes with client_id and password, code, or challenge and passkey.");
     }
 
     private static ApiException Denied() => new(401, "step_up_denied", "Present a live project sign-in token and reverify with the password or an allowed factor.");
