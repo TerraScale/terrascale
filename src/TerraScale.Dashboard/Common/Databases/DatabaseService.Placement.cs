@@ -49,7 +49,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }, cancellationToken);
         }
 
-        private async Task<T> RoutedAsync<T>(AccountContext context, DatabaseRecord database, Func<DatabaseRecord, DatabaseRegion, Task<T>> call, CancellationToken cancellationToken)
+        internal async Task<T> RoutedAsync<T>(AccountContext context, DatabaseRecord database, Func<DatabaseRecord, DatabaseRegion, Task<T>> call, CancellationToken cancellationToken)
         {
             var home = await HomeAsync(context, database, cancellationToken);
             try { return await call(database, home); }
