@@ -6,7 +6,6 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
-using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
@@ -38,16 +37,40 @@ public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settin
         }
 
         using var reservation = mail.Reserve();
-        var token = AuthIds.New();
+        var token = Tokens.RandomToken(43);
         var now = clock.GetUtcNow();
         var invitation = new ProjectInvitationRecord(AuthIds.New(), projectId, normalized, Tokens.Sha256Hex(token), redirectUrl, now, now + Lifetime);
-        List<Change> changes = [Change.Insert(invitation), version is null ? Change.Insert(policy) : Change.Assert(policy, version)];
+        List<Change> changes = [Change.Insert(invitation)];
+        if (version is not null)
+        {
+            changes.Add(Change.Assert(policy, version));
+        }
         if (waitlist is not null)
         {
             changes.Add(Change.Update(waitlist, waitlist.Value with { Status = "approved" }));
         }
 
-        if (!await data.SaveAsync(changes, cancellationToken))
+        try
+        {
+            await data.TransactAsync(async (db, probe) =>
+            {
+                if (waitlist is not null && await db.Users.AnyAsync(row => row.InstanceId == projectId && row.Email == normalized, probe))
+                {
+                    throw new ApiException(409, "conflict", "The waitlist address already has an account.");
+                }
+
+                foreach (var change in changes)
+                {
+                    if (!change.Apply(db))
+                    {
+                        throw new ApiException(409, "conflict", "The project settings or waitlist entry changed.");
+                    }
+                }
+
+                return true;
+            }, cancellationToken);
+        }
+        catch (DbUpdateException error) when (AuthData.IsConflict(error))
         {
             throw new ApiException(409, "conflict", "The project settings or waitlist entry changed.");
         }
@@ -82,7 +105,7 @@ public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settin
 
     public async Task<ProjectInvitationRecord?> LookupAsync(string projectId, string token, CancellationToken cancellationToken)
     {
-        if (!TerraScaleIds.IsValid(token))
+        if (token.Length != 43 || token.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_'))
         {
             return null;
         }

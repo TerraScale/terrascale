@@ -19,6 +19,11 @@ public sealed class JoinProjectWaitlistEndpoint(AuthOptions options, SignUpRestr
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
+        if (SignInFlow.WrongSlug(this.HttpContext))
+        {
+            return Results.NotFound();
+        }
+
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
         {
             return SignInFlow.Refused(this.HttpContext);

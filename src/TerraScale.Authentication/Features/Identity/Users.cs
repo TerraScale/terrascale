@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
@@ -20,9 +21,27 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         }
 
         var at = trimmed.IndexOf('@', StringComparison.Ordinal);
-        return at > 0 && at == trimmed.LastIndexOf('@') && trimmed[(at + 1)..].Split('.') is { Length: > 1 } labels && labels.All(label => label.Length > 0)
-            ? AuthIds.NormalizeEmail(trimmed)
-            : null;
+        if (at <= 0 || at != trimmed.LastIndexOf('@') || NormalizeDomain(trimmed[(at + 1)..]) is not { } domain)
+        {
+            return null;
+        }
+
+        var normalized = AuthIds.NormalizeEmail(trimmed[..at] + "@" + domain);
+        return normalized.Length <= 254 ? normalized : null;
+    }
+
+    internal static string? NormalizeDomain(string domain)
+    {
+        try
+        {
+            var ascii = new IdnMapping().GetAscii(domain).ToLowerInvariant();
+            return Uri.CheckHostName(ascii) == UriHostNameType.Dns && ascii.Split('.') is { Length: > 1 } labels && labels.All(label => label.Length > 0)
+                ? ascii : null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 
     public Task<UserRecord?> CreateAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
@@ -74,7 +93,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         return linked is { Disabled: false } && linked.LinkedProviders.Contains(identity) ? BindProvider(linked, identity) : null;
     }
 
-    public async Task<UserRecord?> FromProviderAsync(string tenant, LinkedProvider identity, string verifiedEmail, bool allowCreation, CancellationToken cancellationToken)
+    public async Task<UserRecord?> FromProviderAsync(string tenant, LinkedProvider identity, string verifiedEmail, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(identity);
         if (!Complete(identity))
@@ -89,7 +108,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 return await this.FindByProviderAsync(tenant, identity, cancellationToken).ConfigureAwait(false);
             }
 
-            if (!allowCreation || NormalizeEmail(verifiedEmail) is not { } normalized
+            if (NormalizeEmail(verifiedEmail) is not { } normalized
                 || await this.FindByEmailAsync(tenant, normalized, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return null;

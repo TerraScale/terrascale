@@ -24,10 +24,13 @@ Joining the waitlist sends no email. Rejoining preserves the original entry.
 }
 ```
 
-Lists accept at most 1,000 emails or exact domains each. Entries are trimmed,
-lowercased and deduplicated. Domains do not match subdomains. Block rules take
-precedence over invitations and allow rules. Alias blocking rejects `+` in the
-local part. Disposable blocking uses the bundled gzip snapshot of
+Lists accept at most 1,000 emails or domains each. Entries are trimmed,
+lowercased and deduplicated, with internationalized domains converted to ASCII
+(punycode) for both stored entries and incoming addresses. Allowlist domains match
+exactly; blocklist and disposable domains also match every subdomain. Block rules
+take precedence over invitations and allow rules. Alias blocking rejects `+` in the
+local part. This is a speed bump, not a guarantee: providers can support aliases
+without plus signs. Disposable blocking uses the bundled gzip snapshot of
 [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains/blob/main/disposable_email_blocklist.conf),
 downloaded November 12, 2026, under its CC0 license. No runtime download occurs.
 
@@ -53,8 +56,8 @@ role: viewer for lists, admin for changes. Lists accept `limit` (1–100, defaul
 
 Invitations contain `id`, `email`, nullable `redirect_url`, `created_at`,
 `expires_at` and `status` (`pending`, `accepted`, `revoked` or computed `expired`).
-Tokens are ULIDs, stored only as SHA-256 digests, expire seven days after creation
-and never appear in management responses. Invitation emails use the existing
+Tokens are independent 43-character cryptographically random secrets, stored only
+as SHA-256 digests, expire seven days after creation and never appear in management responses. Invitation emails use the existing
 project-branded invitation template. Their link opens
 `/ui/{project}/invitations/{token}` with the invited email prefilled. The user
 chooses a password and verifies a code sent to that email. The invitation is
@@ -67,6 +70,9 @@ normal hosted sign-up, which still requires proving ownership of that mailbox.
 
 Waitlist entries contain `id`, `project_id`, `email`, `created_at` and `status`
 (`pending`, `approved` or `rejected`). Each email has one entry per project.
+Each project accepts at most 10,000 pending entries, checked atomically with insertion. Existing accounts and requests beyond
+the cap receive the same received response without adding an entry. Approving an
+entry whose address already has an account returns 409 and sends no invitation.
 Concurrent decisions produce a 409 for the losing decision. A newly blocked
 address cannot be approved until its restrictions change.
 

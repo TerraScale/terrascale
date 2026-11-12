@@ -858,7 +858,6 @@ internal static class SignInFlow
             "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method),
             "sign-in/verify" => theme.Passcode,
             "sign-in/password" or "reset" or "reset/complete" or "reset/resend" => theme.Password,
-            "sign-up" or "sign-up/verify" or "sign-up/resend" => true,
             _ => true,
         };
     }
