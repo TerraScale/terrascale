@@ -15,6 +15,7 @@ public static class ReplicaExtensions
         services.TryAddSingleton<IReplicaStatus, ReplicaStatusBoard>();
         services.AddSingleton<ReplicaHolds>();
         services.AddSingleton<ReplicaNames>();
+        services.AddSingleton<RemovedReplicaFaults>();
         services.AddSingleton<RegionReplication>();
         services.AddSingleton<HomeSessions>();
         services.AddSingleton<HomeMoves>();

@@ -6,6 +6,7 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
@@ -31,7 +32,7 @@ internal sealed partial class RegionReplication
         {
             foreach (var (key, follower) in _followers.Where(entry => entry.Value.Home.Region == options.Region).ToArray())
             {
-                await StopFollowingAsync(key, follower.Database, cancellationToken).ConfigureAwait(false);
+                await DeleteShreddedAsync(follower.Database, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -107,6 +108,18 @@ internal sealed partial class RegionReplication
             }
         }
 
+        (string Project, string Database)? resumed = _refreshAfter.TryGetValue(home.Region, out var cursor) ? cursor : null;
+        lock (_gate)
+        {
+            var now = time.GetUtcNow();
+            foreach (var key in _refreshed.Where(entry => entry.Value <= now).Select(entry => entry.Key).ToArray())
+            {
+                _refreshed.Remove(key);
+            }
+        }
+
+        var refreshes = new List<TenantContext>();
+        var deferred = false;
         TenantContext? after = null;
         do
         {
@@ -117,9 +130,10 @@ internal sealed partial class RegionReplication
 
             foreach (var database in page.Databases)
             {
-                var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
-                var replicated = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-                    && placement.Home == home.Region && (home.Region == options.Region || placement.Includes(options.Region));
+                var key = (Organization: database.OrganizationId, Project: database.ProjectId!, Database: database.DatabaseId!);
+                var held = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
+                    && placement.Home == home.Region ? placement : null;
+                var replicated = held is not null && (home.Region == options.Region || held.Includes(options.Region));
                 try
                 {
                     if (replicated && (listed is null || listed.ContainsKey(key)))
@@ -132,7 +146,19 @@ internal sealed partial class RegionReplication
                     }
                     else
                     {
-                        await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
+                        await DeleteShreddedAsync(database, cancellationToken).ConfigureAwait(false);
+                        if (held is not null && listed is not null
+                            && (resumed is not { } from || Follows(key.Project, key.Database, from)) && RefreshDue(key))
+                        {
+                            if (refreshes.Count == MaxRefreshes)
+                            {
+                                deferred = true;
+                            }
+                            else
+                            {
+                                refreshes.Add(database);
+                            }
+                        }
                     }
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -144,7 +170,109 @@ internal sealed partial class RegionReplication
             after = page.Next;
         }
         while (after is not null);
+
+        if (refreshes.Count == 0)
+        {
+            _ = _refreshAfter.TryRemove(home.Region, out _);
+            return;
+        }
+
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(PlacementTimeout);
+        using var refreshLookups = new ReplicaNameLookups(budget.Token);
+        var reached = resumed;
+        foreach (var database in refreshes)
+        {
+            if (budget.IsCancellationRequested)
+            {
+                deferred = true;
+                break;
+            }
+
+            lock (_gate)
+            {
+                if (_refreshed.ContainsKey(Key(database)))
+                {
+                    reached = (database.ProjectId!, database.DatabaseId!);
+                    continue;
+                }
+                if (_refreshed.Count == MaxRecentRefreshes)
+                {
+                    deferred = true;
+                    break;
+                }
+                _refreshed[Key(database)] = time.GetUtcNow() + VerifyEvery;
+            }
+
+            reached = (database.ProjectId!, database.DatabaseId!);
+            try
+            {
+                await ResolveMissingAsync(home, database, refreshLookups, budget.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && budget.IsCancellationRequested)
+            {
+                deferred = true;
+                break;
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                faults.Failed(database, home.Region, error);
+            }
+        }
+
+        if (deferred && reached is { } next)
+        {
+            _refreshAfter[home.Region] = next;
+        }
+        else
+        {
+            _ = _refreshAfter.TryRemove(home.Region, out _);
+        }
     }
+
+    private bool RefreshDue((string, string, string) key)
+    {
+        lock (_gate)
+        {
+            return !_refreshed.ContainsKey(key);
+        }
+    }
+
+    private static bool Follows(string project, string database, (string Project, string Database) cursor) =>
+        string.CompareOrdinal(project, cursor.Project) is var order && (order > 0 || order == 0 && string.CompareOrdinal(database, cursor.Database) > 0);
+
+    private async Task<PeerPlacement> PlacementAtAsync(ReplicaPeer peer, TenantContext database, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(PlacementTimeout);
+        try
+        {
+            var observed = owners.Find(peer.Region);
+            var writer = observed is { Activated: true } && observed.Node == peer.Name;
+            if (options.NatsUrl is null)
+            {
+                var nodes = options.PeersFile is null ? [] : await new PeersFile(options).ListAsync(timeout.Token).ConfigureAwait(false);
+                writer = nodes.Count(node => node.Region == peer.Region) == 1 && nodes.Any(node => node.Region == peer.Region && node.Name == peer.Name);
+            }
+
+            using var response = await _http.GetAsync(new Uri(peer.Internal, ReplicaRoutes.DatabasePath(database, "placement")), timeout.Token).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return writer && owners.Find(peer.Region) == observed ? new NotFound() : PlacementUnanswered;
+            }
+
+            return response.IsSuccessStatusCode
+                && await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.ReplicaCatalogEntry, timeout.Token).ConfigureAwait(false) is { } entry
+                ? entry
+                : PlacementUnanswered;
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return PlacementUnanswered;
+        }
+    }
+
+    private readonly union PeerPlacement(ReplicaCatalogEntry, NotFound, Unavailable);
 
 
     internal async Task DeleteShreddedAsync(TenantContext database, CancellationToken cancellationToken)
@@ -182,10 +310,13 @@ internal sealed partial class RegionReplication
         {
             do
             {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(PlacementTimeout);
                 var address = new Uri(home.Internal, $"/v1/sync/regions/{options.Region}/databases" + (after is null ? "" : $"?after={Uri.EscapeDataString(after)}"));
-                var page = await _http.GetFromJsonAsync(address, ReplicasJsonContext.Default.ReplicaCatalogPage, cancellationToken).ConfigureAwait(false);
+                var page = await _http.GetFromJsonAsync(address, ReplicasJsonContext.Default.ReplicaCatalogPage, timeout.Token).ConfigureAwait(false);
                 if (page is null)
                 {
+                    logger.ZLogWarning($"Region {home.Region}'s home returned no catalog page; its replicas keep serving what they hold");
                     return null;
                 }
 
@@ -198,52 +329,78 @@ internal sealed partial class RegionReplication
             }
             while (after is not null);
         }
-        catch (Exception error) when (error is HttpRequestException or JsonException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (error is HttpRequestException or JsonException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            logger.ZLogInformation($"Region {home.Region}'s home is unreachable; its replicas keep serving what they hold: {error.GetType().Name:@Error}");
+            logger.ZLogWarning($"Region {home.Region}'s home is unreachable; its replicas keep serving what they hold: {error.GetType().Name:@Error}");
             return null;
         }
 
         return listed;
     }
 
-    private async Task RecordAsync(ReplicaCatalogEntry entry, IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry> listed, ReplicaNameLookups lookups, CancellationToken cancellationToken)
+    private async Task RecordAsync(ReplicaCatalogEntry entry, IReadOnlyDictionary<(string, string, string), ReplicaCatalogEntry>? listed, ReplicaNameLookups lookups, CancellationToken cancellationToken)
     {
-        if (!await catalog.RecordAsync(entry, cancellationToken, listed, lookups).ConfigureAwait(false))
+        var database = new TenantContext(entry.OrganizationId, PlanTier.Hobby, entry.ProjectId, entry.DatabaseId);
+        var gate = Lifecycle(Key(database));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            CatalogFailed(entry.HomeRegion, null);
+            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var held }
+                && held.Version < entry.PlacementVersion && !held.Includes(options.Region)
+                && (entry.AllRegions || entry.HomeRegion == options.Region || entry.ReplicaRegions.Contains(options.Region)))
+            {
+                await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!await catalog.RecordAsync(entry, cancellationToken, listed, lookups).ConfigureAwait(false))
+            {
+                CatalogFailed(entry.HomeRegion, null);
+                faults.Rejected(database, entry.HomeRegion);
+            }
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 
     private async Task ResolveMissingAsync(ReplicaPeer home, TenantContext database, ReplicaNameLookups lookups, CancellationToken cancellationToken)
     {
-        var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
-        var address = new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "placement"));
-        using var response = await _http.GetAsync(address, cancellationToken).ConfigureAwait(false);
-        if (response.StatusCode == HttpStatusCode.NotFound)
+        switch (await PlacementAtAsync(home, database, cancellationToken).ConfigureAwait(false))
         {
-            await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
-            _ = await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        if (!response.IsSuccessStatusCode
-            || await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.ReplicaCatalogEntry, cancellationToken).ConfigureAwait(false) is not { } entry)
-        {
-            return;
-        }
-
-        if (entry.HomeRegion == home.Region)
-        {
-            _ = await catalog.RecordAsync(entry, cancellationToken, lookups: lookups).ConfigureAwait(false);
-        }
-        else
-        {
-            await catalog.UpdatePlacementAsync(database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions), cancellationToken).ConfigureAwait(false);
-        }
-        if (!entry.AllRegions && !entry.ReplicaRegions.Contains(options.Region))
-        {
-            await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
+            case NotFound:
+                var gate = Lifecycle(Key(database));
+                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
+                    if (await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false) is Unavailable error)
+                    {
+                        faults.Failed(database, home.Region, new InvalidOperationException(error.Message));
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+                break;
+            case ReplicaCatalogEntry entry:
+                if (entry.HomeRegion == home.Region)
+                {
+                    await RecordAsync(entry, null, lookups, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await catalog.UpdatePlacementAsync(database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions), cancellationToken).ConfigureAwait(false);
+                }
+                if (entry.HomeRegion != options.Region && !entry.AllRegions && !entry.ReplicaRegions.Contains(options.Region))
+                {
+                    await DeleteShreddedAsync(database, cancellationToken).ConfigureAwait(false);
+                }
+                break;
+            case Unavailable:
+                faults.Unanswered(database, home.Region);
+                break;
         }
     }
 

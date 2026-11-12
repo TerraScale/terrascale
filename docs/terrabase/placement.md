@@ -104,7 +104,51 @@ Region A is the home and region B the target. A coordinates; B's replica becomes
 The epoch of a database is its placement version: B is home at version `v + 1` only after A stopped writing at `v`, and a
 region accepts a placement only when it is newer than the one it holds.
 
-A request through a region that is no longer a member answers `421 wrong_region`, naming the current home in `X-TerraBase-Database-Home`. Its former replica can serve reads until the local catalog observes the removal.
+A request through a region that is no longer a member answers `421 wrong_region`, naming the current home in `X-TerraBase-Database-Home`. Its former replica can serve reads until the local catalog observes the removal ([removing a region](#removing-a-region)).
+
+## Removing a region
+
+A region leaves a database's set when a placement request no longer names it. The writer H records the new placement at the next placement version and sends the removed region R nothing. R acts in its own catalog pass ([region replicas](region-replicas.md#how-a-replica-follows-its-home)), which runs every 30 seconds and at startup. R keeps a routing record after removing its local replica; removal never authorizes retirement or backup deletion.
+
+| Step | What R does | A stop of R here leaves |
+|---|---|---|
+| Observe | R's record names H as writer and R as a member, and H's listing for R no longer names the database. R reads the placement H records (`GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/placement`) and writes it to its record when it is newer. | The record as it was. The next pass observes again. |
+| Erase | In the same pass R stops its follower and deletes the replica's files under `.replicas/<organization>/<project>/`: the pages, the write-ahead log, the pending local changes, the sync state and the wrapped data key. A region that was the writer deletes its home file, with its data key, when the writer moves away ([moving the home](#moving-the-home)). If that deletion fails, the orphan sweep deletes the home file after its 24-hour grace period, while retaining the routing record and managed snapshots. | A record that does not name R. Every later pass deletes what is left of the files again. |
+| Keep current | After reconciling followers, R refreshes at most 64 removed records per home region with one shared five-second budget. A cursor carries unfinished rounds to the next pass. Each record is refreshed at most once every ten minutes; at most 4,096 recent attempts are held in memory, and further refreshes wait for a slot. Each page of a home-region listing has its own five-second budget; listing failures are logged at Warning. Placement, name and identity follow the same catalog and name-chain reconciliation as a member, including renames without a placement-version change. The answering node returns `503 not_writer` unless it holds the regional writer lease; it rechecks ownership after a missing-record read before returning `404`. A `404` authorizes forgetting only when the contacted node matches the regional writer observed before and after the request. Without NATS, the region must have exactly one configured node. A standby, an unobserved writer or a writer change leaves the record intact for a later round. | The record, which the next pass reads again. |
+
+### What R answers
+
+R keeps its record of the database, with the placement that no longer names R, as the routing record of that database. It serves nothing from it:
+
+- a REST request that names the database (management `GET`, regions, SQL) answers `421 wrong_region` with `X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions`, as before for every request but the management `GET`, which answered R's record with `200`;
+- Postgres and WebSocket sessions and shape requests are relayed to the writer, as before ([forwarding to the home](cross-region.md#forwarding-to-the-home));
+- the project's database listing leaves out the record of a region that the record's own placement does not name, so the database is listed once, with the name and placement its writer records;
+- file and bucket requests of the project do not depend on a database's placement and answer as before.
+
+A region that never held the database holds no record and passes REST requests on to the writer instead ([forwarding to the home](cross-region.md#forwarding-to-the-home)). The record is what makes a removed region refuse them.
+
+Removing a region is not a deletion of the database: R writes no retired id, no purge record, no cleanup intent and no backup sweep, and sends nothing to any region. It deletes only its own replica files.
+
+An unanswered or rejected removed-record refresh is counted and never stops follower reconciliation: `terrabase_replica_removed_record_errors_total` with the labels `region` (the writer) and `error` (`unanswered`, `catalog_rejected`, or the exception type), and a warning at most once every 10 minutes for each writer and error.
+
+### Adding the region again
+
+H lists the database for R again and R's next pass, at most 30 seconds later, takes the placement that names it. Before it writes that placement R deletes the replica's files again, so a copy whose erasure was interrupted is never continued: the follower starts from an empty replica and pulls every page. Nothing refuses the request that adds R. Until R's pass has run, requests through R still answer `421 wrong_region`, and R's row in `GET …/regions` shows no pull.
+
+### What stays in a removed region
+
+- The routing record: the database's id, project, name, identity and placement. Member sweeps and removed-record refreshes reconcile names from the current home; a name conflict or failed adoption retains the existing record and is counted and logged.
+- Managed snapshots the region took while it was the writer. Their restore answers `409 backup_region_not_placed` ([recovery copy placement](recovery-copy-placement.md)).
+- The database's state in the region's catalog outside its record: functions, backup policy and schedule, usage and request logs. A move of the writer does not carry them either.
+- The record of a database whose writer's region is no longer in the peers file: nothing answers for its placement.
+
+### Rolling deploy
+
+No message and no stored format changes: the pass uses the `…/placement` request of the earlier release.
+
+- A removed region on the earlier release answers as before: `421 wrong_region` from its record, and the record itself to a management `GET` and in the listing. From its first request after the upgrade it refuses the `GET` and is left out of listings, and its first pass brings every record left by an earlier removal up to date or forgets it.
+- A node of this release leaves a record out of the listing when the region that sent it is not in that record's placement, so a listing through an upgraded region is correct while a removed region still runs the earlier release.
+- A writer on the earlier release can answer `404` without checking its own writer lease; the caller retains its before-and-after writer check during a rolling upgrade.
 
 ### Fencing
 

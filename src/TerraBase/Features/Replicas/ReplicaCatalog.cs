@@ -42,6 +42,11 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
         var database = new TenantContext(entry.OrganizationId, PlanTier.Hobby, entry.ProjectId, entry.DatabaseId);
         var placement = new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions);
         var stored = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
+        if (stored is TenantDatabaseRecord newer && newer.Placement.Version > placement.Version)
+        {
+            return true;
+        }
+
         if (stored is TenantDatabaseRecord unchanged && unchanged.Name == entry.Name
             && unchanged.Placement.Home == placement.Home && unchanged.Placement.Version == placement.Version
             && unchanged.Placement.AllRegions == placement.AllRegions && DatabaseRegions.SameSet(unchanged.Placement.Replicas, placement.Replicas)
@@ -57,7 +62,7 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
             nameApplied = await names.ApplyAsync(entry, listed, lookups ?? owned!, cancellationToken).ConfigureAwait(false);
         }
 
-        return stored switch
+        var applied = stored switch
         {
             NotFound => await tenants.AdoptDatabaseAsync(database, entry.Name, placement, entry.Identity, cancellationToken).ConfigureAwait(false) is Done,
             TenantDatabaseRecord record when record.Placement.Version <= placement.Version =>
@@ -65,6 +70,7 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
             TenantDatabaseRecord => true,
             Unavailable => false,
         };
+        return applied && (nameApplied || stored is TenantDatabaseRecord current && current.Name == entry.Name);
     }
 
     public async ValueTask UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken) =>

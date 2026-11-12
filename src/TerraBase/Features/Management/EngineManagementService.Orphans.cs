@@ -189,6 +189,38 @@ internal sealed partial class EngineManagementService
         {
             return false;
         }
+        var removedHome = await ReadAsync<bool?>(async transaction => await RemovedHomeFileAsync(transaction, database, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
+        if (removedHome is null)
+        {
+            return false;
+        }
+        if (removedHome.Value)
+        {
+            var removed = await engine.RecordDatabaseDeleteIntentAsync(database, token => ReadAsync<bool>(async transaction =>
+                await RemovedHomeFileAsync(transaction, database, token).ConfigureAwait(false)
+                && !await OwnedFileAsync(transaction, database, token).ConfigureAwait(false)
+                && await GetAsync(transaction, OrphanFiles, OrphanId(database), ManagementJsonContext.Default.OrphanDatabaseFile, token).ConfigureAwait(false) == record,
+                static _ => false, token), cancellationToken).ConfigureAwait(false);
+            if (!removed)
+            {
+                return false;
+            }
+
+            try
+            {
+                _ = await engine.DeleteDatabaseAsync(database, cancellationToken, retainIntentOwnership: true).ConfigureAwait(false);
+                return await WriteAsync<bool>(async transaction =>
+                {
+                    await transaction.DeleteAsync(OrphanFiles, OrphanId(database), cancellationToken).ConfigureAwait(false);
+                    return true;
+                }, static _ => false, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                await engine.CompleteDatabaseIntentAsync(database, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+
         var reserved = await engine.RecordDatabaseDeleteIntentAsync(database, token => WriteAsync<bool>(async transaction =>
         {
             var id = OrphanId(database);
@@ -210,8 +242,13 @@ internal sealed partial class EngineManagementService
         return !await ReadAsync<bool>(transaction => OwnedFileAsync(transaction, database, cancellationToken), static _ => true, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async ValueTask<bool> OwnedFileAsync(IStorageTransaction transaction, TenantContext database, CancellationToken token) =>
+    private async ValueTask<bool> RemovedHomeFileAsync(IStorageTransaction transaction, TenantContext database, CancellationToken token) =>
+        await CatalogTables.DatabaseAsync(transaction, database.ProjectId!, database.DatabaseId!, token).ConfigureAwait(false) is { } record
+        && !record.Regions(options.Region).Contains(options.Region, StringComparer.Ordinal);
+
+    private async ValueTask<bool> OwnedFileAsync(IStorageTransaction transaction, TenantContext database, CancellationToken token) =>
         await IsRegisteredAsync(transaction, database, token).ConfigureAwait(false)
+            && !await RemovedHomeFileAsync(transaction, database, token).ConfigureAwait(false)
         || await CatalogTables.PendingCleanupAsync(transaction, database.DatabaseId!, token).ConfigureAwait(false) is not null
         || await transaction.GetAsync(DatabasePurge.Kind, database.DatabaseId!, token).ConfigureAwait(false) is not null
         || await HasDeletionAuthorityAsync(transaction, database, token).ConfigureAwait(false);

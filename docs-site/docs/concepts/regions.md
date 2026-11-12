@@ -95,6 +95,6 @@ A region of the set can lag behind the region that orders writes. Postgres and W
 
 ## Storage and billing
 
-Database files in every region of the set are encrypted at rest. Adding a region places a copy of your data in that region.
+Database files in every region of the set are encrypted at rest. Adding a region places a copy of your data in that region. Removing a region erases the database's files in that region, usually within half a minute; a region that cannot be reached then erases them when it is back. Snapshots that region took stay in it and cannot be restored while it is outside the set.
 
 The catalog's regionsPerDatabase counts the regions in which a database's writes and stored bytes are metered: one per database on every plan. Copies in the database's other regions are not billed separately. See [pricing](/pricing).

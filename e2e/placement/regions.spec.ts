@@ -1,14 +1,15 @@
 import { randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:http2';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse, type Page } from '@playwright/test';
 import { test, authenticatedCells, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
 import { dash, production, stateDir } from '../support/stack';
 import { Audit, auditedContext } from '../support/audit';
-import { saveCookies, saveSecret } from '../support/state';
+import { journey, saveCookies, saveSecret } from '../support/state';
 import { confirmWithPassword, onboard, signUp, verify } from '../support/hosted';
 import { newAddress } from '../support/inbox';
 import { createApiKey } from '../support/paid';
@@ -23,6 +24,15 @@ type Progress = { regions: Observation[] };
 async function answer(response: APIResponse, code: number, documented: string): Promise<void> {
   expect(response.status(), response.status() === code ? documented : `${documented}: ${await response.text()}`).toBe(code);
   if (code >= 400) expect((await response.json()).error.code, documented).toBe(documented);
+}
+
+async function refused(response: APIResponse, label: string): Promise<void> {
+  await answer(response, 421, 'wrong_region');
+  expect(response.headers()['x-terrabase-database-home'], `${label} names the writer`).toBe('fra');
+}
+
+function files(directory: string, id: string): string[] {
+  return (readdirSync(join(stateDir, directory), { recursive: true }) as string[]).filter(path => basename(path).includes(id));
 }
 
 async function create(cells: Cells, regions: string[], projectId?: string): Promise<Database> {
@@ -400,7 +410,7 @@ async function recordedName(cells: Cells, id: string, projectId: string): Promis
   return (await json<{ name: string }>(await cells.get(`${replica}${database(id, projectId)}`))).name;
 }
 
-async function catalogRecord<T>(cell: string, path: string): Promise<T> {
+async function catalogRecord<T>(cell: string, path: string, status = 200): Promise<T> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(cell);
   const stream = session.request({ ':method': 'GET', ':path': path, 'x-terrabase-peer-credential': credential });
@@ -412,7 +422,7 @@ async function catalogRecord<T>(cell: string, path: string): Promise<T> {
     let body = '';
     stream.setEncoding('utf8');
     for await (const chunk of stream) body += chunk;
-    expect(Number(headers[':status']), path).toBe(200);
+    expect(Number(headers[':status']), path).toBe(status);
     return JSON.parse(body) as T;
   } finally {
     session.close();
@@ -638,5 +648,158 @@ multiple('R15 an observed intermediate home rename still converges after a swap'
     console.log('R15 reproduced the intermediate-name precondition that broke the old assertion; both final names converged');
   } finally {
     for (const row of [x, y]) await removeDatabase(cells, row.id, projectId);
+  }
+});
+
+test('R16 a removed region refuses every request, erases its copy and takes the database back', async ({ cells }) => {
+  const created = await create(cells, ['gru', 'fra']);
+  const execute = (region: string, statement: string) => cells.post(`${region}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: statement }] } });
+  const rows = async (region: string) => (await sql(cells, region, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows;
+  try {
+    await seed(cells, created.id);
+    await observed(cells, created.id);
+    await replicated(cells, replica, created.id, 3);
+    expect(files('terrabase', created.id), 'gru holds the database before the removal').not.toEqual([]);
+    await move(cells, created.id, 'R16', 60_000);
+    await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (4)');
+    const renamed = name('regions-renamed');
+    await answer(await cells.patch(`${replica}${database(created.id)}`, { data: { name: renamed } }), 200, '200 renamed through fra');
+
+    await expect.poll(async () => {
+      const response = await execute(home, 'SELECT value FROM placement_rows ORDER BY value');
+      if (response.status() === 421) await refused(response, 'read through gru');
+      else await answer(response, 200, '200 during catalog propagation');
+      return response.status();
+    }, { message: 'gru observes that it was removed', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
+    await refused(await cells.get(`${home}${database(created.id)}`), 'management GET through gru');
+    await refused(await cells.get(`${home}${database(created.id)}/regions`), 'regions through gru');
+    await refused(await execute(home, 'SELECT value FROM placement_rows'), 'read through gru');
+    await refused(await execute(home, 'INSERT INTO placement_rows VALUES (99)'), 'write through gru');
+    const listed = await json<{ items: { id: string; name: string; regions: string[] }[] }>(await cells.get(`${home}${project()}/databases`));
+    expect(listed.items.filter(item => item.id === created.id), 'the listing through gru shows the writer\'s record').toMatchObject([{ name: renamed, regions: ['fra'] }]);
+    await expect.poll(() => files('terrabase', created.id),
+      { message: 'gru erased its copy of the database', timeout: 45_000, intervals: [250, 500, 1000] }).toEqual([]);
+
+    expect(await json(await cells.get(`${replica}${database(created.id)}`))).toMatchObject({ id: created.id, name: renamed, regions: ['fra'] });
+    expect((await progress(cells, created.id, replica)).regions.map(row => row.region)).toEqual(['fra']);
+    await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (5)');
+    expect(await rows(replica)).toEqual([[1], [2], [3], [4], [5]]);
+
+    const added = await patch(cells, created.id, ['fra', 'gru']);
+    await answer(added, 200, '200 database updated with writer retained');
+    expect((await added.json()).regions).toEqual(['fra', 'gru']);
+    await expect.poll(async () => {
+      const response = await execute(home, 'SELECT value FROM placement_rows ORDER BY value');
+      if (response.status() === 421) await refused(response, 'read through gru before it takes the database back');
+      return response.status();
+    }, { message: 'gru takes the database back', timeout: 45_000, intervals: [250, 500, 1000] }).not.toBe(421);
+    await replicated(cells, home, created.id, 5);
+    expect(await rows(home)).toEqual([[1], [2], [3], [4], [5]]);
+    expect(files('terrabase', created.id), 'gru holds a copy again').not.toEqual([]);
+    expect(await json(await cells.get(`${home}${database(created.id)}`))).toMatchObject({ id: created.id, regions: ['fra', 'gru'] });
+  } finally {
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('R17 a removed follower retains routing and rejoins with the current name and data', async ({ cells }) => {
+  const created = await create(cells, ['gru', 'fra']);
+  const renamed = name('removed-follower');
+  try {
+    await seed(cells, created.id);
+    await observed(cells, created.id);
+    await replicated(cells, replica, created.id, 3);
+    await answer(await patch(cells, created.id, ['gru']), 200, '200 follower removed');
+    await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (4)');
+    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
+      { message: 'the removed follower refuses its stale record', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
+    await rename(cells, home, created.id, renamed, journey().projectId);
+    await expect.poll(() => files('terrabase-fra', created.id),
+      { message: 'the removed follower erases its replica', timeout: 45_000, intervals: [250, 500, 1000] }).toEqual([]);
+    const path = `/v1/sync/organizations/${journey().organizationId}/projects/${journey().projectId}/databases/${created.id}/placement`;
+    await expect.poll(async () => (await catalogRecord<{ name: string }>('http://127.0.0.2:8081', path)).name,
+      { message: 'the removed follower learns a rename without a placement version change', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(renamed);
+    await answer(await patch(cells, created.id, ['gru', 'fra']), 200, '200 follower added again');
+    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
+      { message: 'the follower observes the placement that adds it again', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(200);
+    await replicated(cells, replica, created.id, 4);
+    expect(await json(await cells.get(`${replica}${database(created.id)}`))).toMatchObject({ id: created.id, name: renamed });
+    expect((await sql(cells, replica, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3], [4]]);
+  } finally {
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('R18 deletion at the home retires a database while its follower is removed', async ({ cells }) => {
+  const created = await create(cells, ['gru', 'fra']);
+  let deleted = false;
+  try {
+    await seed(cells, created.id);
+    await observed(cells, created.id);
+    await replicated(cells, replica, created.id, 3);
+    await answer(await patch(cells, created.id, ['gru']), 200, '200 follower removed');
+    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
+      { message: 'the follower observes its removal before deletion', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
+    expect(await json(await cells.get(`${home}${database(created.id)}`))).toMatchObject({ id: created.id, regions: ['gru'] });
+    await answer(await cells.delete(`${home}${database(created.id)}`), 204, '204 deleted at the home');
+    deleted = true;
+    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
+      { message: 'the removed follower forgets the database after the home deletes it', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(404);
+    expect(files('terrabase-fra', created.id)).toEqual([]);
+    const listed = await json<{ items: { id: string }[] }>(await cells.get(`${replica}${project()}/databases`));
+    expect(listed.items.map(item => item.id)).not.toContain(created.id);
+  } finally {
+    if (!deleted) await removeDatabase(cells, created.id);
+  }
+});
+
+test('R19 an unprimed non-writer in the home region cannot confirm deletion', async ({ cells }) => {
+  const created = await create(cells, ['gru']);
+  const directory = mkdtempSync(join(stateDir, 'non-writer-'));
+  const source = readFileSync(join(stateDir, 'pids', 'terrabase.pid'), 'utf8').trim();
+  const environment = Object.fromEntries(readFileSync(`/proc/${source}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
+    const split = value.indexOf('=');
+    return [value.slice(0, split), value.slice(split + 1)];
+  }));
+  writeFileSync(join(directory, 'peers'), 'journey-1 gru 127.0.0.1\njourney-unprimed gru 127.0.0.3\n', { mode: 0o600 });
+  const token = randomBytes(32).toString('hex');
+  saveSecret('non-writer-nats', token);
+  writeFileSync(join(directory, 'nats-token'), token, { mode: 0o600 });
+  const log = join(directory, 'node.log');
+  const output = openSync(log, 'w', 0o600);
+  const node = spawn('dotnet', [join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.dll')], {
+    env: {
+      ...environment,
+      TS_NODE: 'journey-unprimed',
+      TS_PEERS_FILE: join(directory, 'peers'),
+      TS_NATS_URL: 'nats://127.0.0.3:4222',
+      TERRABASE_NATS_TOKEN_FILE: join(directory, 'nats-token'),
+      TERRABASE_DATA_DIRECTORY: join(directory, 'data'),
+      TERRABASE_PORT: '8280',
+      TERRABASE_METRICS_PORT: '9291',
+      TERRABASE_POSTGRES_PORT: '6632',
+    },
+    stdio: ['ignore', output, output],
+  });
+  closeSync(output);
+  const exited = once(node, 'exit');
+  const path = `/v1/sync/organizations/${journey().organizationId}/projects/${journey().projectId}/databases/${created.id}/placement`;
+  try {
+    await seed(cells, created.id);
+    await expect.poll(() => {
+      expect(node.exitCode, 'the real non-writer node stays running').toBeNull();
+      return readFileSync(log, 'utf8').includes('Application started.');
+    }, { message: 'the unprimed home-region node opens its listeners' }).toBe(true);
+    expect(await catalogRecord('http://127.0.0.3:8081', '/v1/rollout/status')).toMatchObject({ node: 'journey-unprimed', writer: false });
+    expect(await catalogRecord('http://127.0.0.1:8081', path)).toMatchObject({ databaseId: created.id, homeRegion: 'gru' });
+    expect(await catalogRecord('http://127.0.0.3:8081', path, 503)).toMatchObject({ error: { code: 'not_writer' } });
+    const missing = path.slice(0, -'/placement'.length - 1) + (created.id.endsWith('0') ? '1' : '0') + '/placement';
+    expect(await catalogRecord('http://127.0.0.1:8081', missing, 404)).toMatchObject({ error: { code: 'not_found' } });
+    expect(await catalogRecord('http://127.0.0.3:8081', missing, 503)).toMatchObject({ error: { code: 'not_writer' } });
+    expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3]]);
+  } finally {
+    node.kill('SIGTERM');
+    await exited;
+    await removeDatabase(cells, created.id);
   }
 });

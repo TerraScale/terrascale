@@ -21,7 +21,8 @@ internal sealed class ListManagedDatabasesEndpoint(
         Summary("Lists the databases of a project");
         Description(ManagementRoute.PageDescription + " " + ProjectApiRoute.IdentityDescription
             + " Every serving region's page is merged, so a database appears whichever region homes it; items are in id order."
-            + " A database whose home region no longer lists it — one its home deleted — is not listed, whatever a replica region still records.");
+            + " A database whose home region no longer lists it — one its home deleted — is not listed, whatever a replica region still records."
+            + " A record held by a region outside that record's own regions is left out.");
         Tags("Databases");
         Produces<ManagementPage<ManagedDatabaseBody>>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
@@ -106,7 +107,7 @@ internal sealed class ListManagedDatabasesEndpoint(
             return new([.. local.Items.Select(database => ManagedDatabaseBody.From(database, region))], local.Next);
         }
 
-        var items = local.Items.Select(database => ManagedDatabaseBody.From(database, region)).ToList();
+        var items = local.Items.Select(database => ManagedDatabaseBody.From(database, region)).Where(database => Placed(database, region)).ToList();
         var more = local.Next is not null;
         var peers = await regions.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
         var windows = new Dictionary<string, (HashSet<string> Ids, string? Last)>(StringComparer.Ordinal)
@@ -129,7 +130,7 @@ internal sealed class ListManagedDatabasesEndpoint(
                 windows[peers[index].Region] = (
                     [.. listed.Select(database => database.Id)],
                     fetched!.Next is null ? null : listed[^1].Id);
-                items.AddRange(listed);
+                items.AddRange(listed.Where(database => Placed(database, peers[index].Region)));
                 more |= fetched.Next is not null;
             }
         }
@@ -147,6 +148,9 @@ internal sealed class ListManagedDatabasesEndpoint(
         var shown = truncated ? [.. kept.Take(page.Limit)] : kept;
         return new(shown, shown.Count > 0 && (truncated || more) ? shown[^1].Id : null);
     }
+
+    private static bool Placed(ManagedDatabaseBody database, string region) =>
+        database.AllRegions || database.HomeRegion == region || database.ReplicaRegions.Contains(region, StringComparer.Ordinal);
 
     private static NotFound Unknown() => new("the database does not exist", "unknown_database");
 }
