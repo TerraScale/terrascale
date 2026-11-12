@@ -15,6 +15,8 @@ internal sealed record PendingSocialLink(string Id, string Email, LinkedProvider
 
 internal static class PendingSocialLinks
 {
+    private const int MaxTokenLength = 16384;
+
     private static readonly ChunkingCookieManager Cookies = new();
 
     internal static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
@@ -33,7 +35,16 @@ internal static class PendingSocialLinks
 
     internal static string? Read(HttpContext context, string tenant) => Cookies.GetRequestCookie(context, Cookie(tenant));
 
-    internal static void Write(HttpContext context, string tenant, string token) => Cookies.AppendResponseCookie(context, Cookie(tenant), token, CookieOptions(tenant));
+    internal static bool Write(HttpContext context, string tenant, string token)
+    {
+        if (token.Length is 0 or > MaxTokenLength)
+        {
+            return false;
+        }
+
+        Cookies.AppendResponseCookie(context, Cookie(tenant), token, CookieOptions(tenant));
+        return true;
+    }
 
     internal static void Delete(HttpContext context, string tenant) => Cookies.DeleteCookie(context, Cookie(tenant), CookieOptions(tenant));
 
@@ -42,7 +53,7 @@ internal static class PendingSocialLinks
 
     internal static PendingSocialLink? Open(AuthOptions options, string tenant, string? token, TimeProvider clock)
     {
-        if (token is not { Length: > 0 and <= 16384 })
+        if (token is not { Length: > 0 and <= MaxTokenLength })
         {
             return null;
         }

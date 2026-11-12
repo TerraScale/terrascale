@@ -285,11 +285,13 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                     PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,
                     PasscodePurpose.SignUp => AuthEmailKind.VerifyEmail,
                     PasscodePurpose.StepUp => AuthEmailKind.StepUpCode,
+                    PasscodePurpose.Social => AuthEmailKind.SocialLinkCode,
                     _ => AuthEmailKind.SignInCode,
                 },
                 Values = new AuthEmailValues(issued.Email)
                 {
                     Code = issued.Code,
+                    Provider = work.Provider,
                     ExpiresIn = issued.ExpiresAt - clock.GetUtcNow(),
                     Tenant = issued.Tenant,
                     Link = work.MagicBrowserHash is { } browserHash ? MagicLinks.Create(options, issued, browserHash, work.MagicNext) : null,
@@ -431,7 +433,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     private async Task<EmailConfig?> ConfigAsync(string tenant, AuthEmailKind kind)
     {
         // Never inherit platform copy or a customer-controlled sender identity into project authentication mail.
-        var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.Lockout
+        var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.SocialLinkCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.Lockout
             ? EmailConfig.Defaults(tenant) with
             {
                 Branding = new EmailBranding { SenderName = "TerraScale", FooterText = "Sent by TerraScale Authentication." },
@@ -556,8 +558,8 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = purpose }, locale, null);
 
         /// <summary>Queues a sign-up code, or a sign-in code when the address already has an account.</summary>
-        public Task EnqueueSocialAsync(string tenant, string email, string pending, string locale) =>
-            this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.Social, SocialLink = pending }, locale, null);
+        public Task EnqueueSocialAsync(string tenant, string email, string pending, string provider, string locale) =>
+            this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.Social, SocialLink = pending, Provider = provider }, locale, null);
 
         public Task EnqueueSignUpAsync(string tenant, string email, string passwordHash, string pendingToken, string locale = AuthEmails.English, string? username = null) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, PasswordHash = passwordHash, PendingToken = pendingToken, Username = username }, locale, null);
@@ -614,6 +616,8 @@ public sealed record MailRow(string Id, string State, string Locale, DateTimeOff
 internal sealed record MailWork(string Tenant, string Email)
 {
     public string? SocialLink { get; init; }
+
+    public string? Provider { get; init; }
 
     public string? MagicBrowserHash { get; init; }
 

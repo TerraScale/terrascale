@@ -234,10 +234,12 @@ internal static class EmailApi
         ExpiresIn = kind switch
         {
             AuthEmailKind.Invitation => TimeSpan.FromDays(7),
+            AuthEmailKind.SocialLinkCode => PendingSocialLinks.Lifetime,
             AuthEmailKind.NewDevice or AuthEmailKind.Lockout => null,
             AuthEmailKind.EmailChangeCode or AuthEmailKind.EmailChangeNotice => EmailChanges.Lifetime,
             _ => Passcodes.Lifetime,
         },
+        Provider = kind == AuthEmailKind.SocialLinkCode ? "Google" : null,
         NewEmail = kind is AuthEmailKind.EmailChangeCode or AuthEmailKind.EmailChangeNotice ? "new." + email : null,
         Organization = "Acme",
         Inviter = "Alex Silva",

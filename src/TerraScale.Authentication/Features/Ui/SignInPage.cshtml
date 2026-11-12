@@ -17,7 +17,15 @@ else
 {
 <p class="sub">@WriteHtml(Model.Sub(Model.Copy.SubCodeSent))</p>
 }
+@if (Model.LinkProvider is { } provider)
+{
+<p class="sub">@string.Format(CultureInfo.InvariantCulture, Model.Copy.SocialLinkCode, provider, Model.Brand)</p>
+<p class="sub">@string.Format(CultureInfo.InvariantCulture, Model.Copy.SocialLinkWarning, provider)</p>
+}
+else
+{
 <p class="sub">@Model.Copy.SubRecoverySignsOut</p>
+}
 break;
 case SignInStep.SignOutConfirm:
 <p class="sub">@WriteHtml(Model.SubBrand(Model.Copy.SubSignOutAsked))</p>

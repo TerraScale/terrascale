@@ -110,9 +110,14 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
             var pending = new PendingSocialLink(Tokens.RandomToken(32), email, external!, SocialSignIn.ConfigurationHash(provider),
                 (clock.GetUtcNow() + PendingSocialLinks.Lifetime).ToUnixTimeSeconds());
             var token = PendingSocialLinks.Seal(options, tenant, pending);
-            await reservation.EnqueueSocialAsync(tenant, email, token, AuthEmails.Locale(context.Request));
-            PendingSocialLinks.Write(context, tenant, token);
-            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, email, resumed.Next) { CodeRequest = "sign-in" });
+            if (!PendingSocialLinks.Write(context, tenant, token))
+            {
+                return Failed(context, resumed.Next, StatusCodes.Status400BadRequest, "The provider returned an identity that is too large to connect. Use another sign-in method.");
+            }
+
+            await reservation.EnqueueSocialAsync(tenant, email, token, SocialProviders.Label(provider.Provider), AuthEmails.Locale(context.Request));
+            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, email, resumed.Next)
+            { CodeRequest = "sign-in", LinkProvider = SocialProviders.Label(provider.Provider) });
         }
 
         // An active local factor gets the hosted second step; the provider's own amr/acr never count as one.

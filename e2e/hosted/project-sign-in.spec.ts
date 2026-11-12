@@ -244,6 +244,7 @@ test('unverified social email creates and links an account only after the code, 
       await expect(admin.locator('#auth-provider-oauth2 .ts-badge')).toHaveText('Configured');
       await admin.goto('/auth/sign-in');
       await admin.locator('#auth-method-username').check();
+      await admin.locator('#auth-method-passcode').uncheck();
       await admin.getByRole('button', { name: 'Save sign-in methods', exact: true }).click();
       await expect(admin.locator('#auth-method-username')).toBeChecked();
       await adminAudit.check('unverified OAuth2 provider configured');
@@ -258,11 +259,22 @@ test('unverified social email creates and links an account only after the code, 
       await providerSignIn(email, subject);
       await expect(page.locator('#sign-in-code-digit')).toBeVisible();
       expect((await customer.cookies()).some(cookie => cookie.name === 'tsauth_session_' + projectId)).toBe(false);
+      await expect(page.locator('main')).toContainText('Enter this code to connect Custom OAuth2 to your');
+      await expect(page.locator('main')).toContainText("If you didn't try to sign in with Custom OAuth2, ignore this email.");
       await audit.check('new unverified social identity requires email proof');
+      const otherEmail = await newAddress('social-other-' + run);
+      for (const path of ['/sign-in', '/sign-in/verify']) {
+        const refused = await customer.request.post(base + path, {
+          headers: { Origin: auth }, form: { email: otherEmail, code: '000000' },
+        });
+        expect(refused.status()).toBe(403);
+      }
       const pending = (await customer.cookies()).filter(cookie => cookie.name.startsWith('tsauth_social_link_'));
       expect(pending).toHaveLength(1);
       pending.forEach(cookie => saveSecret('pending-social-cookie', cookie.value));
       const mail = await nextMail(email, 0);
+      expect(mail.text).toContain('Enter this code to connect Custom OAuth2 to your');
+      expect(mail.text).toContain("If you didn't try to sign in with Custom OAuth2, ignore this email.");
       const code = /^\s*(\d{6})\s*$/m.exec(mail.text)?.[1] ?? '';
       expect(code).toMatch(/^\d{6}$/);
       const wrongCode = await customer.request.post(base + '/sign-in/verify', {
@@ -310,6 +322,7 @@ test('unverified social email creates and links an account only after the code, 
       expect((await customer.cookies()).some(cookie => cookie.name === 'tsauth_session_' + projectId)).toBe(false);
       await audit.check('an unbound subject cannot select an existing account by email');
       const existingMail = await nextMail(existingEmail, 0);
+      expect(existingMail.text).toContain('Enter this code to connect Custom OAuth2 to your');
       const existingCode = /^\s*(\d{6})\s*$/m.exec(existingMail.text)?.[1] ?? '';
       await enterSecret(page.locator('#sign-in-code-digit'), existingCode);
       await page.getByRole('button', { name: 'Verify and sign in', exact: true }).click();

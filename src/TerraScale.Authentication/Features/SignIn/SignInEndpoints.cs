@@ -88,7 +88,7 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         var tenant = SignInFlow.Tenant(this.HttpContext);
         var pendingToken = PendingSocialLinks.Read(this.HttpContext, tenant);
         var pendingIdentity = PendingSocialLinks.Open(options, tenant, pendingToken, this.HttpContext.RequestServices.GetRequiredService<TimeProvider>());
-        pendingIdentity = pendingIdentity?.Email == form.Email?.Trim() ? pendingIdentity : null;
+        pendingIdentity = pendingIdentity?.Email == Users.NormalizeEmail(form.Email ?? string.Empty) ? pendingIdentity : null;
         var address = pendingIdentity?.Email ?? form.Email?.Trim() ?? string.Empty;
         if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
         {
@@ -112,7 +112,7 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         cancellationToken.ThrowIfCancellationRequested();
         if (pendingIdentity is not null)
         {
-            await reservation.EnqueueSocialAsync(tenant, address, pendingToken!, AuthEmails.Locale(this.HttpContext.Request));
+            await reservation.EnqueueSocialAsync(tenant, address, pendingToken!, SocialProviders.Label(pendingIdentity.Identity.Provider), AuthEmails.Locale(this.HttpContext.Request));
         }
         else
         {
@@ -162,6 +162,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         var tenant = SignInFlow.Tenant(this.HttpContext);
         var pendingSocial = PendingSocialLinks.Read(this.HttpContext, tenant);
         var pendingIdentity = PendingSocialLinks.Open(options, tenant, pendingSocial, this.HttpContext.RequestServices.GetRequiredService<TimeProvider>());
+        pendingIdentity = pendingIdentity?.Email == Users.NormalizeEmail(form.Email ?? string.Empty) ? pendingIdentity : null;
         var address = pendingIdentity?.Email ?? magic?.Email ?? form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
@@ -179,10 +180,10 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
                 : MagicLinks.CodePage(this.HttpContext, magic, form.Challenge!, "Too many attempts. Try again later.", StatusCodes.Status429TooManyRequests);
         }
 
-        var user = pendingSocial is not null
-            ? await passcodes.RedeemSocialAsync(tenant, pendingSocial, form.Code ?? string.Empty, cancellationToken)
+        var user = pendingIdentity is not null
+            ? await passcodes.RedeemSocialAsync(tenant, pendingSocial!, form.Code ?? string.Empty, cancellationToken)
             : await passcodes.RedeemAsync(tenant, address, form.Code ?? string.Empty, PasscodePurpose.SignIn, cancellationToken: cancellationToken);
-        if (user is not null && pendingSocial is not null)
+        if (user is not null && pendingIdentity is not null)
         {
             PendingSocialLinks.Delete(this.HttpContext, tenant);
         }
@@ -887,7 +888,9 @@ internal static class SignInFlow
             "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method)
                 || PendingSocialLinks.Open(context.RequestServices.GetRequiredService<AuthOptions>(), Tenant(context),
                     PendingSocialLinks.Read(context, Tenant(context)), context.RequestServices.GetRequiredService<TimeProvider>()) is not null,
-            "sign-in/verify" => theme.Passcode || theme.MagicLink || theme.Providers.Count > 0,
+            "sign-in/verify" => theme.Passcode || theme.MagicLink
+                || PendingSocialLinks.Open(context.RequestServices.GetRequiredService<AuthOptions>(), Tenant(context),
+                    PendingSocialLinks.Read(context, Tenant(context)), context.RequestServices.GetRequiredService<TimeProvider>()) is not null,
             "sign-in/password" or "reset" or "reset/complete" or "reset/resend" => theme.Password,
             "sign-up" or "sign-up/verify" or "sign-up/resend" => theme.SignUp,
             _ => true,
@@ -935,6 +938,21 @@ internal static class SignInFlow
         }
 
         var form = await context.Request.ReadFormAsync(cancellationToken);
+        if (!HostedTheme.Of(context).Passcode && (context.Request.Path.Value ?? string.Empty).TrimEnd('/') is var path
+            && (path.EndsWith("/sign-in", StringComparison.Ordinal) || path.EndsWith("/sign-in/verify", StringComparison.Ordinal)))
+        {
+            var tenant = Tenant(context);
+            var clock = context.RequestServices.GetRequiredService<TimeProvider>();
+            var pending = PendingSocialLinks.Open(options, tenant, PendingSocialLinks.Read(context, tenant), clock);
+            var matchesPending = pending is not null && pending.Email == Users.NormalizeEmail(form["email"].ToString());
+            var magic = path.EndsWith("/sign-in/verify", StringComparison.Ordinal) && HostedTheme.Of(context).MagicLink
+                ? MagicLinks.Open(options, tenant, form["challenge"], clock) : null;
+            if (!matchesPending && magic is null)
+            {
+                return null;
+            }
+        }
+
         return new SignInForm(form["email"], form["code"], form["next"], form["password"], form["pending_token"], form["challenge"], form["username"]);
     }
 
