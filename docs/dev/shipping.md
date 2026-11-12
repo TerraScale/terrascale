@@ -25,13 +25,12 @@ The journey in `e2e/` is the only test; a behaviour that matters becomes a
 journey step ([`e2e/AGENTS.md`](../../e2e/AGENTS.md)).
 
 A `CI time regression: <workflow> (<event>)` issue (label `ci-time`) means a
-successful first-attempt `CI`, `Sites` or `Images (GHCR)` run took more than 30 s
-longer than the median of its latest five earlier runs with the same jobs, or one
-of its jobs took more than 30 s longer than the slowest of its own latest five
-runs (`CI time`, `.github/workflows/ci-time.yml`). Read its per-job table: find
-the job that grew, fix the cause in a pull request, then close the issue. A
-job's time starts when the job starts and the run's time when the run is
-created, so a slow run whose jobs did not grow waited for a runner or a
-concurrency lock (the queued seconds show it). The check never blocks a merge.
+slowdown repeated on the previous successful first-attempt `CI`, `Sites` or
+`Images (GHCR)` run with the same jobs (`CI time`, `.github/workflows/ci-time.yml`).
+The check compares working time, not time waiting for a runner: a run is slow
+when that time is more than 30 s over the median of its latest five earlier runs
+with the same jobs, or one of its jobs is more than 30 s over the slowest of its
+own latest five runs. Read its per-job table: find the job that grew, fix the
+cause in a pull request, then close the issue. The check never blocks a merge.
 
 For a missing GitHub push event, see [CI recovery](ci-recovery.md).
