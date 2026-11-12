@@ -26,6 +26,7 @@ from websockets.sync.client import ClientConnection, connect
 from websockets.typing import Subprotocol
 
 from . import sql as _sql
+from ._sql_connect_retry import ConnectRetry
 from .errors import (
     APIError,
     CommitUncertainError,
@@ -192,15 +193,21 @@ class SqlSession:
         client = self._db._c
         url = _url(client.base_url, client.project, self._db.name)
         refreshed = False
+        retry = ConnectRetry(client._http.timeout.connect)
         while True:
             token = client._bearer()
             try:
                 ws = connect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None, max_size=None,
-                             additional_headers={**client._headers, "Authorization": f"Bearer {token}"}, proxy=_proxy(url))
+                             additional_headers={**client._headers, "Authorization": f"Bearer {token}"},
+                             proxy=_proxy(url), open_timeout=retry.remaining())
             except InvalidStatus as exc:
                 err = _refusal(exc)
                 if _retry_refusal(client._source, token, err, refreshed):
                     refreshed = True
+                    continue
+                delay = retry.delay(err, exc.response.headers.get("Retry-After"))
+                if delay is not None:
+                    retry.wait(delay)
                     continue
                 raise err from None
             except (OSError, InvalidHandshake) as exc:
@@ -348,16 +355,21 @@ class AsyncSqlSession:
         client = self._db._c
         url = _url(client.base_url, client.project, self._db.name)
         refreshed = False
+        retry = ConnectRetry(client._http.timeout.connect)
         while True:
             token = await client._bearer()
             try:
                 ws = await aconnect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None, max_size=None,
                                     additional_headers={**client._headers, "Authorization": f"Bearer {token}"},
-                                    proxy=_proxy(url))
+                                    proxy=_proxy(url), open_timeout=retry.remaining())
             except InvalidStatus as exc:
                 err = _refusal(exc)
                 if _retry_refusal(client._source, token, err, refreshed):
                     refreshed = True
+                    continue
+                delay = retry.delay(err, exc.response.headers.get("Retry-After"))
+                if delay is not None:
+                    await asyncio.sleep(delay)
                     continue
                 raise err from None
             except (OSError, InvalidHandshake, asyncio.TimeoutError) as exc:

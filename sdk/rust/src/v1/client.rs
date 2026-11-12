@@ -523,6 +523,9 @@ impl Resp {
             status: self.status.as_u16(),
             error: Box::new(error),
             mutation: self.mutation,
+            retry_after: self
+                .header("Retry-After")
+                .and_then(|v| parse_retry_after(v, std::time::SystemTime::now())),
             body: self.body.clone(),
             request_id: self.header("X-Request-ID").map(str::to_owned),
         }
@@ -809,8 +812,13 @@ impl Client {
         let tls = url.scheme() == "https";
         url.set_scheme(if tls { "wss" } else { "ws" })
             .map_err(|()| Error::InvalidInput("base URL cannot carry a WebSocket".into()))?;
+        let deadline = self
+            .inner
+            .timeout
+            .map(|limit| tokio::time::Instant::now() + limit);
         let open = async {
             let mut rejected = None;
+            let mut overloads = 1;
             loop {
                 let token = self
                     .inner
@@ -887,6 +895,17 @@ impl Client {
                             continue;
                         }
                     }
+                }
+                if super::sql_connect_retry::wait(
+                    response.status().as_u16(),
+                    retry_after,
+                    overloads,
+                    deadline,
+                )
+                .await
+                {
+                    overloads += 1;
+                    continue;
                 }
                 return Err(error);
             }
@@ -1227,6 +1246,10 @@ impl Client {
         Error::Response {
             status: status.as_u16(),
             mutation,
+            retry_after: headers
+                .get("Retry-After")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| parse_retry_after(v, std::time::SystemTime::now())),
             error: Box::new(error),
             body,
             request_id: headers

@@ -367,46 +367,54 @@ internal sealed class TerraBaseConnection
     {
         using var expiry = new CancellationTokenSource(timeout, timeProvider);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
+        var started = timeProvider.GetTimestamp();
         var socket = new ClientWebSocket();
         try
         {
-            var origin = Origin(await endpointResolver.ResolveAsync(deadline.Token).ConfigureAwait(false));
-            if (anonymous && origin.Scheme == Uri.UriSchemeHttps)
-                throw new InvalidOperationException("A client without a credential reaches only a private plain-HTTP TerraBase listener.");
-            socket.Options.CollectHttpResponseDetails = true;
-            socket.Options.AddSubProtocol(subprotocol);
-            if (anonymous)
+            for (var attempt = 1; ; attempt++)
             {
-                socket.Options.HttpVersion = HttpVersion.Version20;
-                socket.Options.HttpVersionPolicy = HttpVersionPolicy.RequestVersionExact;
-            }
+                var origin = Origin(await endpointResolver.ResolveAsync(deadline.Token).ConfigureAwait(false));
+                if (anonymous && origin.Scheme == Uri.UriSchemeHttps)
+                    throw new InvalidOperationException("A client without a credential reaches only a private plain-HTTP TerraBase listener.");
+                socket.Options.CollectHttpResponseDetails = true;
+                socket.Options.AddSubProtocol(subprotocol);
+                if (anonymous)
+                {
+                    socket.Options.HttpVersion = HttpVersion.Version20;
+                    socket.Options.HttpVersionPolicy = HttpVersionPolicy.RequestVersionExact;
+                }
 
-            var bearer = authorization?.Parameter;
-            if (accessTokenProvider is not null)
-            {
-                bearer = await accessTokenProvider(deadline.Token).ConfigureAwait(false);
-                ValidateSecret(bearer, nameof(TerraBaseDatabaseClientOptions.AccessTokenProvider));
-            }
+                var bearer = authorization?.Parameter;
+                if (accessTokenProvider is not null)
+                {
+                    bearer = await accessTokenProvider(deadline.Token).ConfigureAwait(false);
+                    ValidateSecret(bearer, nameof(TerraBaseDatabaseClientOptions.AccessTokenProvider));
+                }
 
-            if (bearer is not null) socket.Options.SetRequestHeader("Authorization", "Bearer " + bearer);
-            if (regionPin is not null) socket.Options.SetRequestHeader(TerraBaseRegion.PinHeader, regionPin);
-            var target = new UriBuilder(new Uri(origin, path)) { Scheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" }.Uri;
-            try
-            {
-                using var invoker = new HttpMessageInvoker(new SentFromOrigin(http, target));
-                await socket.ConnectAsync(target, invoker, deadline.Token).ConfigureAwait(false);
-            }
-            catch (WebSocketException upgrade) when (socket.HttpStatusCode is not (0 or HttpStatusCode.SwitchingProtocols))
-            {
-                using var refused = new HttpResponseMessage(socket.HttpStatusCode) { Content = new ByteArrayContent([]) };
-                foreach (var (name, values) in socket.HttpResponseHeaders ?? new Dictionary<string, IEnumerable<string>>())
-                    refused.Headers.TryAddWithoutValidation(name, values);
-                throw await TerraBaseException.FromResponseAsync(refused, upgrade, deadline.Token).ConfigureAwait(false);
-            }
+                if (bearer is not null) socket.Options.SetRequestHeader("Authorization", "Bearer " + bearer);
+                if (regionPin is not null) socket.Options.SetRequestHeader(TerraBaseRegion.PinHeader, regionPin);
+                var target = new UriBuilder(new Uri(origin, path)) { Scheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" }.Uri;
+                try
+                {
+                    using var invoker = new HttpMessageInvoker(new SentFromOrigin(http, target));
+                    await socket.ConnectAsync(target, invoker, deadline.Token).ConfigureAwait(false);
+                }
+                catch (WebSocketException upgrade) when (socket.HttpStatusCode is not (0 or HttpStatusCode.SwitchingProtocols))
+                {
+                    using var refused = new HttpResponseMessage(socket.HttpStatusCode) { Content = new ByteArrayContent([]) };
+                    foreach (var (name, values) in socket.HttpResponseHeaders ?? new Dictionary<string, IEnumerable<string>>())
+                        refused.Headers.TryAddWithoutValidation(name, values);
+                    var refusal = await TerraBaseException.FromResponseAsync(refused, upgrade, deadline.Token).ConfigureAwait(false);
+                    socket.Dispose();
+                    await SqlConnectRetry.WaitAsync(refusal, attempt, timeout - timeProvider.GetElapsedTime(started), timeProvider, deadline.Token).ConfigureAwait(false);
+                    socket = new ClientWebSocket();
+                    continue;
+                }
 
-            return socket.SubProtocol == subprotocol
-                ? socket
-                : throw new TerraBaseException(HttpStatusCode.SwitchingProtocols, "TerraBase did not select the SQL WebSocket subprotocol.", "invalid_response", null);
+                return socket.SubProtocol == subprotocol
+                    ? socket
+                    : throw new TerraBaseException(HttpStatusCode.SwitchingProtocols, "TerraBase did not select the SQL WebSocket subprotocol.", "invalid_response", null);
+            }
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && expiry.IsCancellationRequested)
         {

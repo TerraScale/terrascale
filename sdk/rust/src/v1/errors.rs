@@ -38,6 +38,8 @@ pub enum Error {
         status: u16,
         /// Whether the failed request was a write.
         mutation: bool,
+        /// Parsed Retry-After delay, retained without the connection wait cap.
+        retry_after: Option<Duration>,
         #[source]
         error: Box<Error>,
         /// Exact response bytes, including malformed or empty bodies.
@@ -329,6 +331,7 @@ pub(crate) fn from_project_response(
     Error::Response {
         status,
         mutation,
+        retry_after,
         error: Box::new(error),
         body: body.to_vec(),
         request_id: request_id.map(str::to_owned).or_else(|| {
