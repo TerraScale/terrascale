@@ -38,6 +38,7 @@ public sealed class RequiredTotpConfirmEndpoint(Sessions sessions, TotpCredentia
         var session = await sessions.CreateAsync(issued.User with { MultiFactor = true, MfaMethod = "totp" }, cancellationToken);
         BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token, pending.User.InstanceId);
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.RecoveryCodes, pending.User.InstanceId,
-            Next: SignInFlow.SafeNext(this.HttpContext, form.Next)) { Account = pending.User.Email, RecoveryCodes = issued.Codes });
+            Next: SignInFlow.SafeNext(this.HttpContext, form.Next))
+        { Account = pending.User.Email, RecoveryCodes = issued.Codes });
     }
 }

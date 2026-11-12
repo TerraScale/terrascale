@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -12,6 +13,7 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Storage;
+using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
@@ -35,8 +37,9 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         Summary("Reverify a project end user");
         Description("Requires a live project sign-in access token for client_id and either the password or a current allowed TOTP/recovery code. Returns a five-minute ES256 JWT with typ step-up+jwt, the project issuer, client audience, sub, auth_time and amr. Verify its type, signature with the project's JWKS, issuer, audience and expiry. The next refresh reflects the fresh auth_time without extending the absolute session. Subject to the hosted IP and account attempt budgets.");
         Tags("Project tenants");
-        Metadata(new AcceptsMetadata(["application/json"], typeof(ProjectStepUpRequest)));
+        Metadata(new AcceptsMetadata(["application/json"], typeof(ProjectStepUpRequest)), new RequiresSecurity(SecuritySchemes.OAuthAccessBearer));
         Produces<ProjectStepUpBody>();
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
@@ -52,7 +55,7 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
             throw Denied();
         }
 
-        var request = await this.HttpContext.Request.ReadFromJsonAsync(ProjectTenantJson.Default.ProjectStepUpRequest, cancellationToken) ?? throw Denied();
+        var request = await this.ReadAsync(cancellationToken);
         if (!PlatformDirectory.IsId(request.ClientId)
             || await authentication.AuthenticateAsync(this.HttpContext.Request, cancellationToken, project, request.ClientId) is not { } caller
             || await sessions.ResolveIdAsync(project, caller.Id, caller.SessionId, cancellationToken) is not { } live)
@@ -134,6 +137,34 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
                 key.Dispose();
             }
         }
+    }
+
+    private async Task<ProjectStepUpRequest> ReadAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (this.HttpContext.Request.HasJsonContentType())
+            {
+                using var buffer = new MemoryStream();
+                var chunk = new byte[4096];
+                int read;
+                while ((read = await this.HttpContext.Request.Body.ReadAsync(chunk, cancellationToken)) > 0 && buffer.Length + read <= 16384)
+                {
+                    buffer.Write(chunk, 0, read);
+                }
+
+                if (read == 0 && JsonSerializer.Deserialize(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), ProjectTenantJson.Default.ProjectStepUpRequest) is { } body)
+                {
+                    return body;
+                }
+            }
+        }
+        catch (Exception error) when (error is JsonException or BadHttpRequestException)
+        {
+            throw new ApiException(400, "invalid_request", "Supply a JSON object with client_id and either password or code.");
+        }
+
+        throw new ApiException(400, "invalid_request", "Supply a JSON object of at most 16384 bytes with client_id and either password or code.");
     }
 
     private static ApiException Denied() => new(401, "step_up_denied", "Present a live project sign-in token and reverify with the password or an allowed factor.");

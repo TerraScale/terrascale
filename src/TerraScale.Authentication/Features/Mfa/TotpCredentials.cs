@@ -105,7 +105,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         {
             var enabled = (await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.Record.Enabled == true;
             var policy = Tenancy.IsProject(instanceId) ? (await settings.GetAsync(instanceId, cancellationToken).ConfigureAwait(false)).Configuration ?? ConfigurationBody.Default : null;
-            var passkey = policy?.RequireMfa == true && policy.AllowPasskey
+            var passkey = policy?.AllowPasskey == true && (policy.RequireMfa || multiFactorMethod == "recovery")
                 && await data.ReadAsync((db, token) => db.Passkeys.AnyAsync(key => key.InstanceId == instanceId && key.UserId == userId, token), cancellationToken).ConfigureAwait(false);
             var enrolled = policy is null || !policy.RequireMfa || policy.AllowTotp && enabled || passkey;
             var allowed = policy is null || multiFactorMethod is null || multiFactorMethod == "totp" && policy.AllowTotp

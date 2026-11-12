@@ -33,10 +33,10 @@ from .auth import (
     list_users_call,
     revoke_api_key_call,
     revoke_session_call,
-    sign_out_user_call,
     rotate_api_key_call,
     rotate_project_client_secret_call,
     set_provider_call,
+    sign_out_user_call,
     update_project_client_call,
     update_settings_call,
 )

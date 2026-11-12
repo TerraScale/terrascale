@@ -198,7 +198,7 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
         }
 
         var now = clock.GetUtcNow();
-        var authenticatedAt = live?.Session.CreatedAt;
+        var authenticatedAt = live?.Session.VerifiedAt ?? live?.Session.CreatedAt;
         // A resumed request's marker replaces max_age: the sign-in it asked for is recent enough, even for max_age=0.
         var stale = authenticatedAt is { } created && (loginAfter is { } after
             ? created.ToUnixTimeMilliseconds() <= after

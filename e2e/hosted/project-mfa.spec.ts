@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, createPublicKey, randomBytes, verify as verifySignature } from 'node:crypto';
 import type { BrowserContext } from '@playwright/test';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { confirmWithPassword, hostedReady, onboard, signUp, verify } from '../support/hosted';
@@ -19,8 +19,9 @@ function totp(secret: string): string {
 }
 
 test('projects require MFA enrollment, replace sessions and sign users out everywhere', async ({ browser }, info) => {
-  const email = await newAddress('mfa-owner-' + journey().runId);
-  const endUser = await newAddress('mfa-end-user-' + journey().runId);
+  const runId = journey().runId + '-' + randomBytes(4).toString('hex');
+  const email = await newAddress('mfa-owner-' + runId);
+  const endUser = await newAddress('mfa-end-user-' + runId);
   const password = randomBytes(24).toString('base64url');
   saveSecret('project-mfa-password', password);
   const owner = await auditedContext(browser, { viewport: desktop });
@@ -62,7 +63,7 @@ test('projects require MFA enrollment, replace sessions and sign users out every
     await enterSecret(page.locator('#sign-up-password'), password);
     await page.locator('form:has(#sign-up-email) button[type=submit]').click();
     const mail = await nextMail(endUser, 0);
-    await page.locator('#sign-up-code').fill(/^\s*(\d{6})\s*$/m.exec(mail.text)![1]);
+    await page.locator('#sign-up-code-digit').fill(/^\s*(\d{6})\s*$/m.exec(mail.text)![1]);
     await page.getByRole('button', { name: 'Verify email', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Set up an authenticator app', exact: true })).toBeVisible();
     expect((await first.cookies()).some((item) => item.name === cookie)).toBe(false);
@@ -77,7 +78,7 @@ test('projects require MFA enrollment, replace sessions and sign users out every
     });
     expect(bypass.status()).toBe(403);
     expect((await first.cookies()).some((item) => item.name === cookie)).toBe(false);
-    await page.locator('#totp-code').fill(totp(secret));
+    await page.locator('#totp-code-digit').fill(totp(secret));
     await page.getByRole('button', { name: 'Turn on two-factor authentication', exact: true }).click();
     await expect(page.locator('[data-mfa-secret]')).toHaveCount(8);
     const recovery = await page.locator('[data-mfa-secret]').allTextContents();
@@ -112,9 +113,26 @@ test('projects require MFA enrollment, replace sessions and sign users out every
     expect(stepUp.status()).toBe(200);
     const proof = (await stepUp.json()).proof as string;
     saveSecret('project-step-up-proof', proof);
-    const claims = JSON.parse(Buffer.from(proof.split('.')[1], 'base64url').toString());
+    const [header, payload, signature] = proof.split('.');
+    const proofHeader = JSON.parse(Buffer.from(header, 'base64url').toString());
+    expect(proofHeader.typ).toBe('step-up+jwt');
+    const jwks = await (await first.request.get(issuer + '/.well-known/jwks.json')).json();
+    const jwk = jwks.keys.find((key: { kid: string }) => key.kid === proofHeader.kid);
+    expect(verifySignature('sha256', Buffer.from(header + '.' + payload), {
+      key: createPublicKey({ key: jwk, format: 'jwk' }), dsaEncoding: 'ieee-p1363',
+    }, Buffer.from(signature, 'base64url'))).toBe(true);
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString());
     expect(claims).toMatchObject({ iss: issuer, aud: client, amr: ['pwd'] });
     expect(claims.exp - claims.auth_time).toBe(300);
+    const renewed = await first.request.post(issuer + '/oauth/token', {
+      form: { grant_type: 'refresh_token', client_id: client, refresh_token: original.refresh_token },
+    });
+    expect(renewed.status()).toBe(200);
+    const renewedTokens = await renewed.json();
+    saveSecret('project-renewed-access-token', renewedTokens.access_token);
+    saveSecret('project-renewed-refresh-token', renewedTokens.refresh_token);
+    expect(JSON.parse(Buffer.from(renewedTokens.access_token.split('.')[1], 'base64url').toString()).auth_time).toBe(claims.auth_time);
+    original.refresh_token = renewedTokens.refresh_token;
 
     const other = await second.newPage();
     const otherAudit = new Audit(other, info);
