@@ -59,7 +59,7 @@ public sealed class Closures(
             var refused = error.ErrorCode switch
             {
                 "not_empty" => PlatformDirectory.Conflict("not_empty", "Delete the project's databases, TerraBase API keys and backup destination first."),
-                "platform_project_protected" => PlatformDirectory.Conflict("platform_project_protected", "This project holds a TerraScale service's own database and cannot be deleted."),
+                "platform_project_protected" => PlatformDirectory.PlatformProjectProtected(),
                 _ => PlatformDirectory.Conflict(error.ErrorCode, "TerraBase holds this project id under another closure or organization."),
             };
             return await this.CancelAsync(job, cancellationToken).ConfigureAwait(false) switch

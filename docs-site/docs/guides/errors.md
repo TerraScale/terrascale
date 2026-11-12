@@ -299,7 +299,7 @@ Not an API answer: a TerraBase server logs this code at startup when another rec
 
 ### `platform_project_protected`
 
-409 — the request would close one of the projects TerraScale's own services run in. Those projects cannot be closed. Retry: no.
+409 — the request would close one of the projects TerraScale's own services run in, or delete the account of the only member of TerraScale's own organization. Those projects cannot be closed. Retry: no.
 
 ### `platform_project_taken`
 
