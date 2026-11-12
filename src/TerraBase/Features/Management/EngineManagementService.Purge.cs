@@ -22,7 +22,6 @@ internal sealed partial class EngineManagementService
     private long _purgePassOverdue;
     private long _purgePassOldestTicks;
     private readonly Counter<long> _purgeErrors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.purge.errors");
-    private readonly ConcurrentDictionary<(string Database, DateTimeOffset DeletedAt), byte> _refusedShreds = new();
     private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), byte> _skippedPurges = new();
 
     private void RegisterPurgeMetrics()
@@ -58,14 +57,9 @@ internal sealed partial class EngineManagementService
 
     public async ValueTask<ObserveShreddedResult> ObserveShreddedAsync(TenantContext database, DateTimeOffset deletedAt, CancellationToken token)
     {
-        if (PlatformDatabases.IsPlatformDatabase(database.DatabaseId))
+        if (ShredGuard.Refusal(database) is { } refusal)
         {
-            if (_refusedShreds.TryAdd((database.DatabaseId!, deletedAt), 0))
-            {
-                logger.ZLogWarning($"Refused a shred record for platform database {database.DatabaseId:@Database} of project {database.ProjectId:@Project}, deleted at {deletedAt:@DeletedAt} by another node: its catalog record and files stay, and its backups have stopped until an operator removes the record");
-            }
-
-            return new Forbidden("a platform database is never shredded");
+            return refusal;
         }
 
         return await WriteAsync<bool>(async transaction =>

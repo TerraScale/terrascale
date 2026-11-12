@@ -193,6 +193,24 @@ internal sealed class DataKeys : IDisposable
         }
     }
 
+    internal async Task<bool> IsHeldAsync(string scope, string id, CancellationToken cancellationToken)
+    {
+        await _readSlots.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
+            {
+                throw new DatabaseShreddedException(shredded.ShreddedAt);
+            }
+
+            return await _store.ReadAsync(BackupLayout.Key(scope, id), static (_, _) => Task.CompletedTask, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _readSlots.Release();
+        }
+    }
+
     public Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken) =>
         ReadKeyAsync(scope, id, cancellationToken);
 

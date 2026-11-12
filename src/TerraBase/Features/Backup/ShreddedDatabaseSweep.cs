@@ -1,12 +1,17 @@
+using System.Diagnostics.Metrics;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
 internal sealed class ShreddedDatabaseSweep(KeyCustody custody, KeyRevocationLocal local, TimeProvider time,
-    ILogger<ShreddedDatabaseSweep> logger) : BackgroundService
+    IMeterFactory meters, ILogger<ShreddedDatabaseSweep> logger) : BackgroundService
 {
     private string? _after;
+    private readonly HashSet<string> _refused = [with(StringComparer.Ordinal)];
+    private readonly Counter<long> _refusals = meters.Create(Telemetry.MeterName)
+        .CreateCounter<long>("terrabase.keys.sweep_refused", description: "Protected databases whose shred records were refused by this process.");
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -35,15 +40,18 @@ internal sealed class ShreddedDatabaseSweep(KeyCustody custody, KeyRevocationLoc
                 && Ulid.TryParse(organization, out _) && Ulid.TryParse(project, out _) && Ulid.TryParse(database, out _))
             {
                 var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
-                var scope = BackupLayout.KeyScope(tenant);
-                var record = await ShredRecords.ReadAsync(custody.Store, scope, token).ConfigureAwait(false);
-                if (record is not null)
+                if (!_refused.Contains(database))
                 {
-                    custody.Revocations.Forget(scope);
-                }
-                if (record is null || !await local.RevokeAsync(tenant, token).ConfigureAwait(false))
-                {
-                    return;
+                    if (ShredGuard.Refusal(tenant) is not null)
+                    {
+                        _ = _refused.Add(database);
+                        _refusals.Add(1);
+                        logger.ZLogWarning($"Refused a shred record for organization {organization:@Organization}, project {project:@Project}, database {database:@Database}: custody and local files stay untouched; an operator must inspect and clear the marker");
+                    }
+                    else if (!await local.RevokeAsync(tenant, token).ConfigureAwait(false))
+                    {
+                        return;
+                    }
                 }
             }
             _after = item.Key;

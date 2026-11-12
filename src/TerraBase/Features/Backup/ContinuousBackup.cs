@@ -696,6 +696,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public SideWork? Side { get; set; }
 
         public Ulid? Generation { get; set; }
+        public string? GenerationKey { get; set; }
         public long Position { get; set; }
         public long PendingStart { get; set; }
         public DateTimeOffset PendingAt { get; set; }

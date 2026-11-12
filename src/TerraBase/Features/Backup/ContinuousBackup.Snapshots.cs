@@ -70,14 +70,14 @@ internal sealed partial class ContinuousBackup
                 ? await _engine.ChecksumAsync(snapshot, cancellationToken).ConfigureAwait(false)
                 : null;
             await StoreGenerationProofAsync(file, generation, key, captured, cancellationToken).ConfigureAwait(false);
-            await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
+            var generationKey = await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
             if (file.Tap is ICdcBackupRetention baseline)
             {
                 await baseline.AcknowledgeAsync(baseline.Position, cancellationToken).ConfigureAwait(false);
             }
 
-            (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
-                (generation, 0, 0, at, at, at, false);
+            (file.Generation, file.GenerationKey, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
+                (generation, generationKey, 0, 0, at, at, at, false);
             Prove(file, at);
             _generations.Add(1);
             (file.LastError, file.Failures) = (null, 0);

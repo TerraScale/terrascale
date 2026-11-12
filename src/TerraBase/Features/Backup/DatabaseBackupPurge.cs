@@ -184,6 +184,11 @@ internal sealed class DatabaseBackupPurge(
 
     internal async Task<DateTimeOffset?> ShredAsync(TenantContext database, DateTimeOffset until, CancellationToken token)
     {
+        if (ShredGuard.Refusal(database) is not null)
+        {
+            return null;
+        }
+
         if (await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, ProgressKind, database.DatabaseId!,
             BackupPurgeJsonContext.Default.BackupPurgeProgress, token), token).ConfigureAwait(false) is { KeysShreddedAt: { } recorded })
         {
@@ -280,6 +285,11 @@ internal sealed class DatabaseBackupPurge(
 
     private async Task<BackupPurgeProgress> PurgeAsync(DatabasePurgeRecord job, BackupPurgeProgress progress, CancellationToken token)
     {
+        if (ShredGuard.Refusal(job.Database) is not null)
+        {
+            return progress with { Failure = "shred_refused" };
+        }
+
         if (progress.KeysShreddedAt is null && await ShredAsync(job.Database, DateTimeOffset.MaxValue, token).ConfigureAwait(false) is { } shredded)
         {
             progress = progress with { KeysShreddedAt = shredded };
