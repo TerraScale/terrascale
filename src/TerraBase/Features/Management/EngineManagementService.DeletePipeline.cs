@@ -180,7 +180,7 @@ internal sealed partial class EngineManagementService
             };
         }
 
-        if (PlatformDatabases.IsPlatform(tenant.OrganizationId))
+        if (PlatformDatabases.IsPlatformDatabase(databaseId))
         {
             return ManagementErrors.PlatformDatabaseProtected;
         }

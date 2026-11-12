@@ -15,7 +15,7 @@ internal sealed partial class EngineManagementService
 
     public async ValueTask<SetDatabaseRegionsResult> SetDatabaseTtlAsync(
         string userId, string organizationId, string projectId, string databaseId, long? ttlSeconds, CancellationToken cancellationToken) =>
-        PlatformDatabases.IsPlatform(organizationId) ? ManagementErrors.PlatformDatabaseProtected : await WriteAsync<SetDatabaseRegionsResult>(async transaction =>
+        PlatformDatabases.IsPlatformDatabase(databaseId) ? ManagementErrors.PlatformDatabaseProtected : await WriteAsync<SetDatabaseRegionsResult>(async transaction =>
         {
             var project = await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (project is not TenantContext)

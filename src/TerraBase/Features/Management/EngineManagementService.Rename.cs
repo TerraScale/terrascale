@@ -9,7 +9,9 @@ internal sealed partial class EngineManagementService
 {
     public async ValueTask<SetDatabaseRegionsResult> RenameDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken) =>
-        PlatformDatabases.IsPlatform(organizationId) ? ManagementErrors.PlatformDatabaseProtected : await WriteAsync<SetDatabaseRegionsResult>(async transaction =>
+        PlatformDatabases.IsPlatformDatabase(databaseId) || PlatformDatabases.IsPlatformName(projectId, name)
+            ? ManagementErrors.PlatformDatabaseProtected
+            : await WriteAsync<SetDatabaseRegionsResult>(async transaction =>
         {
             var project = await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (project is not TenantContext tenant)

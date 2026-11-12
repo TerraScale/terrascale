@@ -16,7 +16,8 @@ internal static class ManagementErrors
 
     public static readonly Conflict PlatformPlacementLocked = new("platform databases are placed in every region and their placement cannot change", "platform_placement_locked");
 
-    public static readonly Conflict PlatformDatabaseProtected = new("platform databases cannot be deleted, renamed or given a TTL", "platform_database_protected");
+    public static readonly Conflict PlatformDatabaseProtected = new(
+        "platform databases cannot be deleted, renamed or given a TTL, and no other database can take their names", "platform_database_protected");
 
     public static readonly Conflict PlatformProjectProtected = new("platform projects cannot be closed", "platform_project_protected");
 
