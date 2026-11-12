@@ -83,7 +83,7 @@ internal sealed class PlatformSeedProgress
         _pending is { } reason ? [new Measurement<int>(1, new KeyValuePair<string, object?>("reason", reason))] : [];
 }
 
-public sealed record PlatformConflicts;
+public sealed record PlatformConflicts(IReadOnlyList<string> Seeded);
 
 public sealed record PlatformPending(Unavailable Reason);
 
@@ -129,8 +129,13 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, 
                         progress.Finish();
                         logger.ZLogInformation($"Platform databases are seeded");
                         return;
-                    case PlatformConflicts:
+                    case PlatformConflicts settled:
                         progress.Finish();
+                        if (settled.Seeded.Count > 0)
+                        {
+                            logger.ZLogInformation($"Platform databases seeded despite the conflicts: {string.Join(", ", settled.Seeded):@Seeded}");
+                        }
+
                         return;
                     case PlatformOrphaned:
                         progress.Serve(PlatformDatabases.Orphaned.Code);

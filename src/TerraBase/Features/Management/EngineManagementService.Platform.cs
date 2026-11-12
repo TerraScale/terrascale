@@ -28,11 +28,15 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         }
 
         List<Conflict> conflicts = [];
+        List<string> seeded = [];
         Unavailable? pending = null;
         foreach (var (name, database) in PlatformDatabases.Databases)
         {
             switch (await SeedDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false))
             {
+                case Done:
+                    seeded.Add(name);
+                    break;
                 case Conflict conflict:
                     found(conflict);
                     conflicts.Add(conflict);
@@ -45,7 +49,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
 
         return pending is not null ? new PlatformPending(pending)
             : conflicts.Contains(PlatformDatabases.Orphaned) ? new PlatformOrphaned()
-            : conflicts.Count == 0 ? new Done() : new PlatformConflicts();
+            : conflicts.Count == 0 ? new Done() : new PlatformConflicts(seeded);
     }
 
     private async ValueTask<PlatformState> SeedDatabaseAsync(string name, (string Id, string ProjectId) database, CancellationToken cancellationToken)
@@ -74,7 +78,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         return state switch
         {
             Done done => done,
-            Conflict => new PlatformConflicts(),
+            Conflict => new PlatformConflicts([]),
             Unavailable unavailable => new PlatformPending(unavailable),
             NotFound => throw new UnreachableException(),
         };
