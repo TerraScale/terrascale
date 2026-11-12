@@ -39,10 +39,19 @@ withdraws ingress from the source and drains in-flight responses.
    up from the current writer. While blocked, the drain answers HTTP 503 with
    `Retry-After: 1` and the standard error body code `source_retiring`; its message
    names the pending restart with a different session, readiness or catch-up step.
-   The refusal logs the database id, source session and pending step.
+   Each refusal logs the source region, source session and pending step once, at
+   information level when the step changes and debug level on repeats.
 5. `recovering`: if activation never committed, CAS back to the retained source
    at a new epoch. It reacquires exclusive admission and any partially moved
    database leases. Once admitted, it clears recovery and resumes replication.
+
+Drain transport failures return HTTP 503, `Retry-After: 1` and the standard error
+body code `target_unreachable` for target readiness, preparation, verification or
+activation, or `observer_unreachable` for route observation after the owner CAS.
+The message names the phase and peer; the warning includes the exception. A
+non-caller deadline returns `drain_timeout` with the same phase and peer context.
+Caller cancellation propagates. Retirement probe failures log the exception type
+at debug level and retain the pending step.
 
 Target activation has a ten-second deadline. Each activation attempt is bounded
 at two seconds, a drain at thirty seconds, and an immediate rollback attempt at

@@ -78,7 +78,7 @@ internal sealed partial class RegionReplication(
     private string Region => options.Region;
 
     [LoggerMessage(Message = "Replica verification skipped for database {Database} in follower region {Region}, session {Session}: {Reason}")]
-    private static partial void LogVerificationSkipped(ILogger logger, LogLevel level, string database, string region, string session, string reason);
+    private static partial void LogVerificationSkipped(ILogger logger, LogLevel level, string? database, string region, string session, string reason);
 
     internal IReadOnlyCollection<TenantContext> Following => [.. _followers.Values.Select(follower => follower.Database)];
 
@@ -738,7 +738,7 @@ internal sealed partial class RegionReplication(
                 _owner._verifications?.Add(1, new KeyValuePair<string, object?>("result", "skipped"),
                     new KeyValuePair<string, object?>("reason", skipped.Label));
                 LogVerificationSkipped(_owner.Logger, _lastSkipReason == skipped.Reason ? LogLevel.Debug : LogLevel.Information,
-                    Database.DatabaseId!, _owner.Region, _owner._session, skipped.Label);
+                    Database.DatabaseId, _owner.Region, _owner._session, skipped.Label);
                 _lastSkipReason = skipped.Reason;
                 _nextVerify = now + RetryGap;
             }

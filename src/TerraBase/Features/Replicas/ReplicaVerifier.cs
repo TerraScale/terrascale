@@ -50,7 +50,6 @@ internal sealed class ReplicaVerifier(IDatabaseReplicas replicas, HttpClient htt
                 return round;
             }
         }
-
     }
 
     internal async Task<VerificationRound> ObserveAsync(TenantContext database, Uri source, ChecksumCursor? cursor, CancellationToken cancellationToken)
