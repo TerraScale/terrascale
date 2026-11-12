@@ -103,7 +103,8 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await expect(page.locator('#database-regions').getByRole('status')).toHaveText('A database needs one region.');
   const saved = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/dashboard/databases/placement');
   await page.getByRole('button', { name: 'Save regions', exact: true }).click();
-  expect((await saved).status(), 'saving the same regions').toBe(303);
+  const placementResponse = await saved;
+  expect(placementResponse.status(), placementResponse.status() === 303 ? 'saving the same regions' : `saving the same regions: ${placementResponse.status()} ${await placementResponse.text()}`).toBe(303);
   await page.waitForLoadState('load');
   await expect(placed).toHaveValue(new RegExp(`^${region}$`, 'i'));
   await audit.check('database regions saved');
