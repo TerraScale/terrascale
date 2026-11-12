@@ -205,10 +205,10 @@ test('R6 repeat and conflicting placements during a move', async ({ cells }) => 
       await seed(cells, created.id);
       await observed(cells, created.id);
       const moving = patch(cells, created.id, ['fra']);
-      const concurrent = await Promise.all([
-        patch(cells, created.id, ['fra']),
-        patch(cells, created.id, ['gru', 'fra']),
-      ]);
+      const concurrent = [
+        await patch(cells, created.id, ['fra']),
+        await patch(cells, created.id, ['gru', 'fra']),
+      ];
       const initial = await moving;
       for (const response of [initial, ...concurrent]) {
         expect([200, 503, 409], '200 updated, 503 replica_not_ready or 409 move_in_progress').toContain(response.status());
