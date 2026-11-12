@@ -166,18 +166,18 @@ else
 <div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.DifferentEmail</a><a href="@Model.Link("sign-up")">@Model.Copy.CreateAccount</a></div>
 break;
 case SignInStep.Continue:
-<a class="btn delayed-continue" href="@Model.Next">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignedIn:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@Model.Copy.SignedIn</p></div>
 break;
 case SignInStep.Sso:
-<a class="btn delayed-continue" href="@Model.SsoUrl">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignedOut:
-@if (Model.ReturnTo is { } returnTo)
+@if (Model.Refresh is { })
 {
-<a class="btn delayed-continue" href="@returnTo">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 }
 else
 {
@@ -291,7 +291,7 @@ else
 <div class="row"><a href="@Model.Link("reset")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.DifferentEmail</a></div>
 break;
 case SignInStep.ResetDone:
-<a class="btn delayed-continue" href="@Model.Link("sign-in")">@Model.Copy.SignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.SignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.DeviceEnter:
 <form method="get" action="/ui/@Model.Slug/device">

@@ -153,12 +153,9 @@ function passkeyDecode(text) {
   }
   function follow(html) {
     var page = new DOMParser().parseFromString(html, 'text/html');
-    var refresh = page.querySelector('meta[http-equiv="refresh"]');
-    var url = refresh && refresh.getAttribute('content').match(/^0;\s*url=(.+)$/);
-    if (url) { window.location.href = url[1]; return; }
+    if (page.querySelector('meta[http-equiv="refresh"]')) return;
     var link = page.querySelector('a.btn');
-    if (link) { window.location.href = link.href; return; }
-    window.location.reload();
+    if (link) window.location.href = link.href;
   }
   button.addEventListener('click', function () {
     var address = email ? email.value.trim() : '';

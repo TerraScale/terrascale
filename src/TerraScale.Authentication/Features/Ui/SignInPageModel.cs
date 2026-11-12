@@ -231,6 +231,33 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         return $"/ui/{this.Slug}/{path}" + (query.Count == 0 ? string.Empty : "?" + string.Join("&", query));
     }
 
+    internal static string? NavigationTarget(Uri? origin, string? url)
+    {
+        if (string.IsNullOrEmpty(url))
+        {
+            return null;
+        }
+
+        var encoded = string.Empty;
+        foreach (var rune in url.EnumerateRunes())
+        {
+            encoded += rune.Value is > 32 and < 127 ? rune.ToString() : Uri.EscapeDataString(rune.ToString());
+        }
+
+        var target = encoded;
+        if (!Uri.TryCreate(target, UriKind.RelativeOrAbsolute, out var parsed))
+        {
+            return null;
+        }
+
+        if (parsed.IsAbsoluteUri)
+        {
+            return parsed.AbsoluteUri;
+        }
+
+        return origin is not null && Uri.TryCreate(origin, target, out var combined) ? combined.PathAndQuery : target;
+    }
+
     private static string? ContinueTo(SignInPageModel model) => model.Step switch
     {
         SignInStep.Continue => model.Next,
@@ -248,12 +275,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
         var uiLocales = context.Request.Query["ui_locales"].ToString();
-        var rendered = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = uiLocales.Length == 0 ? null : uiLocales, Refresh = ContinueTo(model) };
-        if (rendered.Refresh is { } refresh)
-        {
-            context.Response.Headers["Refresh"] = "0;url=" + refresh;
-        }
-
+        var located = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = uiLocales.Length == 0 ? null : uiLocales };
+        var rendered = located with { Refresh = NavigationTarget(located.PublicOrigin, ContinueTo(located)) };
         var page = SignInPage.Create(rendered);
         page.StatusCode = statusCode;
         return page;
