@@ -7,10 +7,10 @@ namespace TerraBase.Features.ApiReference;
 internal static class ApiExamples
 {
     private const string Database = """
-        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"regions":["gru-1"],"expiresAt":null}
+        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"placementVersion":1,"regions":["gru-1"],"expiresAt":null}
         """;
     private const string Expiring = """
-        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"run-42","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"regions":["gru-1"],"expiresAt":"2026-10-07T13:00:00Z"}
+        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"run-42","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"placementVersion":1,"regions":["gru-1"],"expiresAt":"2026-10-07T13:00:00Z"}
         """;
     private const string ReadGrant = """{"table":"notes","where":"owner_id = :sub","columns":["id","owner_id","body"],"updatedAt":"2026-11-04T12:00:00Z"}""";
     private const string DeclaredSchema = """{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""";
@@ -114,7 +114,7 @@ internal static class ApiExamples
         "getDatabaseRegions" => """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","homeRegion":"gru-1","observedAt":"2026-10-07T12:00:00Z","replicas":[{"region":"sjc-1","lagMs":120.5,"lastPulledAt":"2026-10-07T12:00:09Z","lastVerified":"2026-10-07T11:58:00Z","revision":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}],"regions":[{"region":"gru-1","role":"writer","lagMs":null,"lastPulledAt":null,"lastVerified":null,"revision":null},{"region":"sjc-1","role":null,"lagMs":120.5,"lastPulledAt":"2026-10-07T12:00:09Z","lastVerified":"2026-10-07T11:58:00Z","revision":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}]}""",
         "putReadGrant" or "getReadGrant" => ReadGrant,
         "listReadGrants" => "{\"grants\":[" + ReadGrant + "]}",
-        "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"regions":["gru-1"],"expiresAt":"2026-10-07T13:00:00Z"}""",
+        "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"placementVersion":1,"regions":["gru-1"],"expiresAt":"2026-10-07T13:00:00Z"}""",
         "listDatabases" => Page(Database),
         "createBackup" => Backup,
         "listBackups" => Page(Backup),

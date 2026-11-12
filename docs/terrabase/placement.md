@@ -13,7 +13,7 @@ request that reached another region (`421 wrong_region`, `ts-replay: region=<hom
 | `updateDatabase` | `PATCH /v1/projects/{project}/databases/{database}` `{"regions":["sjc"]}` | `200` database |
 | `moveDatabaseHome` | `POST /v1/projects/{project}/databases/{database}/move-home` `{"homeRegion":"sjc"}` | `200` database |
 
-`regions` is a JSON array with at least one serving region id, without duplicates. Unknown, non-serving, duplicate and empty sets answer the existing `400 invalid_request` envelope. Database responses include `regions` sorted by region id, the catalog order. Response order carries no meaning and does not identify the writer.
+`regions` is a JSON array with at least one serving region id, without duplicates. Unknown, non-serving, duplicate and empty sets answer the existing `400 invalid_request` envelope. Database responses include `regions` sorted by region id, the catalog order. Response order carries no meaning and does not identify the writer. Database responses also carry `placementVersion`, the current placement epoch; an unchanged region-set request retains it.
 
 On create, the first region in the caller's array is the initial writer. On update, the writer stays if it remains selected. Otherwise TerraBase adds missing requested regions and keeps them as members so their followers can synchronize. A call that adds regions returns `503 replica_not_ready` without attempting promotion. The intermediate placement is the old writer and existing members plus the requested regions. If no regions need adding, TerraBase can promote on the first call: `{a,b}` to `{b}` returns `200` when `b` is ready. Nothing is unstaged on any refusal, and `regions` reports that superset meanwhile.
 

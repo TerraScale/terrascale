@@ -30,6 +30,11 @@ internal static class PlacementSchemas
             }
         }
 
+        if (properties.TryGetValue("placementVersion", out var version) && version is OpenApiSchema placementVersion)
+        {
+            placementVersion.Description = "Placement epoch; unchanged region-set updates retain it, membership and writer changes increase it.";
+        }
+
         if (properties.TryGetValue("regions", out var selected) && selected is OpenApiSchema regions)
         {
             regions.Type = JsonSchemaType.Array;
