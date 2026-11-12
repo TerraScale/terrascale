@@ -5,6 +5,8 @@ namespace TerraScale.Authentication.Features.UserApiKeys;
 
 public sealed class CreateSelfUserApiKeyEndpoint(PlatformAuthentication authentication, UserApiKeys keys) : SelfUserApiKeyEndpoint(authentication)
 {
+    protected override bool RequiresRecentSignIn => true;
+
     public override void Configure()
     {
         Post(Root + "");
@@ -14,6 +16,13 @@ public sealed class CreateSelfUserApiKeyEndpoint(PlatformAuthentication authenti
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var request = await this.BodyAsync(UserApiKeyJson.Default.UserApiKeyRequest, cancellationToken);
-        return Results.Json(await keys.CreateAsync(this.RouteId("project"), caller.Id, caller.Id, request, cancellationToken), UserApiKeyJson.Default.UserApiKeyBody, statusCode: 201);
+        var now = this.HttpContext.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
+        if (request.ExpiresAt > now.AddDays(365))
+        {
+            throw new ApiException(400, "invalid_request", "Self-service keys must expire within 365 days.");
+        }
+
+        request = request with { ExpiresAt = request.ExpiresAt ?? now.AddDays(90) };
+        return Results.Json(await keys.CreateAsync(this.RouteId("project"), caller.Id, caller.Id, request, this.CreationAuthorization, cancellationToken), UserApiKeyJson.Default.UserApiKeyBody, statusCode: 201);
     }
 }

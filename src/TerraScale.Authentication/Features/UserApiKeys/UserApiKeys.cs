@@ -13,7 +13,8 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Features.UserApiKeys;
 
 public sealed record UserApiKeyRecord(string ProjectId, string Id, string UserId, string Name, string Prefix, string SecretHash,
-    IReadOnlyList<string> Scopes, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt);
+    IReadOnlyList<string> Scopes, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, long AuthEpoch, string AuthStamp);
+public sealed record UserApiKeyAuthorization(Change Session, long AuthEpoch, string AuthStamp, DateTimeOffset Until);
 public sealed record UserApiKeyPolicyRecord(string ProjectId, IReadOnlyList<string> AllowedScopes);
 public sealed record UserApiKeyRequest(string? Name, IReadOnlyList<string>? Scopes, DateTimeOffset? ExpiresAt = null);
 public sealed record UserApiKeyPolicyBody(IReadOnlyList<string> AllowedScopes);
@@ -52,7 +53,7 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
         return new(scopes);
     }
 
-    public async Task<UserApiKeyBody> CreateAsync(string project, string userId, string actor, UserApiKeyRequest request, CancellationToken cancellationToken)
+    public async Task<UserApiKeyBody> CreateAsync(string project, string userId, string actor, UserApiKeyRequest request, UserApiKeyAuthorization? authorization, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var name = PlatformDirectory.Name(request.Name);
@@ -63,23 +64,63 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
             throw Invalid();
         }
 
-        var user = await data.ReadAsync((db, token) => db.Users.SingleOrDefaultAsync(row => row.InstanceId == project && row.Id == userId, token), cancellationToken).ConfigureAwait(false);
-        if (user is null || user.Disabled)
+        var user = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == userId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        if (user is null || user.Value.Disabled)
         {
             throw PlatformDirectory.NotFound();
         }
 
-        if (await limiter.AcquireAsync(project, "user-api-key-create", userId, 20, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
+        if (authorization is not null && (authorization.AuthEpoch != user.Value.AuthEpoch || authorization.AuthStamp != user.Value.AuthStamp))
+        {
+            throw new ApiException(403, "reauthentication_required", "Sign in again to create an API key.");
+        }
+
+        var now = clock.GetUtcNow();
+        var live = await data.ReadAsync((db, token) => db.UserApiKeys.CountAsync(row => row.ProjectId == project && row.UserId == userId
+            && (row.ExpiresAt == null || row.ExpiresAt > now) && row.AuthEpoch == user.Value.AuthEpoch && row.AuthStamp == user.Value.AuthStamp, token), cancellationToken).ConfigureAwait(false);
+        if (live >= 25)
+        {
+            throw new ApiException(409, "user_key_limit", "A user can have at most 25 live API keys.");
+        }
+
+        if (await limiter.AcquireAsync(project, "user-api-key-create", userId, 100, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
         {
             throw ApiException.RateLimited("Too many user keys created.", wait);
         }
 
+        return await this.InsertAsync(project, actor, user, policy, name, scopes, request.ExpiresAt, authorization, false, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<UserApiKeyBody> InsertAsync(string project, string actor, Versioned<UserRecord> user, Versioned<UserApiKeyPolicyRecord> policy,
+        string name, IReadOnlyList<string> scopes, DateTimeOffset? expiresAt, UserApiKeyAuthorization? authorization, bool retried, CancellationToken cancellationToken)
+    {
         var prefix = "tsk_" + Tokens.RandomToken(8);
         var secret = prefix + "_" + Tokens.RandomToken(43);
-        var key = new UserApiKeyRecord(project, AuthIds.New(), userId, name, prefix, Tokens.Sha256Hex(secret), scopes, clock.GetUtcNow(), request.ExpiresAt);
-        await this.SaveAsync(project, actor, "apiKey.created", key.Id,
-            [Change.Insert(key), Change.Assert(policy), Change.Assert(user), Change.Insert(outbox.NewEvent(project, "apiKey.created", userId))], cancellationToken).ConfigureAwait(false);
-        return Body(key, secret);
+        var key = new UserApiKeyRecord(project, AuthIds.New(), user.Value.Id, name, prefix, Tokens.Sha256Hex(secret), scopes,
+            clock.GetUtcNow(), expiresAt, user.Value.AuthEpoch, user.Value.AuthStamp ?? throw new InvalidDataException("The user has no authentication stamp."));
+        List<Change> changes = [Change.Insert(key), Change.Assert(policy), Change.Update(user, user.Value),
+            Change.Insert(outbox.NewEvent(project, "apiKey.created", user.Value.Id))];
+        if (authorization is not null)
+        {
+            if (authorization.Until <= clock.GetUtcNow())
+            {
+                throw new ApiException(403, "reauthentication_required", "Sign in again to create an API key.");
+            }
+
+            changes.Add(authorization.Session);
+        }
+
+        if (await this.TrySaveAsync(project, actor, "apiKey.created", key.Id, changes, cancellationToken).ConfigureAwait(false))
+        {
+            return Body(key, secret);
+        }
+
+        if (!retried && await data.ReadAsync((db, token) => db.UserApiKeys.AnyAsync(row => row.ProjectId == project && row.Prefix == prefix, token), cancellationToken).ConfigureAwait(false))
+        {
+            return await this.InsertAsync(project, actor, user, policy, name, scopes, expiresAt, authorization, true, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw Conflict();
     }
 
     public async Task<UserApiKeyPageBody> ListAsync(string project, string userId, CancellationToken cancellationToken)
@@ -114,7 +155,8 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
         var equal = CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Tokens.Sha256Hex(secret)),
             Encoding.ASCII.GetBytes(key?.SecretHash ?? new string('0', 64)));
         if (!equal || key is null || key.ExpiresAt <= clock.GetUtcNow()
-            || !await data.ReadAsync((db, token) => db.Users.AnyAsync(row => row.InstanceId == project && row.Id == key.UserId && !row.Disabled, token), cancellationToken).ConfigureAwait(false))
+            || !await data.ReadAsync((db, token) => db.Users.AnyAsync(row => row.InstanceId == project && row.Id == key.UserId && !row.Disabled
+                && row.AuthEpoch == key.AuthEpoch && row.AuthStamp == key.AuthStamp, token), cancellationToken).ConfigureAwait(false))
         {
             return new(false);
         }
@@ -124,12 +166,19 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
 
     private async Task SaveAsync(string project, string actor, string action, string target, IReadOnlyList<Change> changes, CancellationToken cancellationToken)
     {
-        var owner = await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        if (!await data.SaveAsync([.. changes, platform.Audit(owner.Value.OrganizationId, actor, action, target)], cancellationToken).ConfigureAwait(false))
+        if (!await this.TrySaveAsync(project, actor, action, target, changes, cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(409, "version_conflict", "The user or key policy changed concurrently.");
+            throw Conflict();
         }
     }
+
+    private async Task<bool> TrySaveAsync(string project, string actor, string action, string target, IReadOnlyList<Change> changes, CancellationToken cancellationToken)
+    {
+        var owner = await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        return await data.SaveAsync([.. changes, platform.Audit(owner.Value.OrganizationId, actor, action, target)], cancellationToken).ConfigureAwait(false);
+    }
+
+    private static ApiException Conflict() => new(409, "version_conflict", "The user or key policy changed concurrently.");
 
     private static ApiException Invalid() => new(400, "invalid_request", "Supply a name, 1 to 64 unique scopes from the project's user key policy, and an optional future expiry.");
 }

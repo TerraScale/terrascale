@@ -645,6 +645,7 @@ internal static class OidcResults
 
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, user.Id)
+            .SetClaim("token_use", "user")
             .SetClaim(Claims.Email, user.Email)
             .SetClaim(Claims.EmailVerified, true)
             .SetClaim(Claims.AuthenticationTime, authenticatedAt.ToUnixTimeSeconds())
@@ -668,7 +669,7 @@ internal static class OidcResults
             Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
-            OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
+            "token_use" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             _ => [],
         });
         var principal = new ClaimsPrincipal(identity);

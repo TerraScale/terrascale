@@ -17,6 +17,6 @@ public sealed class CreateUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserApiKeyJson.Default.UserApiKeyRequest, cancellationToken);
-        return Results.Json(await keys.CreateAsync(project, this.RouteId("user"), caller.Id, request, cancellationToken), UserApiKeyJson.Default.UserApiKeyBody, statusCode: 201);
+        return Results.Json(await keys.CreateAsync(project, this.RouteId("user"), caller.Id, request, null, cancellationToken), UserApiKeyJson.Default.UserApiKeyBody, statusCode: 201);
     }
 }

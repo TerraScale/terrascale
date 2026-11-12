@@ -2240,6 +2240,16 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("id");
 
+                    b.Property<long>("AuthEpoch")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("auth_epoch");
+
+                    b.Property<string>("AuthStamp")
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("auth_stamp");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT")
                         .HasColumnName("created_at");

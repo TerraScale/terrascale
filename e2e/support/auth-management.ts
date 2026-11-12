@@ -1,8 +1,10 @@
-import { createPublicKey, verify as verifySignature } from 'node:crypto';
+import { createHash, createPublicKey, randomBytes, verify as verifySignature } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { expect, request } from '@playwright/test';
 import { newAddress, nextMail } from './inbox';
-import { auth, dash } from './stack';
+import { auth, dash, onLocalStack, stateDir } from './stack';
 import { journey, saveCookies, saveSecret } from './state';
 
 export type AuthManagement = { user: string; readKey: string; writeKey: string; csrf: string; ownerToken: string };
@@ -201,6 +203,12 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
   expect(own.status()).toBe(201);
   const ownKey = await own.json();
   saveSecret('self-user-key-' + sdk, ownKey.key);
+  expect(new Date(ownKey.expires_at).getTime() - new Date(ownKey.created_at).getTime()).toBeGreaterThan(89 * 86400_000);
+  expect(new Date(ownKey.expires_at).getTime() - new Date(ownKey.created_at).getTime()).toBeLessThanOrEqual(90 * 86400_000);
+  const tooLong = await page.request.post(root + '/me/api-keys', {
+    headers: { Origin: auth }, data: { name: 'too long', scopes: ['invoices:read'], expires_at: new Date(Date.now() + 366 * 86400_000).toISOString() },
+  });
+  expect(tooLong.status()).toBe(400);
   const ownList = await page.request.get(root + '/me/api-keys');
   expect((await ownList.json()).items.some((item: { id: string }) => item.id === ownKey.id)).toBe(true);
   const csrfRefused = await page.request.delete(root + '/me/api-keys/' + ownKey.id, { headers: { Origin: dash } });
@@ -248,7 +256,10 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
   }
   const ownRevoke = await page.request.delete(root + '/me/api-keys/' + ownKey.id, { headers: { Origin: auth } });
   expect(ownRevoke.status()).toBe(204);
-  if (sdk === 'dotnet') await checkMachineClient(page, ownerToken, current.projectId);
+  if (sdk === 'dotnet') {
+    await checkMachineClient(page, ownerToken, current.projectId);
+    await checkUserKeyLifecycle(page.request, root, user, readKey, writeKey);
+  }
   return { user, readKey, writeKey, csrf, ownerToken };
 }
 
@@ -301,6 +312,71 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
 }
 
 
+async function authStorage(context: APIRequestContext, sql: string, args: unknown[]): Promise<void> {
+  const peer = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
+  const changed = await context.post('http://127.0.0.1:8081/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute', {
+    headers: { 'X-TerraBase-Peer-Credential': peer }, data: { statements: [{ sql, args }] },
+  });
+  expect(changed.status()).toBe(200);
+}
+
+async function checkUserKeyLifecycle(context: APIRequestContext, root: string, user: string, readKey: string, writeKey: string): Promise<void> {
+  const created: { id: string; key: string }[] = [];
+  for (let index = 0; index < 25; index++) {
+    const answer = await context.post(root + '/users/' + user + '/api-keys', {
+      headers: { Authorization: 'Bearer ' + writeKey }, data: { name: 'cap-' + index, scopes: ['invoices:read'] },
+    });
+    expect(answer.status()).toBe(201);
+    const key = await answer.json();
+    saveSecret('capped-user-key-' + index, key.key);
+    created.push(key);
+  }
+  const capped = await context.post(root + '/users/' + user + '/api-keys', {
+    headers: { Authorization: 'Bearer ' + writeKey }, data: { name: '26th', scopes: ['invoices:read'] },
+  });
+  expect(capped.status()).toBe(409);
+  expect((await capped.json()).error).toMatchObject({ code: 'user_key_limit' });
+  const cappedSelf = await context.post(root + '/me/api-keys', {
+    headers: { Origin: auth }, data: { name: '26th self', scopes: ['invoices:read'] },
+  });
+  expect(cappedSelf.status()).toBe(409);
+  for (const key of created.slice(1)) {
+    const removed = await context.delete(root + '/users/' + user + '/api-keys/' + key.id, {
+      headers: { Authorization: 'Bearer ' + writeKey },
+    });
+    expect(removed.status()).toBe(204);
+  }
+  const own = await context.post(root + '/me/api-keys', {
+    headers: { Origin: auth }, data: { name: 'self epoch', scopes: ['invoices:read'] },
+  });
+  expect(own.status()).toBe(201);
+  const ownKey = await own.json();
+  saveSecret('self-epoch-key', ownKey.key);
+  const verify = async (key: string, valid: boolean) => {
+    const answer = await context.post(root + '/api-keys/verify', {
+      headers: { Authorization: 'Bearer ' + readKey }, data: { key },
+    });
+    expect(answer.status()).toBe(200);
+    expect((await answer.json()).valid).toBe(valid);
+  };
+  await verify(created[0].key, true);
+  await verify(ownKey.key, true);
+  await onLocalStack(async () => {
+    await authStorage(context, 'UPDATE sessions SET created_at = ? WHERE user_id = ?', [new Date(Date.now() - 11 * 60_000).toISOString(), user]);
+    const old = await context.post(root + '/me/api-keys', {
+      headers: { Origin: auth }, data: { name: 'old session', scopes: ['invoices:read'] },
+    });
+    expect(old.status()).toBe(403);
+    expect((await old.json()).error).toMatchObject({ code: 'reauthentication_required', message: expect.stringMatching(/sign in again/i) });
+  });
+  const signedOut = await context.post(root + '/me/sign-out', { headers: { Origin: auth } });
+  expect(signedOut.status()).toBe(204);
+  await verify(created[0].key, false);
+  await verify(ownKey.key, false);
+  const ended = await context.get(root + '/me/api-keys');
+  expect(ended.status()).toBe(401);
+}
+
 async function checkMachineClient(page: Page, ownerToken: string, project: string): Promise<void> {
   const context = page.request;
   const proof = await stepUp(context, ownerToken, 'create_oauth_client');
@@ -333,7 +409,7 @@ async function checkMachineClient(page: Page, ownerToken: string, project: strin
   const decodedHeader = JSON.parse(Buffer.from(header, 'base64url').toString());
   const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString());
   expect(decodedHeader.alg).toBe('ES256');
-  expect(decoded).toMatchObject({ iss: auth + '/' + project, sub: client.client_id, scope: 'invoices:read', aud: 'https://invoices.example' });
+  expect(decoded).toMatchObject({ iss: auth + '/' + project, sub: client.client_id, scope: 'invoices:read', aud: 'https://invoices.example', token_use: 'machine' });
   expect(decoded.exp - decoded.iat).toBe(900);
   const jwks = await context.get(auth + '/' + project + '/.well-known/jwks.json');
   expect(jwks.status()).toBe(200);
@@ -357,6 +433,29 @@ async function checkMachineClient(page: Page, ownerToken: string, project: strin
   const refusedUserClient = await context.post(endpoint, { form: { grant_type: 'client_credentials',
     client_id: userClient.client_id, client_secret: userClient.client_secret, scope: 'invoices:read' } });
   expect(refusedUserClient.status()).toBe(400);
+  const verifier = randomBytes(32).toString('base64url');
+  saveSecret('project-user-pkce', verifier);
+  const authorization = await context.get(auth + '/' + project + '/oauth/authorize', {
+    params: { response_type: 'code', client_id: userClient.client_id, redirect_uri: 'https://app.example/callback',
+      scope: 'openid email', code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' },
+    maxRedirects: 0,
+  });
+  expect(authorization.status()).toBe(302);
+  const code = new URL(authorization.headers().location).searchParams.get('code');
+  expect(code).toBeTruthy();
+  saveSecret('project-user-code', code!);
+  const userGrant = await context.post(endpoint, { form: { grant_type: 'authorization_code', client_id: userClient.client_id,
+    client_secret: userClient.client_secret, redirect_uri: 'https://app.example/callback', code: code!, code_verifier: verifier } });
+  expect(userGrant.status()).toBe(200);
+  const userToken = (await userGrant.json()).access_token as string;
+  saveSecret('project-user-access-token', userToken);
+  expect(JSON.parse(Buffer.from(userToken.split('.')[1], 'base64url').toString()).token_use).toBe('user');
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const badSecret = await context.post(endpoint, { form: { ...form, client_secret: 'incorrect-secret' } });
+    expect(badSecret.status()).toBe(401);
+  }
+  const locked = await context.post(endpoint, { form });
+  expect(locked.status()).toBe(401);
   const removedUserClient = await context.delete(clients + '/' + userClient.client_id,
     { headers: { Authorization: 'Bearer ' + ownerToken } });
   expect(removedUserClient.status()).toBe(204);

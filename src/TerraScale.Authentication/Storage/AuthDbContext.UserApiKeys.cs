@@ -19,6 +19,7 @@ public sealed partial class AuthDbContext
             key.HasIndex(row => new { row.ProjectId, row.UserId });
             key.HasOne<UserRecord>().WithMany().HasForeignKey(row => row.UserId).OnDelete(DeleteBehavior.Cascade);
             key.HasOne<ProjectRecord>().WithMany().HasForeignKey(row => row.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            key.Property(row => row.AuthStamp).HasMaxLength(26).IsRequired();
             key.Property(row => row.SecretHash).HasMaxLength(64).IsRequired();
             key.Property(row => row.Prefix).HasMaxLength(12).IsRequired();
             key.Property(row => row.Scopes).HasJson(StorageJson.Default.IReadOnlyListString);

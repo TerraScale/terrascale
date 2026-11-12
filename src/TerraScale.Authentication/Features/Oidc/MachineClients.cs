@@ -78,7 +78,8 @@ internal static class MachineClients
         }
 
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
-            .SetClaim(Claims.Subject, application.ClientId);
+            .SetClaim(Claims.Subject, application.ClientId)
+            .SetClaim("token_use", "machine");
         var principal = new ClaimsPrincipal(identity).SetScopes(scopes).SetResources(resources)
             .SetAccessTokenLifetime(TimeSpan.FromMinutes(policy.TokenLifetimeMinutes));
         principal.SetDestinations(_ => [Destinations.AccessToken]);

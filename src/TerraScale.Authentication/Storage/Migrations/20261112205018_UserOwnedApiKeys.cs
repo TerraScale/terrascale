@@ -43,6 +43,8 @@ namespace TerraScale.Authentication.Storage.Migrations
                     scopes = table.Column<string>(type: "TEXT", nullable: false),
                     created_at = table.Column<DateTime>(type: "TEXT", nullable: false),
                     expires_at = table.Column<DateTime>(type: "TEXT", nullable: true),
+                    auth_epoch = table.Column<long>(type: "INTEGER", nullable: false),
+                    auth_stamp = table.Column<string>(type: "TEXT", maxLength: 26, nullable: false),
                     version = table.Column<string>(type: "TEXT", maxLength: 26, nullable: false)
                 },
                 constraints: table =>
