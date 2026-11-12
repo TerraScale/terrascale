@@ -67,7 +67,7 @@ https://journey.backups.terrascale.tech, https://6cd3f3639e928077593d9b470765efe
 	reverse_proxy 127.0.0.1:8028
 }
 
-https://hooks.journey.terrascale.tech {
+https://hooks.journey.terrascale.tech, https://api.pwnedpasswords.com, https://challenges.cloudflare.com {
 	import edge
 	reverse_proxy 127.0.0.1:8029
 }

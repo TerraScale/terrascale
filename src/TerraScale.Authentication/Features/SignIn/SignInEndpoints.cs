@@ -1,4 +1,5 @@
 using System.Globalization;
+using TerraScale.Authentication.Features.AttackProtection;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -327,7 +328,8 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
             { ErrorTitle = copy.ErrorCheckDetailsTitle }, StatusCodes.Status400BadRequest);
         }
 
-        if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
+        if (await this.HttpContext.RequestServices.GetRequiredService<PasswordProtection>().CheckAsync(
+            SignInFlow.Tenant(this.HttpContext), form.Password, address, cancellationToken) is not PasswordProblem.None and var problem)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
                 SignInFlow.PasswordError(copy, problem))
@@ -607,7 +609,8 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         var copy = SignInFlow.Copy(this.HttpContext);
-        if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
+        if (await this.HttpContext.RequestServices.GetRequiredService<PasswordProtection>().CheckAsync(
+            SignInFlow.Tenant(this.HttpContext), form.Password, address, cancellationToken) is not PasswordProblem.None and var problem)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next,
                 SignInFlow.PasswordError(copy, problem))
@@ -676,6 +679,7 @@ internal static class SignInFlow
 
     public static string PasswordError(HostedPageCopy copy, PasswordProblem problem) => problem switch
     {
+        PasswordProblem.Breached => PasswordPolicy.Message(problem),
         PasswordProblem.Length => copy.ErrorPasswordLength,
         _ => copy.ErrorPasswordCommon,
     };
@@ -804,6 +808,7 @@ internal static class SignInFlow
         {
             await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
         }
+        await context.RequestServices.GetRequiredService<AccountProtection>().SignedInAsync(context, tenant, session.Session.UserId, cancellationToken);
         BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
         return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
     }

@@ -1313,6 +1313,79 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.AttackProtection.AccountLockRecord", b =>
+                {
+                    b.Property<string>("InstanceId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("instance_id");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<int>("Failures")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("failures");
+
+                    b.Property<DateTime?>("LockedUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("locked_until");
+
+                    b.Property<string>("UnlockHash")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("unlock_hash");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("InstanceId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("account_locks", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_account_locks_failures", "failures BETWEEN 0 AND 10");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.AttackProtection.KnownDeviceRecord", b =>
+                {
+                    b.Property<string>("InstanceId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("instance_id");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Fingerprint")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("fingerprint");
+
+                    b.Property<DateTime>("LastSeen")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_seen");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("InstanceId", "UserId", "Fingerprint");
+
+                    b.HasIndex("LastSeen");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("known_devices", (string)null);
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.Email.EmailBudgetRecord", b =>
                 {
                     b.Property<string>("Key")
@@ -1958,6 +2031,11 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<string>("InstanceId")
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
+
+                    b.Property<string>("AttackProtection")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("attack_protection");
 
                     b.Property<string>("BackgroundColor")
                         .HasColumnType("TEXT")
@@ -2646,6 +2724,24 @@ namespace TerraScale.Authentication.Storage.Migrations
                 });
 
             modelBuilder.Entity("TerraScale.Authentication.Contracts.TotpCredentialRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.AttackProtection.AccountLockRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.AttackProtection.KnownDeviceRecord", b =>
                 {
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()

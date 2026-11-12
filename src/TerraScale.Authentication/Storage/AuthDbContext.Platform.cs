@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Sso;
@@ -147,6 +148,7 @@ public sealed partial class AuthDbContext
             settings.Property(row => row.Providers).HasJson(ProjectAuthSettingsJson.Default.IReadOnlyListSocialProviderRecord);
             settings.Property(row => row.FooterLinks).HasJson(ProjectAuthSettingsJson.Default.IReadOnlyListFooterLinkBody);
             settings.Property(row => row.Configuration).HasJson(ProjectAuthSettingsJson.Default.ConfigurationBody);
+            settings.Property(row => row.AttackProtection).HasJson(AttackProtectionJson.Default.AttackProtectionSettings);
             settings.Property(row => row.SubscribedWebhookEvents).HasJson(StorageJson.Default.IReadOnlyListString);
             Versioned(settings);
         });

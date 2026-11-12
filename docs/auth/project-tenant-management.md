@@ -70,7 +70,7 @@ effective project role (`platform-contract.md` section 3) on every request:
 | Method and path | Role | Key scope | Response |
 | --- | --- | --- | --- |
 | `GET /settings` | viewer | `auth:read` | `Settings` |
-| `PUT /settings` | admin | `auth:write` | `Settings`; body `{methods?, branding?}`, omitted parts unchanged |
+| `PUT /settings` | admin | `auth:write` | `Settings`; body `{methods?, branding?, configuration?, attack_protection?}`, omitted parts unchanged |
 | `GET /users?q=&limit=&after=` | viewer | `auth:read` | `{items: [User], next}`; `q` matches an email substring, `limit` 1 to 100 (default 50) |
 | `GET /users/{user}` | viewer | `auth:read` | `User` |
 | `POST /users/{user}/disable` | admin | `auth:write` | `User`; ends every session and token of the user |
@@ -119,3 +119,5 @@ Webhook endpoints are described in [webhooks.md](webhooks.md).
 - Redirect URIs are absolute `https` URLs, or `http` on `localhost` and loopback
   addresses, without fragments; 1 to 10 per client.
 - Errors use the platform API's error body `{error: {code, message}}`.
+
+Project security settings and the account-unlock contract are described in [attack protection](attack-protection.md).

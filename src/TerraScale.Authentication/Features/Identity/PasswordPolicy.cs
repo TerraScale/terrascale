@@ -16,6 +16,8 @@ public enum PasswordProblem
 
     /// <summary>On the common-password list, one short run repeated, or the account's own email address.</summary>
     Common,
+
+    Breached,
 }
 
 public static class PasswordPolicy
@@ -53,6 +55,7 @@ public static class PasswordPolicy
     /// <summary>The page message for <paramref name="problem"/>.</summary>
     public static string Message(PasswordProblem problem) => problem switch
     {
+        PasswordProblem.Breached => "That password was found in a data breach. Choose a different password.",
         PasswordProblem.Length => $"Choose a password of {MinCharacters} to {MaxCharacters} characters. A passphrase of a few words works well.",
         _ => "That password is too common or easy to guess. Choose a longer or less predictable one.",
     };

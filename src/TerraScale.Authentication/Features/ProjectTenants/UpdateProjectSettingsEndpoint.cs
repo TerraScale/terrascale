@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
 
@@ -42,6 +43,11 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
             throw Invalid("configuration requires at least one allowed factor when MFA is required, inactivity_timeout_minutes null or 15 to 43200, session_lifetime_seconds 300 to 2592000 and at most 100 exact https redirect URLs (http only on loopback), without userinfo or fragments.");
         }
 
+        if (request.AttackProtection is { BotChallenge: true } && !this.HttpContext.RequestServices.GetRequiredService<TurnstileKeys>().Configured)
+        {
+            throw Invalid("Bot challenge requires configured Cloudflare Turnstile site and secret keys.");
+        }
+
         var methods = request.Methods;
         var updated = await settings.UpdateAsync(projectId, current =>
         {
@@ -59,6 +65,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
                 EmailMessage = sent.EmailMessage,
             } : next;
             next = request.Configuration is { } policy ? next with { Configuration = policy } : next;
+            next = request.AttackProtection is { } protection ? next with { AttackProtection = protection } : next;
             return next.Passcode || next.Password ? next : throw Invalid("At least one of passcode and password must stay on.");
         }, cancellationToken);
         return Results.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);

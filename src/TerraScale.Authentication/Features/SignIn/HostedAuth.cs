@@ -1,4 +1,5 @@
 using System.Globalization;
+using TerraScale.Authentication.Features.AttackProtection;
 using System.Net;
 using System.Net.Sockets;
 using TerraScale.Authentication.Contracts;
@@ -168,7 +169,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// </summary>
     public async Task<(UserRecord? User, TimeSpan? Wait)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
-        if (await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken, locale) is { } wait)
+        if (!Tenancy.IsProject(this.Tenant) && await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken, locale) is { } wait)
         {
             return (null, wait);
         }
@@ -178,13 +179,11 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
 
     private async Task<UserRecord?> VerifyPasswordAsync(string email, string password, CancellationToken cancellationToken)
     {
-        if (!PasswordPolicy.Verifiable(password))
-        {
-            return null;
-        }
-
         var user = await users.FindByEmailAsync(this.Tenant, email, cancellationToken);
-        return await passwords.VerifyAsync(password, user?.PasswordHash, cancellationToken) ? user : null;
+        var valid = PasswordPolicy.Verifiable(password) && await passwords.VerifyAsync(password, user?.PasswordHash, cancellationToken);
+        var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
+        return user is not null && await context.RequestServices.GetRequiredService<AccountProtection>()
+            .PasswordAttemptAsync(user, valid, AuthEmails.Locale(context.Request), cancellationToken) ? user : null;
     }
 
     // The first bytes of an IPv6 address, the rest zeroed.

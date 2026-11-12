@@ -28,6 +28,8 @@ public sealed record HostedTheme(string? Name = null, string? LogoUrl = null, st
     /// <summary>The configured social sign-in providers, in <see cref="SocialProviders.Names"/> order.</summary>
     public IReadOnlyList<string> Providers { get; init; } = [];
 
+    public bool BotChallenge { get; init; }
+
     internal const string ItemKey = "ts-auth:theme";
 
     /// <summary>The platform's pages.</summary>
@@ -51,6 +53,7 @@ public static class HostedThemes
             context.Items[HostedTheme.ItemKey] = new HostedTheme(settings.Name ?? project?.Name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUp,
                 settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor)
             {
+                BotChallenge = settings.AttackProtection.BotChallenge,
                 Providers = [.. SocialProviders.Names.Where(name => settings.Provider(name) is not null)],
             };
         }
