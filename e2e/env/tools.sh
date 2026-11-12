@@ -24,4 +24,24 @@ for script in install-ts.sh branch.sh; do
   fetch branch-action "https://github.com/TerraScale/branch-action/archive/$branch_action.tar.gz" \
     277518ac3558626462f11736626be72e8d607afb6ece7560b6f00342b593dcf5 "branch-action-$branch_action/$script"
 done
-if want branch-action; then RUNNER_OS=Linux RUNNER_ARCH=X64 HOME="$tools/ts" GITHUB_PATH=/dev/null bash "$tools/install-ts.sh"; fi
+if want branch-action; then
+  cli_version=0.0.58
+  cli_platform=linux_amd64
+  cli_sum=8cb62b2f6bf609fa458d8fa9a640c50cca84a11119bdb4da08ce838ea9eb8cdf
+  cli_archive=$tools/ts-$cli_version-$cli_platform.tar.gz
+  cli_home=$tools/ts
+  if [ ! -f "$cli_archive" ] || ! printf '%s  %s\n' "$cli_sum" "$cli_archive" | sha256sum --check --status; then
+    echo "downloading ts $cli_version ($cli_platform)" >&2
+    curl --fail --silent --show-error --location --retry 2 \
+      "https://github.com/TerraScale/terrascale/releases/download/sdk/go/v$cli_version/ts_$cli_platform.tar.gz" \
+      --output "$cli_archive.part"
+    printf '%s  %s\n' "$cli_sum" "$cli_archive.part" | sha256sum --check --quiet
+    mv "$cli_archive.part" "$cli_archive"
+  else
+    echo "reusing ts $cli_version ($cli_platform): checksum matches, no download" >&2
+  fi
+  mkdir -p "$cli_home/.local/bin"
+  tar -xzf "$cli_archive" -C "$cli_home/.local/bin" ts
+  installed=$("$cli_home/.local/bin/ts" --version)
+  [ "$installed" = "ts $cli_version" ] || { echo "ts_$cli_platform.tar.gz holds $installed, not ts $cli_version" >&2; exit 1; }
+fi
