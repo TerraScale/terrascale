@@ -11,7 +11,12 @@ namespace TerraScale.Dashboard.Platform.Observability
         private static readonly object OutcomeKey = new();
         private static readonly AsyncLocal<Outcome?> Current = new();
         private static readonly string[] UntrackedPaths = ["/health", "/healthz", "/readyz", "/metrics", "/internal", "/css", "/js", "/fonts", "/brand", "/flags", "/favicon.ico"];
-        private sealed class Outcome { public int Bad; }
+        private sealed class Outcome(CancellationToken caller)
+        {
+            public CancellationToken Caller { get; } = caller;
+            public int Bad;
+            public int Abandoned;
+        }
         private sealed class ObservedLifetime(IHttpRequestLifetimeFeature inner, Outcome outcome) : IHttpRequestLifetimeFeature
         {
             public CancellationToken RequestAborted { get => inner.RequestAborted; set => inner.RequestAborted = value; }
@@ -46,13 +51,30 @@ namespace TerraScale.Dashboard.Platform.Observability
             }
         }
 
-        public static void MarkFailure(Exception error)
+        private static bool MarkCallerAbandoned(Exception error, Outcome? outcome)
         {
+            if (outcome is null || error is not OperationCanceledException cancellation ||
+                !outcome.Caller.IsCancellationRequested || cancellation.CancellationToken != outcome.Caller)
+            {
+                return false;
+            }
+
+            Interlocked.Exchange(ref outcome.Abandoned, 1);
+            return true;
+        }
+
+        public static void MarkFailure(Exception error, HttpContext? http = null)
+        {
+            if (MarkCallerAbandoned(error, http?.Items[OutcomeKey] as Outcome ?? Current.Value))
+            {
+                return;
+            }
+
             var status = error is AccountAccessException access ? access.StatusCode : error is DbUpdateConcurrencyException ? StatusCodes.Status412PreconditionFailed :
                 error is HttpRequestException { StatusCode: { } code } ? (int)code : 503;
             if (status is >= 500 or 408)
             {
-                MarkBad();
+                MarkBad(http);
             }
         }
 
@@ -62,7 +84,7 @@ namespace TerraScale.Dashboard.Platform.Observability
             if (UntrackedPaths.Any(prefix => path.StartsWithSegments(prefix)))
             { await next(http); return; }
             var previous = Current.Value;
-            var outcome = new Outcome();
+            var outcome = new Outcome(http.RequestAborted);
             http.Items[OutcomeKey] = Current.Value = outcome;
             var lifetime = http.Features.Get<IHttpRequestLifetimeFeature>();
             if (lifetime is not null)
@@ -75,16 +97,24 @@ namespace TerraScale.Dashboard.Platform.Observability
                 await next(http);
                 await http.Response.CompleteAsync();
             }
-            catch { Interlocked.Exchange(ref outcome.Bad, 1); throw; }
+            catch (Exception error)
+            {
+                if (!MarkCallerAbandoned(error, outcome))
+                {
+                    Interlocked.Exchange(ref outcome.Bad, 1);
+                }
+
+                throw;
+            }
             finally
             {
-                // Kestrel exposes the same token for caller disconnects and service Abort().
-                // Without positive transport attribution, both conservatively count as bad.
-                if (outcome.Bad != 0 || http.Response.StatusCode >= 500 || http.Response.StatusCode == 408 || http.RequestAborted.IsCancellationRequested)
+                if (outcome.Bad != 0 || outcome.Abandoned == 0 &&
+                    (http.Response.StatusCode >= 500 || http.Response.StatusCode == 408 ||
+                     outcome.Caller.IsCancellationRequested || http.RequestAborted.IsCancellationRequested))
                 {
                     Interlocked.Increment(ref bad);
                 }
-                else
+                else if (outcome.Abandoned == 0)
                 {
                     Interlocked.Increment(ref good);
                 }
