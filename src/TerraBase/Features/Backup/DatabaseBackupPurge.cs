@@ -37,6 +37,7 @@ internal sealed class DatabaseBackupPurge(
 {
     private readonly CancellationTokenSource _stopping = new();
     internal const string ProgressKind = "backup_purge_progress";
+    private const string ShredRefused = "shred_refused";
     private readonly SemaphoreSlim _pass = new(1, 1);
     private readonly Counter<long> _failures = meters.Create(Telemetry.MeterName)
         .CreateCounter<long>("terrabase.backup.purge_failures", description: "Backup erasure attempts that remain unverified, by fixed reason.");
@@ -82,7 +83,7 @@ internal sealed class DatabaseBackupPurge(
                 var progress = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, ProgressKind,
                     job.Database.DatabaseId!, BackupPurgeJsonContext.Default.BackupPurgeProgress, token), token).ConfigureAwait(false)
                     ?? new BackupPurgeProgress(job.RequestedAt, null, null, null, null);
-                if (progress.Failure == "shred_refused" || job.BackupVerifiedAt is not null && progress.KeysShreddedAt is not null)
+                if (progress.Failure == ShredRefused || job.BackupVerifiedAt is not null && progress.KeysShreddedAt is not null)
                 {
                     _pending.Verified(job.Database.DatabaseId!);
                     continue;
@@ -108,7 +109,7 @@ internal sealed class DatabaseBackupPurge(
                     var hours = Math.Round((time.GetUtcNow() - job.RequestedAt).TotalHours, 1);
                     logger.ZLogInformation($"Backup erasure of database {job.Database.DatabaseId:@Database} is verified, {hours:@Hours} h after its deletion");
                 }
-                else if (progress.Failure == "shred_refused")
+                else if (progress.Failure == ShredRefused)
                 {
                     _pending.Verified(job.Database.DatabaseId!);
                     logger.ZLogWarning($"Shred refused: platform database {job.Database.DatabaseId:@Database}; backup erasure is terminal and custody stays untouched");
@@ -297,7 +298,7 @@ internal sealed class DatabaseBackupPurge(
     {
         if (ShredGuard.Refusal(job.Database) is not null)
         {
-            return progress with { Failure = "shred_refused" };
+            return progress with { Failure = ShredRefused };
         }
 
         if (progress.KeysShreddedAt is null && await ShredAsync(job.Database, DateTimeOffset.MaxValue, token).ConfigureAwait(false) is { } shredded)

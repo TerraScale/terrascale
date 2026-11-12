@@ -605,8 +605,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             if (file.Generation is not null)
             {
                 Drop(file, error is DatabaseShreddedException ? "shredded" : "missing_key");
+                file.DrilledAt = DateTimeOffset.MinValue;
             }
-            file.DrilledAt = DateTimeOffset.MinValue;
         }
         else if (file.Target.Revision != BackupDestinationNames.Platform && file.Generation is not null)
         {

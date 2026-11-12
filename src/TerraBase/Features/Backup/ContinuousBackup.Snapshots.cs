@@ -59,6 +59,7 @@ internal sealed partial class ContinuousBackup
     internal static long SealedPendingBytes(long growth) => checked(2 * growth + (1L << 20));
     private async Task StartGenerationAsync(ShippedFile file, CancellationToken cancellationToken)
     {
+        _ = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
         var claim = _disk.Reserve(await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false));
         var generation = EntityIds.New(_time);
         var snapshot = ScratchFile(".db");
