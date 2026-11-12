@@ -253,8 +253,13 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
                 }
                 catch (Exception error) when (error is RefreshNotStartedException || lookup.Kind == SessionRow.Credential)
                 {
-                    var cause = error is RefreshNotStartedException { InnerException: { } inner } ? inner : error;
-                    logger.RefreshOfAStoredTsAuth(lookup.Kind, cause.GetType().Name, (cause as HttpRequestException)?.StatusCode, (cause as TsAuthException)?.ErrorCode ?? "none");
+                    var level = error is RefreshNotStartedException ? LogLevel.Debug : LogLevel.Warning;
+                    if (logger.IsEnabled(level))
+                    {
+                        var cause = error is RefreshNotStartedException { InnerException: { } inner } ? inner : error;
+                        logger.RefreshOfAStoredTsAuth(level, lookup.Kind, cause.GetType().Name, (cause as HttpRequestException)?.StatusCode, (cause as TsAuthException)?.ErrorCode ?? "none");
+                    }
+
                     if (await FindAsync(lookup, cancellationToken) is { } unchanged && Open(unchanged, credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
                     {
                         await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, cancellationToken);
@@ -270,7 +275,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
                 }
                 catch (Exception error)
                 {
-                    logger.RefreshOfAStoredTsAuth(lookup.Kind, error.GetType().Name, (error as HttpRequestException)?.StatusCode,
+                    logger.RefreshOfAStoredTsAuth(LogLevel.Warning, lookup.Kind, error.GetType().Name, (error as HttpRequestException)?.StatusCode,
                         (error as TsAuthException)?.ErrorCode ?? "none");
                     throw;
                 }

@@ -23,8 +23,8 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Dashboard request on {Route} lost a concurrent write race; answered 409")]
         internal static partial void DashboardRequestConflicted(this ILogger logger, object? route);
 
-        [LoggerMessage(EventId = 7, Level = LogLevel.Warning, Message = "Refresh of a stored ts-auth grant in {Table} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
-        internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, object? table, object? errorType, object? status, object? errorCode);
+        [LoggerMessage(EventId = 7, Message = "Refresh of a stored ts-auth grant in {Table} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
+        internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, LogLevel level, object? table, object? errorType, object? status, object? errorCode);
 
         [LoggerMessage(EventId = 8, Level = LogLevel.Warning, Message = "Saving a refreshed ts-auth grant in {Table} failed ({ErrorType}); retrying")]
         internal static partial void SavingARefreshedTsAuthGrant(this ILogger logger, object? table, object? errorType);
