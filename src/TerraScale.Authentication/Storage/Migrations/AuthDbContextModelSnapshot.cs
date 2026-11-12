@@ -2201,6 +2201,118 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookAttemptRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DeliveryId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("delivery_id");
+
+                    b.Property<int>("LatencyMs")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("latency_ms");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("ResponseBody")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("response_body");
+
+                    b.Property<int?>("ResponseCode")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("response_code");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeliveryId", "Id");
+
+                    b.ToTable("webhook_attempts", (string)null);
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookDeliveryRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("attempts");
+
+                    b.Property<int>("CycleAttempts")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("cycle_attempts");
+
+                    b.Property<string>("EndpointId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("endpoint_id");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("event_id");
+
+                    b.Property<DateTime>("NextAttemptAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EndpointId");
+
+                    b.HasIndex("EventId", "EndpointId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextAttemptAt");
+
+                    b.ToTable("webhook_deliveries", (string)null);
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookEndpointRecord", b =>
                 {
                     b.Property<string>("Id")
@@ -2211,15 +2323,27 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("created_at");
 
+                    b.Property<DateTime?>("DisabledAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("disabled_at");
+
                     b.Property<string>("EventTypes")
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("event_types");
 
+                    b.Property<DateTime?>("FirstFailureAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("first_failure_at");
+
                     b.Property<string>("InstanceId")
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
+
+                    b.Property<DateTime>("LeaseUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("lease_until");
 
                     b.Property<string>("PreviousSecretBox")
                         .HasColumnType("TEXT")
@@ -2272,6 +2396,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("email");
 
+                    b.Property<string>("EndpointId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("endpoint_id");
+
                     b.Property<string>("EventType")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -2299,6 +2427,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("provider");
 
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -2318,7 +2450,9 @@ namespace TerraScale.Authentication.Storage.Migrations
 
                     b.HasKey("EventId");
 
-                    b.HasIndex("ProjectId");
+                    b.HasIndex("OccurredAt");
+
+                    b.HasIndex("ProjectId", "EventId");
 
                     b.HasIndex("Status", "NextAttemptAt");
 
@@ -2531,6 +2665,30 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.OrganizationRecord", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookAttemptRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Features.Webhooks.WebhookDeliveryRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DeliveryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookDeliveryRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Features.Webhooks.WebhookEndpointRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EndpointId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Authentication.Features.Webhooks.WebhookOutboxRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EventId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 ["settings" or "branding" or "configuration" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
-                ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate"] => true,
+                ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
                 _ => false
             };
             if (!known)
@@ -148,6 +148,8 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
                         var rotatedSecret = await projects.RotateWebhookSecretAsync(session, project, id, secretIntent.Challenge.Proof, cancel);
                         return await PageAsync(http, context, projects, "webhooks", rotatedWebhook: rotatedSecret);
+                    case ["webhooks", var id, "test"]: await projects.TestWebhookAsync(session, project, id, cancel); break;
+                    case ["webhooks", var id, "deliveries", var delivery, "replay"]: await projects.ReplayWebhookDeliveryAsync(session, project, id, delivery, cancel); break;
                     case ["webhooks", var id, "delete"]: await projects.DeleteWebhookEndpointAsync(session, project, id, cancel); break;
                     case ["sessions", var id, _]: await projects.RevokeSessionAsync(session, project, id, cancel); break;
                     case ["users", var id, "delete"]: await projects.DeleteUserAsync(session, project, id, cancel); break;
@@ -261,7 +263,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         public static readonly string[] LifecycleEvents =
-            ["user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked"];
+            ["user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled"];
 
         public static TsAuthCreateWebhookEndpoint NewWebhook(string? url, IEnumerable<string?> eventTypes)
         {
@@ -363,7 +365,19 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case "users": var users = await projects.ListUsersAsync(session, project, Value(page.Search), Value(page.After), cancel); page = page with { Users = users.Items, Next = users.Next }; break;
                     case "sessions": var live = await projects.ListSessionsAsync(session, project, Value(page.User), Value(page.After), cancel); page = page with { Sessions = live.Items, Next = live.Next }; break;
                     case "clients": page = page with { Clients = await projects.ListClientsAsync(session, project, cancel) }; break;
-                    case "webhooks": page = page with { Webhooks = context.CanManageProject ? await projects.ListWebhookEndpointsAsync(session, project, cancel) : [] }; break;
+                    case "logs":
+                        var events = context.CanManageProject ? await projects.ListEventsAsync(session, project, Value(page.After), cancel) : new TsAuthPlatformPage<TsAuthWebhookEvent>([], null);
+                        page = page with { Events = events.Items, Next = events.Next };
+                        break;
+                    case "webhooks":
+                        var hooks = context.CanManageProject ? await projects.ListWebhookEndpointsAsync(session, project, cancel) : [];
+                        Dictionary<string, IReadOnlyList<TsAuthWebhookDelivery>> deliveries = [];
+                        foreach (var hook in hooks)
+                        {
+                            deliveries.Add(hook.Id, await projects.ListWebhookDeliveriesAsync(session, project, hook.Id, cancel));
+                        }
+                        page = page with { Webhooks = hooks, Deliveries = deliveries };
+                        break;
                     default: page = page with { Settings = await projects.GetSettingsAsync(session, project, cancel) }; break;
                 }
             }
@@ -389,6 +403,8 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public IReadOnlyList<TsAuthProjectSession>? Sessions { get; init; }
         public IReadOnlyList<TsAuthProjectOAuthClient>? Clients { get; init; }
         public IReadOnlyList<TsAuthWebhookEndpoint>? Webhooks { get; init; }
+        public IReadOnlyList<TsAuthWebhookEvent>? Events { get; init; }
+        public IReadOnlyDictionary<string, IReadOnlyList<TsAuthWebhookDelivery>> Deliveries { get; init; } = new Dictionary<string, IReadOnlyList<TsAuthWebhookDelivery>>();
         public string? Next { get; init; }
         public IFormCollection? Draft { get; init; }
         public bool Saved { get; init; }
@@ -412,6 +428,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             new("configuration", "Configuration", "Settings", "Sign-in"),
             new("clients", "OAuth applications", "Boxes", "Developers"),
             new("webhooks", "Webhooks", "Zap", "Developers"),
+            new("logs", "Logs", "ScrollText", "Developers"),
             new("branding", "Branding", "Wand2", "Customize"),
             new("danger", "Danger zone", "TriangleAlert", "Danger")
         ];

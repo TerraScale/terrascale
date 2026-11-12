@@ -191,6 +191,8 @@ public static class App
         builder.Services.AddHttpClient(Features.Social.PlatformSocialSignIn.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(10))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = PublicAddresses.ConnectionLifetime });
         builder.Services.AddWebhookDelivery();
+        builder.Services.AddSingleton<WebhookHistory>();
+        builder.Services.AddHostedService<WebhookDeliveryWorker>();
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
         builder.Services.AddSingleton<TerraBaseStorageHealth>();

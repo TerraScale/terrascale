@@ -1,0 +1,10 @@
+@using System.Globalization
+@using TerraScale.Dashboard.Features.AuthenticationManagement
+@inherits RazorSlice<AuthenticationPage>
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="auth-logs-title">Logs</h2></div></header>
+<div class="ts-card-body">@if (Model.Events is not { Count: > 0 } events) { <div class="ts-empty" role="status"><p class="ts-empty-title">No events in the last 30 days.</p></div> }
+else { <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Authentication events"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">Event</th><th scope="col">Type</th><th scope="col">User</th><th scope="col">Occurred</th></tr></thead><tbody>
+@foreach (var item in events) { <tr data-auth-event="@item.Id"><td class="ts-mono ts-break">@item.Id</td><td>@item.Type</td><td class="ts-break">@(item.Data.Email ?? item.Data.UserId)</td><td>@item.Timestamp.UtcDateTime.ToString("u", CultureInfo.InvariantCulture)</td></tr> }
+</tbody></table></div> }@if (Model.Next is not null || Model.After.Length > 0) {
+<nav class="ts-pager" aria-label="Event pages"><div class="ts-row">@if (Model.After.Length > 0) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/auth/logs">First page</a> }@if (Model.Next is not null) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@("/auth/logs?after=" + Uri.EscapeDataString(Model.Next))">Next page</a> }</div></nav>
+}</div>

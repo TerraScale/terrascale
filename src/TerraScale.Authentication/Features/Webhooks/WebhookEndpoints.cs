@@ -14,13 +14,13 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Features.Webhooks;
 
 public sealed record WebhookEndpointRecord(string InstanceId, string Id, string ProjectId, string Url, IReadOnlyList<string> EventTypes,
-    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default);
+    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default, DateTimeOffset? FirstFailureAt = null, DateTimeOffset? DisabledAt = null, DateTimeOffset LeaseUntil = default);
 
 public sealed record CreateWebhookEndpointRequest(string? Url, IReadOnlyList<string>? EventTypes);
 
 public sealed record WebhookEndpointBody(string Id, string Url, IReadOnlyList<string> EventTypes, DateTimeOffset CreatedAt,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Secret = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? PreviousSecretExpiresAt = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset? DisabledAt = null);
 
 public sealed record WebhookEndpointPageBody(IReadOnlyList<WebhookEndpointBody> Items, string? Next);
 
@@ -34,7 +34,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
 
     public static readonly FrozenSet<string> LifecycleEvents = new[]
     {
-        "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked",
+        "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled",
     }.ToFrozenSet(StringComparer.Ordinal);
 
     public async Task<(WebhookEndpointRecord Endpoint, string Secret)> CreateAsync(string projectId, string url, IReadOnlyList<string> eventTypes, CancellationToken cancellationToken)
@@ -117,7 +117,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
 
     public static string NewSecret() => "whsec_" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
-    private static string Context(string projectId, string id) => $"webhook-endpoint:{projectId}:{id}";
+    internal static string Context(string projectId, string id) => $"webhook-endpoint:{projectId}:{id}";
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
@@ -125,4 +125,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
 [JsonSerializable(typeof(WebhookEndpointBody))]
 [JsonSerializable(typeof(WebhookEndpointPageBody))]
 [JsonSerializable(typeof(WebhookSecretBody))]
+[JsonSerializable(typeof(WebhookEventBody))]
+[JsonSerializable(typeof(WebhookEventPage))]
+[JsonSerializable(typeof(WebhookDeliveryPage))]
 internal sealed partial class WebhooksJson : JsonSerializerContext;

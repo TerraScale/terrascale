@@ -34,6 +34,10 @@ public sealed partial class AuthDbContext
 
     public DbSet<WebhookEndpointRecord> WebhookEndpoints => this.Set<WebhookEndpointRecord>();
 
+    public DbSet<WebhookDeliveryRecord> WebhookDeliveries => this.Set<WebhookDeliveryRecord>();
+
+    public DbSet<WebhookAttemptRecord> WebhookAttempts => this.Set<WebhookAttemptRecord>();
+
     public DbSet<WebhookOutboxRecord> WebhookOutbox => this.Set<WebhookOutboxRecord>();
 
     private static void ConfigurePlatform(ModelBuilder model)
@@ -157,6 +161,26 @@ public sealed partial class AuthDbContext
             Versioned(endpoint);
         });
 
+        model.Entity<WebhookDeliveryRecord>(delivery =>
+        {
+            delivery.ToTable("webhook_deliveries");
+            delivery.HasKey(row => row.Id);
+            delivery.HasOne<WebhookOutboxRecord>().WithMany().HasForeignKey(row => row.EventId).OnDelete(DeleteBehavior.Cascade);
+            delivery.HasOne<WebhookEndpointRecord>().WithMany().HasForeignKey(row => row.EndpointId).OnDelete(DeleteBehavior.Cascade);
+            delivery.HasIndex(row => new { row.EventId, row.EndpointId }).IsUnique();
+            delivery.HasIndex(row => new { row.Status, row.NextAttemptAt });
+            Versioned(delivery);
+        });
+
+        model.Entity<WebhookAttemptRecord>(attempt =>
+        {
+            attempt.ToTable("webhook_attempts");
+            attempt.HasKey(row => row.Id);
+            attempt.HasOne<WebhookDeliveryRecord>().WithMany().HasForeignKey(row => row.DeliveryId).OnDelete(DeleteBehavior.Cascade);
+            attempt.HasIndex(row => new { row.DeliveryId, row.Id });
+            Versioned(attempt);
+        });
+
         model.Entity<WebhookOutboxRecord>(outbox =>
         {
             outbox.ToTable("webhook_outbox", table =>
@@ -164,6 +188,8 @@ public sealed partial class AuthDbContext
             outbox.HasKey(row => row.EventId);
             outbox.HasOne<ProjectRecord>().WithMany().HasForeignKey(row => row.ProjectId).OnDelete(DeleteBehavior.Cascade);
             outbox.HasIndex(row => new { row.Status, row.NextAttemptAt });
+            outbox.HasIndex(row => new { row.ProjectId, row.EventId });
+            outbox.HasIndex(row => row.OccurredAt);
             Versioned(outbox);
         });
     }

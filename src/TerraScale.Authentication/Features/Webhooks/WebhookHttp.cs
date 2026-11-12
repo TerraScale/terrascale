@@ -16,6 +16,7 @@ public static class WebhookHttp
             client.Timeout = TimeSpan.FromSeconds(20);
             client.MaxResponseContentBufferSize = 64 * 1024;
         })
+        .RemoveAllLoggers()
         .ConfigurePrimaryHttpMessageHandler(GuardedHandler)
         .Services;
 

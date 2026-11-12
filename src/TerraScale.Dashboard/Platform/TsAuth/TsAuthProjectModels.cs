@@ -133,7 +133,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("url")] string Url,
         [property: JsonPropertyName("event_types")] IReadOnlyList<string> EventTypes,
         [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-        [property: JsonPropertyName("secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Secret = null)
+        [property: JsonPropertyName("secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Secret = null,
+        [property: JsonPropertyName("disabled_at")] DateTimeOffset? DisabledAt = null)
     {
         public override string ToString()
         {

@@ -35,8 +35,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
         var lifetime = project is null ? Lifetime
             : TimeSpan.FromSeconds(project.Configuration?.SessionLifetimeSeconds ?? ConfigurationBody.Default.SessionLifetimeSeconds);
         var createdAt = clock.GetUtcNow();
-        var signedIn = project?.SubscribedWebhookEvents is null ? null
-            : await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, project.SubscribedWebhookEvents, cancellationToken).ConfigureAwait(false);
+        var signedIn = await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, project?.SubscribedWebhookEvents, cancellationToken).ConfigureAwait(false);
         return await this.IssueAsync(user, createdAt, createdAt + lifetime, cancellationToken, signedIn).ConfigureAwait(false)
             ?? throw new ApiException(401, "invalid_credentials", "Authentication could not be completed.");
     }
@@ -114,7 +113,16 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
                 return true;
             }
 
-            if (await data.SaveAsync(Change.Update(current with { AuthEpoch = current.AuthEpoch + 1, AuthStamp = AuthIds.New() }), cancellationToken).ConfigureAwait(false))
+            List<Change> changes = [Change.Update(current with { AuthEpoch = current.AuthEpoch + 1, AuthStamp = AuthIds.New() })];
+            if (Tenancy.IsProject(instanceId))
+            {
+                var now = clock.GetUtcNow();
+                var revoked = await data.ReadAsync((db, token) => db.Sessions.Where(session => session.InstanceId == instanceId && session.UserId == userId
+                    && !session.Revoked && session.AuthEpoch == current.AuthEpoch && session.ExpiresAt > now).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+                changes.AddRange(revoked.Select(session => Change.Insert(outbox.NewEvent(instanceId, "session.revoked", userId, current.Email, sessionId: session.Id))));
+            }
+
+            if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
@@ -151,6 +159,11 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
             MfaMethod = user.MfaMethod,
         };
         List<Change> changes = [.. lineage, Change.Assert(user), Change.Insert(session)];
+        if (Tenancy.IsProject(user.InstanceId))
+        {
+            changes.Add(Change.Insert(outbox.NewEvent(user.InstanceId, "session.created", user.Id, user.Email, sessionId: session.Id)));
+        }
+
         if (extra is not null)
         {
             changes.Add(extra);
@@ -209,6 +222,14 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
         throw ApiException.Unavailable();
     }
 
-    private Task<bool> TryRevokeAsync(SessionRecord session, string version, CredentialBinding binding, CancellationToken cancellationToken) =>
-        data.SaveAsync([Credentials.Claim(session.InstanceId, binding), Change.Update(session with { Revoked = true }, version)], cancellationToken);
+    private Task<bool> TryRevokeAsync(SessionRecord session, string version, CredentialBinding binding, CancellationToken cancellationToken)
+    {
+        List<Change> changes = [Credentials.Claim(session.InstanceId, binding), Change.Update(session with { Revoked = true }, version)];
+        if (Tenancy.IsProject(session.InstanceId))
+        {
+            changes.Add(Change.Insert(outbox.NewEvent(session.InstanceId, "session.revoked", session.UserId, sessionId: session.Id)));
+        }
+
+        return data.SaveAsync(changes, cancellationToken);
+    }
 }
