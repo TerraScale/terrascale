@@ -26,7 +26,8 @@ Paths are relative to `/v1/{project}`.
 The dashboard exposes endpoint deliveries, replay and test actions under
 **Authentication → Webhooks**, and the retained event stream under **Logs**.
 `next` is the last returned event id when more records exist; pass it as `after`.
-Events become visible after a five-second settle window to allow commits from
+The database clock applies both the retention cutoff and the five-second settle
+window. Events become visible after that window to allow commits from
 other nodes to arrive before advancing an ULID cursor. This assumes commits and
 clock skew stay within that window. Endpoint events have their own `webhook.*`
 type, an empty `user_id`, and an `endpoint_id`.
@@ -79,6 +80,11 @@ that user lifecycle event; it does not emit one event per affected session.
 
 ## Delivery and retries
 
+Projects are served in order of their most recent endpoint claim, least recent
+first; each project gets its oldest due endpoint next. Each endpoint pass sends
+at most ten deliveries within 30 seconds and stops after its first failure.
+The pass deadline also cancels any in-flight request.
+
 A database version claim leases the endpoint and delivery for two minutes. Only
 one worker can claim an endpoint at a time across nodes. Attempts are persisted
 before sending, with completion status, latency, HTTP status and the first 1024
@@ -90,10 +96,11 @@ Any non-2xx response, connection failure or 20-second deadline causes a retry.
 Backoff starts at five seconds, doubles per failed attempt, and caps at six
 hours before jitter. Each delay is multiplied by a random factor from 0.5 to 1.5.
 Four independent delivery lanes claim the oldest due delivery per unleased
-endpoint, ordered by the endpoint’s last lease release, so a project’s backlog
-cannot fill a batch. Each lane sends up to ten events per endpoint in event-id
+endpoint, choosing the least recently served project before that project's
+oldest due endpoint. Each lane sends up to ten events per endpoint in event-id
 order before selecting endpoints again. Busy lanes continue immediately; idle
-lanes check due work every two seconds. Expansion and retention run separately; retries stop within 24 hours of the
+lanes check due work every two seconds. Expansion and retention run separately;
+the final retry scheduled at 24 hours is sent before exhaustion, measured from the
 first actual attempt of the current delivery cycle, including a replay. Queued
 deliveries with no attempts never expire because of backlog. The nominal sequence is 5s, 10s, 20s, 40s, 80s, 160s,
 320s, 640s, 1280s, 2560s, 5120s, 10240s, 20480s, then 21600s.
@@ -106,6 +113,9 @@ the maximum nine-hour retry interval with jitter. Inactivity alone never disable
 an endpoint. The disable transaction also reserves one notification email per
 project owner or admin in the existing email ledger; accepted or uncertain sends
 are never sent again. Register a working replacement; disabled endpoints reject test/replay.
+The email's sending claim has a recoverable two-minute lease and uses the
+organization's email tenant. Its URL shows only the scheme, host and first path
+segment; later segments are masked and the query is omitted.
 
 Delivery never follows redirects or uses proxies. DNS resolution happens inside
 the socket `ConnectCallback`, which requires every resolved address to be public

@@ -1380,6 +1380,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("recipient");
 
+                    b.Property<DateTime?>("LeaseUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("lease_until");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -1393,6 +1397,8 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnName("version");
 
                     b.HasKey("Kind", "Key", "Recipient");
+
+                    b.HasIndex("Kind", "Status", "LeaseUntil");
 
                     b.ToTable("email_deliveries", null, t =>
                         {
@@ -2247,7 +2253,8 @@ namespace TerraScale.Authentication.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DeliveryId", "Id");
+                    b.HasIndex("DeliveryId", "Id")
+                        .IsDescending(false, true);
 
                     b.ToTable("webhook_attempts", (string)null);
                 });
@@ -2303,12 +2310,10 @@ namespace TerraScale.Authentication.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("EndpointId");
-
                     b.HasIndex("EventId", "EndpointId")
                         .IsUnique();
 
-                    b.HasIndex("Status", "NextAttemptAt");
+                    b.HasIndex("EndpointId", "Status", "NextAttemptAt");
 
                     b.ToTable("webhook_deliveries", (string)null);
                 });
@@ -2340,6 +2345,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
+
+                    b.Property<DateTime>("LastServedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_served_at");
 
                     b.Property<DateTime>("LeaseUntil")
                         .HasColumnType("TEXT")
@@ -2377,7 +2386,12 @@ namespace TerraScale.Authentication.Storage.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DisabledAt", "LeaseUntil");
+
                     b.HasIndex("ProjectId", "Id");
+
+                    b.HasIndex("ProjectId", "LastServedAt")
+                        .IsDescending(false, true);
 
                     b.ToTable("webhook_endpoints", (string)null);
                 });

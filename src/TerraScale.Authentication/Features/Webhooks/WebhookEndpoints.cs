@@ -14,7 +14,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Features.Webhooks;
 
 public sealed record WebhookEndpointRecord(string InstanceId, string Id, string ProjectId, string Url, IReadOnlyList<string> EventTypes,
-    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default, DateTimeOffset? FirstFailureAt = null, DateTimeOffset? DisabledAt = null, DateTimeOffset LeaseUntil = default);
+    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default, DateTimeOffset? FirstFailureAt = null, DateTimeOffset? DisabledAt = null, DateTimeOffset LeaseUntil = default, DateTimeOffset LastServedAt = default);
 
 public sealed record CreateWebhookEndpointRequest(string? Url, IReadOnlyList<string>? EventTypes);
 

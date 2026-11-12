@@ -34,10 +34,13 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
             throw new ApiException(400, "invalid_request", "after must be an event ULID.");
         }
 
-        var cutoff = clock.GetUtcNow().AddDays(-30);
-        var settledAt = clock.GetUtcNow().AddSeconds(-5);
         var rows = await data.ReadAsync((db, token) => db.WebhookOutbox
-            .Where(row => row.ProjectId == projectId && row.OccurredAt > cutoff && row.OccurredAt <= settledAt && (after == null || after == "" || string.Compare(row.EventId, after) > 0))
+            .FromSqlRaw("""
+                SELECT * FROM webhook_outbox
+                WHERE occurred_at > strftime('%Y-%m-%d %H:%M:%f', 'now', '-30 days')
+                  AND occurred_at <= strftime('%Y-%m-%d %H:%M:%f', 'now', '-5 seconds')
+                """)
+            .Where(row => row.ProjectId == projectId && (after == null || after == "" || string.Compare(row.EventId, after) > 0))
             .OrderBy(row => row.EventId).Take(limit + 1).ToListAsync(token), cancellationToken).ConfigureAwait(false);
         return new([.. rows.Take(limit).Select(Body)], rows.Count > limit ? rows[limit - 1].EventId : null);
     }

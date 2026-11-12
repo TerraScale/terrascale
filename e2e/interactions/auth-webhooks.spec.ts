@@ -212,3 +212,95 @@ test('auth webhook backlog of 200 in one project allows another project through 
     }
   });
 });
+
+test('auth webhook timeouts release delivery lanes for another project within one endpoint pass', async ({ browser }, info) => {
+  await onLocalStack(async () => {
+    const owner = journey();
+    const contexts = await Promise.all([0, 1].map(() => auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } })));
+    const healthyContext = await auditedContext(browser, { viewport: desktop, storageState: ownerSession() });
+    const healthyPage = await healthyContext.newPage();
+    const healthyAudit = new Audit(healthyPage, info);
+    const accounts = await Promise.all(contexts.map(async (context, index) => {
+      const page = await context.newPage();
+      const audit = new Audit(page, info);
+      const email = await newAddress('webhook-timeout-' + randomBytes(4).toString('hex'));
+      const password = randomBytes(24).toString('base64url');
+      saveSecret('timeout-owner-password', password);
+      await signUp(page, audit, email, password, 'timeout webhook owner');
+      await verify(page, email);
+      await onboard(page, audit, 'Timeout owner', 'Timeout ' + owner.runId + '-' + index, 'timeout webhook owner');
+      return { page, audit, email, password };
+    }));
+    const register = async (page: typeof healthyPage, audit: Audit, password: string, hold: boolean) => {
+      const path = '/receive/timeout-' + randomBytes(8).toString('hex');
+      await page.goto(dash + '/auth/webhooks');
+      await page.getByRole('button', { name: 'Add webhook endpoint', exact: true }).first().click();
+      await page.locator('#auth-webhook-url').fill('https://hooks.journey.terrascale.tech' + path);
+      await page.locator('input[name=event_types][value="user.signed_up"]').check();
+      await page.locator('#auth-create-webhook button[type=submit]').click();
+      await confirmWithPassword(page, audit, password, 'timeout webhook registration');
+      const secret = await page.locator('#auth-webhook-created-secret').innerText();
+      saveSecret('timeout-signing-secret', secret);
+      expect((await fetch(receiver + '/configure', { method: 'POST', body: JSON.stringify({ path, secret, hold }) })).status).toBe(200);
+      await page.goto(dash + '/auth/webhooks');
+      const row = page.locator('tr').filter({ hasText: path });
+      const form = row.locator('form').filter({ has: page.getByRole('button', { name: 'Send test event', exact: true }) });
+      const action = await form.getAttribute('action');
+      const fields = await form.locator('input[type=hidden]').evaluateAll(inputs => Object.fromEntries(inputs.map(input => [(input as HTMLInputElement).name, (input as HTMLInputElement).value])));
+      expect(action).toBeTruthy();
+      return { path, enqueue: async () => {
+        const response = await page.request.post(new URL(action!, dash).href, { form: fields });
+        expect(response.status()).toBe(200);
+      } };
+    };
+    try {
+      const failing = (await Promise.all(accounts.map(async (account, index) => {
+        const endpoints = [];
+        for (let count = 0; count < (index === 0 ? 3 : 2); count++) {
+          endpoints.push(await register(account.page, account.audit, account.password, true));
+        }
+        return endpoints;
+      }))).flat();
+      const healthy = await register(healthyPage, healthyAudit, owner.password, false);
+      await Promise.all(failing.map(async endpoint => {
+        for (let count = 0; count < 10; count++) await endpoint.enqueue();
+      }));
+      await expect.poll(async () => {
+        const rows = await (await fetch(receiver + '/deliveries')).json() as (Delivery & { path: string })[];
+        return new Set(rows.filter(row => failing.some(endpoint => endpoint.path === row.path)).map(row => row.path)).size;
+      }).toBe(4);
+      const queuedAt = performance.now();
+      const deadline = AbortSignal.timeout(30_000);
+      await healthy.enqueue();
+      let rows = await (await fetch(receiver + '/deliveries')).json() as (Delivery & { path: string })[];
+      while (!rows.some(row => row.path === healthy.path)) {
+        const response = await fetch(receiver + '/wait?after=' + rows.length, { signal: deadline });
+        expect(response.status).toBe(200);
+        rows = await response.json() as (Delivery & { path: string })[];
+      }
+      const delivered = rows.find(row => row.path === healthy.path);
+      expect(delivered).toMatchObject({ valid: true, code: 200, event: { type: 'webhook.test' } });
+      expect(performance.now() - queuedAt).toBeLessThan(30_000);
+      expect(rows.filter(row => failing.some(endpoint => endpoint.path === row.path)).length).toBeLessThanOrEqual(5);
+      console.log('Webhook timeouts: five failing endpoints with ten deliveries each; healthy project delivered within one 30-second endpoint pass.');
+      await healthyPage.goto(dash + '/auth/webhooks');
+      await healthyPage.locator('tr').filter({ hasText: healthy.path }).getByRole('button', { name: 'Delete', exact: true }).click();
+      await Promise.all(accounts.map(async ({ page, audit, email, password }) => {
+        await page.goto(dash + '/profile?tab=danger');
+        await page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
+        await page.locator('#delete-account-email').fill(email);
+        await page.locator('#delete-account').getByRole('button', { name: 'Delete account', exact: true }).click();
+        await confirmWithPassword(page, audit, password, 'timeout webhook owner cleanup');
+        await page.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
+        await expect(page.getByRole('heading', { level: 1 })).toHaveText('Account deleted');
+        await audit.finish();
+      }));
+      await healthyAudit.finish();
+    } finally {
+      for (const context of [...contexts, healthyContext]) {
+        await saveCookies(context);
+        await context.close();
+      }
+    }
+  });
+});

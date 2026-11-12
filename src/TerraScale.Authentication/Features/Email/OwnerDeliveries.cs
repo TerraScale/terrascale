@@ -7,7 +7,7 @@ using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Email;
 
-public sealed record EmailDeliveryRecord(string Kind, string Key, string Recipient, string Status);
+public sealed record EmailDeliveryRecord(string Kind, string Key, string Recipient, string Status, DateTimeOffset? LeaseUntil = null);
 
 public sealed class OwnerDeliveries(AuthData data, Users users, IEmailSender sender)
 {

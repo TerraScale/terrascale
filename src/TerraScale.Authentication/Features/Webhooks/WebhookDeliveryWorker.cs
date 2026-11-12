@@ -31,8 +31,9 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
                     .Where(endpoint => endpoint.DisabledAt == null && endpoint.LeaseUntil <= now
                         && db.WebhookDeliveries.Any(row => row.EndpointId == endpoint.Id
                             && (row.Status == "pending" || row.Status == "sending") && row.NextAttemptAt <= now))
-                    .OrderBy(endpoint => endpoint.LeaseUntil).ThenBy(endpoint => endpoint.ProjectId).ThenBy(endpoint => endpoint.Id)
-                    .Take(4).Select(endpoint => endpoint.Id).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+                    .OrderBy(endpoint => db.WebhookEndpoints.Where(row => row.ProjectId == endpoint.ProjectId).Max(row => row.LastServedAt))
+                    .ThenBy(endpoint => endpoint.ProjectId).ThenBy(endpoint => endpoint.LastServedAt).ThenBy(endpoint => endpoint.Id)
+                    .Take(1).Select(endpoint => endpoint.Id).ToListAsync(token), cancellationToken).ConfigureAwait(false);
                 if (endpoints.Count == 0)
                 {
                     await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
@@ -41,13 +42,14 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
 
                 foreach (var endpointId in endpoints)
                 {
-                    for (var count = 0; count < 10; count++)
+                    using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30), clock);
+                    for (var count = 0; count < 10 && !budget.IsCancellationRequested; count++)
                     {
                         now = clock.GetUtcNow();
                         var current = await data.ReadAsync((db, token) => db.WebhookDeliveries
                             .Where(row => row.EndpointId == endpointId && (row.Status == "pending" || row.Status == "sending") && row.NextAttemptAt <= now)
                             .OrderBy(row => row.EventId).ThenBy(row => row.Id).WithVersion().FirstOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
-                        if (current is null || !await this.DeliverAsync(current, cancellationToken).ConfigureAwait(false))
+                        if (current is null || !await this.DeliverAsync(current, budget.Token, cancellationToken).ConfigureAwait(false))
                         {
                             break;
                         }
@@ -64,7 +66,7 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
         }
     }
 
-    private async Task<bool> DeliverAsync(Versioned<WebhookDeliveryRecord> current, CancellationToken cancellationToken)
+    private async Task<bool> DeliverAsync(Versioned<WebhookDeliveryRecord> current, CancellationToken budgetToken, CancellationToken cancellationToken)
     {
         var delivery = current.Value;
         var endpoint = await data.ReadAsync((db, token) => db.WebhookEndpoints.Where(row => row.Id == delivery.EndpointId && row.ProjectId == delivery.ProjectId)
@@ -75,9 +77,9 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
             return false;
         }
 
-        if (endpoint.Value.DisabledAt is not null || delivery.CycleAttempts > 0 && now >= delivery.StartedAt.AddHours(24))
+        if (endpoint.Value.DisabledAt is not null)
         {
-            await data.SaveAsync(Change.Update(current, delivery with { Status = endpoint.Value.DisabledAt is null ? "exhausted" : "disabled" }), cancellationToken).ConfigureAwait(false);
+            await data.SaveAsync(Change.Update(current, delivery with { Status = "disabled" }), cancellationToken).ConfigureAwait(false);
             return false;
         }
 
@@ -92,7 +94,7 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
         var sending = delivery with { StartedAt = cycleStartedAt, Status = "sending", Attempts = delivery.Attempts + 1, CycleAttempts = delivery.CycleAttempts + 1, NextAttemptAt = leaseUntil };
         var claim = Change.Update(current, sending);
         var attempt = new WebhookAttemptRecord(AuthIds.New(), delivery.Id, delivery.ProjectId, now, "sending", 0, null, null);
-        List<Change> claims = [claim, Change.Update(endpoint, endpoint.Value with { LeaseUntil = leaseUntil }), Change.Insert(attempt)];
+        List<Change> claims = [claim, Change.Update(endpoint, endpoint.Value with { LeaseUntil = leaseUntil, LastServedAt = now }), Change.Insert(attempt)];
         var interrupted = await data.ReadAsync((db, token) => db.WebhookAttempts.Where(row => row.DeliveryId == delivery.Id && row.Status == "sending")
             .WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
         claims.AddRange(interrupted.Select(row => Change.Update(row, row.Value with { Status = "interrupted" })));
@@ -101,12 +103,18 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
             return false;
         }
 
-        var previousAttempt = await data.ReadAsync((db, token) => db.WebhookAttempts
-            .Where(row => row.ProjectId == delivery.ProjectId && row.Id != attempt.Id
-                && db.WebhookDeliveries.Any(item => item.Id == row.DeliveryId && item.EndpointId == delivery.EndpointId))
-            .OrderByDescending(row => row.Id).FirstOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var previousAttempt = await data.ReadAsync((db, token) => db.WebhookAttempts.FromSql($"""
+            SELECT a.* FROM webhook_deliveries AS d
+            JOIN webhook_attempts AS a ON a.delivery_id = d.id
+            WHERE d.endpoint_id = {delivery.EndpointId} AND d.project_id = {delivery.ProjectId}
+              AND a.id = (
+                SELECT max(previous.id) FROM webhook_attempts AS previous
+                WHERE previous.delivery_id = d.id AND previous.id <> {attempt.Id})
+            ORDER BY a.id DESC
+            LIMIT 1
+            """).OrderByDescending(row => row.Id).FirstOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         var started = clock.GetTimestamp();
-        var result = await this.SendAsync(endpoint.Value, evt, cancellationToken).ConfigureAwait(false);
+        var result = await this.SendAsync(endpoint.Value, evt, budgetToken, cancellationToken).ConfigureAwait(false);
         var finishedAt = clock.GetUtcNow();
         var latest = await data.ReadAsync((db, token) => db.WebhookEndpoints.Where(row => row.Id == endpoint.Value.Id && row.ProjectId == delivery.ProjectId)
             .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
@@ -145,10 +153,10 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
             return false;
         }
 
-        return true;
+        return result.Success;
     }
 
-    private async Task<DeliveryResult> SendAsync(WebhookEndpointRecord endpoint, WebhookOutboxRecord evt, CancellationToken cancellationToken)
+    private async Task<DeliveryResult> SendAsync(WebhookEndpointRecord endpoint, WebhookOutboxRecord evt, CancellationToken budgetToken, CancellationToken cancellationToken)
     {
         var body = JsonSerializer.Serialize(WebhookHistory.Body(evt), WebhooksJson.Default.WebhookEventBody);
         var timestamp = clock.GetUtcNow().ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
@@ -160,7 +168,7 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
         var signed = $"{evt.EventId}.{timestamp}.{body}";
         request.Headers.Add("webhook-signature", Sign(secret, signed) + (previous is null ? "" : " " + Sign(previous, signed)));
         request.Content = new StringContent(body, Encoding.UTF8, new MediaTypeHeaderValue("application/json"));
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budgetToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
         int? responseCode = null;
         try

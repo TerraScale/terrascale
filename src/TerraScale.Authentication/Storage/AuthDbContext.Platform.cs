@@ -157,6 +157,8 @@ public sealed partial class AuthDbContext
             endpoint.HasKey(row => row.Id);
             endpoint.HasOne<ProjectRecord>().WithMany().HasForeignKey(row => row.ProjectId).OnDelete(DeleteBehavior.Cascade);
             endpoint.HasIndex(row => new { row.ProjectId, row.Id });
+            endpoint.HasIndex(row => new { row.ProjectId, row.LastServedAt }).IsDescending(false, true);
+            endpoint.HasIndex(row => new { row.DisabledAt, row.LeaseUntil });
             endpoint.Property(row => row.EventTypes).HasJson(StorageJson.Default.IReadOnlyListString);
             Versioned(endpoint);
         });
@@ -168,7 +170,7 @@ public sealed partial class AuthDbContext
             delivery.HasOne<WebhookOutboxRecord>().WithMany().HasForeignKey(row => row.EventId).OnDelete(DeleteBehavior.Cascade);
             delivery.HasOne<WebhookEndpointRecord>().WithMany().HasForeignKey(row => row.EndpointId).OnDelete(DeleteBehavior.Cascade);
             delivery.HasIndex(row => new { row.EventId, row.EndpointId }).IsUnique();
-            delivery.HasIndex(row => new { row.Status, row.NextAttemptAt });
+            delivery.HasIndex(row => new { row.EndpointId, row.Status, row.NextAttemptAt });
             Versioned(delivery);
         });
 
@@ -177,7 +179,7 @@ public sealed partial class AuthDbContext
             attempt.ToTable("webhook_attempts");
             attempt.HasKey(row => row.Id);
             attempt.HasOne<WebhookDeliveryRecord>().WithMany().HasForeignKey(row => row.DeliveryId).OnDelete(DeleteBehavior.Cascade);
-            attempt.HasIndex(row => new { row.DeliveryId, row.Id });
+            attempt.HasIndex(row => new { row.DeliveryId, row.Id }).IsDescending(false, true);
             Versioned(attempt);
         });
 
