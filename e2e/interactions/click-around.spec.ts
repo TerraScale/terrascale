@@ -185,7 +185,7 @@ test('an alert webhook secret is shown once, including two parallel reads, and i
   const secret = (await revealed.innerText()).trim();
   saveSecret('alert-webhook-secret', secret);
   expect(/^[A-Za-z0-9_-]{43}$/.test(secret), 'the webhook signing secret has the expected format').toBe(true);
-  await expect(page).toHaveURL(`${dash}/notifications/alerts`);
+  await expect(page).toHaveURL((url) => url.origin === dash && url.pathname === '/notifications/alerts' && [...url.searchParams.keys()].every((key) => ['organizationId', 'projectId'].includes(key)));
   await expect(page.locator('#alert-rules tr').filter({ hasText: name })).toHaveCount(1);
   await audit.check('alert webhook secret created');
   await page.reload();
@@ -193,15 +193,19 @@ test('an alert webhook secret is shown once, including two parallel reads, and i
   expect((await page.content()).includes(secret), 'the webhook secret is never shown again').toBe(false);
 
   const parallelName = unique('parallel');
-  const form = await page.locator('form[action="/api/v1/notifications/alerts"]').evaluate((element) => Object.fromEntries(new FormData(element as HTMLFormElement)));
-  const created = await page.request.post(`${dash}/api/v1/notifications/alerts`, {
-    form: { ...form, name: parallelName, threshold: '250', webhook: 'https://example.com/alerts' },
+  const form = await page.locator('form').filter({ has: page.locator('#alert-name') }).evaluate((element) => ({ action: (element as HTMLFormElement).action, values: Object.fromEntries(new FormData(element as HTMLFormElement)) }));
+  const created = await page.request.post(form.action, {
+    form: { ...form.values, name: parallelName, threshold: '250', webhook: 'https://example.com/alerts' },
+    headers: { Origin: dash },
     maxRedirects: 0,
   });
   expect(created.status()).toBe(303);
-  expect(created.headers().location).toBe('/notifications/alerts');
+  const target = new URL(created.headers().location, dash);
+  expect(target.origin).toBe(dash);
+  expect(target.pathname).toBe('/notifications/alerts');
+  expect([...target.searchParams.keys()].every((key) => ['organizationId', 'projectId'].includes(key)), 'the redirect contains only workspace selectors').toBe(true);
   const headers = { Cookie: (await page.context().cookies(dash)).map((cookie) => `${cookie.name}=${cookie.value}`).join('; ') };
-  const reads = await Promise.all([page.request.get(`${dash}/notifications/alerts`, { headers }), page.request.get(`${dash}/notifications/alerts`, { headers })]);
+  const reads = await Promise.all([page.request.get(target.href, { headers }), page.request.get(target.href, { headers })]);
   let disclosures = 0;
   for (const response of reads) {
     expect(response.status()).toBe(200);
