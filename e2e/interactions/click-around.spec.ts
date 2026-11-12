@@ -90,15 +90,18 @@ test('an API key is shown once and rotates twice during grace without another cl
     if (generation === 2) await expect(dialog.locator('[name=view]')).toHaveValue('details');
     await dialog.locator('[name=previousSecretTtl]').selectOption('3600');
     await dialog.getByRole('button', { name: 'Rotate key', exact: true }).click();
-    const approved = page.waitForResponse((response) => response.request().method() === 'POST'
-      && new URL(response.url()).pathname.startsWith('/ui/terrascale/step-up/'));
+    let fallback = '';
+    const approved = page.waitForResponse(async (response) => {
+      if (response.request().method() !== 'POST' || !new URL(response.url()).pathname.startsWith('/ui/terrascale/step-up/')) return false;
+      fallback = await response.text();
+      return true;
+    });
     await confirmWithPassword(page, audit, current.password, `rotation ${generation}`);
     const confirmation = await approved;
     expect(confirmation.status()).toBe(200);
     expect(confirmation.headers()['cache-control']).toBe('no-store');
     expect(confirmation.headers()['refresh']).toBe(`0;url=${dash}/auth/step-up/callback`);
     expect(confirmation.headers()['content-security-policy']).toContain("style-src 'self' 'nonce-");
-    const fallback = await confirmation.text();
     expect(fallback).toContain(`href="${dash}/auth/step-up/callback"`);
     expect(fallback).toContain('class="btn delayed-continue"');
     await expect(secret).toBeVisible();

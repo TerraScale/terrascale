@@ -254,6 +254,10 @@ function install(section) {
   window.addEventListener('beforeunload', event => {
     if (active > 0 || waiting.length > 0) event.preventDefault();
   });
+  if (input.files.length > 0) {
+    add([...input.files]);
+    input.value = '';
+  }
 }
 
 for (const section of document.querySelectorAll('[data-upload]')) install(section);
