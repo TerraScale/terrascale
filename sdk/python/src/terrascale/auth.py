@@ -371,7 +371,7 @@ class APIKeyTokenSource:
     ):
         self._x = _Exchange(api_key, project, scopes, issuer)
         self._http = http_client or httpx.Client(timeout=30.0, follow_redirects=False, http2=True,
-                                                 trust_env=_spec.trust_env(self._x.endpoint))
+                                                 mounts={"http://": httpx.HTTPTransport(http2=True)})
         self._lock = threading.Lock()
         self._flight: Future[str] | None = None
         self._thread: threading.Thread | None = None
@@ -466,7 +466,7 @@ class AsyncAPIKeyTokenSource:
     ):
         self._x = _Exchange(api_key, project, scopes, issuer)
         self._http = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=False, http2=True,
-                                                      trust_env=_spec.trust_env(self._x.endpoint))
+                                                      mounts={"http://": httpx.AsyncHTTPTransport(http2=True)})
         self._flight: asyncio.Task[str] | None = None
         self._closed = False
         self._owns_http = http_client is None

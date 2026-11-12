@@ -129,10 +129,6 @@ def service_origin(raw: str, what: str, service: tuple[str, str]) -> str:
     return origin
 
 
-def trust_env(*origins: str) -> bool:
-    return all(origin.startswith("https://") for origin in origins)
-
-
 def issuer_parts(issuer: str | None) -> tuple[str, str]:
     scheme, _, rest = (issuer or DEFAULT_ISSUER).partition("://")
     authority, _, tenant = rest.partition("/")
