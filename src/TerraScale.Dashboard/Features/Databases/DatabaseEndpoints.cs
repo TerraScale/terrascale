@@ -208,19 +208,17 @@ namespace TerraScale.Dashboard.Features.Databases
             var regionsRead = backend.DiscoveryAsync(http.RequestAborted);
             IReadOnlyList<DatabaseRegion> choices = [];
             var regionsError = "";
-            IReadOnlyList<DatabaseRegion> catalog = [];
             try
             {
                 var discovery = await regionsRead;
                 choices = discovery.Regions;
-                catalog = discovery.Catalog;
             }
             catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
             var search = http.Request.Query["q"].ToString().Trim();
             var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
             var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
             var metrics = await metricsRead;
-            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Catalog = catalog, Metrics = metrics, Range = range, Selection = selection, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." });
+            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, Selection = selection, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." });
             result.StatusCode = status;
             return result;
         }
@@ -297,7 +295,7 @@ namespace TerraScale.Dashboard.Features.Databases
             // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
             if (tab == "replication" || tab == "overview" && database.AllRegions)
             {
-                try { choices = (await backend.DiscoveryAsync(http.RequestAborted)).Catalog; }
+                try { choices = await backend.RegionsAsync(http.RequestAborted); }
                 catch (HttpRequestException) { }
             }
 
