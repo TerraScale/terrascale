@@ -96,16 +96,9 @@ class DatabaseRegions:
             revision = item.get("revision")
             if revision is not None and (not isinstance(revision, str) or not revision):
                 raise ValueError("invalid replica revision")
-            statuses.append(
-                ReplicaStatus(
-                    region=item["region"],
-                    role=role,
-                    lag_ms=lag,
-                    last_pulled_at=timestamps["lastPulledAt"],
-                    last_verified=timestamps["lastVerified"],
-                    revision=revision,
-                )
-            )
+            statuses.append(ReplicaStatus(region=item["region"], role=role, lag_ms=lag,
+                                          last_pulled_at=timestamps["lastPulledAt"],
+                                          last_verified=timestamps["lastVerified"], revision=revision))
         return cls(database_id=validate_id(body["databaseId"]), observed_at=body["observedAt"], regions=statuses)
 
 

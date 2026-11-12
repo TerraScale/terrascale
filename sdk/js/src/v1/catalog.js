@@ -158,7 +158,7 @@ export class V1Databases {
   }
 
   /**
-   * Deletes the database in its home region; branches remain independent.
+   * Deletes the database in the region that orders the database's writes; branches remain independent.
    * @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>}
    */
   async delete(name, options = {}) {

@@ -134,8 +134,8 @@ class ServiceUnavailableError(APIError):
 
 
 class CommitUncertainError(APIError):
-    """The write may or may not have committed (``commit_uncertain``,
-    ``write_outcome_unknown`` or a transport failure on a mutation).
+    """The write may have committed: no response after sending, an uncoded 5xx,
+    or commit_uncertain, write_outcome_unknown or internal_error.
     Re-read the state before deciding what to do; never blindly replay."""
 
 
@@ -186,8 +186,6 @@ _BY_CODE: dict[str, type[APIError]] = {
     "key_revoked": KeyRevokedError,
     "key_expired": KeyExpiredError,
     "unique_violation": UniqueViolationError,
-    "commit_uncertain": CommitUncertainError,
-    "write_outcome_unknown": CommitUncertainError,
 }
 _BY_STATUS: dict[int, type[APIError]] = {
     400: InvalidRequestError,
@@ -216,6 +214,9 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
     cls = _BY_CODE.get(code) or _BY_STATUS.get(status) or APIError
     if statement is not None and raw_code and isinstance(raw_state, str):
         cls = SqlError
+    elif mutation and (code in ("commit_uncertain", "write_outcome_unknown", "internal_error")
+                       or 500 <= status < 600 and code == f"http_{status}"):
+        cls = CommitUncertainError
     return cls(
         status,
         code,

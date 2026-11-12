@@ -131,12 +131,14 @@ type ManagedDatabase struct {
 	CreatedAt    time.Time  `json:"createdAt"`
 	ExpiresAt    *time.Time `json:"expiresAt"`
 	// Region identifies the answering node; it is absent from restore results.
-	Region           string          `json:"region"`
-	Regions          []string        `json:"regions"`
-	AllRegions       bool            `json:"allRegions"`
-	PlacementVersion int64           `json:"placementVersion"`
-	HomeRegion       json.RawMessage `json:"homeRegion,omitempty"`
-	ReplicaRegions   json.RawMessage `json:"replicaRegions,omitempty"`
+	Region           string   `json:"region"`
+	Regions          []string `json:"regions"`
+	AllRegions       bool     `json:"allRegions"`
+	PlacementVersion int64    `json:"placementVersion"`
+	// Deprecated: raw earlier field, passed through for ts -json; absent once the server stops sending it.
+	HomeRegion json.RawMessage `json:"homeRegion,omitempty"`
+	// Deprecated: raw earlier field, passed through for ts -json; absent once the server stops sending it.
+	ReplicaRegions json.RawMessage `json:"replicaRegions,omitempty"`
 }
 
 // DatabaseUsage is a database's storage and its metered reads and writes.

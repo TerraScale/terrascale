@@ -547,6 +547,7 @@ impl Resp {
                 retry_after,
                 self.header("X-Request-ID"),
                 &self.body,
+                self.mutation,
             ))
         } else {
             Err(self.invalid(format!("unexpected HTTP status {}", self.status.as_u16())))
@@ -565,6 +566,7 @@ impl Resp {
         Error::Response {
             status: self.status.as_u16(),
             error: Box::new(error),
+            mutation: self.mutation,
             body: self.body.clone(),
             request_id: self.header("X-Request-ID").map(str::to_owned),
         }
@@ -611,6 +613,7 @@ impl Client {
                     status,
                     &headers,
                     body.clone(),
+                    true,
                 )
             })?;
             if body.len() + chunk.len() > self.inner.max_response {
@@ -623,6 +626,7 @@ impl Client {
                     status,
                     &headers,
                     body,
+                    true,
                 ));
             }
             body.extend_from_slice(&chunk);
@@ -653,13 +657,20 @@ impl Client {
                         details: None,
                     }
                 };
-                return Err(self.response_error(error, status, &response.headers, response.body));
+                return Err(self.response_error(
+                    error,
+                    status,
+                    &response.headers,
+                    response.body,
+                    true,
+                ));
             }
             return Err(errors::from_project_response(
                 status.as_u16(),
                 retry_after,
                 response.header("X-Request-ID"),
                 &response.body,
+                true,
             ));
         }
         Ok(response)
@@ -737,12 +748,13 @@ impl Client {
                         }
                     };
                     let error = match failed {
-                        Some(error) => self.response_error(error, status, &headers, body),
+                        Some(error) => self.response_error(error, status, &headers, body, false),
                         None => errors::from_project_response(
                             status.as_u16(),
                             retry_after,
                             headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
                             &body,
+                            false,
                         ),
                     };
                     (error, retry_after)
@@ -897,6 +909,7 @@ impl Client {
                     retry_after,
                     header("X-Request-ID"),
                     response.body().as_deref().unwrap_or_default(),
+                    false,
                 );
                 if response.status() == StatusCode::UNAUTHORIZED
                     && self.inner.auth.refreshable()
@@ -1122,7 +1135,7 @@ impl Client {
                         };
                         body.extend_from_slice(&chunk[..self.inner.max_response - body.len()]);
                         return Attempt::Failed(
-                            self.response_error(error, status, &headers, body),
+                            self.response_error(error, status, &headers, body, !req.replay_safe),
                             None,
                         );
                     }
@@ -1130,7 +1143,13 @@ impl Client {
                 }
                 Err(e) => {
                     return Attempt::Failed(
-                        self.response_error(Error::Transport(describe(&e)), status, &headers, body),
+                        self.response_error(
+                            Error::Transport(describe(&e)),
+                            status,
+                            &headers,
+                            body,
+                            !req.replay_safe,
+                        ),
                         None,
                     )
                 }
@@ -1165,6 +1184,7 @@ impl Client {
             retry_after,
             headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
             &body,
+            !req.replay_safe,
         );
         Attempt::Failed(err, retry_after)
     }
@@ -1215,6 +1235,7 @@ impl Client {
                 None,
                 headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
                 &body,
+                false,
             );
             let decoded = match &error {
                 Error::Response { error, .. } => error.as_ref(),
@@ -1245,9 +1266,11 @@ impl Client {
         status: StatusCode,
         headers: &HeaderMap,
         body: Vec<u8>,
+        mutation: bool,
     ) -> Error {
         Error::Response {
             status: status.as_u16(),
+            mutation,
             error: Box::new(error),
             body,
             request_id: headers

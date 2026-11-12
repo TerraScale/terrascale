@@ -299,7 +299,7 @@ class TerraScale:
     def export_database(self, database: str) -> Iterator[bytes]:
         """Stream the database as one SQL dump (BEGIN … COMMIT) with ``sql:read``.
 
-        The database's home region serves the export; consume the iterator to
+        The region that orders the database's writes serves the export; consume the iterator to
         read the dump and close it when done.
         """
         return self._stream(_spec.export_database(self.project, _spec.database_selector(database)))
@@ -463,7 +463,7 @@ class Database:
         return self._c._send(_spec.get_database_regions(*self._p))
 
     def delete(self) -> None:
-        """Delete in the database's home region. HTTP 204 confirms logical deletion and local cleanup;
+        """Delete in the region that orders the database's writes. HTTP 204 confirms logical deletion and local cleanup;
         remote erasure is retried durably and may complete later."""
         self._c._send(_spec.delete_database(*self._p))
 

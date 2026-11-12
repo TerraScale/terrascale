@@ -97,7 +97,7 @@ func createEarlierPlaced(ctx context.Context, tb *v1.Client, project, name, writ
 		return err
 	}
 	placementFailure := func(cause error, flags string) error {
-		return fmt.Errorf("database %s was created; its placement was not applied: %w. Run `ts db placement %s %s` to apply it.", name, cause, name, flags)
+		return fmt.Errorf("database %s was created; its placement may not be complete: %w. Run `ts db placement %s %s` again; repeating it is safe.", name, cause, name, flags)
 	}
 	if writer == "" && len(replicas) != 0 {
 		flags := "-replica-regions " + strings.Join(replicas, ",")

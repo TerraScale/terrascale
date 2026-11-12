@@ -25,7 +25,6 @@ public sealed partial class TerraBaseProjectClient
     public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, TerraBaseDatabasePlacement? placement = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
-        TerraBaseSqlClient.ValidatePlacement(placement?.Regions, placement?.AllRegions);
         var body = TerraBaseConnection.Json(new TerraBaseCreateDatabaseRequest(name, placement?.Regions, placement?.AllRegions), Json.TerraBaseCreateDatabaseRequest);
         return (await connection.SendAsync(HttpMethod.Post, path + "/databases", body, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
     }

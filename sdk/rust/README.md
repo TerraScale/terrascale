@@ -180,7 +180,9 @@ from 60 to 2,592,000 seconds, default to 3600 and cannot outlive the parent key.
 an organization key; for a project key it must match that key's project. Scoped keys cannot manage
 databases, mint keys or reach another database. Revoking or rotating the parent revokes its scoped keys.
 The returned `ScopedKey.key` is shown once and can be passed directly to another client's API-key builder.
-Refusals use the existing HTTP error types; mutations are never replayed after an uncertain result.
+Refusals use the existing HTTP error types.
+
+A failed write is uncertain if no response arrives after sending, if a 5xx response has no server error code, or if the server code is `commit_uncertain`, `write_outcome_unknown` or `internal_error`. Other coded 5xx responses and SQL errors (the request rolled back) are definite refusals. Reads are never uncertain. Reconcile state before repeating an uncertain write; a malformed success acknowledgement is also uncertain.
 
 Qualification: this surface is checked against the local contract fixtures in
 `contracts/terrabase/agent/`, equivalent to the shared SQL API contract. Live server qualification is pending.

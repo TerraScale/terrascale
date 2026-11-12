@@ -133,13 +133,13 @@ with synthetic values. Both supported .NET frameworks replay them; live producer
 ## Placement
 
 ```csharp
-var db = await client.CreateDatabaseAsync(project, "orders", placement: new TerraBaseDatabasePlacement(Regions: ["gru", "sjc"]));
-await client.SetDatabasePlacementAsync(project, db.Id, placement: new TerraBaseDatabasePlacement(Regions: ["fra", "gru", "sjc"]));
+var db = await client.CreateDatabaseAsync(project, "orders", placement: TerraBaseDatabasePlacement.In("gru", "sjc"));
+await client.SetDatabasePlacementAsync(project, db.Id, placement: TerraBaseDatabasePlacement.In("fra", "gru", "sjc"));
 ```
 
 Every region that holds a database is equal. `TerraBaseManagedDatabase` carries `Regions` (every region that holds it,
 sorted by region id; the order has no meaning) and `AllRegions`. `CreateDatabaseAsync` and `SetDatabasePlacementAsync`
-take a `TerraBaseDatabasePlacement` value containing `Regions` (at least one, no duplicates) or `AllRegions`, and not both. TerraBase picks which region writes and
+take a `TerraBaseDatabasePlacement` value made with `In` (one to nine distinct regions) or `EveryRegion`. TerraBase picks which region writes and
 moves that on its own when the set changes. `Database(projectId, name).GetRegionsAsync` reads each region's pull
 progress; an entry's `Role` is `writer` for the region that commits writes.
 Tests replay `contracts/terrabase/placement/`; live producer qualification has not run. All-regions placement
@@ -402,6 +402,6 @@ The caller bounds this repeat loop to 90 seconds and propagates other errors:
 
 ```csharp
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, placement: new TerraBaseDatabasePlacement(Regions: ["fra"]), cancellationToken: deadline.Token); break; }
+for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, placement: TerraBaseDatabasePlacement.In("fra"), cancellationToken: deadline.Token); break; }
     catch (TerraBaseException e) when (e.ErrorCode == "replica_not_ready") { await Task.Delay(1000, deadline.Token); } }
 ```

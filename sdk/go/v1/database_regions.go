@@ -14,8 +14,10 @@ type DatabaseRegions struct {
 	DatabaseID string          `json:"databaseId" ulid:"required"`
 	ObservedAt time.Time       `json:"observedAt"`
 	Regions    []ReplicaStatus `json:"regions"`
+	// Deprecated: raw earlier field, passed through for ts -json; absent once the server stops sending it.
 	HomeRegion json.RawMessage `json:"homeRegion,omitempty"`
-	Replicas   json.RawMessage `json:"replicas,omitempty"`
+	// Deprecated: raw earlier field, passed through for ts -json; absent once the server stops sending it.
+	Replicas json.RawMessage `json:"replicas,omitempty"`
 }
 
 // ReplicaStatus is one selected region's writer-observed pull progress; unknown observations are nil.

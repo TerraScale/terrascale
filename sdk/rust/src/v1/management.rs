@@ -117,7 +117,7 @@ impl Database {
             .await
     }
 
-    /// `DELETE D` in the database's home region. HTTP 204
+    /// `DELETE D` in the region that orders the database's writes. HTTP 204
     /// confirms logical deletion and local cleanup; remote erasure is retried
     /// durably and may complete later.
     pub async fn delete_database(&self) -> Result<()> {

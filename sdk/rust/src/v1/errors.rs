@@ -36,6 +36,8 @@ pub enum Error {
     Response {
         /// Actual HTTP status, independent of the response body.
         status: u16,
+        /// Whether the failed request was a write.
+        mutation: bool,
         #[source]
         error: Box<Error>,
         /// Exact response bytes, including malformed or empty bodies.
@@ -46,6 +48,7 @@ pub enum Error {
     /// `404 not_found`.
     #[error("terrabase: 404 not_found")]
     NotFound,
+    /// The request must reach the region that orders the database's writes.
     #[error("terrabase: 421 home_region_required")]
     HomeRegionRequired,
     /// `503 commit_uncertain`: read state to reconcile the unknown outcome.
@@ -66,7 +69,7 @@ pub enum Error {
     /// `401 key_expired`: permanent; replace the key without retry or exchange.
     #[error("terrabase: 401 key_expired{}", fmt_msg(message))]
     KeyExpired { message: Option<String> },
-    /// `500 internal_error`: the server refused the request.
+    /// `500 internal_error`: a write may have committed.
     #[error("terrabase: 500 internal_error")]
     InternalError,
     /// A refused SQL statement; the request rolled back. `status` is the HTTP
@@ -260,20 +263,28 @@ impl Error {
         }
     }
 
-    /// True for server codes declaring an unknown write outcome, a transport
-    /// failure without a response, or an unreadable mutation acknowledgement.
-    /// Other coded server errors are definite refusals; reconcile unknown
-    /// outcomes by reading state before deciding whether to repeat a mutation.
+    /// True for a write with no response after sending, an uncoded 5xx, or
+    /// commit_uncertain, write_outcome_unknown or internal_error. Other coded
+    /// errors and rolled-back SQL requests are definite. Response reads are
+    /// never uncertain. Reconcile before repeating an uncertain write.
     #[must_use]
     pub fn is_uncertain(&self) -> bool {
         match self {
-            Self::Response { error, .. } => error.is_uncertain(),
-            Self::CommitUncertain | Self::Transport(_) | Self::UndecodableAck { .. } => true,
+            Self::Response {
+                mutation, error, ..
+            } => *mutation && error.is_uncertain(),
+            Self::CommitUncertain
+            | Self::InternalError
+            | Self::Transport(_)
+            | Self::UndecodableAck { .. } => true,
             Self::ResponseTooLarge {
                 may_have_applied, ..
             } => *may_have_applied,
-            Self::Api { code, .. } => {
-                matches!(code.as_str(), "commit_uncertain" | "write_outcome_unknown")
+            Self::Api { status, code, .. } => {
+                matches!(
+                    code.as_str(),
+                    "commit_uncertain" | "write_outcome_unknown" | "internal_error"
+                ) || (500..600).contains(status) && code == &format!("http_{status}")
             }
             _ => false,
         }
@@ -286,6 +297,7 @@ pub(crate) fn from_project_response(
     retry_after: Option<Duration>,
     request_id: Option<&str>,
     body: &[u8],
+    mutation: bool,
 ) -> Error {
     let value = serde_json::from_slice::<std::collections::HashMap<String, &RawValue>>(body).ok();
     let problem = value.as_ref().filter(|value| {
@@ -304,7 +316,9 @@ pub(crate) fn from_project_response(
         // retry decisions or turn a denied request into another error kind.
         Error::Api {
             status,
-            code: text("code").unwrap_or_else(|| format!("http_{status}")),
+            code: text("code")
+                .filter(|code| !code.is_empty())
+                .unwrap_or_else(|| format!("http_{status}")),
             message: text("detail").or_else(|| text("title")),
             // The wrapper retains every member and the exact number text.
             details: None,
@@ -314,6 +328,7 @@ pub(crate) fn from_project_response(
     };
     Error::Response {
         status,
+        mutation,
         error: Box::new(error),
         body: body.to_vec(),
         request_id: request_id.map(str::to_owned).or_else(|| {
@@ -348,7 +363,9 @@ pub(crate) fn from_response(status: u16, retry_after: Option<Duration>, body: &[
         Some(b) => (b.code, b.message),
         None => (None, None),
     };
-    let code = code.unwrap_or_else(|| format!("http_{status}"));
+    let code = code
+        .filter(|code| !code.is_empty())
+        .unwrap_or_else(|| format!("http_{status}"));
     let sql = raw
         .as_ref()
         .and_then(|r| serde_json::from_str::<SqlError>(r.get()).ok());

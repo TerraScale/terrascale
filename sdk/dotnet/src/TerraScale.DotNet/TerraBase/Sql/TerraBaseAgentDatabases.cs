@@ -26,7 +26,6 @@ public sealed partial class TerraBaseSqlClient
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ValidateDatabaseTtl(ttlSeconds);
-        ValidatePlacement(placement?.Regions, placement?.AllRegions);
         return SendDatabaseAsync(project, HttpMethod.Post, DatabasesPath(project),
             new(name, TtlSeconds: ttlSeconds, Regions: placement?.Regions, AllRegions: placement?.AllRegions), cancellationToken);
     }
@@ -36,8 +35,6 @@ public sealed partial class TerraBaseSqlClient
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(placement);
-        ValidatePlacement(placement.Regions, placement.AllRegions);
-        if (placement.Regions is null && placement.AllRegions is null) throw new ArgumentException("Pass Regions or AllRegions.", nameof(placement));
         return SendDatabaseAsync(project, HttpMethod.Patch, DatabasePath(project, database),
             new(Regions: placement.Regions, AllRegions: placement.AllRegions), cancellationToken);
     }
@@ -103,21 +100,6 @@ public sealed partial class TerraBaseSqlClient
         return (await ProjectConnection(project).SendAsync(method, path,
             request is null ? null : TerraBaseConnection.Json(request, json.TerraBaseAgentDatabaseRequest),
             json.TerraBaseManagedDatabase, null, cancellationToken, requestTimeout).ConfigureAwait(false)).Value;
-    }
-
-    internal static void ValidatePlacement(IReadOnlyList<string>? regions, bool? allRegions)
-    {
-        if (regions is not null && allRegions is not null) throw new ArgumentException("Pass regions or allRegions, not both.", nameof(regions));
-        if (regions is not null)
-        {
-            if (regions.Count is < 1 or > 9) throw new ArgumentException("Pass between one and nine regions.", nameof(regions));
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var region in regions)
-            {
-                ArgumentException.ThrowIfNullOrEmpty(region, nameof(regions));
-                if (!seen.Add(region)) throw new ArgumentException("Regions must be distinct.", nameof(regions));
-            }
-        }
     }
 
     private TerraBaseConnection ProjectConnection(string project)
