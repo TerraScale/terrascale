@@ -77,7 +77,8 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask<TenantContext?> ExpiringHereAsync(Engine.IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken)
     {
-        if (await CatalogTables.DatabaseAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false) is not { } database
+        if (PlatformDatabases.IsPlatformDatabase(databaseId)
+            || await CatalogTables.DatabaseAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false) is not { } database
             || database.Home(options.Region) != options.Region
             || await CatalogTables.ProjectOrganizationAsync(transaction, database.ProjectId, cancellationToken).ConfigureAwait(false) is not { } organization)
         {
