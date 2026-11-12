@@ -180,8 +180,9 @@ test('project usernames and browser-bound magic links share single-use email ver
     await expect(page.locator('[data-state=success]')).toHaveCount(0);
     expect((await customer.cookies()).some(cookie => cookie.name === `tsauth_session_${projectId}`)).toBe(false);
 
+    const challenge = await passwordPage.locator('form[action$="/sign-in/verify"] input[name=challenge]').inputValue();
     const reusedCode = await other.request.post(`${base}/sign-in/verify`, {
-      headers: { Origin: auth }, form: { email, code },
+      headers: { Origin: auth }, form: { email, code, challenge },
     });
     expect(reusedCode.status()).toBe(401);
     await admin.goto('/profile?tab=danger');
@@ -349,7 +350,10 @@ test('unverified social email creates and links an account only after the code, 
       await page.goto(base + '/security');
       await expect(page.locator('main')).toContainText(existingEmail);
       await audit.check('existing account connects after proof and its next sign-in needs no code');
-      await admin.goto('/auth/logs');
+      await expect.poll(async () => {
+        await admin.goto('/auth/logs');
+        return admin.locator('main').innerText();
+      }).toContain('user.updated');
       await expect(admin.locator('main')).toContainText('user.signed_up');
       await expect(admin.locator('main')).toContainText('user.provider_linked');
       await expect(admin.locator('main')).toContainText('user.updated');
