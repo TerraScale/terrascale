@@ -85,6 +85,7 @@ class OrganizationInvitationRequest:
 
     email: str
     role: str
+    inviter_name: str | None = None
 
 
 @dataclass(frozen=True)

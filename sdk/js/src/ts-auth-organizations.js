@@ -55,6 +55,7 @@ import { requireId } from "./ids.js";
  * @typedef {{
  * readonly email: string;
  * readonly role: string;
+ * readonly inviter_name?: string | null;
  * }} TsAuthOrganizationInvitationRequest
  */
 /**

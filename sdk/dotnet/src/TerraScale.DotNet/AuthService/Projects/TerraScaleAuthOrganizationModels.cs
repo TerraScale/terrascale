@@ -51,7 +51,8 @@ public sealed record TerraScaleAuthOrganizationInvitation(
 /// <summary>Project organization invitation request.</summary>
 public sealed record TerraScaleAuthOrganizationInvitationRequest(
     [property: JsonPropertyName("email")] string Email,
-    [property: JsonPropertyName("role")] string Role);
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("inviter_name")] string? InviterName = null);
 
 /// <summary>Project organization domain.</summary>
 public sealed record TerraScaleAuthOrganizationDomain(

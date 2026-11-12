@@ -11,7 +11,7 @@ public sealed record ProjectOrganizationMembership(string ProjectId, string Orga
 public sealed record ProjectOrganizationInvitation(string ProjectId, string OrganizationId, string Id, string Email, string Role,
     string TokenHash, string Status, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt);
 
-public sealed record ProjectOrganizationDomain(string ProjectId, string OrganizationId, string Domain, string VerificationToken, DateTimeOffset? VerifiedAt, DateTimeOffset? CheckedAt = null, int FailedChecks = 0);
+public sealed record ProjectOrganizationDomain(string ProjectId, string OrganizationId, string Domain, string VerificationToken, DateTimeOffset? VerifiedAt, DateTimeOffset? CheckedAt = null, int FailedChecks = 0, DateTimeOffset? LeaseUntil = null);
 
 public sealed record ProjectOrganizationDismissal(string ProjectId, string OrganizationId, string UserId);
 
@@ -27,7 +27,7 @@ public sealed record ProjectMembershipRequest(string? UserId, string? Role);
 
 public sealed record ProjectMembershipPage(IReadOnlyList<ProjectOrganizationMembership> Items, string? Next);
 
-public sealed record ProjectInvitationRequest(string? Email, string? Role);
+public sealed record ProjectInvitationRequest(string? Email, string? Role, string? InviterName = null);
 
 public sealed record ProjectOrganizationInvitationBody(string Id, string Email, string Role, string Status, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt);
 

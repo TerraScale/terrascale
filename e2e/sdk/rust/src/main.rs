@@ -337,6 +337,7 @@ impl Runner {
                     &self.project,
                     &created.id,
                     &terrascale::auth_projects::OrganizationInvitationRequest {
+                        inviter_name: None,
                         email: format!("org-{}@example.com", self.table),
                         role: "member".into(),
                     },

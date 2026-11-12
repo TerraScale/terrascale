@@ -23,13 +23,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                 type: "TEXT",
                 nullable: true);
 
-            migrationBuilder.AddColumn<bool>(
-                name: "email_verified",
-                table: "users",
-                type: "INTEGER",
-                nullable: false,
-                defaultValue: true);
-
             migrationBuilder.CreateTable(
                 name: "project_organizations",
                 columns: table => new
@@ -99,6 +92,7 @@ namespace TerraScale.Authentication.Storage.Migrations
                     verified_at = table.Column<DateTime>(type: "TEXT", nullable: true),
                     checked_at = table.Column<DateTime>(type: "TEXT", nullable: true),
                     failed_checks = table.Column<int>(type: "INTEGER", nullable: false),
+                    lease_until = table.Column<DateTime>(type: "TEXT", nullable: true),
                     version = table.Column<string>(type: "TEXT", maxLength: 26, nullable: false)
                 },
                 constraints: table =>
@@ -173,9 +167,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                 column: "user_id");
 
             migrationBuilder.CreateIndex(
-                name: "IX_project_organization_domains_checked_at",
+                name: "IX_project_organization_domains_lease_until_checked_at",
                 table: "project_organization_domains",
-                column: "checked_at",
+                columns: new[] { "lease_until", "checked_at" },
                 filter: "verified_at IS NOT NULL");
 
             migrationBuilder.CreateIndex(
@@ -233,10 +227,6 @@ namespace TerraScale.Authentication.Storage.Migrations
             migrationBuilder.DropColumn(
                 name: "organization_role",
                 table: "webhook_outbox");
-
-            migrationBuilder.DropColumn(
-                name: "email_verified",
-                table: "users");
         }
     }
 }

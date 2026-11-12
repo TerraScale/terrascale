@@ -9,7 +9,7 @@ public sealed class VerifyProjectOrganizationDomainEndpoint(ProjectOrganizationD
     public override void Configure()
     {
         Post(OrganizationRoute + "/domains/{domain}/verify");
-        this.Describe("verify_project_organization_domain", "Verify an organization domain", "Project-scoped verified domains. Publish record_name with record_value as DNS TXT before verifying. A domain belongs to one organization per project.", "Project tenants", null, 200, typeof(ProjectOrganizationDomainBody), conflict: true);
+        this.Describe("verify_project_organization_domain", "Verify an organization domain", "Project-scoped verified domains. Publish record_name with record_value as DNS TXT before verifying. A domain belongs to one organization per project. Resolver errors answer 503 dns_unavailable.", "Project tenants", null, 200, typeof(ProjectOrganizationDomainBody), conflict: true);
     }
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
@@ -15,9 +16,15 @@ public sealed partial class ProjectOrganizationDirectory
     public ProjectOrganizationInvitationBody InvitationBody(ProjectOrganizationInvitation invite) => new(invite.Id, invite.Email, invite.Role,
         invite.Status == "pending" && invite.ExpiresAt <= clock.GetUtcNow() ? "expired" : invite.Status, invite.CreatedAt, invite.ExpiresAt);
 
-    public async Task<ProjectOrganizationInvitationBody> InviteAsync(string project, string id, ProjectInvitationRequest request, string inviter, CancellationToken cancellationToken)
+    public async Task<ProjectOrganizationInvitationBody> InviteAsync(string project, string id, ProjectInvitationRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (request.InviterName is { } name && (string.IsNullOrWhiteSpace(name) || name.Length > 100
+            || name.Any(c => char.IsControl(c) || char.GetUnicodeCategory(c) is UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator || c is '<' or '>')))
+        {
+            throw Invalid("inviter_name must be 1 to 100 plain-text characters without control or bidirectional formatting characters.");
+        }
+
         var email = Users.NormalizeEmail(request.Email) ?? throw Invalid("email must be a valid address.");
         var role = Role(request.Role);
         using var reservation = mail.Reserve();
@@ -30,7 +37,7 @@ public sealed partial class ProjectOrganizationDirectory
         {
             Tenant = project,
             Organization = org.Value.Name,
-            Inviter = inviter,
+            Inviter = request.InviterName ?? org.Value.Name,
             Link = new Uri(options.PublicOrigin, $"ui/{project}/organization-invitations?token={secret}"),
             ExpiresIn = InvitationLifetime,
         }).ConfigureAwait(false);
@@ -95,6 +102,7 @@ public sealed partial class ProjectOrganizationDirectory
             changes.Add(this.Event(org.Value, "organizationMembership.created", user.Id, invite.Value.Role));
         }
 
+        changes.AddRange(await this.ClearDismissalAsync(user.InstanceId, org.Value.Id, user.Id, cancellationToken).ConfigureAwait(false));
         await this.CommitAsync(changes, cancellationToken).ConfigureAwait(false);
         return new(org.Value.Id, org.Value.Slug, existing?.Value.Role ?? invite.Value.Role);
     }

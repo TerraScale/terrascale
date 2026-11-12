@@ -100,9 +100,25 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     expect(demoted.ok).toBe(false);
     if (!demoted.ok) expect(demoted.status).toBe(409);
 
-    const invitation = value(await organizations.createOrganizationInvitation(key, current.projectId, org, { email, role: 'member' }));
+    const ownerToken = await signInToken(ownerPage.request, 'organization-owner');
+    const invitation = value(await organizations.createOrganizationInvitation(ownerToken, current.projectId, org, { email, role: 'member' }));
     expect(Date.parse(invitation.expires_at) - Date.parse(invitation.created_at)).toBe(7 * 24 * 60 * 60 * 1000);
     const invitationMail = await nextMail(email, 0);
+    expect(invitationMail.text).toContain(input.name + ' invited');
+    await onLocalStack(async () => expect(invitationMail.fromName).toMatch(/^Journey organization \(.+\)$/));
+    expect(invitationMail.text).not.toContain(current.email);
+    for (const inviter_name of ['', 'x'.repeat(101), 'bad\nname', 'bad\u202ename', '<b>name</b>']) {
+      const invalid = await organizations.createOrganizationInvitation(key, current.projectId, org, { email, role: 'member', inviter_name });
+      expect(invalid.ok).toBe(false);
+      if (!invalid.ok) expect(invalid.status).toBe(400);
+    }
+    const named = value(await organizations.createOrganizationInvitation(key, current.projectId, org, {
+      email: adminEmail, role: 'member', inviter_name: 'Customer teammate',
+    }));
+    const namedMail = await nextMail(adminEmail, 1);
+    expect(namedMail.text).toContain('Customer teammate invited');
+    expect(namedMail.text).not.toContain(current.email);
+    value(await organizations.revokeOrganizationInvitation(key, current.projectId, org, named.id));
     const invitationUrl = /https:\/\/[^\s<>]+\/organization-invitations\?token=[A-Za-z0-9]{48}/.exec(invitationMail.text)?.[0];
     expect(invitationUrl).toBeTruthy();
     saveSecret('organization-invitation', invitationUrl!);
@@ -137,7 +153,6 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     await confirmWithPassword(ownerPage, ownerAudit, current.password, 'organization OAuth client');
     client = await ownerPage.locator('#auth-created-client-id').innerText();
 
-    const ownerToken = await signInToken(ownerPage.request, 'organization-owner');
     const foreignProjectResponse = await ownerPage.request.post(auth + '/v1/terrascale/organizations/' + current.organizationId + '/projects', {
       headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: 'Organization isolation ' + randomBytes(5).toString('hex') },
     });
@@ -181,6 +196,18 @@ test('project organizations bind invitations, roles and refresh to the chosen or
         data: { name: firstClaim.record_name, value: firstClaim.record_value },
       });
       expect(published.status()).toBe(200);
+      expect((await outsiderPage.request.post('http://127.0.0.1:8030/records', {
+        data: { name: firstClaim.record_name, value: firstClaim.record_value, status: 2 },
+      })).status()).toBe(200);
+      const unavailable = await organizations.verifyOrganizationDomain(key, current.projectId, org, domain);
+      expect(unavailable.ok).toBe(false);
+      if (!unavailable.ok) {
+        expect(unavailable.status).toBe(503);
+        expect(unavailable.error.code).toBe('dns_unavailable');
+      }
+      expect((await outsiderPage.request.post('http://127.0.0.1:8030/records', {
+        data: { name: firstClaim.record_name, value: firstClaim.record_value },
+      })).status()).toBe(200);
       expect(value(await organizations.verifyOrganizationDomain(key, current.projectId, org, domain)).verified_at).toBeTruthy();
       expect((await outsiderPage.request.post('http://127.0.0.1:8030/records', {
         data: { name: secondClaim.record_name, value: secondClaim.record_value },
@@ -216,13 +243,16 @@ test('project organizations bind invitations, roles and refresh to the chosen or
       value(await organizations.updateOrganization(key, current.projectId, org, { ...input, domain_join: 'auto' }));
       const joined = await tokens(outsiderPage, org);
       expect(claims(joined.access_token)).toMatchObject({ org_id: org, org_role: 'member' });
+      value(await organizations.updateOrganization(key, current.projectId, org, { ...input, domain_join: 'suggest' }));
+      value(await organizations.deleteOrganizationMember(key, current.projectId, org, outsiderId));
+      expect((await authorize(outsiderPage)).response.status()).toBe(200);
+      value(await organizations.addOrganizationMember(key, current.projectId, org, { user_id: outsiderId, role: 'member' }));
       value(await organizations.deleteOrganizationDomain(key, current.projectId, org, domain));
     });
     if (!value(await organizations.listOrganizationMembers(key, current.projectId, org)).items.some(member => member.user_id === outsiderId)) {
       value(await organizations.addOrganizationMember(key, current.projectId, org, { user_id: outsiderId, role: 'member' }));
     }
-    value(await sdk.projects.deleteUser(key, current.projectId, outsiderId));
-    expect(value(await organizations.listOrganizationMembers(key, current.projectId, org)).items.some(member => member.user_id === outsiderId)).toBe(false);
+    expect(value(await organizations.listOrganizationMembers(key, current.projectId, org)).items.some(member => member.user_id === outsiderId)).toBe(true);
 
     const selected = await tokens(page, org);
     expect(claims(selected.access_token)).toMatchObject({ org_id: org, org_slug: input.slug, org_role: 'member' });
@@ -244,7 +274,7 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     expect(claims(refreshed.access_token)).toMatchObject({ org_id: org, org_role: 'admin' });
     const pendingInvitation = value(await organizations.createOrganizationInvitation(key, current.projectId, org, { email: adminEmail, role: 'member' }));
     const deletedOrg = org;
-    const pendingMail = await nextMail(adminEmail, 1);
+    const pendingMail = await nextMail(adminEmail, 2);
     const pendingLink = /https:\/\/[^\s<>]+\/organization-invitations\?token=[A-Za-z0-9]{48}/.exec(pendingMail.text)?.[0];
     expect(pendingLink).toBeTruthy();
     saveSecret('organization-revoked-invitation', pendingLink!);
@@ -259,6 +289,10 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     const succession = value(await organizations.createOrganization(key, current.projectId, { ...input, slug: input.slug + '-succession' })).id;
     extraOrganizations.push(succession);
     value(await organizations.addOrganizationMember(key, current.projectId, succession, { user_id: invitedId, role: 'member' }));
+    value(await organizations.addOrganizationMember(key, current.projectId, succession, { user_id: outsiderId, role: 'member' }));
+    const beforePromotion = value(await organizations.listOrganizationMembers(key, current.projectId, succession)).items;
+    expect(Date.parse(beforePromotion.find(member => member.user_id === invitedId)!.created_at))
+      .toBeLessThan(Date.parse(beforePromotion.find(member => member.user_id === outsiderId)!.created_at));
     const sole = value(await organizations.createOrganization(key, current.projectId, { ...input, slug: input.slug + '-sole' })).id;
     extraOrganizations.push(sole);
     await onLocalStack(async () => {
@@ -271,7 +305,22 @@ test('project organizations bind invitations, roles and refresh to the chosen or
       value(await organizations.verifyOrganizationDomain(key, current.projectId, sole, domain));
     });
     value(await sdk.projects.deleteUser(key, current.projectId, adminId));
-    expect(value(await organizations.listOrganizationMembers(key, current.projectId, succession)).items).toMatchObject([{ user_id: invitedId, role: 'admin' }]);
+    expect(value(await organizations.listOrganizationMembers(key, current.projectId, succession)).items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ user_id: invitedId, role: 'admin' }),
+      expect.objectContaining({ user_id: outsiderId, role: 'member' }),
+    ]));
+    expect(value(await organizations.listOrganizationMembers(key, current.projectId, succession)).items).toHaveLength(2);
+    const promotionInput = { ...input, slug: input.slug + '-succession', max_members: 2 };
+    value(await organizations.updateOrganization(key, current.projectId, succession, promotionInput));
+    const tooSmall = await organizations.updateOrganization(key, current.projectId, succession, { ...promotionInput, max_members: 1 });
+    expect(tooSmall.ok).toBe(false);
+    if (!tooSmall.ok) expect(tooSmall.status).toBe(400);
+    const lastAdmin = await organizations.deleteOrganizationMember(key, current.projectId, succession, invitedId);
+    expect(lastAdmin.ok).toBe(false);
+    if (!lastAdmin.ok) expect(lastAdmin.status).toBe(409);
+    value(await sdk.projects.deleteUser(key, current.projectId, outsiderId));
+    expect(value(await organizations.listOrganizationMembers(key, current.projectId, succession)).items)
+      .toMatchObject([{ user_id: invitedId, role: 'admin' }]);
     expect(value(await organizations.listOrganizationMembers(key, current.projectId, sole)).items).toEqual([]);
     value(await sdk.projects.deleteUser(key, current.projectId, invitedId));
     expect(value(await organizations.listOrganizationMembers(key, current.projectId, succession)).items).toEqual([]);

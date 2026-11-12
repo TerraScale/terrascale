@@ -60,8 +60,9 @@ type ProjectOrganizationInvitation struct {
 
 // ProjectOrganizationInvitationRequest is a project organization invitation request.
 type ProjectOrganizationInvitationRequest struct {
-	Email string `json:"email"`
-	Role  string `json:"role"`
+	InviterName *string `json:"inviter_name,omitempty"`
+	Email       string  `json:"email"`
+	Role        string  `json:"role"`
 }
 
 // ProjectOrganizationDomain is a project organization domain.

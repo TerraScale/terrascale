@@ -1264,10 +1264,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("email");
 
-                    b.Property<bool>("EmailVerified")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("email_verified");
-
                     b.Property<string>("InstanceId")
                         .IsRequired()
                         .HasMaxLength(26)
@@ -1994,6 +1990,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("failed_checks");
 
+                    b.Property<DateTime?>("LeaseUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("lease_until");
+
                     b.Property<string>("VerificationToken")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -2012,7 +2012,7 @@ namespace TerraScale.Authentication.Storage.Migrations
 
                     b.HasKey("ProjectId", "OrganizationId", "Domain");
 
-                    b.HasIndex("CheckedAt")
+                    b.HasIndex("LeaseUntil", "CheckedAt")
                         .HasFilter("verified_at IS NOT NULL");
 
                     b.HasIndex("ProjectId", "Domain")

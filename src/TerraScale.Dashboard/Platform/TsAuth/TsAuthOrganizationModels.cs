@@ -45,7 +45,8 @@ public sealed record TsAuthOrganizationInvitation(
 
 public sealed record TsAuthOrganizationInvitationRequest(
     [property: JsonPropertyName("email")] string Email,
-    [property: JsonPropertyName("role")] string Role);
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("inviter_name")] string? InviterName = null);
 
 public sealed record TsAuthOrganizationDomain(
     [property: JsonPropertyName("domain")] string Domain,

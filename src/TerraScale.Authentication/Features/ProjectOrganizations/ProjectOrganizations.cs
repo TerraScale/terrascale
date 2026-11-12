@@ -76,7 +76,8 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
         var member = new ProjectOrganizationMembership(project, org.Value.Id, user.Id, Role(role), clock.GetUtcNow());
         var updated = AddMember(org.Value, member.Role);
         await this.CommitAsync([Change.Assert(user), Change.Update(org, updated), Change.Insert(member),
-            this.Event(updated, "organizationMembership.created", user.Id, member.Role)], cancellationToken).ConfigureAwait(false);
+            this.Event(updated, "organizationMembership.created", user.Id, member.Role),
+            .. await this.ClearDismissalAsync(project, org.Value.Id, user.Id, cancellationToken).ConfigureAwait(false)], cancellationToken).ConfigureAwait(false);
         return member;
     }
 
@@ -94,8 +95,17 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
         var updated = member.Value with { Role = nextRole ?? member.Value.Role };
         await this.CommitAsync([Change.Update(org, org.Value with { Admins = admins, Members = org.Value.Members - (remove ? 1 : 0) }),
             remove ? Change.Delete(member) : Change.Update(member, updated),
-            this.Event(org.Value, remove ? "organizationMembership.deleted" : "organizationMembership.updated", userId, nextRole)], cancellationToken).ConfigureAwait(false);
+            this.Event(org.Value, remove ? "organizationMembership.deleted" : "organizationMembership.updated", userId, nextRole),
+            .. remove ? await this.ClearDismissalAsync(project, org.Value.Id, userId, cancellationToken).ConfigureAwait(false) : []], cancellationToken).ConfigureAwait(false);
         return remove ? null : updated;
+    }
+
+    private async Task<IReadOnlyList<Change>> ClearDismissalAsync(string project, string org, string userId, CancellationToken cancellationToken)
+    {
+        var dismissal = await data.ReadAsync((db, token) => db.ProjectOrganizationDismissals
+            .Where(row => row.ProjectId == project && row.OrganizationId == org && row.UserId == userId)
+            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        return dismissal is null ? [] : [Change.Delete(dismissal)];
     }
 
     public Task<Versioned<ProjectOrganizationMembership>?> MemberAsync(string project, string org, string userId, CancellationToken cancellationToken) =>

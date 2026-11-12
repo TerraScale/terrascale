@@ -60,7 +60,7 @@ public sealed partial class AuthDbContext
             domain.ToTable("project_organization_domains");
             domain.HasKey(row => new { row.ProjectId, row.OrganizationId, row.Domain });
             domain.HasIndex(row => new { row.ProjectId, row.Domain }).IsUnique().HasFilter("verified_at IS NOT NULL");
-            domain.HasIndex(row => row.CheckedAt).HasFilter("verified_at IS NOT NULL");
+            domain.HasIndex(row => new { row.LeaseUntil, row.CheckedAt }).HasFilter("verified_at IS NOT NULL");
             domain.HasOne<ProjectOrganizationRecord>().WithMany().HasForeignKey(row => new { row.ProjectId, row.OrganizationId }).OnDelete(DeleteBehavior.Cascade);
             Versioned(domain);
         });

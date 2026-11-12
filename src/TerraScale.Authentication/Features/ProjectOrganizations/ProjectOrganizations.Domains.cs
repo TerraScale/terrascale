@@ -62,11 +62,6 @@ public sealed partial class ProjectOrganizationDirectory
     public async Task<IReadOnlyList<OrganizationClaims>> AutoJoinAsync(UserRecord user, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(user);
-        if (!user.EmailVerified)
-        {
-            return [];
-        }
-
         var domain = user.Email[(user.Email.LastIndexOf('@') + 1)..];
         var match = await data.ReadAsync((db, token) => db.ProjectOrganizationDomains
             .Where(row => row.ProjectId == user.InstanceId && row.Domain == domain && row.VerifiedAt != null)
@@ -108,7 +103,8 @@ public sealed partial class ProjectOrganizationDirectory
         [
             Change.Assert(user), Change.Assert(match), Change.Update(org, AddMember(org.Value, "member")),
             Change.Insert(new ProjectOrganizationMembership(user.InstanceId, org.Value.Id, user.Id, "member", clock.GetUtcNow())),
-            this.Event(org.Value, "organizationMembership.created", user.Id, "member")
+            this.Event(org.Value, "organizationMembership.created", user.Id, "member"),
+            .. await this.ClearDismissalAsync(user.InstanceId, org.Value.Id, user.Id, cancellationToken).ConfigureAwait(false)
         ];
         if (!await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
         {
@@ -130,7 +126,8 @@ public sealed partial class ProjectOrganizationDirectory
             {
                 await data.SaveAsync([Change.Assert(user), Change.Assert(proof), Change.Update(refreshed, AddMember(refreshed.Value, "member")),
                     Change.Insert(new ProjectOrganizationMembership(user.InstanceId, refreshed.Value.Id, user.Id, "member", clock.GetUtcNow())),
-                    this.Event(refreshed.Value, "organizationMembership.created", user.Id, "member")], cancellationToken).ConfigureAwait(false);
+                    this.Event(refreshed.Value, "organizationMembership.created", user.Id, "member"),
+                    .. await this.ClearDismissalAsync(user.InstanceId, refreshed.Value.Id, user.Id, cancellationToken).ConfigureAwait(false)], cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -143,7 +140,8 @@ public sealed partial class ProjectOrganizationDirectory
         var (org, proof) = await this.SuggestionAsync(user, id, cancellationToken).ConfigureAwait(false);
         await this.CommitAsync([Change.Assert(user), Change.Assert(proof), Change.Update(org, AddMember(org.Value, "member")),
             Change.Insert(new ProjectOrganizationMembership(user.InstanceId, org.Value.Id, user.Id, "member", clock.GetUtcNow())),
-            this.Event(org.Value, "organizationMembership.created", user.Id, "member")], cancellationToken).ConfigureAwait(false);
+            this.Event(org.Value, "organizationMembership.created", user.Id, "member"),
+            .. await this.ClearDismissalAsync(user.InstanceId, org.Value.Id, user.Id, cancellationToken).ConfigureAwait(false)], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DismissSuggestionAsync(UserRecord user, string id, CancellationToken cancellationToken)
@@ -163,11 +161,6 @@ public sealed partial class ProjectOrganizationDirectory
     private async Task<(Versioned<ProjectOrganizationRecord> Org, Versioned<ProjectOrganizationDomain> Proof)> SuggestionAsync(
         UserRecord user, string id, CancellationToken cancellationToken)
     {
-        if (!user.EmailVerified)
-        {
-            throw new ApiException(403, "email_unverified", "Verify your email before joining an organization.");
-        }
-
         var domain = user.Email[(user.Email.LastIndexOf('@') + 1)..];
         var org = await this.ReadAsync(user.InstanceId, id, cancellationToken).ConfigureAwait(false);
         var proof = await data.ReadAsync((db, token) => db.ProjectOrganizationDomains

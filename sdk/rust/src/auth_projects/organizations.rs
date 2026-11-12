@@ -88,6 +88,8 @@ pub struct OrganizationInvitation {
 /// Project organization invitation request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizationInvitationRequest {
+    /// Optional plain-text inviter name.
+    pub inviter_name: Option<String>,
     /// email.
     pub email: String,
     /// role.
