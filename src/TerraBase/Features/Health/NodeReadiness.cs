@@ -20,7 +20,7 @@ internal sealed class NodeReadiness(
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
-        if (!gate.IsOpen || !platform.Finished || lifetime.ApplicationStopping.IsCancellationRequested
+        if (!gate.IsOpen || !platform.Ready || lifetime.ApplicationStopping.IsCancellationRequested
             || options is { NatsUrl: not null, PeersFile: not null }
                 && (owners.Find(options.Region) is null || !push.Started || !leases.Ready))
         {

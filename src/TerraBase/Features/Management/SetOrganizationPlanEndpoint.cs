@@ -16,7 +16,7 @@ internal sealed class SetOrganizationPlanEndpoint(IManagementService management,
         Metadata(AnchoredRevocation.Instance);
         Name("setOrganizationPlan");
         Summary("Sets an organization's plan");
-        Description("Publishes a resource plan authorized by the platform: hobby (the default), starter, pro, team or enterprise. Requires the platform operator (internal listener) acting as an organization owner. " + ManagementRoute.IdentityDescription);
+        Description("Publishes a resource plan authorized by the platform: hobby (the default), starter, pro, team or enterprise. Requires the platform operator (internal listener) acting as an organization owner. The platform organization's plan cannot change (403 platform_plan_locked). " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

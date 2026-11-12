@@ -11,41 +11,78 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
     private const string PlatformCreator = PlatformDatabases.OrganizationId;
     private const string PlatformOrganizationName = "TerraScale";
 
-    public async ValueTask<EnsurePlatformResult> EnsurePlatformAsync(CancellationToken cancellationToken)
+    public async ValueTask<EnsurePlatformResult> EnsurePlatformAsync(Action<Conflict> found, CancellationToken cancellationToken)
     {
-        var state = await ReadAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: false, cancellationToken), static error => error, cancellationToken)
+        ArgumentNullException.ThrowIfNull(found);
+        var tenants = await ReadAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: false, cancellationToken), static error => error, cancellationToken)
             .ConfigureAwait(false);
-        if (state is NotFound)
+        if (tenants is NotFound)
         {
-            state = await WriteAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: true, cancellationToken), static error => error, cancellationToken)
+            tenants = await WriteAsync<PlatformState>(transaction => PlatformTenantsAsync(transaction, create: true, cancellationToken), static error => error, cancellationToken)
                 .ConfigureAwait(false);
         }
 
+        if (tenants is not Done)
+        {
+            return Settled(tenants, found);
+        }
+
+        List<Conflict> conflicts = [];
+        List<string> seeded = [];
+        Unavailable? pending = null;
         foreach (var (name, database) in PlatformDatabases.Databases)
         {
-            if (state is not Done)
+            switch (await SeedDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false))
             {
-                break;
-            }
-
-            state = await ReadAsync<PlatformState>(transaction => PlatformDatabaseAsync(transaction, name, database, cancellationToken), static error => error, cancellationToken)
-                .ConfigureAwait(false);
-            if (state is NotFound)
-            {
-                state = await AddPlatformDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false);
+                case Done:
+                    seeded.Add(name);
+                    break;
+                case Conflict conflict:
+                    found(conflict);
+                    conflicts.Add(conflict);
+                    break;
+                case Unavailable unavailable:
+                    pending ??= unavailable;
+                    break;
             }
         }
 
-        return Settled(state);
+        return pending is not null ? new PlatformPending(pending)
+            : conflicts.Contains(PlatformDatabases.Orphaned) ? new PlatformOrphaned()
+            : conflicts.Count == 0 ? new Done() : new PlatformConflicts(seeded);
     }
 
-    private static EnsurePlatformResult Settled(PlatformState state) => state switch
+    private async ValueTask<PlatformState> SeedDatabaseAsync(string name, (string Id, string ProjectId) database, CancellationToken cancellationToken)
     {
-        Done done => done,
-        Conflict conflict => conflict,
-        Unavailable unavailable => unavailable,
-        NotFound => throw new UnreachableException(),
-    };
+        var state = await ReadAsync<PlatformState>(transaction => PlatformDatabaseAsync(transaction, name, database, cancellationToken), static error => error, cancellationToken)
+            .ConfigureAwait(false);
+        if (state is not NotFound)
+        {
+            return state;
+        }
+
+        var tenant = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Enterprise, database.ProjectId, database.Id);
+        return engine.HasDatabaseFiles(tenant, cancellationToken)
+            && !await ReadAsync(transaction => OwnedFileAsync(transaction, tenant, cancellationToken), static _ => true, cancellationToken).ConfigureAwait(false)
+                ? PlatformDatabases.Orphaned
+                : await AddPlatformDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static EnsurePlatformResult Settled(PlatformState state, Action<Conflict> found)
+    {
+        if (state is Conflict conflict)
+        {
+            found(conflict);
+        }
+
+        return state switch
+        {
+            Done done => done,
+            Conflict => new PlatformConflicts([]),
+            Unavailable unavailable => new PlatformPending(unavailable),
+            NotFound => throw new UnreachableException(),
+        };
+    }
 
     private static async ValueTask<PlatformState> PlatformTenantsAsync(IStorageTransaction transaction, bool create, CancellationToken cancellationToken)
     {
@@ -97,12 +134,12 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
             return new Conflict("a platform project is closed", "platform_project_closed");
         }
 
-        if (await FindDatabaseAsync(transaction, PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken).ConfigureAwait(false) is { } found)
+        if (await CatalogTables.DatabaseNamedAsync(transaction, database.ProjectId, name, cancellationToken).ConfigureAwait(false) is { } id)
         {
-            return await CatalogTables.DatabaseAsync(transaction, database.ProjectId, found.DatabaseId!, cancellationToken).ConfigureAwait(false) is { } existing
-                && existing.Id == database.Id && existing.HomeRegion == options.Region && !existing.AllRegions && existing.Replicas.Count == 0
+            return id == database.Id && await CatalogTables.DatabaseAsync(transaction, database.ProjectId, id, cancellationToken).ConfigureAwait(false) is { } existing
+                && existing.HomeRegion == options.Region && !existing.AllRegions && existing.Replicas.Count == 0
                     ? new Done()
-                    : new Conflict("a platform database name holds another database", "platform_database_taken");
+                    : new Conflict("a platform database name holds another database, or the platform database with another placement", "platform_database_taken");
         }
 
         return await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false)
@@ -119,10 +156,10 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
             .ConfigureAwait(false) switch
         {
             AddedDatabase => new Done(),
-            Conflict error when error == ManagementErrors.NameTaken => new Unavailable("a platform database was created while it was seeded"),
+            Conflict error when error == ManagementErrors.NameTaken => new Unavailable("a platform database was created while it was seeded", "platform_database_raced"),
             Conflict error => error,
             Unavailable error => error,
-            NotFound or Forbidden or QuotaExceeded => new Unavailable("the platform project is not ready"),
+            NotFound or Forbidden or QuotaExceeded => new Unavailable("the platform project is not ready", "platform_project_unready"),
         };
 
     private readonly union PlatformState(Done, Conflict, NotFound, Unavailable);

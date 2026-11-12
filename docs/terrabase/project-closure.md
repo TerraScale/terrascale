@@ -20,6 +20,7 @@ after a lost response, a restart or a repeated request presents the same identit
 | 409 `not_empty` | Version 1 only: this node sees a database, project API key, backup destination or file bucket. | nothing |
 | 409 `closure_conflict` | A fence for this project exists with another closure id or authority organization. | nothing |
 | 409 `binding_conflict` | TerraBase's own binding names another authority organization, or an unverified legacy namespace holds the id. | nothing |
+| 409 `platform_project_protected` | The project is a [platform project](platform-databases.md) (ts-auth `00000000000000000000000002`, ts-dashboard `00000000000000000000000005`), for either version. | nothing |
 | 503 | Catalog unavailable or not verified (restore gate). | nothing |
 
 404 is never returned for an unknown project: a never-enrolled project is fenced like an enrolled one.

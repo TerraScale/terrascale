@@ -379,25 +379,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             _ = Locate(database);
             await ThrowIfPurgeFencedAsync(key.Database, cancellationToken).ConfigureAwait(false);
             ThrowIfIntentPending(key);
-            if (File.Exists(path) || Directory.Exists(path)
-                || Sidecars.Any(sidecar => File.Exists(path + sidecar) || Directory.Exists(path + sidecar)))
+            if (HoldsFiles(path, key.Database, cancellationToken))
             {
                 throw new IOException("a database create target already contains files");
-            }
-
-            var directory = Path.GetDirectoryName(path)!;
-            if (Directory.Exists(directory))
-            {
-
-                foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    if (string.Equals(CollisionDatabaseIdFromFileName(Path.GetFileName(entry)), key.Database, StringComparison.Ordinal))
-                    {
-                        throw new IOException("a database create target already contains files");
-                    }
-                }
             }
 
             if (store is { IsClosed: true })
@@ -745,6 +729,36 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         var (key, path) = Place(database);
         RejectDatabaseLinks(path);
         return File.Exists(path) ? await OpenStoreAsync(key, path, cancellationToken).ConfigureAwait(false) : null;
+    }
+
+    public bool HasDatabaseFiles(TenantContext database, CancellationToken cancellationToken)
+    {
+        var (key, path) = Locate(database);
+        return HoldsFiles(path, key.Database, cancellationToken);
+    }
+
+    private static bool HoldsFiles(string path, string database, CancellationToken cancellationToken)
+    {
+        if (File.Exists(path) || Directory.Exists(path)
+            || Sidecars.Any(sidecar => File.Exists(path + sidecar) || Directory.Exists(path + sidecar)))
+        {
+            return true;
+        }
+
+        var directory = Path.GetDirectoryName(path)!;
+        if (Directory.Exists(directory))
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (string.Equals(CollisionDatabaseIdFromFileName(Path.GetFileName(entry)), database, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public ValueTask<long?> GetDatabaseSizeAsync(TenantContext database, CancellationToken cancellationToken)

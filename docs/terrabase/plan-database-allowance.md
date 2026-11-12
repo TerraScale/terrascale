@@ -44,8 +44,8 @@ allowance answers `409` with code `database_limit` and a message naming the plan
   `409 name_taken` on `POST`), even at the allowance.
 - Organizations already above their allowance (after a downgrade) keep their databases; only new
   ones are refused.
-- The [platform databases](platform-databases.md) are exempt: their organization is on enterprise
-  and is excluded explicitly.
+- The [platform databases](platform-databases.md) are exempt: a database added to the platform
+  organization skips the allowance check, so no region asks its peers for that organization's count.
 
 ## Organization plans before the first database
 
@@ -58,6 +58,7 @@ Body: `{"plan": "hobby" | "starter" | "pro" | "team" | "enterprise"}`.
 | Organization record | Result |
 |---|---|
 | `{organization}` is not a canonical ULID, or the plan is unknown | `400 invalid_request` |
+| The platform organization (`00000000000000000000000001`) | `403 platform_plan_locked`; its plan stays enterprise, as on `PUT /v1/management/organizations/{organization}/plan` |
 | Exists, no members (created by enrollment or by this route) | `200` organization; an unchanged plan writes nothing and records no audit event |
 | Missing, plan `hobby` | `404 not_found`; Hobby is the default, so nothing is stored |
 | Missing, any other plan | `200` organization; creates the memberless record and records `settings.plan_updated` |

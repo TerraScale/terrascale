@@ -277,21 +277,33 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 503 — the plan is not published in every region yet. Retry shortly. Retry: yes.
 
+### `platform_database_protected`
+
+409 — the request would delete, rename or set a TTL on one of the databases TerraScale's own services run on, or give another database one of their names. Those databases cannot change. Retry: no.
+
 ### `platform_database_taken`
 
-409 — a platform database with that name already exists. Choose another name. Retry: no.
+Not an API answer: a TerraBase server logs this code at startup when the name of one of TerraScale's own databases is held by another database, or by that database with another placement. No request returns it.
 
 ### `platform_organization_taken`
 
-409 — a platform organization with that name already exists. Choose another name. Retry: no.
+Not an API answer: a TerraBase server logs this code at startup when another record holds the id of TerraScale's own organization. No request returns it.
 
 ### `platform_placement_locked`
 
-409 — platform databases are placed in every region and their placement cannot change. The request cannot be served. Retry: no.
+409 — the request would move the home region of one of the databases TerraScale's own services run on. Their home cannot move. Retry: no.
+
+### `platform_plan_locked`
+
+403 — the request would change the plan of TerraScale's own organization. Its plan cannot change. Retry: no.
+
+### `platform_project_protected`
+
+409 — the request would close one of the projects TerraScale's own services run in, or delete the account of the only member of TerraScale's own organization. Those projects cannot be closed. Retry: no.
 
 ### `platform_project_taken`
 
-409 — a platform project with that name already exists. Choose another name. Retry: no.
+Not an API answer: a TerraBase server logs this code at startup when another organization holds the id of one of TerraScale's own projects. No request returns it.
 
 ### `precondition_failed`
 

@@ -364,6 +364,11 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             shared.Add(row.Membership.OrganizationId);
         }
 
+        if (sole.Contains(PlatformBootstrap.OrganizationId))
+        {
+            throw Conflict("platform_project_protected", "TerraScale's own organization holds its services' databases and cannot be deleted; give it another owner before deleting your account.");
+        }
+
         return (sole, shared);
     }
 
@@ -501,6 +506,11 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         {
             var access = await this.ProjectAccessAsync(userId, organizationId, projectId, requireMfa: accountId is null, cancellationToken).ConfigureAwait(false);
             RequireRole(access, Roles.Admin);
+            if (projectId is PlatformBootstrap.AuthProjectId or PlatformBootstrap.DashboardProjectId)
+            {
+                throw PlatformProjectProtected();
+            }
+
             var account = accountId is null ? null : await this.ClosureAsync("account", accountId, cancellationToken).ConfigureAwait(false);
             if (accountId is not null && account is null)
             {
@@ -964,6 +974,9 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
     internal static ApiException Forbidden() => new(StatusCodes.Status403Forbidden, "forbidden_role", "Your role does not allow this.");
 
     internal static ApiException Conflict(string code, string message) => new(StatusCodes.Status409Conflict, code, message);
+
+    internal static ApiException PlatformProjectProtected() =>
+        Conflict("platform_project_protected", "This project holds a TerraScale service's own database and cannot be deleted.");
 
     internal static Change Authority(OrganizationAccess access)
     {

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Platform;
 using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 
@@ -31,7 +32,7 @@ internal sealed partial class EngineManagementService
 
     public async ValueTask<SetPlanResult> SetPlanAsync(
         string userId, string organizationId, PlanTier plan, CancellationToken cancellationToken) =>
-        await WriteAsync<SetPlanResult>(async transaction =>
+        PlatformDatabases.IsPlatform(organizationId) ? ManagementErrors.PlatformPlanLocked : await WriteAsync<SetPlanResult>(async transaction =>
         {
             var access = await AuthorizeAsync(transaction, userId, organizationId, allowProject: false, cancellationToken).ConfigureAwait(false);
             if (access is not Organization)

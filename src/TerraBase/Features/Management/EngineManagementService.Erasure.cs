@@ -4,6 +4,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.FileStorage;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management;
+using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -107,7 +108,7 @@ internal sealed partial class EngineManagementService
         }
 
         var databases = await CatalogTables.DatabasesAsync(transaction, project, null, CatalogPage, token).ConfigureAwait(false);
-        foreach (var database in databases.Items)
+        foreach (var database in databases.Items.Where(database => !PlatformDatabases.IsPlatformDatabase(database.Id)))
         {
             var namespaceId = await CatalogTables.ProjectOrganizationAsync(transaction, project, token).ConfigureAwait(false);
             var organization = (namespaceId is null ? null : await CatalogTables.OrganizationAsync(transaction, namespaceId, token).ConfigureAwait(false))

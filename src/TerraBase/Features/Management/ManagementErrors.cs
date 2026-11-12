@@ -14,7 +14,14 @@ internal static class ManagementErrors
 
     public static readonly Conflict WrongRegion = new("the database is managed in another region: send it to its home region", "wrong_region");
 
-    public static readonly Conflict PlatformPlacementLocked = new("platform databases are placed in every region and their placement cannot change", "platform_placement_locked");
+    public static readonly Conflict PlatformPlacementLocked = new("a platform database stays homed in the region that seeds it; its home cannot move", "platform_placement_locked");
+
+    public static readonly Conflict PlatformDatabaseProtected = new(
+        "platform databases cannot be deleted, renamed or given a TTL, and no other database can take their names", "platform_database_protected");
+
+    public static readonly Conflict PlatformProjectProtected = new("platform projects cannot be closed", "platform_project_protected");
+
+    public static readonly Forbidden PlatformPlanLocked = new("the platform organization's plan cannot change", "platform_plan_locked");
 
     public static Conflict DatabaseLimit(string plan, long allowed) => new(
         $"the organization's {plan} plan allows {allowed} database{(allowed == 1 ? "" : "s")}; delete a database or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing",

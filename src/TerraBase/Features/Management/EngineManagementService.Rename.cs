@@ -1,14 +1,17 @@
 using System.Diagnostics;
 using TerraBase.Errors;
+using TerraBase.Features.Platform;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
-    public ValueTask<SetDatabaseRegionsResult> RenameDatabaseAsync(
+    public async ValueTask<SetDatabaseRegionsResult> RenameDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken) =>
-        WriteAsync<SetDatabaseRegionsResult>(async transaction =>
+        PlatformDatabases.IsPlatformDatabase(databaseId) || PlatformDatabases.IsPlatformName(projectId, name)
+            ? ManagementErrors.PlatformDatabaseProtected
+            : await WriteAsync<SetDatabaseRegionsResult>(async transaction =>
         {
             var project = await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (project is not TenantContext tenant)
@@ -44,5 +47,5 @@ internal sealed partial class EngineManagementService
             var renamed = database with { Name = name };
             await CatalogTables.PutDatabaseAsync(transaction, renamed, cancellationToken).ConfigureAwait(false);
             return renamed;
-        }, static error => error, cancellationToken);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 }

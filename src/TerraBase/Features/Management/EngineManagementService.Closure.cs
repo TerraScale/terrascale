@@ -4,6 +4,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.FileStorage;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management;
+using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using ZLogger;
@@ -12,10 +13,16 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
+    private readonly HashSet<string> _platformClosuresReported = [with(StringComparer.Ordinal)];
     private string? _closuresAfter;
 
     public async ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken)
     {
+        if (PlatformDatabases.IsPlatformProject(projectId))
+        {
+            return ManagementErrors.PlatformProjectProtected;
+        }
+
         var result = await FenceProjectAsync(projectId, closureId, authorityOrganizationId, version, cancellationToken).ConfigureAwait(false);
         if (result is not ProjectClosureStatus { Status: ProjectClosure.Pending })
         {
@@ -181,6 +188,16 @@ internal sealed partial class EngineManagementService
 
         foreach (var stored in page.Records)
         {
+            if (PlatformDatabases.IsPlatformProject(stored.Id))
+            {
+                if (_platformClosuresReported.Add(stored.Id))
+                {
+                    logger.ZLogError($"The closure record of platform project {stored.Id:@Project} is never converged; nothing of that project is erased: {ManagementErrors.PlatformProjectProtected.Code:@Code}");
+                }
+
+                continue;
+            }
+
             try
             {
                 var record = EntityPayload.Read(stored, ManagementJsonContext.Default.ProjectClosureRecord);

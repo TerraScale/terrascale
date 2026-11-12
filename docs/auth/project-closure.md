@@ -24,13 +24,16 @@ ts-auth's half of the closure handoff; the TerraBase fence and its acceptance ru
 
 ## Project closure
 
-- `DELETE …/projects/{project}` commits, in one transaction asserting the caller's admin role, the project intent.
+- `DELETE …/projects/{project}` commits, in one transaction asserting the caller's admin role, the project intent. For
+  a TerraScale platform project (`00000000000000000000000002`, `00000000000000000000000005`) it answers 409
+  `platform_project_protected` after the role check instead, and writes no intent.
 - Then ts-auth calls TerraBase over its own peer transport (`TerraBaseManagementClient.CloseProjectAsync`):
   - `accepted` or `pending`: the intent first records `fenceSeen` (at the version read, read again after a lost race),
     so no later refusal can cancel it. `accepted` then removes, in one transaction, the project root, its logical
     deletion job and the intent (204), and afterwards its roles, keys and invitations. `pending` answers 202.
-  - `not_empty`, `closure_conflict` or `binding_conflict` while `fenceSeen` is false: the intent is removed at the
-    version read (read again after a lost race) and the request answers 409; the project keeps every right. If the
+  - `not_empty`, `closure_conflict`, `binding_conflict` or `platform_project_protected` (a TerraScale platform project,
+    whose database TerraBase never erases) while `fenceSeen` is false: the intent is removed at the version read (read
+    again after a lost race) and the request answers 409 with that code; the project keeps every right. If the
     intent showed the fence meanwhile it stays (202). If it is gone, the answer reflects the root: 204 when another pass
     removed it, 409 when another pass cancelled it.
   - Any other answer (an outage, a lost answer, a wrong listener's 404, a wrong peer credential's 401): the intent stays
@@ -57,13 +60,16 @@ answers for the fence it holds and the closure proceeds.
   loses the fence; one that became sole later gets one. For every sole organization, each project gets a project intent
   owned by the account (`accountId`) and closes as above; a project removed meanwhile is skipped. A project intent's
   transaction requires the account intent, so a step running after a cancellation creates none.
-- Until every project closure is accepted, a 409 (`last_owner`, `not_empty`, `closure_conflict`, `binding_conflict`)
-  ends the account intent. The account intent goes first, at the version read: a concurrent pass that deferred it is read
+- Until every project closure is accepted, a 409 (`last_owner`, `not_empty`, `closure_conflict`, `binding_conflict`,
+  `platform_project_protected`) ends the account intent. The account intent goes first, at the version read: a concurrent pass that deferred it is read
   again and the delete retried; one that committed it pauses it instead (see below); a vanished one stops there. Only
   then are its children handled: each project intent it began is detached (`accountId` cleared at the version read) and
   finishes alone, removing that project once TerraBase accepts; its organization fences go. The account, its
   memberships, its organizations and untouched projects keep every right. TerraBase fences are permanent, so this is no
-  rollback of the closures that started.
+  rollback of the closures that started. The deletion of an account that is the only member of the TerraScale
+  organization (`00000000000000000000000001`) answers 409 `platform_project_protected` before ts-auth writes any intent
+  or starts any closure, whatever the order of its memberships, and the account stays and signs in. A pass of an
+  account intent written earlier ends with the same 409 before it starts another closure.
 - When every project closure is accepted, the intent records `committedAt` and removes, in order: the shared
   memberships, the sole organizations, then the user. From `committedAt` on, a 409 (for example a late `last_owner`
   when another owner left a shared organization meanwhile) only pauses the closure; repeating the request, or the
