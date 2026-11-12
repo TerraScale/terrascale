@@ -94,7 +94,7 @@ internal sealed class SqlSocket(
 
     private async Task ServeAsync(CancellationToken cancellationToken)
     {
-        while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested && !_revoked.IsCancellationRequested)
+        while (socket.State is (WebSocketState.Open or WebSocketState.CloseSent) && !cancellationToken.IsCancellationRequested && !_revoked.IsCancellationRequested)
         {
             var frame = await ReceiveAsync(SqlBatch.MaxBytes, cancellationToken).ConfigureAwait(false);
             if (frame is null)
@@ -104,6 +104,11 @@ internal sealed class SqlSocket(
 
             try
             {
+                if (_closing)
+                {
+                    continue;
+                }
+
                 await _frame.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
@@ -304,7 +309,7 @@ internal sealed class SqlSocket(
         if (_fence.IsCancellationRequested)
         {
             await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
-            return false;
+            return true;
         }
 
         if (running is null)
@@ -494,6 +499,12 @@ internal sealed class SqlSocket(
 
     private async Task CloseAsync(WebSocketCloseStatus status, string? reason)
     {
+        if (status is WebSocketCloseStatus.InvalidMessageType or WebSocketCloseStatus.PolicyViolation or WebSocketCloseStatus.MessageTooBig
+            or WebSocketCloseStatus.InternalServerError)
+        {
+            _closed.CancelAfter(Shutdown.DrainBudget);
+        }
+
         await _send.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -503,7 +514,6 @@ internal sealed class SqlSocket(
             }
 
             _closing = true;
-            _closed.CancelAfter(Shutdown.DrainBudget);
             await socket.CloseOutputAsync(status, reason, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException)

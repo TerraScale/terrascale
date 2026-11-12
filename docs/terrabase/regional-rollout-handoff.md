@@ -145,7 +145,8 @@ by up to the 5-second transaction limit. When the source writer's ingress hold
 starts, it closes every SQL socket it serves with 1012 (service restart) once
 the frame in flight is answered, and refuses frames that arrive later, so no
 statement runs on the old writer after the fence and clients reconnect to the
-new writer.
+new writer. A closed socket still sends every answer queued before its 1012 and
+ends when the client answers the close.
 
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

@@ -72,8 +72,10 @@ After a failed statement inside a transaction, every `execute` answers `transact
 | Server restarting | close 1001 |
 | The region's writer starts handing off to another node | close 1012 after the answer to the frame in flight; frames that arrive later do not run. Reconnect |
 
-The server pings every 20 seconds and drops a peer that does not answer within 20 seconds, or that does not answer the
-server's close within 2 seconds. Every frame counts as one request in usage and request logs, with its received and
-sent bytes.
+The server pings every 20 seconds and drops a peer that does not answer within 20 seconds. After a close for a client
+fault (1003, 1008, 1009, 1011) it drops a peer that does not answer the close within 2 seconds. After a 1001 or 1012 it
+still sends every answer queued before the close, runs no frame that arrives later and waits for the peer's answer until
+the ping timeout drops it, 40 to 50 seconds after the peer's last frame. Every frame counts as one request in usage and
+request logs, with its received and sent bytes.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
