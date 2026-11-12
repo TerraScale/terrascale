@@ -39,6 +39,7 @@ export default defineConfig({
       name: 'placement',
       testMatch: 'placement/*.spec.ts',
       testIgnore: 'placement/close.spec.ts',
+      workers: 1,
       dependencies: process.env.E2E_REGIONS === '2' ? ['placement-setup'] : [],
       metadata: { setup: 'placement-setup' },
       use: secretFree,
