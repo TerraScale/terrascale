@@ -11,7 +11,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Storage.Migrations
 {
     [DbContext(typeof(AuthDbContext))]
-    [Migration("20261112194404_ProjectAttackProtection")]
+    [Migration("20261112215534_ProjectAttackProtection")]
     partial class ProjectAttackProtection
     {
         /// <inheritdoc />
@@ -809,7 +809,7 @@ namespace TerraScale.Authentication.Storage.Migrations
                         {
                             t.HasCheckConstraint("ck_passcodes_failed_attempts", "failed_attempts >= 0");
 
-                            t.HasCheckConstraint("ck_passcodes_purpose", "purpose IS NULL OR purpose IN ('password-reset', 'sign-up', 'step-up')");
+                            t.HasCheckConstraint("ck_passcodes_purpose", "purpose IS NULL OR purpose IN ('password-reset', 'sign-up', 'step-up', 'enrollment-inbox')");
                         });
                 });
 
@@ -1056,6 +1056,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
 
+                    b.Property<DateTime?>("LastActivityAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_activity_at");
+
                     b.Property<bool>("Mfa")
                         .HasColumnType("INTEGER")
                         .HasColumnName("mfa");
@@ -1068,6 +1072,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("revoked");
 
+                    b.Property<string>("SessionStamp")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_stamp");
+
                     b.Property<string>("TokenHash")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -1077,6 +1085,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("user_id");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("verified_at");
 
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
@@ -1277,6 +1289,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<string>("PlatformRole")
                         .HasColumnType("TEXT")
                         .HasColumnName("platform_role");
+
+                    b.Property<string>("SessionStamp")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_stamp");
 
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
