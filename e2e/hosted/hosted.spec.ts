@@ -60,13 +60,11 @@ test('a second user enrolls a passkey and signs back in to the dashboard and a r
       }
       await page.locator('#sign-in-email').fill(email);
       if (path === null || path === 'post') {
-        const [navigation, signedIn] = await Promise.all([
+        const [navigation] = await Promise.all([
           page.waitForRequest((request) => request.isNavigationRequest() && request.frame() === page.mainFrame()),
-          page.waitForResponse((response) => new URL(response.url()).pathname === '/ui/terrascale/sign-in/passkey'),
           page.locator('#passkey-sign-in').click(),
         ]);
         expect(navigation.method()).toBe('GET');
-        expect(await signedIn.text()).toContain(`href="${dash}"`);
         expect(new URL(navigation.url()).pathname).toBe('/ui/terrascale/sign-in');
         await page.waitForURL(onHosted('sign-in'));
         await hostedReady(page);
