@@ -129,6 +129,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
     private async Task BatchAsync(JsonElement op, CancellationToken cancellationToken)
     {
         var results = await Db.BatchAsync(Statements(op, "statements"), cancellationToken);
+        Same(results.Count.ToString(CultureInfo.InvariantCulture), op.GetProperty("statements").GetArrayLength().ToString(CultureInfo.InvariantCulture), "results");
         Same(Rows(results[^1].Rows), Canonical(op.GetProperty("lastRows")), "last rows");
         var refusal = await RefusedAsync<TerraBaseSqlException>(() => Db.BatchAsync(Statements(op, "failing"), cancellationToken));
         Same($"{refusal.Code}:{refusal.Statement}", $"{Text(op, "code")}:{op.GetProperty("statement").GetInt32()}", "batch refusal");
@@ -251,9 +252,16 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
 
     private async Task CreateWithTtlAsync(JsonElement op, CancellationToken cancellationToken)
     {
-        var created = await client.CreateDatabaseAsync(project, Fill(op, "name"), op.GetProperty("ttlSeconds").GetInt32(), cancellationToken: cancellationToken);
+        var ttl = op.GetProperty("ttlSeconds").GetInt32();
+        var before = TimeProvider.System.GetUtcNow();
+        var created = await client.CreateDatabaseAsync(project, Fill(op, "name"), ttl, cancellationToken: cancellationToken);
+        var after = TimeProvider.System.GetUtcNow();
         Same(created.Name, Fill(op, "name"), "name");
-        Same(created.ExpiresAt is null ? "none" : "expires", "expires", "expiry");
+        var expiry = created.ExpiresAt ?? throw new InvalidOperationException("the database has no expiry");
+        var earliest = before.AddSeconds(ttl).ToUnixTimeSeconds();
+        var latest = after.AddSeconds(ttl + 5).ToUnixTimeSeconds();
+        var at = expiry.ToUnixTimeSeconds();
+        Same(at >= earliest && at <= latest ? "within ttl" : $"{at} outside {earliest}..{latest}", "within ttl", "expiry the server reports");
         agent = created;
     }
 

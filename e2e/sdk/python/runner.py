@@ -220,10 +220,17 @@ def ids(op):
 
 
 def create_ttl(op):
+    before = datetime.now(timezone.utc)
     created = client.create_database(fill(op["name"]), ttl_seconds=op["ttlSeconds"])
+    after = datetime.now(timezone.utc)
     same(created.name, fill(op["name"]), "name")
     if created.expires_at is None:
         raise AssertionError("the database has no expiry")
+    expiry = datetime.fromisoformat(created.expires_at.replace("Z", "+00:00"))
+    earliest = before + timedelta(seconds=op["ttlSeconds"])
+    latest = after + timedelta(seconds=op["ttlSeconds"] + 5)
+    if not earliest <= expiry <= latest:
+        raise AssertionError(f"expiry the server reports, {created.expires_at}, is outside {earliest.isoformat()}..{latest.isoformat()}")
     state["agent"] = created
 
 
