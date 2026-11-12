@@ -1,4 +1,6 @@
 import { createHash, createPublicKey, randomBytes, verify as verifySignature } from 'node:crypto';
+import { once } from 'node:events';
+import { connect } from 'node:http2';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { APIRequestContext, Page } from '@playwright/test';
@@ -312,12 +314,24 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
 }
 
 
-async function authStorage(context: APIRequestContext, sql: string, args: unknown[]): Promise<void> {
+async function authStorage(sql: string, args: unknown[]): Promise<void> {
   const peer = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
-  const changed = await context.post('http://127.0.0.1:8081/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute', {
-    headers: { 'X-TerraBase-Peer-Credential': peer }, data: { statements: [{ sql, args }] },
-  });
-  expect(changed.status()).toBe(200);
+  const session = connect('http://127.0.0.1:8081');
+  const stream = session.request({ ':method': 'POST', ':path': '/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute',
+    'content-type': 'application/json', 'x-terrabase-peer-credential': peer });
+  session.on('error', error => stream.destroy(error));
+  try {
+    const response = once(stream, 'response');
+    stream.end(JSON.stringify({ statements: [{ sql, args }] }));
+    const [headers] = await response;
+    let body = '';
+    stream.setEncoding('utf8');
+    for await (const chunk of stream) body += chunk;
+    expect(Number(headers[':status']), body).toBe(200);
+    expect(JSON.parse(body).results[0].rows_affected).toBeGreaterThan(0);
+  } finally {
+    session.close();
+  }
 }
 
 async function checkUserKeyLifecycle(context: APIRequestContext, root: string, user: string, readKey: string, writeKey: string): Promise<void> {
@@ -362,7 +376,7 @@ async function checkUserKeyLifecycle(context: APIRequestContext, root: string, u
   await verify(created[0].key, true);
   await verify(ownKey.key, true);
   await onLocalStack(async () => {
-    await authStorage(context, 'UPDATE sessions SET created_at = ? WHERE user_id = ?', [new Date(Date.now() - 11 * 60_000).toISOString(), user]);
+    await authStorage('UPDATE sessions SET created_at = ? WHERE user_id = ?', [new Date(Date.now() - 11 * 60_000).toISOString(), user]);
     const old = await context.post(root + '/me/api-keys', {
       headers: { Origin: auth }, data: { name: 'old session', scopes: ['invoices:read'] },
     });
