@@ -72,7 +72,7 @@ public interface ITenantDirectory
         TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken, string? name = null, DatabaseIdentity? identity = null);
 
     ValueTask<bool> ReconcileDatabaseNameAsync(
-        TenantContext database, string name, string home, Func<TenantContext, CancellationToken, Task<string?>> resolve, CancellationToken cancellationToken);
+        TenantContext database, string name, string home, long version, Func<TenantContext, CancellationToken, Task<string?>> resolve, CancellationToken cancellationToken);
 
     ValueTask<ForgetDatabaseResult> ForgetDatabaseAsync(TenantContext database, CancellationToken cancellationToken);
 

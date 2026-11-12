@@ -8,7 +8,7 @@ internal sealed partial class EngineManagementService
     private const int MaxNameChain = 8;
 
     public ValueTask<bool> ReconcileDatabaseNameAsync(
-        TenantContext database, string name, string home, Func<TenantContext, CancellationToken, Task<string?>> resolve, CancellationToken cancellationToken) =>
+        TenantContext database, string name, string home, long version, Func<TenantContext, CancellationToken, Task<string?>> resolve, CancellationToken cancellationToken) =>
         WriteAsync<bool>(async transaction =>
         {
             if (database.ProjectId is null || database.DatabaseId is null || !DatabaseName.TryParse(name, out _))
@@ -20,7 +20,7 @@ internal sealed partial class EngineManagementService
             var stored = new HashSet<string>(StringComparer.Ordinal);
             if (await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is { } root)
             {
-                if (root.Home(options.Region) != home || home == options.Region)
+                if (root.Home(options.Region) != home || home == options.Region || root.PlacementVersion > version)
                 {
                     return false;
                 }

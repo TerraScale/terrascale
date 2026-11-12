@@ -20,7 +20,7 @@ internal sealed class ReplicaNames(ITenantDirectory tenants, IReplicaPeers peers
         using var lookup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         lookup.CancelAfter(TimeSpan.FromSeconds(3));
         var database = new TenantContext(entry.OrganizationId, PlanTier.Hobby, entry.ProjectId, entry.DatabaseId);
-        return await tenants.ReconcileDatabaseNameAsync(database, entry.Name, entry.HomeRegion, async (holder, token) =>
+        return await tenants.ReconcileDatabaseNameAsync(database, entry.Name, entry.HomeRegion, entry.PlacementVersion, async (holder, token) =>
         {
             ReplicaCatalogEntry? found;
             if (listed?.TryGetValue((holder.OrganizationId, holder.ProjectId!, holder.DatabaseId!), out found) != true)
