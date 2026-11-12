@@ -412,6 +412,8 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
 {
     internal const string DeviceAuthorizationClaim = "ts_auth_device_authorization";
 
+    internal const string DeviceApprovalKind = "oidc-device-approval";
+
     /// <inheritdoc />
     public async ValueTask HandleAsync(ProcessSignInContext context)
     {
@@ -487,6 +489,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             approvedAuthorizationId = approval.Id;
             operations.Add(Change.Assert(parent));
             operations.Add(Change.Insert(approval));
+            operations.Add(Credentials.Claim(tenant, DeviceApprovalKind, approval.Id, parentId));
         }
         else if (context.Request.IsDeviceCodeGrantType())
         {

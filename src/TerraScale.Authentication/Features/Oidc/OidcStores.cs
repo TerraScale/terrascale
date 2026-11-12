@@ -407,7 +407,9 @@ public sealed class OidcAuthorizationStore(AuthData data, IHttpContextAccessor h
         var cutoff = clock.GetUtcNow() - TimeSpan.FromHours(1);
         return await data.ReadAsync((db, token) => db.OidcAuthorizations
             .Where(authorization => (authorization.Status == Statuses.Revoked || authorization.Type == AuthorizationTypes.AdHoc) && authorization.CreationDate <= cutoff
-                && !db.OidcTokens.Any(entry => entry.AuthorizationId == authorization.Id))
+                && !db.OidcTokens.Any(entry => entry.AuthorizationId == authorization.Id)
+                && !db.CredentialClaims.Any(claim => claim.InstanceId == authorization.InstanceId && claim.Kind == RedeemExactlyOnce.DeviceApprovalKind
+                    && claim.OwnerId == authorization.Id && db.OidcAuthorizations.Any(approval => approval.Id == claim.Key)))
             .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 

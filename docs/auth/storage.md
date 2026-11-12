@@ -99,4 +99,7 @@ UPDATE users SET platform_role = 'admin' WHERE id = '<user ULID>' AND instance_i
 
 Background workers prune expired sessions, passcodes, step-up proofs, email changes, challenges, OIDC tokens and
 authorizations with set-based deletes, and drive deletion and closure jobs from `deletion_jobs` and `closure_jobs`.
+A device request's authorization stays while a device approval made from it exists: the approval records it as a
+`credential_claims` row of kind `oidc-device-approval` (key the approval, owner the device request's authorization),
+because the ts-cli sign-in's ancestry binds that authorization.
 EF Core's `Microsoft.EntityFrameworkCore` meter is exported with ts-auth's metrics.
