@@ -130,8 +130,9 @@ public sealed class TerraBaseManagementClient
     /// Served only on TerraBase's private listener behind the peer credential, so use a client without
     /// <see cref="TerraBaseManagementClientOptions.AccessTokenProvider"/>;
     /// no user acts. Idempotent: retry with the same <paramref name="closureId"/> after a lost response. A refusal writes
-    /// nothing and throws <see cref="TerraBaseConflictException"/> (<c>not_empty</c>, <c>closure_conflict</c> or
-    /// <c>binding_conflict</c>). Any other failure, a 404 included, proves nothing about the project.
+    /// nothing and throws <see cref="TerraBaseConflictException"/> (<c>not_empty</c>, <c>closure_conflict</c>,
+    /// <c>binding_conflict</c>, or <c>platform_project_protected</c> for the ts-auth and ts-dashboard platform projects).
+    /// Any other failure, a 404 included, proves nothing about the project.
     /// </summary>
     public Task<TerraBaseProjectClosure> CloseProjectAsync(string projectId, string authorityOrganizationId, string closureId, CancellationToken cancellationToken = default) =>
         SendProjectClosureAsync(projectId, authorityOrganizationId, closureId, 1, cancellationToken);

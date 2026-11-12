@@ -29,8 +29,9 @@ ts-auth's half of the closure handoff; the TerraBase fence and its acceptance ru
   - `accepted` or `pending`: the intent first records `fenceSeen` (at the version read, read again after a lost race),
     so no later refusal can cancel it. `accepted` then removes, in one transaction, the project root, its logical
     deletion job and the intent (204), and afterwards its roles, keys and invitations. `pending` answers 202.
-  - `not_empty`, `closure_conflict` or `binding_conflict` while `fenceSeen` is false: the intent is removed at the
-    version read (read again after a lost race) and the request answers 409; the project keeps every right. If the
+  - `not_empty`, `closure_conflict`, `binding_conflict` or `platform_project_protected` (a TerraScale platform project,
+    whose database TerraBase never erases) while `fenceSeen` is false: the intent is removed at the version read (read
+    again after a lost race) and the request answers 409 with that code; the project keeps every right. If the
     intent showed the fence meanwhile it stays (202). If it is gone, the answer reflects the root: 204 when another pass
     removed it, 409 when another pass cancelled it.
   - Any other answer (an outage, a lost answer, a wrong listener's 404, a wrong peer credential's 401): the intent stays

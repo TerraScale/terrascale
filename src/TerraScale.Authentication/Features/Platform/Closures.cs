@@ -52,13 +52,16 @@ public sealed class Closures(
                 ? await this.EraseOrCloseAsync(job.Value, cancellationToken).ConfigureAwait(false)
                 : await terraBase.CloseProjectAsync(job.Value.SubjectId, job.Value.OrganizationId!, job.Value.Id, cancellationToken).ConfigureAwait(false);
         }
-        catch (TerraBaseConflictException error) when (error.ErrorCode is "not_empty" or "closure_conflict" or "binding_conflict")
+        catch (TerraBaseConflictException error) when (error.ErrorCode is "not_empty" or "closure_conflict" or "binding_conflict" or "platform_project_protected")
         {
             // TerraBase wrote nothing for this request. Once an earlier answer showed the fence, a machine that has not received
             // it yet can refuse, so the refusal no longer proves the fence was never written: stay pending.
-            var refused = error.ErrorCode == "not_empty"
-                ? PlatformDirectory.Conflict("not_empty", "Delete the project's databases, TerraBase API keys and backup destination first.")
-                : PlatformDirectory.Conflict(error.ErrorCode, "TerraBase holds this project id under another closure or organization.");
+            var refused = error.ErrorCode switch
+            {
+                "not_empty" => PlatformDirectory.Conflict("not_empty", "Delete the project's databases, TerraBase API keys and backup destination first."),
+                "platform_project_protected" => PlatformDirectory.Conflict("platform_project_protected", "This project holds a TerraScale service's own database and cannot be deleted."),
+                _ => PlatformDirectory.Conflict(error.ErrorCode, "TerraBase holds this project id under another closure or organization."),
+            };
             return await this.CancelAsync(job, cancellationToken).ConfigureAwait(false) switch
             {
                 Cancellation.Cancelled => throw refused,

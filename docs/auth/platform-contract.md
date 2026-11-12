@@ -134,7 +134,7 @@ Organization roles, from least to most privileged: `viewer`, `member`,
 | Create a project | organization `member`; the creator becomes the project's explicit `admin` |
 | List projects | every project for organization members; granted projects for collaborators |
 | Read a project, list its members | project `viewer` |
-| Rename or delete a project | project `admin`; delete answers `204` when removed, `202` while TerraBase's closure is pending, `409 not_empty`, `closure_conflict` or `binding_conflict` when TerraBase refuses ([project closure](project-closure.md)) |
+| Rename or delete a project | project `admin`; delete answers `204` when removed, `202` while TerraBase's closure is pending, `409 not_empty`, `closure_conflict`, `binding_conflict` or `platform_project_protected` when TerraBase refuses ([project closure](project-closure.md)) |
 | Grant, change or remove a project member | project `admin`; a new grant needs an organization member (`404` otherwise: invite anyone else) |
 | Project API keys | project `member` |
 | Organization API keys | organization `admin` |
