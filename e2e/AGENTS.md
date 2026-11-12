@@ -78,6 +78,16 @@ bucket, and `placement-close` deletes the account. Specs added under `placement/
 bash env/local.sh exec npx playwright test placement/placement.spec.ts --project placement
 ```
 
+`placement/closure.spec.ts` closes projects across the pair and signs up two owners of its own, because a closed
+project cannot be the placement account's. Its first test creates a bucket with a file and a database through fra,
+sends a version 2 closure to gru's internal listener with the run's peer credential (the first line of
+`$E2E_STATE/secrets`), waits for `200 accepted`, and then sees fra refuse a new bucket, an upload URL and a database
+for the project, list no bucket and hold neither the object nor the database; that owner stays, since ts-auth knows
+no closure of its project. Its second test upgrades its owner to Pro at the Stripe stand-in for a second project,
+creates a database of that project through fra, sees the console's project deletion refused with 409 while a `GET`
+of the closure on each internal listener shows no fence in gru or fra, then deletes the database, deletes the project
+and deletes the account.
+
 Other existing projects can run in two-region mode by starting this same stack first and selecting their project
 normally. No two-region CI job is configured; adding one requires its own journey shard with `E2E_REGIONS=2`,
 the placement project and the normal prepare/start/up/stop lifecycle. The pair shares one machine and third-party
