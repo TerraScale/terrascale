@@ -201,6 +201,16 @@ owning implementation changes. Examples below show current API boundaries,
 not a first-party production setup recipe. `discoveredOrigin` below is a trusted
 HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See the [zero-configuration contract](https://docs.terrascale.tech/guides/zero-configuration).
 
+## Base URL rules
+
+Every `BaseAddress` and `AuthAddress` option, `TerraBaseStaticEndpointResolver`, `TERRASCALE_BASE_URL` and the
+`Endpoint` and `AuthEndpoint` of the EF Core connection string follow the origin rule of
+[`sdk/SQL-API.md`](../SQL-API.md#client). Building the client or resolver throws `ArgumentException`, before any
+request, for a base address with user info or a path, a string of more than 2,048 characters, a name of more than 253
+characters or with a label of more than 63, a label that begins or ends with a hyphen or begins with `xn--`, the name
+`loopback`, and the unspecified addresses `0.0.0.0`, `[::]` and `[::ffff:0:0]` in any spelling. A `Uri` option is
+parsed first by the caller's `new Uri(...)`, which refuses some of these strings with its own `UriFormatException`.
+
 ## TerraBase client
 
 `TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public HTTPS client listener.
@@ -342,8 +352,9 @@ are not evidence that their routes exist. See [the supported contract](contracts
 
 ```csharp
 using TerraScale.DotNet;
+using TerraScale.DotNet.TerraBase;
 
-using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false });
+using var http = new HttpClient(TerraBaseHttp.CreateHandler());
 var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions
 {
     BaseAddress = new Uri("https://auth.terrascale.tech"),
