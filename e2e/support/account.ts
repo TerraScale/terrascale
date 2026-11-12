@@ -1,6 +1,6 @@
 import type { Browser, Page, TestInfo } from '@playwright/test';
 import { Audit, auditedContext, expect } from './audit';
-import { confirmWithPassword, onHosted } from './hosted';
+import { confirmWithPassword, hostedReady, onHosted } from './hosted';
 import { enterSecret } from './secret';
 import { auth, dash, desktop } from './stack';
 import { journey, saveCookies } from './state';
@@ -26,8 +26,11 @@ export async function deleteAccount(page: Page, audit: Audit, browser: Browser, 
   refusal.expectStatus(/^https:\/\/auth\.terrascale\.tech\/ui\/terrascale\/sign-in\/password$/, 401);
   await again.goto(`${dash}/login`);
   await again.waitForURL(onHosted('sign-in'));
+  await hostedReady(again);
   await again.locator('#sign-in-email').fill(current.email);
   await again.getByRole('button', { name: 'Use a password instead' }).click();
+  await again.waitForURL(onHosted('sign-in/password'));
+  await hostedReady(again);
   await enterSecret(again.locator('#sign-in-password'), current.password);
   await again.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(again.locator('#sign-in-error')).toBeVisible();
