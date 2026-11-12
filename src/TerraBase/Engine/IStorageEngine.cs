@@ -42,6 +42,8 @@ public interface IStorageEngine : IAsyncDisposable
 
     IEnumerable<StoredDatabaseFile> EnumerateDatabaseFiles(CancellationToken cancellationToken = default);
 
+    bool HasDatabaseFiles(TenantContext database);
+
     ValueTask<long?> GetDatabaseSizeAsync(TenantContext database, CancellationToken cancellationToken);
 
     ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken);

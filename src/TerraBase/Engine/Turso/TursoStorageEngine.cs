@@ -747,6 +747,12 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         return File.Exists(path) ? await OpenStoreAsync(key, path, cancellationToken).ConfigureAwait(false) : null;
     }
 
+    public bool HasDatabaseFiles(TenantContext database)
+    {
+        var (_, path) = Locate(database);
+        return Sidecars.Prepend(string.Empty).Any(suffix => File.Exists(path + suffix) || Directory.Exists(path + suffix));
+    }
+
     public ValueTask<long?> GetDatabaseSizeAsync(TenantContext database, CancellationToken cancellationToken)
     {
         var (_, path) = Locate(database);

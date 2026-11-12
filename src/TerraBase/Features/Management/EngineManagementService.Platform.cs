@@ -62,8 +62,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         }
 
         var tenant = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Enterprise, database.ProjectId, database.Id);
-        return engine.EnumerateDatabaseFiles(cancellationToken).Any(file => file.Database is { } stored && stored.OrganizationId == tenant.OrganizationId
-                && stored.ProjectId == tenant.ProjectId && stored.DatabaseId == tenant.DatabaseId)
+        return engine.HasDatabaseFiles(tenant)
             && !await ReadAsync(transaction => OwnedFileAsync(transaction, tenant, cancellationToken), static _ => true, cancellationToken).ConfigureAwait(false)
                 ? PlatformDatabaseOrphaned
                 : await AddPlatformDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false);
