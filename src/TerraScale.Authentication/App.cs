@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Features.Impersonation;
 using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -121,6 +122,8 @@ public static class App
         builder.Services.AddSingleton<Credentials>();
         builder.Services.AddSingleton<Challenges>();
         builder.Services.AddSingleton<Users>();
+        builder.Services.AddSingleton<Impersonations>();
+        builder.Services.AddHostedService<ImpersonationExpiry>();
         builder.Services.AddSingleton<WebhookOutbox>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
@@ -357,6 +360,7 @@ public static class App
         }
         app.UseTenancy();
         app.UseHostedTheme();
+        app.UseImpersonation();
         // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
         app.UseAuthentication();
         app.MapTerraScaleEndpoints();

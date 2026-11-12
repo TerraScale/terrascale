@@ -36,6 +36,7 @@ public sealed partial class AuthDbContext(DbContextOptions<AuthDbContext> option
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         ConfigureIdentity(modelBuilder);
+        ConfigureImpersonation(modelBuilder);
         ConfigurePlatform(modelBuilder);
         ConfigureOidc(modelBuilder);
         ConfigureOperations(modelBuilder);

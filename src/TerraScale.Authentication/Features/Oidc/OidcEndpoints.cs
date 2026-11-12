@@ -1,3 +1,5 @@
+using System.Text.Json;
+using TerraScale.Authentication.Features.Impersonation;
 using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
@@ -50,7 +52,8 @@ public sealed record TokenBody(
 public sealed record UserInfoBody(
     [property: JsonPropertyName("sub")] string Subject,
     [property: JsonPropertyName("email"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Email,
-    [property: JsonPropertyName("email_verified"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? EmailVerified);
+    [property: JsonPropertyName("email_verified"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? EmailVerified,
+    [property: JsonPropertyName("act"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ImpersonationActor? Actor = null);
 
 /// <summary><c>GET /{slug}/.well-known/openid-configuration</c>: OpenID Provider metadata, served by OpenIddict.</summary>
 public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
@@ -95,8 +98,8 @@ public sealed class JwksEndpoint : EndpointWithoutRequest<IResult>
 /// <summary>
 /// <c>GET /{slug}/oauth/authorize</c>: the authorization endpoint with its parameters in the query string.
 /// </summary>
-public sealed class AuthorizeGetEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
-    : AuthorizeEndpoint(sessions, settings, clock, options)
+public sealed class AuthorizeGetEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
+    : AuthorizeEndpoint(impersonations, sessions, settings, clock, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -111,8 +114,8 @@ public sealed class AuthorizeGetEndpoint(Sessions sessions, ProjectAuthSettings 
 /// <c>POST /{slug}/oauth/authorize</c>: the authorization endpoint with its parameters form-encoded (OpenID Connect Core
 /// 3.1.2.1).
 /// </summary>
-public sealed class AuthorizePostEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
-    : AuthorizeEndpoint(sessions, settings, clock, options)
+public sealed class AuthorizePostEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
+    : AuthorizeEndpoint(impersonations, sessions, settings, clock, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -129,7 +132,7 @@ public sealed class AuthorizePostEndpoint(Sessions sessions, ProjectAuthSettings
 /// redirect URI, scopes and PKCE first; this signs in the user of the hosted session cookie, or sends the browser to the
 /// hosted sign-in page and back.
 /// </summary>
-public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options) : EndpointWithoutRequest<IResult>
+public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/authorize";
@@ -179,6 +182,37 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
         if (parameters.Any(parameter => parameter.Key is Parameters.Prompt or LoginAfter && parameter.Value.Count > 1) || marker.Count > 0 && loginAfter is null)
         {
             return OidcResults.Forbid(Errors.InvalidRequest, $"prompt and {LoginAfter} may appear only once, and {LoginAfter} must be Unix milliseconds.");
+        }
+
+        var ticketParameter = parameters.FirstOrDefault(parameter => parameter.Key == "impersonation_ticket").Value;
+        if (ticketParameter.Count > 0)
+        {
+            if (ticketParameter.Count != 1 || string.IsNullOrEmpty(ticketParameter[0]))
+            {
+                return OidcResults.Forbid(Errors.InvalidRequest, "Supply exactly one impersonation ticket.");
+            }
+
+            try
+            {
+                var redeemed = await impersonations.RedeemAsync(tenant, request.ClientId, ticketParameter[0]!, cancellationToken);
+                this.HttpContext.Response.Cookies.Append(Impersonations.Cookie(tenant), redeemed.Cookie, ImpersonationBrowser.CookieOptions(redeemed.Live.Record.ExpiresAt));
+                this.HttpContext.Response.Headers["Referrer-Policy"] = "no-referrer";
+                return OidcResults.SignIn(redeemed.Live.User, redeemed.Live.Record.RedeemedAt!.Value, request.GetScopes(),
+                    OidcResults.Audiences(tenant, options, request.ClientId), impersonation: redeemed.Live.Record);
+            }
+            catch (ApiException error) when (error.Status == 400)
+            {
+                return OidcResults.Forbid(Errors.InvalidRequest, error.Message);
+            }
+        }
+
+        if (this.HttpContext.Request.Cookies.TryGetValue(Impersonations.Cookie(tenant), out var actingCookie))
+        {
+            var acting = await impersonations.ResolveAsync(tenant, actingCookie, cancellationToken);
+            return acting is not null && acting.Record.ClientId == request.ClientId
+                ? OidcResults.SignIn(acting.User, acting.Record.RedeemedAt!.Value, request.GetScopes(),
+                    OidcResults.Audiences(tenant, options, request.ClientId), impersonation: acting.Record)
+                : OidcResults.Forbid(Errors.LoginRequired, "End the impersonation before signing in to another client.");
         }
 
         var cookie = Tenancy.SessionCookie(tenant);
@@ -235,7 +269,7 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
     }
 }
 
-public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications,
+public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications,
     Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, IOpenIddictTokenManager tokens) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
@@ -329,9 +363,13 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal
             ?? throw new InvalidOperationException("OpenIddict passed a token request without a principal.");
-        var user = principal.GetClaim(Claims.Subject) is { } subject
-            ? await mfa.PrimaryUserAsync(tenant, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken)
-            : null;
+        var acting = principal.GetClaim(Impersonations.Claim) is { } actingId
+            ? await impersonations.FindAsync(tenant, actingId, cancellationToken) : null;
+        var user = principal.HasClaim(claim => claim.Type == Impersonations.Claim)
+            ? acting is not null && acting.Record.ClientId == request.ClientId && acting.User.Id == principal.GetClaim(Claims.Subject) ? acting.User : null
+            : principal.GetClaim(Claims.Subject) is { } subject
+                ? await mfa.PrimaryUserAsync(tenant, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken)
+                : null;
         if (user is null || ProjectSessionPolicy.ReadAuthenticationTime(principal, clock) is not { } authenticationTime)
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
@@ -353,12 +391,12 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
         }
 
         return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, authenticationTime, principal.GetScopes(),
-            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt);
+            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt, acting?.Record);
     }
 }
 
 /// <summary><c>GET /{slug}/oauth/userinfo</c>: the UserInfo endpoint by GET.</summary>
-public sealed class UserInfoGetEndpoint(TotpCredentials mfa) : UserInfoEndpoint(mfa)
+public sealed class UserInfoGetEndpoint(Impersonations impersonations, TotpCredentials mfa) : UserInfoEndpoint(impersonations, mfa)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -370,7 +408,7 @@ public sealed class UserInfoGetEndpoint(TotpCredentials mfa) : UserInfoEndpoint(
 }
 
 /// <summary><c>POST /{slug}/oauth/userinfo</c>: the UserInfo endpoint by form POST (OpenID Connect Core 5.3.1).</summary>
-public sealed class UserInfoPostEndpoint(TotpCredentials mfa) : UserInfoEndpoint(mfa)
+public sealed class UserInfoPostEndpoint(Impersonations impersonations, TotpCredentials mfa) : UserInfoEndpoint(impersonations, mfa)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -383,7 +421,7 @@ public sealed class UserInfoPostEndpoint(TotpCredentials mfa) : UserInfoEndpoint
 }
 
 /// <summary>The UserInfo endpoint: claims about the user of a valid access token.</summary>
-public abstract class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutRequest<IResult>
+public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCredentials mfa) : EndpointWithoutRequest<IResult>
 {
     internal const string RouteName = "oauth_userinfo";
 
@@ -429,15 +467,21 @@ public abstract class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutReq
         }
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
-        if (principal?.GetClaim(Claims.Subject) is not { } subject
-            || await mfa.PrimaryUserAsync(Tenancy.Current(this.HttpContext), subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim),
-                principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken) is not { } user)
+        var tenant = Tenancy.Current(this.HttpContext);
+        var acting = principal?.GetClaim(Impersonations.Claim) is { } actingId
+            ? await impersonations.FindAsync(tenant, actingId, cancellationToken) : null;
+        var user = principal?.GetClaim(Claims.Subject) is not { } subject ? null
+            : principal.HasClaim(claim => claim.Type == Impersonations.Claim)
+                ? acting?.User.Id == subject ? acting.User : null
+                : await mfa.PrimaryUserAsync(tenant, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim),
+                    principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken);
+        if (user is null || principal is null)
         {
             return Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         var email = principal.HasScope(Scopes.Email);
-        return Results.Ok(new UserInfoBody(user.Id, email ? user.Email : null, email ? true : null));
+        return Results.Ok(new UserInfoBody(user.Id, email ? user.Email : null, email ? true : null, acting is null ? null : new ImpersonationActor(acting.Record.ActorId)));
     }
 }
 
@@ -465,7 +509,7 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
 }
 
 /// <summary><c>GET /{slug}/oauth/logout</c>: RP-initiated logout with its parameters in the query string.</summary>
-public sealed class LogoutGetEndpoint(Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(sessions, settings, options)
+public sealed class LogoutGetEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(impersonations, sessions, settings, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -477,7 +521,7 @@ public sealed class LogoutGetEndpoint(Sessions sessions, ProjectAuthSettings set
 }
 
 /// <summary><c>POST /{slug}/oauth/logout</c>: RP-initiated logout with its parameters form-encoded (RP-Initiated Logout 1.0 section 2).</summary>
-public sealed class LogoutPostEndpoint(Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(sessions, settings, options)
+public sealed class LogoutPostEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(impersonations, sessions, settings, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -495,7 +539,7 @@ public sealed class LogoutPostEndpoint(Sessions sessions, ProjectAuthSettings se
 /// is ended only for an <c>id_token_hint</c> issued to its user or once the user confirms on the hosted page
 /// (RP-Initiated Logout 1.0 section 2): anything else shows the confirmation and changes nothing.
 /// </summary>
-public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
+public abstract class LogoutEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/logout";
@@ -537,7 +581,10 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
         }
 
         var cookie = this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)];
-        if (await sessions.ResolveAsync(tenant, cookie, cancellationToken) is { } live && !await this.ConfirmedAsync(request, live.User.Id))
+        var actingCookie = this.HttpContext.Request.Cookies[Impersonations.Cookie(tenant)];
+        var acting = await impersonations.ResolveAsync(tenant, actingCookie, cancellationToken);
+        var subject = actingCookie is not null ? acting?.User.Id : (await sessions.ResolveAsync(tenant, cookie, cancellationToken))?.User.Id;
+        if (subject is not null && !await this.ConfirmedAsync(request, subject))
         {
             // Names no account, so a page opened by another site learns nothing it could not already.
             var fields = Carried.Select(name => (Name: name, Value: (string?)request[name]))
@@ -547,8 +594,20 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignOutConfirm, tenant) { LogoutFields = fields });
         }
 
-        await sessions.RevokeAsync(tenant, cookie, cancellationToken);
-        BrowserSecurity.DeleteSessionCookie(this.HttpContext.Response, tenant);
+        if (actingCookie is not null)
+        {
+            if (acting is not null)
+            {
+                await impersonations.EndAsync(tenant, acting.Record.Id, acting.Record.ActorId, cancellationToken);
+            }
+
+            this.HttpContext.Response.Cookies.Delete(Impersonations.Cookie(tenant), ImpersonationBrowser.CookieOptions(null));
+        }
+        else
+        {
+            await sessions.RevokeAsync(tenant, cookie, cancellationToken);
+            BrowserSecurity.DeleteSessionCookie(this.HttpContext.Response, tenant);
+        }
         var returnTo = request.PostLogoutRedirectUri is { } uri
             ? (string.IsNullOrEmpty(request.State) ? uri : Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(uri, Parameters.State, request.State))
             : null;
@@ -629,7 +688,7 @@ internal static class OidcResults
     /// platform owner (<see cref="PlatformBootstrap.OwnerEmail"/>) always carries it.
     /// </summary>
     public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
-        DateTimeOffset? refreshExpiresAt = null)
+        DateTimeOffset? refreshExpiresAt = null, ImpersonationRecord? impersonation = null)
     {
         // TerraBase and platform scopes come only from the role-checked token exchange (TS-598), never with a sign-in,
         // although ts-dashboard holds their permissions for the exchange.
@@ -657,10 +716,16 @@ internal static class OidcResults
             identity.SetClaim(PlatformRoleClaim, PlatformRoleAdmin);
         }
 
+        if (impersonation is not null)
+        {
+            identity.SetClaim(Impersonations.Claim, impersonation.Id);
+            identity.SetClaim("act", JsonSerializer.SerializeToElement(new ImpersonationActor(impersonation.ActorId), ImpersonationJson.Default.ImpersonationActor));
+        }
+
         var email = identity.HasScope(Scopes.Email);
         identity.SetDestinations(claim => claim.Type switch
         {
-            Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
+            Claims.Subject or "act" or Impersonations.Claim => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
             OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],

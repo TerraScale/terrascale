@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Features.Impersonation;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.OpenApi;
@@ -96,7 +97,7 @@ public static partial class OpenApiSetup
                 if (context.Description.RelativePath?.StartsWith("v1/{project}/", StringComparison.Ordinal) == true)
                 {
                     var personOnly = operation.OperationId is "create_project_client" or "update_project_client"
-                        or "rotate_project_client_secret" or "create_webhook_endpoint" or "rotate_webhook_secret";
+                        or "rotate_project_client_secret" or "create_webhook_endpoint" or "rotate_webhook_secret" or "start_impersonation" or "list_impersonations" or "end_impersonation";
                     if (!personOnly)
                     {
                         operation.Security = [Requirement(SecuritySchemes.ProjectManagement, context.Document)];
@@ -107,7 +108,7 @@ public static partial class OpenApiSetup
                         : $" Also accepts an unrestricted project secret API key with {(context.Description.HttpMethod == "GET" ? "auth:read" : "auth:write")}.";
                 }
 
-                if (operation.OperationId is "delete_account" or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client")
+                if (operation.OperationId is "delete_account" or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client" or "start_impersonation")
                 {
                     (operation.Parameters ??= []).Add(new OpenApiParameter
                     {
@@ -224,7 +225,7 @@ public static partial class OpenApiSetup
     // so renaming a parent property first would hide its entire subtree from that traversal.
     private static void MatchProjectWireSchema(IOpenApiSchema input, JsonTypeInfo type)
     {
-        var wire = ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type);
+        var wire = ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type) ?? ImpersonationJson.Default.GetTypeInfo(type.Type);
         if (wire is null || (input is OpenApiSchemaReference reference ? reference.Target : input) is not OpenApiSchema schema)
         {
             return;
@@ -269,6 +270,7 @@ public static partial class OpenApiSetup
     // Descriptions for every tag the API uses; add an entry with each new feature tag.
     private static readonly Dictionary<string, string> TagDescriptions = new(StringComparer.Ordinal)
     {
+        ["Impersonation"] = "Project-admin support sessions, single-use client-bound tickets and hosted session termination.",
         ["Observability"] = "Liveness and readiness probes.",
         ["Admin"] = "Hosted administrator portal and its bundled assets.",
         ["OAuth"] = "OpenID Connect provider for the issuer {public origin}/{slug} (authorization code with S256 PKCE, rotating refresh tokens).",

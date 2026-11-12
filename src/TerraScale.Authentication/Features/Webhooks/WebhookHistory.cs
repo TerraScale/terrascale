@@ -13,7 +13,7 @@ public sealed record WebhookAttemptRecord(string Id, string DeliveryId, string P
 
 public sealed record WebhookEventBody(string Id, string Type, DateTimeOffset Timestamp, WebhookEventData Data);
 
-public sealed record WebhookEventData(string UserId, string? Email, string? Provider, string? SessionId, string? EndpointId);
+public sealed record WebhookEventData(string UserId, string? Email, string? Provider, string? SessionId, string? EndpointId, string? ActorId = null, string? Reason = null);
 
 public sealed record WebhookEventPage(IReadOnlyList<WebhookEventBody> Items, string? Next);
 
@@ -25,7 +25,7 @@ public sealed record WebhookDeliveryPage(IReadOnlyList<WebhookDeliveryBody> Item
 public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProvider clock)
 {
     public static WebhookEventBody Body(WebhookOutboxRecord row) => new(row.EventId, row.EventType, row.OccurredAt,
-        new(row.UserId, row.Email, row.Provider, row.SessionId, row.EndpointId));
+        new(row.UserId, row.Email, row.Provider, row.SessionId, row.EndpointId, row.ActorId, row.Reason));
 
     public async Task<WebhookEventPage> EventsAsync(string projectId, string? after, int limit, CancellationToken cancellationToken)
     {

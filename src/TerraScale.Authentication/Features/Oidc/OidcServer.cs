@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Features.Impersonation;
 using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text.Json;
@@ -182,6 +183,12 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ValidateTokenContext>(handler => handler.UseScopedHandler<ValidateCredentialLineage>()
                         .SetOrder(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor.Order)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ValidateTokenContext>(handler => handler.UseScopedHandler<ValidateImpersonationToken>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor.Order + 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<GenerateTokenContext>(handler => handler.UseScopedHandler<LimitImpersonationToken>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.CreateTokenEntry.Descriptor.Order - 2)
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ValidateTokenRequestContext>(handler => handler.UseSingletonHandler<RefuseScopeExpansion>()
                         .SetOrder(OpenIddictServerHandlers.Exchange.ValidateScopePermissions.Descriptor.Order - 1)
