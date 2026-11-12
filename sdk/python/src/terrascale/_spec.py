@@ -102,6 +102,14 @@ def _serves(service: tuple[str, str], host: str) -> bool:
     return host == own or label != host and label != "" and "." not in label
 
 
+def _sent_as(origin: str) -> tuple[bytes, int | None] | None:
+    try:
+        parsed = httpx.URL(origin)
+    except httpx.InvalidURL:
+        return None
+    return parsed.raw_host, parsed.port
+
+
 def service_origin(raw: str, what: str, service: tuple[str, str]) -> str:
     checked = _strict(raw)
     if checked is None:
@@ -111,7 +119,10 @@ def service_origin(raw: str, what: str, service: tuple[str, str]) -> str:
         raise ValueError(f"{what} must use https; plain http is allowed only for localhost, 127.0.0.0/8 and [::1]")
     if not _serves(service, host):
         raise ValueError(f"{what} names a TerraScale host that does not serve {service[1]}")
-    return f"{scheme}://{host}" + (f":{port}" if port else "")
+    origin = f"{scheme}://{host}" + (f":{port}" if port else "")
+    if _sent_as(origin) != (host.strip("[]").encode(), int(port) if port else None):
+        raise ValueError(f"{what} is read as another host or port by the HTTP client")
+    return origin
 
 
 def issuer_parts(issuer: str | None) -> tuple[str, str]:

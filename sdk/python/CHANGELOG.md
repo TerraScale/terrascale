@@ -37,8 +37,9 @@
   `<cell>.auth.terrascale.tech` included. The string is checked as written:
   whitespace, `%`, `\`, a non-ASCII character, a trailing dot, an IPv4 address
   in any form but four decimal octets, port `0` and a port with a leading zero
-  are refused. The client raises `ValueError` when it is built. Earlier versions
-  kept a `base_url` path prefix, query or user info, and the platform calls
+  are refused, and httpx, which sends the request, must read the same host and
+  port. The client raises `ValueError` when it is built. Earlier versions kept
+  a `base_url` path prefix, query or user info, and the platform calls
   (`create_api_key`, `list_api_keys`, `revoke_api_key`, the project client,
   settings and user calls) sent an issuer's user info as HTTP Basic in place of
   the bearer token.
