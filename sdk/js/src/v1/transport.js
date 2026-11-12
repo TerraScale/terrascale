@@ -7,7 +7,7 @@ import { parseExactJson } from "./json.js";
 import { region as regionId } from "./catalog.js";
 import { v1Route, v1RoutePath } from "./routes.js";
 import { V1SqlSocket, sqlSocketProtocol } from "./sql-socket.js";
-import { apiService, authService, isLoopbackHost, serviceOrigin } from "../origin.js";
+import { apiService, authService, serviceOrigin } from "../origin.js";
 import { ShapeHints, shapeHintProtocol } from "./shape-hints.js";
 /**
  * @import { FetchLike } from "../config.js"
@@ -49,30 +49,6 @@ const publicAuthOrigin = "https://auth.terrascale.tech";
  * @property {JsonValue | undefined} value
  * @property {string | undefined} [redirectedTo] The final URL after a followed redirect.
  */
-
-/**
- * @param {string} raw
- * @param {string} what
- * @returns {URL}
- */
-export function requireServiceUrl(raw, what) {
-  /** @type {URL} */
-  let url;
-  if (typeof raw !== "string") throw new TypeError(`${what} must be an absolute URL.`);
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new TypeError(`${what} must be an absolute URL.`);
-  }
-  if (url.username !== "" || url.password !== "" || url.hash !== "")
-    throw new TypeError(`${what} must not carry credentials or a fragment.`);
-  if (
-    url.protocol !== "https:" &&
-    !(url.protocol === "http:" && isLoopbackHost(url.hostname))
-  )
-    throw new TypeError(`${what} must use HTTPS; plain HTTP is allowed only for loopback hosts.`);
-  return url;
-}
 
 /**
  * An explicitly configured endpoint, with no discovery or hardcoded hosts.

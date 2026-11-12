@@ -78,8 +78,9 @@ def service_origin(raw: str, what: str, service: tuple[str, bool, str]) -> str:
 
 def issuer_parts(issuer: str | None) -> tuple[str, str]:
     base, path = split_origin(issuer or DEFAULT_ISSUER, "issuer", AUTH_SERVICE)
-    if path.count("/") != 1:
-        raise ValueError("issuer must be a ts-auth origin followed by one tenant segment")
+    tenant = path.removeprefix("/")
+    if path.count("/") != 1 or tenant != "terrascale" and not is_valid_id(tenant):
+        raise ValueError("issuer must be a ts-auth origin followed by one tenant segment: terrascale or a project id")
     return base, path
 
 

@@ -1,7 +1,7 @@
 import { array, boolean, malformed, object, string } from "./decode.js";
 import { requireId } from "../ids.js";
 import { assertJsonObject, stringifyExactJson } from "./json.js";
-import { requireServiceUrl } from "./transport.js";
+import { isLoopbackHost } from "../origin.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { FetchLike } from "../config.js" */
 /** @import { JsonObject, JsonValue } from "./json.js" */
@@ -38,11 +38,20 @@ function storedFile(value) {
   return { id: requireId(v.id), name: string(v.name, "file name"), contentType: string(v.contentType, "content type"), size: v.size,
     sha256: string(v.sha256, "checksum"), metadata: object(v.metadata, "file metadata"), status: string(v.status, "file status"), uploadExpiresAt: string(v.uploadExpiresAt, "upload expiry") };
 }
+/** @param {string} raw */
+function requireSignedFileUrl(raw) {
+  if (!URL.canParse(raw)) throw new TypeError("Signed file URL must be an absolute URL.");
+  const url = new URL(raw);
+  if (url.username !== "" || url.password !== "" || url.hash !== "")
+    throw new TypeError("Signed file URL must not carry credentials or a fragment.");
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname)))
+    throw new TypeError("Signed file URL must use HTTPS; plain HTTP is allowed only for loopback hosts.");
+}
 /** @param {JsonValue | undefined} value @returns {SignedFileUrl} */
 function signed(value) {
   const v = object(value, "signed file URL");
   const url = string(v.url, "signed URL");
-  requireServiceUrl(url, "Signed file URL");
+  requireSignedFileUrl(url);
   /** @type {Record<string, string>} */
   const headers = {};
   for (const [key, val] of Object.entries(object(v.headers, "signed headers"))) {

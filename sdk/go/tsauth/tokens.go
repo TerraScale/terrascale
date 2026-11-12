@@ -454,8 +454,8 @@ func parseIssuer(issuer string) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tsauth: Issuer %w", err)
 	}
-	if strings.Count(path, "/") > 1 {
-		return nil, errors.New("tsauth: Issuer must be a ts-auth origin followed by one tenant segment")
+	if tenant := strings.TrimPrefix(path, "/"); tenant != "terrascale" && entityid.Check(tenant) != nil {
+		return nil, errors.New("tsauth: Issuer must be a ts-auth origin followed by one tenant segment: terrascale or a project id")
 	}
 	return url.Parse(base + path)
 }

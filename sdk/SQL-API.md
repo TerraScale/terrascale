@@ -45,7 +45,7 @@ before any request:
 | Scheme | `https`. `http` only for a loopback host: `localhost`, an IPv4 address in `127.0.0.0/8` or `[::1]`. .NET also takes `http` to a NetBird `100.64.0.0/10` address for TerraBase's private listener and for `AuthAddress`. |
 | Host case | Any case; the SDK uses it in lower case. |
 | Default port | `:443` (`:80` for `http`) is the same origin as no port; any other port is kept. |
-| Path | None; a trailing `/` is allowed. An issuer (Go `tsauth`, Python `issuer=`) is the ts-auth origin and one tenant segment, such as `/terrascale`. |
+| Path | None; a trailing `/` is allowed. An issuer (Go `tsauth`, Python `issuer=`) is the ts-auth origin and one tenant segment, `terrascale` or a project id (a canonical ULID), such as `/terrascale`. |
 | Query, fragment | Refused, also when empty (`?`, `#`). |
 | User info | Refused. |
 | TerraScale's own hosts | Under `terrascale.tech` the TerraBase origin is `api.terrascale.tech` or `<cell>.api.terrascale.tech`, and the ts-auth origin is `auth.terrascale.tech` or `<cell>.auth.terrascale.tech`, with one label for the cell (`gru`, `sjc`, `fra` today); any other `terrascale.tech` host is refused for both. An API key goes to `https://auth.terrascale.tech` only when the TerraBase origin is `https://api.terrascale.tech` in any case, with or without `:443` and `/`. |
