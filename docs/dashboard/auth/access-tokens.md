@@ -29,8 +29,12 @@ A token works until the expiry chosen when it was created:
 
 - Revoking it on Profile → Access tokens: the dashboard marks it revoked,
   revokes the grant at ts-auth (RFC 7009) and deletes its credential.
-- Signing out everywhere, a password reset, turning MFA on or off and closing
-  the account: ts-auth refuses the grant on the token's next request.
+- Signing out everywhere, a password reset or change, an email change, turning
+  MFA on or off and closing the account: ts-auth refuses the grant on the
+  token's next request.
+- An MCP sign-in unused for 30 days: its MCP client registration closes at its
+  next request, which answers `401`, and the dashboard then revokes every token
+  of that registration as Profile → Access tokens does.
 - Removal from an organization or a project limits what the token reaches on
   its next request: the dashboard reads memberships and grants from ts-auth on
   every call.

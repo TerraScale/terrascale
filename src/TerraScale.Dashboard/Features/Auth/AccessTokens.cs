@@ -206,10 +206,26 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
         var context = await accounts.GetContextAsync(grant, cancellationToken);
         if (token.McpClientId is { } clientId && await McpRegistrations.TouchAsync(storage, time, clientId, cancellationToken) is null)
         {
+            await RevokeClientAsync(token.UserId, clientId, cancellationToken);
             return null;
         }
 
         return context;
+    }
+
+    private async Task RevokeClientAsync(string userId, string mcpClientId, CancellationToken cancellationToken)
+    {
+        List<string> live;
+        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        {
+            live = await db.AccessTokens.Where(row => row.UserId == userId && row.McpClientId == mcpClientId && row.RevokedAt == null)
+                .Select(row => row.Id).ToListAsync(cancellationToken);
+        }
+
+        foreach (var id in live)
+        {
+            await RevokeAsync(userId, id, cancellationToken);
+        }
     }
 
     public static string Validate(string name, int expiresInDays)
