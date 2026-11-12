@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.Dashboard.Platform.TsAuth
@@ -26,6 +27,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             string code,
             string redirectUri,
             string? codeVerifier = null,
+            DateTimeOffset? refreshExpiresAt = null,
             CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(code);
@@ -41,6 +43,11 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             if (codeVerifier is not null)
             {
                 form.Add(new("code_verifier", codeVerifier));
+            }
+
+            if (refreshExpiresAt is { } expiresAt)
+            {
+                form.Add(new("ts_refresh_expires_at", expiresAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture)));
             }
 
             return client.SendOAuthFormAsync(

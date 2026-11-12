@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Auth
     public interface IAuthOidcGateway
     {
         Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken);
-        Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, CancellationToken cancellationToken);
+        Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, DateTimeOffset? credentialExpiresAt, CancellationToken cancellationToken);
     }
 
     public interface IAuthLogoutGateway

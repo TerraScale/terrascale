@@ -93,16 +93,21 @@ namespace TerraScale.Dashboard.Features.Auth
 
             try
             {
-                var session = await auth.ExchangeAsync(context.Request.Query["code"].ToString(), flow, context.RequestAborted);
+                var code = context.Request.Query["code"].ToString();
+                var time = context.RequestServices.GetRequiredService<TimeProvider>();
                 if (flow.TokenName.Length != 0)
                 {
-                    return await AccessTokenEndpoints.IssueAsync(context, flow, session);
+                    var tokenExpiresAt = AccessTokens.ExpiresAt(time, flow.TokenDays);
+                    return await AccessTokenEndpoints.IssueAsync(context, flow, await auth.ExchangeAsync(code, flow, tokenExpiresAt, context.RequestAborted), tokenExpiresAt);
                 }
 
                 if (flow.Mcp is not null)
                 {
-                    return await McpOAuth.GrantAsync(context, flow.Mcp, session, flow.StepUp);
+                    var tokenExpiresAt = McpOAuth.TokenExpiresAt(time);
+                    return await McpOAuth.GrantAsync(context, flow.Mcp, await auth.ExchangeAsync(code, flow, tokenExpiresAt, context.RequestAborted), flow.StepUp, tokenExpiresAt);
                 }
+
+                var session = await auth.ExchangeAsync(code, flow, null, context.RequestAborted);
                 var account = await EnsureAccountAsync(context, session);
                 await sessions.StartAsync(context, session);
                 var target = flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo;

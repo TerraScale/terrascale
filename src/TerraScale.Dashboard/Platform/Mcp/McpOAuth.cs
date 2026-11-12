@@ -242,15 +242,17 @@ namespace TerraScale.Dashboard.Platform.Mcp
             return await StepUpFlow.StartAsync(context, account, "create_pat", "ts-dashboard", mcp: request.Authorization);
         }
 
+        public static DateTimeOffset TokenExpiresAt(TimeProvider time) =>
+            DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().AddDays(TokenDays).ToUnixTimeSeconds());
+
         // The ts-auth callback for an MCP authorization: the fresh grant waits in its own credential
         // until the client redeems the single-use code with its PKCE verifier.
-        public static async Task<IResult> GrantAsync(HttpContext context, McpAuthorization authorization, SessionRecord fresh, StepUpIntent? proof)
+        public static async Task<IResult> GrantAsync(HttpContext context, McpAuthorization authorization, SessionRecord fresh, StepUpIntent? proof, DateTimeOffset tokenExpiresAt)
         {
             var sessions = context.RequestServices.GetRequiredService<DashboardSessions>();
             var storage = context.RequestServices.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
             var time = context.RequestServices.GetRequiredService<TimeProvider>();
             var code = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
-            var tokenExpiresAt = time.GetUtcNow().AddDays(TokenDays);
             string? credential = null;
             try
             {

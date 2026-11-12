@@ -23,20 +23,22 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
         return [.. rows.Select(Token)];
     }
 
-    public Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, StepUpIntent stepUp, CancellationToken cancellationToken)
+    public Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, DateTimeOffset expiresAt, SessionRecord fresh, StepUpIntent stepUp, CancellationToken cancellationToken)
     {
-        return IssueAsync(context, name, expiresInDays, fresh, stepUp, cancellationToken);
+        return IssueAsync(context, name, expiresAt, fresh, stepUp, cancellationToken);
     }
 
-    private async Task<CreatedProfileToken> IssueAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, StepUpIntent proof, CancellationToken cancellationToken)
+    public static DateTimeOffset ExpiresAt(TimeProvider time, int expiresInDays) =>
+        DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().AddDays(expiresInDays).ToUnixTimeSeconds());
+
+    private async Task<CreatedProfileToken> IssueAsync(AccountContext context, string name, DateTimeOffset expiresAt, SessionRecord fresh, StepUpIntent proof, CancellationToken cancellationToken)
     {
-        name = Validate(name, expiresInDays);
+        name = ValidName(name);
         if (fresh.UserId != context.UserId)
         {
             await auth.RevokeAsync(fresh, cancellationToken);
             throw new AccountAccessException("Identity does not match this account.", 401);
         }
-        var expiresAt = time.GetUtcNow().AddDays(expiresInDays);
         string? credential = null;
         try
         {
@@ -212,15 +214,21 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
 
     public static string Validate(string name, int expiresInDays)
     {
+        name = ValidName(name);
+        if (expiresInDays is < 1 or > 365)
+        {
+            throw new AccountAccessException("Choose an expiration between 1 and 365 days.", 422);
+        }
+
+        return name;
+    }
+
+    private static string ValidName(string name)
+    {
         name = name.Trim();
         if (name.EnumerateRunes().Count() is 0 or > 64 || name.Any(char.IsControl))
         {
             throw new AccountAccessException("Access token names use 1–64 printable characters.", 422);
-        }
-
-        if (expiresInDays is < 1 or > 365)
-        {
-            throw new AccountAccessException("Choose an expiration between 1 and 365 days.", 422);
         }
 
         return name;

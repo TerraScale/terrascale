@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.Features.Auth
             return endpoint + "?" + string.Join("&", fields.Select(field => Uri.EscapeDataString(field.Key) + "=" + Uri.EscapeDataString(field.Value)));
         }
 
-        public async Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, CancellationToken cancellationToken)
+        public async Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, DateTimeOffset? credentialExpiresAt, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(code) || code.Length > 4096)
             {
@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.Features.Auth
             try
             {
                 tokens = await Client().Oidc.ExchangeAuthorizationCodeAsync(
-                    credentials.AuthClientId, credentials.AuthClientSecret, code, flow.RedirectUri, flow.Verifier, cancellationToken);
+                    credentials.AuthClientId, credentials.AuthClientSecret, code, flow.RedirectUri, flow.Verifier, credentialExpiresAt, cancellationToken);
             }
             catch (TsAuthException error) when (error.ErrorCode == "invalid_grant") { throw new SignInRejectedException(); }
             return await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken);
