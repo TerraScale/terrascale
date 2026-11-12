@@ -9,8 +9,6 @@ namespace TerraScale.Dashboard.Common.UI
             return new(context, title, DocumentModel.NonceFor(http), Csrf.Token(http), PageUrl(http));
         }
 
-        // A failed form post renders its page at the /api/... action URL, which has no GET route. The page
-        // URL is the submitting page (same-origin Referer), so reload, back and bookmarks land on a page.
         public static string PageUrl(HttpContext http)
         {
             if (!http.Request.Path.StartsWithSegments("/api"))
@@ -19,6 +17,7 @@ namespace TerraScale.Dashboard.Common.UI
             }
 
             return Uri.TryCreate(http.Request.Headers.Referer.ToString(), UriKind.Absolute, out var referer) &&
+                string.Equals(referer.GetLeftPart(UriPartial.Authority), $"{http.Request.Scheme}://{http.Request.Host}", StringComparison.OrdinalIgnoreCase) &&
                 referer.AbsolutePath.StartsWith('/') && !referer.AbsolutePath.StartsWith("//", StringComparison.Ordinal) &&
                 !referer.AbsolutePath.StartsWith("/api/", StringComparison.Ordinal) ? referer.PathAndQuery : "/";
         }
