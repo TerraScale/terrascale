@@ -234,7 +234,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     private static UserRecord Merge(UserRecord caller, IReadOnlyList<CredentialBinding> fresh)
     {
         var bindings = caller.AuthenticationBindings.Concat(fresh).Distinct().ToArray();
-        if (bindings.Length > Credentials.MaxBindings)
+        if (bindings.Length > Credentials.MaxLineage)
         {
             throw Required();
         }

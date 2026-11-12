@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Identity;
@@ -8,6 +9,8 @@ namespace TerraScale.Authentication.Features.Identity;
 public sealed class Credentials(AuthData data)
 {
     public const int MaxBindings = 64;
+
+    public static readonly int MaxLineage = MaxBindings + (int)(TimeSpan.FromHours(12) / (OidcIssuer.TokenLifetime - TimeSpan.FromSeconds(30)));
 
     public const string SocialKind = "credential:social";
 
@@ -49,14 +52,14 @@ public sealed class Credentials(AuthData data)
     public async Task<bool> AreCurrentAsync(string instanceId, IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(bindings);
-        return bindings.Count <= MaxBindings && bindings.All(Wellformed)
+        return bindings.Count <= MaxLineage && bindings.All(Wellformed)
             && await this.RequireAsync(instanceId, bindings, cancellationToken).ConfigureAwait(false) is not null;
     }
 
     public async Task<IReadOnlyList<Change>?> RequireAsync(string instanceId, IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(bindings);
-        if (bindings.Count > MaxBindings || !bindings.All(Wellformed))
+        if (bindings.Count > MaxLineage || !bindings.All(Wellformed))
         {
             return null;
         }

@@ -501,7 +501,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             approvedAuthorizationId = approvalId;
         }
 
-        if (inherited.Length + (addsBinding ? 1 : 0) > Credentials.MaxBindings)
+        if (inherited.Length + (addsBinding ? 1 : 0) > Credentials.MaxLineage)
         {
             context.Reject(Errors.InvalidGrant, "This sign-in reached its rotation limit. Sign in again to continue.");
             return;
