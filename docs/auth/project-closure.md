@@ -58,13 +58,15 @@ answers for the fence it holds and the closure proceeds.
   loses the fence; one that became sole later gets one. For every sole organization, each project gets a project intent
   owned by the account (`accountId`) and closes as above; a project removed meanwhile is skipped. A project intent's
   transaction requires the account intent, so a step running after a cancellation creates none.
-- Until every project closure is accepted, a 409 (`last_owner`, `not_empty`, `closure_conflict`, `binding_conflict`)
-  ends the account intent. The account intent goes first, at the version read: a concurrent pass that deferred it is read
+- Until every project closure is accepted, a 409 (`last_owner`, `not_empty`, `closure_conflict`, `binding_conflict`,
+  `platform_project_protected`) ends the account intent. The account intent goes first, at the version read: a concurrent pass that deferred it is read
   again and the delete retried; one that committed it pauses it instead (see below); a vanished one stops there. Only
   then are its children handled: each project intent it began is detached (`accountId` cleared at the version read) and
   finishes alone, removing that project once TerraBase accepts; its organization fences go. The account, its
   memberships, its organizations and untouched projects keep every right. TerraBase fences are permanent, so this is no
-  rollback of the closures that started.
+  rollback of the closures that started. The platform owner's deletion while they are the only member of the
+  TerraScale organization (`00000000000000000000000001`) ends this way at its first platform project: TerraBase refuses
+  closing it (`platform_project_protected`), the request answers 409 with that code, and the account stays and signs in.
 - When every project closure is accepted, the intent records `committedAt` and removes, in order: the shared
   memberships, the sole organizations, then the user. From `committedAt` on, a 409 (for example a late `last_owner`
   when another owner left a shared organization meanwhile) only pauses the closure; repeating the request, or the
