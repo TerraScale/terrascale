@@ -13,7 +13,7 @@ public sealed class ListWebhookDeliveriesEndpoint(TenantDirectory tenants, Platf
         this.Describe("list_webhook_deliveries", "List recent webhook deliveries and attempts", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookDeliveryPage));
     }
 
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return Results.Json(await history.DeliveriesAsync(projectId, this.RouteId("id"), cancellationToken), WebhooksJson.Default.WebhookDeliveryPage);

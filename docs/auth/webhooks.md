@@ -8,8 +8,10 @@ deletes them and their delivery history.
 
 ## Routes
 
-All routes below require a signed-in platform user with the project admin role.
-The events route instead requires the member role.
+Signed-in platform users need the project admin role, or the member role for
+events. Project secret API keys need auth:read for events and auth:write for
+endpoint and delivery management. Creating endpoints and rotating their secrets
+still require a person's step-up proof.
 Paths are relative to `/v1/{project}`.
 
 | Method and path | Result |

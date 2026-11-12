@@ -13,7 +13,7 @@ public sealed class ReplayWebhookDeliveryEndpoint(TenantDirectory tenants, Platf
         this.Describe("replay_webhook_delivery", "Replay a webhook delivery with the original event id", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null, conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await history.ReplayAsync(projectId, this.RouteId("id"), this.RouteId("delivery"), cancellationToken);

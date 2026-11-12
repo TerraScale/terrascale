@@ -13,7 +13,7 @@ public sealed class TestWebhookEndpoint(TenantDirectory tenants, PlatformAuthent
         this.Describe("test_webhook", "Send a signed test event to a webhook endpoint", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookEventBody), conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return Results.Json(await history.TestAsync(projectId, this.RouteId("id"), cancellationToken), WebhooksJson.Default.WebhookEventBody);
