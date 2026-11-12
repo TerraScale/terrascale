@@ -69,29 +69,30 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
     private async Task<bool> DeliverAsync(Versioned<WebhookDeliveryRecord> current, CancellationToken budgetToken, CancellationToken cancellationToken)
     {
         var delivery = current.Value;
-        var state = await data.ReadAsync((db, token) => db.WebhookEndpointStates.Where(row => row.EndpointId == delivery.EndpointId && row.ProjectId == delivery.ProjectId)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var target = await data.ReadAsync((db, token) =>
+            (from state in db.WebhookEndpointStates
+             join endpoint in db.WebhookEndpoints on state.EndpointId equals endpoint.Id
+             join evt in db.WebhookOutbox on delivery.EventId equals evt.EventId
+             where state.EndpointId == delivery.EndpointId && state.ProjectId == delivery.ProjectId
+                 && endpoint.ProjectId == delivery.ProjectId && evt.ProjectId == delivery.ProjectId
+             select new
+             {
+                 State = new Versioned<WebhookEndpointStateRecord>(state, EF.Property<string>(state, AuthDbContext.VersionProperty)),
+                 Endpoint = endpoint,
+                 Event = evt,
+             }).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         var now = clock.GetUtcNow();
-        if (state is null || state.Value.LeaseUntil > now)
+        if (target is null || target.State.Value.LeaseUntil > now)
         {
             return false;
         }
 
+        var state = target.State;
+        var endpoint = target.Endpoint;
+        var evt = target.Event;
         if (state.Value.DisabledAt is not null)
         {
             await data.SaveAsync(Change.Update(current, delivery with { Status = "disabled" }), cancellationToken).ConfigureAwait(false);
-            return false;
-        }
-
-        var endpoint = await data.ReadAsync((db, token) => db.WebhookEndpoints.SingleOrDefaultAsync(row => row.Id == delivery.EndpointId && row.ProjectId == delivery.ProjectId, token), cancellationToken).ConfigureAwait(false);
-        if (endpoint is null)
-        {
-            return false;
-        }
-
-        var evt = await data.ReadAsync((db, token) => db.WebhookOutbox.SingleOrDefaultAsync(row => row.EventId == delivery.EventId && row.ProjectId == delivery.ProjectId, token), cancellationToken).ConfigureAwait(false);
-        if (evt is null)
-        {
             return false;
         }
 
