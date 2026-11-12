@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
@@ -15,10 +16,16 @@ internal sealed class KeyRevocationLocal(KeyCustody custody, IShreddedDatabases 
             return false;
         }
         custody.Revocations.Forget(scope);
-        if (!await management.ObserveShreddedAsync(database, record.ShreddedAt, token).ConfigureAwait(false))
+        return await management.ObserveShreddedAsync(database, record.ShreddedAt, token).ConfigureAwait(false) switch
         {
-            return false;
-        }
+            true => await EraseAsync(database, token).ConfigureAwait(false),
+            false => false,
+            Forbidden => true,
+        };
+    }
+
+    private async Task<bool> EraseAsync(TenantContext database, CancellationToken token)
+    {
         await replicas.DeleteShreddedAsync(database, token).ConfigureAwait(false);
         _ = await management.EraseShreddedAsync(database, token).ConfigureAwait(false);
         await backup.RetireDeletedAsync(database, token).ConfigureAwait(false);
