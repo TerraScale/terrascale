@@ -51,8 +51,8 @@ ts.set_database_placement(db.id, regions=["fra", "gru", "sjc"])
 ```
 
 ```csharp
-var db = await client.CreateDatabaseAsync(project, "orders", regions: ["gru", "sjc"]);
-await client.SetDatabasePlacementAsync(project, db.Id, regions: ["fra", "gru", "sjc"]);
+var db = await client.CreateDatabaseAsync(project, "orders", placement: TerraBaseDatabasePlacement.In("gru", "sjc"));
+await client.SetDatabasePlacementAsync(project, db.Id, placement: TerraBaseDatabasePlacement.In("fra", "gru", "sjc"));
 ```
 
 ```go
@@ -71,7 +71,15 @@ client.set_database_placement(&database.id, &DatabasePlacement {
 }).await?;
 ```
 
-The CLI on the regions release takes the same list: `ts db create example -regions gru,fra` and `ts db placement example -regions sjc,fra`. `-all-regions` places the database in every serving region. The installed `ts` binary still uses the earlier flags until that release.
+`replica_not_ready` means the regions you added are stored; send the same request again. It usually completes within about half a minute. `move_unresolved` means an earlier move is unresolved; send the same request again later. The SDKs do not retry `replica_not_ready` for you, so your code repeats the same request, bounded:
+
+```js
+const signal = AbortSignal.timeout(90_000);
+for (;;) { try { await client.setDatabasePlacement(project, database, { regions: ["fra"] }, { signal }); break; }
+  catch (e) { if (e.code !== "replica_not_ready") throw e; await new Promise(resolve => setTimeout(resolve, 1000)); } }
+```
+
+The CLI takes the same list: `ts db create example -regions gru,fra` and `ts db placement example -regions sjc,fra`. `-all-regions` places the database in every serving region. When a requested region is not ready, `ts db placement <name> -regions …` exits with a message asking you to run the same command again.
 
 ## Earlier fields
 

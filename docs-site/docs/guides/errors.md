@@ -215,11 +215,11 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 ### `move_in_progress`
 
-409 — another change of the region that orders this database's writes is running. Wait for it to finish. Retry: yes.
+409 — another placement change is running. Try again when it finishes. Retry: yes.
 
 ### `move_unresolved`
 
-503 — the region that orders this database's writes is changing and its placement is not yet known. Retry after `Retry-After`. Retry: yes.
+503 — an earlier change is still being settled. Send the same request again later. Retry: yes.
 
 ### `must_refetch`
 
@@ -343,7 +343,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `replica_not_ready`
 
-503 — a requested region has not replicated the database yet. Regions you added stay added. Repeat the request. Retry: yes.
+503 — the regions you added are stored. Send the same request again; it usually completes within about half a minute. Retry: yes.
 
 ### `request_timeout`
 

@@ -220,15 +220,15 @@ ts db regions example
 
 `db create` takes `-regions`, a comma-separated list of region ids, at least one.
 `-all-regions` places the database in every serving region, including regions added later.
-`db placement` changes the set later with the same `-regions` list, or with `-all-regions`.
+`db placement <name> -regions …` changes the set later with the same `-regions` list, or with `-all-regions`.
 Changing the set does not name which region orders writes: TerraBase picks that region and moves it when the set changes.
-If the new set drops the region that currently orders writes, added regions stay added and the call answers `503` `replica_not_ready` until one of the requested regions has replicated the database. Repeat the same request.
-`db regions <db>` prints the regions of the set.
-These flags ship with the regions CLI (PR 1948). Until that release, the installed `ts` binary still takes the earlier flags below.
+When a requested region is not ready, the regions you added stay added and `ts db placement <name> -regions …` exits with a message asking you to run the same command again.
+`db regions <db>` prints each region's pull progress.
+`-json` output still carries the earlier fields while the server sends them. `ts db move-home` no longer exists.
 
 ### Earlier fields
 
-The installed CLI still takes `-home-region`, `-replica-regions` and `db move-home`. They still work. The regions CLI replaces them with `-regions` and `-all-regions`.
+`-home-region` and `-replica-regions` are earlier flags and still work. New commands use `-regions` and `-all-regions`.
 
 Database deletion asks you to type the database name in a terminal before it
 deletes data. For an unattended script, explicitly consent

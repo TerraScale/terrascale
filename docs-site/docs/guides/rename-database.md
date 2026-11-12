@@ -35,7 +35,7 @@ A name starts with a lowercase letter and continues with up to 62 lowercase lett
 
 ### Earlier fields
 
-Responses may still include `homeRegion`, `replicaRegions` and `allRegions`. They still work. New calls read `regions`.
+Responses can still carry `homeRegion`, `replicaRegions` and `allRegions` while the server sends them. They still work. New calls read `regions`.
 
 ## CLI and SDKs
 
