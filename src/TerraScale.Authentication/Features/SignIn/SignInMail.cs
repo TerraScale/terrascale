@@ -424,7 +424,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     private async Task<EmailConfig?> ConfigAsync(string tenant, AuthEmailKind kind)
     {
         // Never inherit platform copy or a customer-controlled sender identity into project authentication mail.
-        var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.Lockout
+        var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.Lockout or AuthEmailKind.NewDevice
             ? EmailConfig.Defaults(tenant) with
             {
                 Branding = new EmailBranding { SenderName = "TerraScale", FooterText = "Sent by TerraScale Authentication." },

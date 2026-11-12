@@ -1,4 +1,5 @@
 using System.Globalization;
+using TerraScale.Authentication.Features.AttackProtection;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -64,6 +65,7 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
     public override void Configure()
     {
         Post("/ui/{slug}/sign-in");
+        Metadata(new BotChallengeForm("sign_in", SignInStep.Email));
         Name("ui_sign_in_request_code");
         Summary("Email a sign-in code");
         Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: an IP call bucket of 120 refilling 30 per minute, an IP mail bucket of 30 refilling 60 per hour, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After; a spent hourly code budget is told plainly - no new code was sent, when it resets, the resend control disabled for the same wait - identically for every address, whether or not it has an account, so nothing becomes enumerable. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
@@ -188,9 +190,10 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
     public override void Configure()
     {
         Post("/ui/{slug}/sign-in/password");
+        Metadata(new BotChallengeForm("sign_in", SignInStep.Password, PasswordPrompt: true));
         Name("ui_sign_in_password");
         Summary("Sign in with a password");
-        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: the IP call bucket of 120 refilling 30 per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: 10 attempts per normalized email per 15 minutes; with account lockout on, the account locks after 10 failures for 30 minutes. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -295,6 +298,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
     public override void Configure()
     {
         Post("/ui/{slug}/sign-up");
+        Metadata(new BotChallengeForm("sign_up", SignInStep.SignUp));
         Name("ui_sign_up_start");
         Summary("Start a sign-up");
         Description("Same-origin form post with email and password (10 to 256 Unicode characters, not a common, repetitive or own-email password). One IP may start 20 sign-ups per hour (429 with Retry-After). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded. An address whose account or pending sign-up already spent the hour's code budget is told that plainly (429, Retry-After, resend disabled) - identically for every refused address, whether or not it has an account, so nothing becomes enumerable. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
@@ -327,7 +331,8 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
             { ErrorTitle = copy.ErrorCheckDetailsTitle }, StatusCodes.Status400BadRequest);
         }
 
-        if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
+        if (await this.HttpContext.RequestServices.GetRequiredService<PasswordProtection>().CheckAsync(
+            SignInFlow.Tenant(this.HttpContext), form.Password, address, cancellationToken) is not PasswordProblem.None and var problem)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
                 SignInFlow.PasswordError(copy, problem))
@@ -360,6 +365,7 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
     public override void Configure()
     {
         Post("/ui/{slug}/sign-up/resend");
+        Metadata(new BotChallengeForm("sign_up", SignInStep.SignUpCode));
         Name("ui_sign_up_resend");
         Summary("Resend the sign-up code");
         Description("Same-origin form post with the email and pending token of the pending sign-up. A fresh code is mailed to the same pending sign-up, replacing the previous code; an address that got an account meanwhile is mailed a sign-in code instead. The page is the same either way. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After, and a spent hourly code budget is told plainly with its resend control disabled - identically for every refused address, whether or not it has an account, so nothing becomes enumerable. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
@@ -450,6 +456,8 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
             && await passcodes.RedeemSignUpAsync(SignInFlow.Tenant(this.HttpContext), address, code, pending, cancellationToken) is { } created)
         {
             logger.ZLogInformation($"Audit: hosted sign-up created user {created.Id:@UserId}");
+            await this.HttpContext.RequestServices.GetRequiredService<AccountProtection>()
+                .SignedInAsync(this.HttpContext, created.InstanceId, created.Id, cancellationToken, notify: false);
             user = created;
         }
 
@@ -498,6 +506,7 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
     public override void Configure()
     {
         Post("/ui/{slug}/reset");
+        Metadata(new BotChallengeForm("reset", SignInStep.Reset));
         Name("ui_password_reset_start");
         Summary("Email a password reset code");
         Description("Same-origin form post with email. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account; a spent hourly code budget is told plainly (429, Retry-After, resend disabled), identically for every refused address, so nothing becomes enumerable. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
@@ -538,6 +547,7 @@ public sealed class ResendResetEndpoint(HostedAuth hosted, AuthOptions options) 
     public override void Configure()
     {
         Post("/ui/{slug}/reset/resend");
+        Metadata(new BotChallengeForm("reset", SignInStep.ResetCode));
         Name("ui_password_reset_resend");
         Summary("Resend the password reset code");
         Description("Same-origin form post with the email of the reset code step. A fresh reset code is mailed to the same address, replacing the previous one, and the visitor stays on the code step. The response never reveals whether the address has an account; a spent hourly code budget is told plainly (429, Retry-After, resend disabled), identically for every refused address, so nothing becomes enumerable. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour). A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
@@ -581,6 +591,7 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
     public override void Configure()
     {
         Post("/ui/{slug}/reset/complete");
+        Metadata(new BotChallengeForm("reset", SignInStep.ResetCode));
         Name("ui_password_reset_complete");
         Summary("Set a new password with a reset code");
         Description("Same-origin form post with email, code and password; the password follows the sign-up policy (400 outside it, the code stays live). Limits: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and continues to the sign-in page.");
@@ -607,7 +618,8 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         var copy = SignInFlow.Copy(this.HttpContext);
-        if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
+        if (await this.HttpContext.RequestServices.GetRequiredService<PasswordProtection>().CheckAsync(
+            SignInFlow.Tenant(this.HttpContext), form.Password, address, cancellationToken) is not PasswordProblem.None and var problem)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next,
                 SignInFlow.PasswordError(copy, problem))
@@ -676,6 +688,7 @@ internal static class SignInFlow
 
     public static string PasswordError(HostedPageCopy copy, PasswordProblem problem) => problem switch
     {
+        PasswordProblem.Breached => PasswordPolicy.Message(problem),
         PasswordProblem.Length => copy.ErrorPasswordLength,
         _ => copy.ErrorPasswordCommon,
     };
@@ -804,6 +817,7 @@ internal static class SignInFlow
         {
             await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
         }
+        await context.RequestServices.GetRequiredService<AccountProtection>().SignedInAsync(context, tenant, session.Session.UserId, cancellationToken);
         BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
         return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
     }

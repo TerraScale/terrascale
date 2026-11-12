@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
             var known = parts switch
             {
-                ["settings" or "branding" or "configuration" or "mfa-sessions" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
+                ["settings" or "branding" or "configuration" or "mfa-sessions" or "attack-protection" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
                 ["users", _, "disable" or "enable" or "delete" or "sign-out"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
@@ -62,6 +62,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 {
                     case ["settings"]:
                         await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up"] == "on")), cancel);
+                        break;
+                    case ["attack-protection"]:
+                        await projects.UpdateSettingsAsync(session, project, new(AttackProtection: new(
+                            form["bot_challenge"] == "on", form["breached_passwords"] == "on",
+                            form["account_lockout"] == "on", form["new_device_email"] == "on")), cancel);
                         break;
                     case ["branding"]:
                         await projects.UpdateSettingsAsync(session, project, new(Branding: HostedBranding(form)), cancel);
@@ -434,6 +439,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             new("social", "Social sign-in", "Fingerprint", "Sign-in"),
             new("configuration", "Configuration", "Settings", "Sign-in"),
             new("mfa-sessions", "MFA and sessions", "Shield", "Security"),
+            new("attack-protection", "Attack protection", "Shield", "Security"),
             new("clients", "OAuth applications", "Boxes", "Developers"),
             new("webhooks", "Webhooks", "Zap", "Developers"),
             new("logs", "Logs", "ScrollText", "Developers"),

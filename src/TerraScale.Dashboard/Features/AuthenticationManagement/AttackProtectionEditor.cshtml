@@ -1,0 +1,26 @@
+@inherits RazorSlice<AuthenticationPage>
+@using TerraScale.Dashboard.Features.AuthenticationManagement
+@using TerraScale.Dashboard.Platform.TsAuth
+@{
+    var protection = Model.Settings?.AttackProtection ?? new TsAuthAttackProtection();
+    var manage = Model.Context.CanManageProject;
+    bool Checked(string name, bool saved) => Model.Draft is { } draft ? draft[name] == "on" : saved;
+}
+<header class="ts-card-head"><h2 class="ts-card-title" id="auth-attack-protection-title">Attack protection</h2></header>
+<div class="ts-card-body">
+@if (Model.Settings is null) {
+<p role="status">Attack protection settings are unavailable.</p>
+} else {
+<form class="ts-form" method="post" action="/api/v1/auth-management/attack-protection">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<fieldset class="ts-form" disabled="@(!manage)">
+<label class="ts-check"><input type="checkbox" name="bot_challenge" checked="@Checked("bot_challenge", protection.BotChallenge)" disabled="@(!protection.ChallengeConfigured)" />Bot challenge</label>
+@if (!protection.ChallengeConfigured) { <p role="status">Cloudflare Turnstile site and secret keys are not configured.</p> }
+<label class="ts-check"><input type="checkbox" name="breached_passwords" checked="@Checked("breached_passwords", protection.BreachedPasswords)" />Refuse breached passwords</label>
+<label class="ts-check"><input type="checkbox" name="account_lockout" checked="@Checked("account_lockout", protection.AccountLockout)" />Lock accounts after 10 failed password attempts for 30 minutes</label>
+<label class="ts-check"><input type="checkbox" name="new_device_email" checked="@Checked("new_device_email", protection.NewDeviceEmail)" />Email users about new devices</label>
+@if (manage) { <button class="ts-btn ts-btn-primary" type="submit">Save attack protection</button> }
+</fieldset>
+</form>
+}
+</div>

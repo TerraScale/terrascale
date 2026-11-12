@@ -182,6 +182,9 @@ Card("Social sign-in");
 @{ DialogFooter(dialog, "Save " + info.Name); }</form></div></dialog> }
 </li> }</ul> }
 }
+else if (current.Key == "attack-protection") {
+@(await RenderPartialAsync<AttackProtectionEditor, AuthenticationPage>(Model))
+}
 else if (current.Key == "configuration") {
 Card("Configuration");
 <div class="ts-card-body">@if (settings is null) { Empty("Configuration is unavailable."); } else {

@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Contracts;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
@@ -26,6 +27,8 @@ public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode 
     string? BackgroundColor = null, string? TextColor = null, ConfigurationBody? Configuration = null, string? EmailMessage = null,
     IReadOnlyList<string>? SubscribedWebhookEvents = null)
 {
+    public AttackProtectionSettings AttackProtection { get; init; } = new();
+
     /// <summary>The configured <paramref name="provider"/>, or null.</summary>
     public SocialProviderRecord? Provider(string provider) => this.Providers?.FirstOrDefault(record => record.Provider == provider);
 }

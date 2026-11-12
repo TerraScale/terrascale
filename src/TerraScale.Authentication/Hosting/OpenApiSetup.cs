@@ -59,6 +59,8 @@ public sealed record RequiresSecurity(string Scheme, bool PublicClientAlternativ
 /// </summary>
 public static partial class OpenApiSetup
 {
+    private static readonly string[] UnlockParameters = ["user", "token"];
+
     /// <summary>
     /// Adds ts-auth's transformers to the <c>v1</c> schema registered by TerraScale.Endpoints,
     /// and keeps Scalar self-hosted (no third-party font requests).
@@ -105,6 +107,46 @@ public static partial class OpenApiSetup
                     operation.Description += personOnly
                         ? " Person-only step-up operation; project API keys answer 403 person_required."
                         : $" Also accepts an unrestricted project secret API key with {(context.Description.HttpMethod == "GET" ? "auth:read" : "auth:write")}.";
+                }
+
+                if (operation.OperationId == "unlock_project_account")
+                {
+                    foreach (var name in UnlockParameters)
+                    {
+                        (operation.Parameters ??= []).Add(new OpenApiParameter
+                        {
+                            Name = name,
+                            In = ParameterLocation.Query,
+                            Required = true,
+                            Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 26, MaxLength = 26, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+                        });
+                    }
+                }
+
+                if (operation.OperationId == "confirm_unlock_project_account")
+                {
+                    operation.RequestBody = new OpenApiRequestBody
+                    {
+                        Required = true,
+                        Content = new Dictionary<string, IOpenApiMediaType>
+                        {
+                            ["application/x-www-form-urlencoded"] = new OpenApiMediaType()
+                            {
+                                Schema = new OpenApiSchema
+                                {
+                                    Type = JsonSchemaType.Object,
+                                    Required = new HashSet<string>(UnlockParameters, StringComparer.Ordinal),
+                                    Properties = UnlockParameters.ToDictionary(name => name, IOpenApiSchema (name) => new OpenApiSchema
+                                    {
+                                        Type = JsonSchemaType.String,
+                                        MinLength = 26,
+                                        MaxLength = 26,
+                                        Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                                    }, StringComparer.Ordinal),
+                                },
+                            },
+                        },
+                    };
                 }
 
                 if (operation.OperationId is "delete_account" or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client")

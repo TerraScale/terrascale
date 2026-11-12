@@ -119,6 +119,7 @@ const authSections: [string, string][] = [
   ['social', 'Social sign-in'],
   ['configuration', 'Configuration'],
   ['mfa-sessions', 'MFA and sessions'],
+  ['attack-protection', 'Attack protection'],
   ['clients', 'OAuth applications'],
   ['webhooks', 'Webhooks'],
   ['logs', 'Logs'],
@@ -343,7 +344,7 @@ export const dashboardStates: readonly PageState[] = [
     ([section, label]): PageState => ({
       name: `authentication ${label.toLowerCase()}`,
       url: () => `/auth/${section}`,
-      covers: { path: new RegExp(`^/auth/${section}$`), ...(section === 'logs' ? { query: { after: optionalId } } : {}) },
+      covers: { path: new RegExp(`^/auth/${section}$`), ...(section === 'logs' ? { query: { after: optionalId } } : {}), ...(section === 'attack-protection' ? { query: { saved: /^(1)?$/ } } : {}) },
       heading: section === 'overview' ? title('Project authentication', 2) : title(`Authentication: ${label}`),
       data: async (page, journey) => {
         if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
@@ -353,6 +354,12 @@ export const dashboardStates: readonly PageState[] = [
           await expect(page.locator('input[name=allow_totp]')).toBeChecked();
           await expect(page.locator('input[name=allow_passkey]')).toBeChecked();
           await expect(page.locator('#auth-inactivity')).toHaveValue('');
+        }
+        else if (section === 'attack-protection') {
+          await expect(page.locator('input[name=breached_passwords]')).toBeChecked();
+          await expect(page.locator('input[name=account_lockout]')).toBeChecked();
+          await expect(page.locator('input[name=new_device_email]')).not.toBeChecked();
+          await expect(page.locator('input[name=bot_challenge]')).not.toBeChecked();
         }
         else if (section === 'users') await expect(page.getByText('No users yet.', { exact: true })).toBeVisible();
         else if (section === 'danger') {

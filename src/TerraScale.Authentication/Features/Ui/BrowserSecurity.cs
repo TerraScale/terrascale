@@ -51,8 +51,8 @@ public static class BrowserSecurity
         var headers = response.Headers;
         headers.CacheControl = "no-store";
         headers.ContentSecurityPolicy =
-            $"default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; img-src 'self' data: https:; "
-            + "font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'";
+            $"default-src 'self'; script-src 'self' 'nonce-{nonce}' https://challenges.cloudflare.com; style-src 'self' 'nonce-{nonce}'; img-src 'self' data: https:; "
+            + "font-src 'self'; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'";
         headers.XContentTypeOptions = "nosniff";
         headers.XFrameOptions = "DENY";
         headers["Referrer-Policy"] = "strict-origin-when-cross-origin";

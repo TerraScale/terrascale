@@ -78,8 +78,9 @@ public static partial class Telemetry
         {
             telemetry.WithTracing(tracing => tracing
                 .AddAspNetCoreInstrumentation(aspnet =>
-                    aspnet.Filter = context => !context.Request.Path.StartsWithSegments("/healthz", StringComparison.Ordinal))
-                .AddHttpClientInstrumentation()
+                    aspnet.Filter = context => !context.Request.Path.StartsWithSegments("/healthz", StringComparison.Ordinal)
+                        && context.Request.Path.Value?.EndsWith("/attack-protection/unlock", StringComparison.Ordinal) != true)
+                .AddHttpClientInstrumentation(http => http.FilterHttpRequestMessage = request => request.RequestUri?.Host != "api.pwnedpasswords.com")
                 .AddOtlpExporter());
         }
 

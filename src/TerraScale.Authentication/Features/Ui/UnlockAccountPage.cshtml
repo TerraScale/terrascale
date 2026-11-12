@@ -1,0 +1,12 @@
+@inherits RazorSlice<UnlockAccountPageModel>
+@using TerraScale.Authentication.Features.AttackProtection
+@implements IUsesLayout<HostedLayout, HostedLayoutModel>
+<div class="head"><h1>Unlock account</h1></div>
+<form method="post" action="/v1/@Model.Project/attack-protection/unlock">
+<input type="hidden" name="user" value="@Model.User">
+<input type="hidden" name="token" value="@Model.Token">
+<button type="submit">Unlock account</button>
+</form>
+@functions {
+    public HostedLayoutModel LayoutModel => new("Unlock account", Model.Nonce, tenant: Model.Project);
+}

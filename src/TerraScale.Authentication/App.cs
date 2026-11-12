@@ -1,4 +1,5 @@
 using System.Net;
+using TerraScale.Authentication.Features.AttackProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -124,6 +125,12 @@ public static class App
         builder.Services.AddSingleton<WebhookOutbox>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
+        builder.Services.AddSingleton(new TurnstileKeys(Environment.GetEnvironmentVariable("TS_AUTH_TURNSTILE_SITE_KEY"),
+            Environment.GetEnvironmentVariable("TS_AUTH_TURNSTILE_SECRET_KEY")));
+        builder.Services.AddSingleton<AttackProtectionHttp>();
+        builder.Services.AddSingleton<PasswordProtection>();
+        builder.Services.AddSingleton<AccountProtection>();
+        builder.Services.AddHttpClient(AttackProtectionHttp.ClientName, client => client.Timeout = TimeSpan.FromSeconds(10)).RemoveAllLoggers();
         builder.Services.AddSingleton<PasswordHasher>();
         builder.Services.AddSingleton<HostedAuth>();
         builder.Services.AddSingleton<TotpCredentials>();
@@ -357,6 +364,7 @@ public static class App
         }
         app.UseTenancy();
         app.UseHostedTheme();
+        app.UseBotChallenge();
         // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
         app.UseAuthentication();
         app.MapTerraScaleEndpoints();
