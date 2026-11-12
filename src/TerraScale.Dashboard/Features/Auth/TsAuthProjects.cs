@@ -26,6 +26,10 @@ namespace TerraScale.Dashboard.Features.Auth
         Task<IReadOnlyList<TsAuthWebhookEndpoint>> ListWebhookEndpointsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
         Task<TsAuthWebhookEndpoint> CreateWebhookEndpointAsync(SessionRecord session, string projectId, TsAuthCreateWebhookEndpoint request, string proof, CancellationToken cancellationToken);
         Task<TsAuthWebhookSecret> RotateWebhookSecretAsync(SessionRecord session, string projectId, string webhookEndpointId, string proof, CancellationToken cancellationToken);
+        Task<TsAuthPlatformPage<TsAuthWebhookEvent>> ListEventsAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken);
+        Task<IReadOnlyList<TsAuthWebhookDelivery>> ListWebhookDeliveriesAsync(SessionRecord session, string projectId, string endpointId, CancellationToken cancellationToken);
+        Task TestWebhookAsync(SessionRecord session, string projectId, string endpointId, CancellationToken cancellationToken);
+        Task ReplayWebhookDeliveryAsync(SessionRecord session, string projectId, string endpointId, string deliveryId, CancellationToken cancellationToken);
         Task DeleteWebhookEndpointAsync(SessionRecord session, string projectId, string webhookEndpointId, CancellationToken cancellationToken);
     }
 
@@ -129,6 +133,19 @@ namespace TerraScale.Dashboard.Features.Auth
             return string.IsNullOrEmpty(proof) ? throw StepUpFlow.Required() :
             ProjectAsync(() => Client().Projects.RotateWebhookSecretAsync(Bearer(session), Id(projectId), Id(webhookEndpointId), proof, cancellationToken));
         }
+
+        public Task<TsAuthPlatformPage<TsAuthWebhookEvent>> ListEventsAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken) =>
+            ProjectAsync(() => Client().Projects.ListEventsAsync(Bearer(session), Id(projectId), after, cancellationToken));
+
+        public async Task<IReadOnlyList<TsAuthWebhookDelivery>> ListWebhookDeliveriesAsync(SessionRecord session, string projectId, string endpointId, CancellationToken cancellationToken) =>
+            (await ProjectAsync(() => Client().Projects.ListWebhookDeliveriesAsync(Bearer(session), Id(projectId), Id(endpointId), cancellationToken))).Items
+                ?? throw new IOException("ts-auth returned an invalid page.");
+
+        public async Task TestWebhookAsync(SessionRecord session, string projectId, string endpointId, CancellationToken cancellationToken) =>
+            await ProjectAsync(() => Client().Projects.TestWebhookAsync(Bearer(session), Id(projectId), Id(endpointId), cancellationToken));
+
+        public Task ReplayWebhookDeliveryAsync(SessionRecord session, string projectId, string endpointId, string deliveryId, CancellationToken cancellationToken) =>
+            ProjectAsync(async () => { await Client().Projects.ReplayWebhookDeliveryAsync(Bearer(session), Id(projectId), Id(endpointId), Id(deliveryId), cancellationToken); return true; });
 
         public Task DeleteWebhookEndpointAsync(SessionRecord session, string projectId, string webhookEndpointId, CancellationToken cancellationToken)
         {

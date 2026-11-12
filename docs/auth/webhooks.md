@@ -1,129 +1,174 @@
-# End-user lifecycle webhooks
+# Authentication webhooks and events
 
-A project registers webhook endpoints to observe its end users' lifecycle. This
-page covers registration; delivery arrives with later slices.
+Projects receive signed HTTPS deliveries for end-user identity changes. Platform
+`terrascale` accounts never emit these events. Every project event is recorded
+atomically with its change, even without a webhook subscription, and is retained
+for 30 days. The events API excludes expired records immediately; an hourly job
+deletes them and their delivery history.
 
 ## Routes
 
-All routes are project-scoped under `/v1/{project}/webhook-endpoints` and need
-the project's admin role.
+Signed-in platform users need the project admin role, or the member role for
+events. Project secret API keys need auth:read for events and auth:write for
+endpoint and delivery management. Creating endpoints and rotating their secrets
+still require a person's step-up proof.
+Paths are relative to `/v1/{project}`.
 
-| Method and path | Role | Response |
-| --- | --- | --- |
-| `GET /webhook-endpoints` | admin | `{items: [WebhookEndpoint], next: null}`, never secrets |
-| `POST /webhook-endpoints` | admin | `201 WebhookEndpoint` with `secret` once; `create_webhook_endpoint` step-up proof required; a concurrent create or delete winning the race answers `409 version_conflict` |
-| `DELETE /webhook-endpoints/{id}` | admin | `204` |
-| `POST /webhook-endpoints/{id}/rotate-secret` | admin | `WebhookSecret` with `secret` once; `rotate_webhook_secret` step-up proof required; a concurrent change to the endpoint answers `409 version_conflict` |
+| Method and path | Result |
+| --- | --- |
+| `GET /webhook-endpoints` | `{items, next: null}`; never secrets; `disabled_at` identifies disabled endpoints |
+| `POST /webhook-endpoints` | `201` endpoint plus `secret` once; `create_webhook_endpoint` step-up proof required |
+| `DELETE /webhook-endpoints/{id}` | `204`; removes endpoint and its delivery history |
+| `POST /webhook-endpoints/{id}/rotate-secret` | New `secret` once; `rotate_webhook_secret` step-up proof required |
+| `GET /webhook-endpoints/{id}/deliveries` | Latest 20 deliveries, each with latest 10 attempts |
+| `POST /webhook-endpoints/{id}/deliveries/{delivery}/replay` | `204`; enqueue the original event for another 24-hour delivery cycle |
+| `POST /webhook-endpoints/{id}/test` | Create and enqueue a `webhook.test` event directly to this endpoint |
+| `GET /events?after={cursor}&limit=50` | `{items, next}` in ascending event ULID order; limit 1–100 |
 
-```text
-POST /v1/{project}/webhook-endpoints
-{ "url": "https://hooks.example.test/lifecycle",
-  "event_types": ["user.signed_up", "user.disabled"] }
+The dashboard exposes endpoint deliveries, replay and test actions under
+**Authentication → Webhooks**, and the retained event stream under **Logs**.
+`next` is the last returned event id when more records exist; pass it as `after`.
+The database clock applies both the retention cutoff and the five-second settle
+window. Events become visible after that window to allow commits from
+other nodes to arrive before advancing an ULID cursor. This assumes commits and
+clock skew stay within that window. Endpoint events have their own `webhook.*`
+type, an empty `user_id`, and an `endpoint_id`.
+Replay keeps the original event body and `webhook-id`, and refreshes the signature
+timestamp. A replay while the endpoint is delivering answers `409`.
 
-201 { "id": "01JD…", "url": "https://hooks.example.test/lifecycle",
-      "event_types": ["user.signed_up", "user.disabled"],
-      "created_at": "2026-11-10T12:00:00Z", "secret": "whsec_…" }
-
-POST /v1/{project}/webhook-endpoints/{id}/rotate-secret
-200 { "id": "01JD…", "secret": "whsec_…", "previous_secret_expires_at": "2026-11-11T12:00:00Z" }
-```
-
-## Registration rules
-
-- `url` is an absolute `https` URL of at most 2048 characters, without userinfo
-  or fragment. It is stored and answered in its normalized form. Anything else
-  fails with `400 invalid_request`.
-- `event_types` is a non-empty duplicate-free subset of `user.signed_up`,
-  `user.signed_in`, `user.disabled`, `user.enabled`, `user.deleted`,
-  `user.provider_linked` and `user.provider_unlinked`.
-- A project registers at most 3 endpoints; a further registration answers
-  `409 webhook_endpoint_limit`, and a concurrent create or delete that wins the
-  race answers `409 version_conflict`.
-
-## Secrets
-
-`secret` starts with `whsec_` and is answered exactly once, on registration and
-on rotation; the list never includes it. It is stored sealed under the ts-auth
-master key, bound to the project and endpoint, like the project social
-providers' client secrets. Rotation keeps the previous secret verifying for 24
-hours, then it is refused.
-
-Registration and rotation consume a purpose-bound step-up proof
-([step-up proof](step-up-proof.md)); deletion needs only the admin role.
+Registration accepts at most three endpoints per project, an HTTPS URL of at most
+2048 characters without userinfo or a fragment, and a non-empty, duplicate-free
+subset of the events below. Subscription is evaluated when the worker expands
+the event to the existing endpoints; newly registered endpoints receive only
+events occurring after registration. Test events bypass subscription filtering.
 
 ## Events
 
-Each end-user lifecycle change writes one event record in the same store
-transaction as the change itself, so an event exists if and only if the change
-committed. Events are written only when the project has at least one registered
-endpoint subscribed to that event type; nothing is dispatched yet (delivery
-arrives with a later slice). The subscribed event types are kept as a compact
-set on the project's auth settings record — the record sign-in already reads —
-and endpoint registration and deletion maintain it in their own store
-transactions, so the check adds no store call to sign-in. Subscription is
-evaluated at the start of the change, so an endpoint added mid-change may miss
-that event.
-
-| Event | Written when |
+| Event | Trigger |
 | --- | --- |
-| `user.signed_up` | an end user's account is created in the project (sign-up code redemption, first social sign-in) |
-| `user.signed_in` | a sign-in completes and a session opens (password, email code, passkey, MFA, social, SSO) |
-| `user.disabled` | an admin disables the end user |
-| `user.enabled` | an admin re-enables the end user |
-| `user.deleted` | the end user's account is deleted |
-| `user.provider_linked` | a social identity is linked to the end user |
-| `user.provider_unlinked` | a social identity is unlinked from the end user |
+| `user.signed_up` | A project account is created by email verification or first social sign-in |
+| `user.signed_in` | A sign-in completes |
+| `user.updated` | The end user completes a verified email change |
+| `user.disabled` | An admin disables an end user |
+| `user.enabled` | An admin re-enables an end user |
+| `user.deleted` | An end user is deleted |
+| `user.provider_linked` | A social identity is linked |
+| `user.provider_unlinked` | A social identity is unlinked |
+| `session.created` | A session is issued, including rotation successors |
+| `session.revoked` | A session is explicitly revoked or sessions are revoked through sign-out everywhere |
+| `webhook.endpoint_disabled` | An endpoint has failed continuously for five days |
+| `webhook.test` | An admin sends a test event |
 
-A first social sign-in emits both `user.signed_up` and `user.signed_in`, and a
-hosted sign-up that opens a session does too; each is delivered per its own
-subscriptions. Platform `terrascale` accounts never emit events: these are
-end-user lifecycle events of a project only.
-
-Each event record carries the project id, the event type, a ULID event id and
-occurred-at timestamp, and a minimal payload: the end user's id and email
-address (the project already owns both through its admin APIs), plus the
-provider name on `user.provider_linked` and `user.provider_unlinked`. No other
-personal data is stored. Delivery state starts at `status: "pending"` with
-`attempts: 0` and a `next_attempt_at` equal to the occurred-at timestamp.
-
-## Verify deliveries
-
-Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com)
-spec: the `webhook-id`, `webhook-timestamp` (unix seconds) and
-`webhook-signature` headers, with space-separated `v1,<base64>` signature
-entries. The signature is HMAC-SHA256, keyed with the base64-decoded payload of
-the `whsec_` secret, over `{id}.{timestamp}.{body}` with the body exactly as
-delivered. Verify every `v1` entry in constant time (rotation keeps the
-previous secret's signatures valid for 24 hours) and refuse timestamps more
-than 5 minutes from now. Each SDK ships one `verifyWebhook` helper that does
-this and returns the parsed event, or the SDK's typed error.
-
-```csharp
-using TerraScale.DotNet;
-
-JsonElement evt = TerraScaleWebhooks.VerifyWebhook(secret, request.Headers.ToDictionary(h => h.Key, h => h.Value.First()), rawBody);
+```json
+{
+  "id": "01K9EXAMPLE0000000000000000",
+  "type": "session.created",
+  "timestamp": "2026-11-12T12:00:00Z",
+  "data": {
+    "user_id": "01K9EXAMPLE0000000000000001",
+    "email": "person@example.com",
+    "provider": null,
+    "session_id": "01K9EXAMPLE0000000000000002",
+    "endpoint_id": null
+  }
+}
 ```
+
+The endpoint-disabled event is persisted for the project owner to consume through
+the authenticated events API and dashboard Logs; other subscribed, working
+endpoints also receive it. It contains the endpoint id, without signing secrets.
+Invalidation caused indirectly by credential or user changes is represented by
+that user lifecycle event; it does not emit one event per affected session.
+
+## Delivery and retries
+
+Projects are served in order of their most recent endpoint claim, least recent
+first; each project gets its oldest due endpoint next. Each endpoint pass sends
+at most ten deliveries within 30 seconds and stops after its first failure.
+The pass deadline also cancels any in-flight request.
+
+A database version claim leases the endpoint and delivery for two minutes. Only
+one worker can claim an endpoint at a time across nodes. Attempts are persisted
+before sending, with completion status, latency, HTTP status and the first 1024
+response bytes. A restart recovers expired leases; unfinished attempts are marked
+`interrupted`. Delivery is at least once: receivers must deduplicate by event id,
+including after a crash between receiving a response and committing completion.
+
+Any non-2xx response, connection failure or 20-second deadline causes a retry.
+Backoff starts at five seconds, doubles per failed attempt, and caps at six
+hours before jitter. Each delay is multiplied by a random factor from 0.5 to 1.5.
+Four independent delivery lanes claim the oldest due delivery per unleased
+endpoint, choosing the least recently served project before that project's
+oldest due endpoint. Each lane sends up to ten events per endpoint in event-id
+order before selecting endpoints again. Busy lanes continue immediately; idle
+lanes check due work every two seconds. Expansion and retention run separately;
+the final retry scheduled at 24 hours is sent before exhaustion, measured from the
+first actual attempt of the current delivery cycle, including a replay. Queued
+deliveries with no attempts never expire because of backlog. The nominal sequence is 5s, 10s, 20s, 40s, 80s, 160s,
+320s, 640s, 1280s, 2560s, 5120s, 10240s, 20480s, then 21600s.
+
+A successful delivery resets the endpoint failure streak. After five continuous
+days since its first failure without a success, the worker disables the endpoint
+and emits `webhook.endpoint_disabled` when another failed attempt completes.
+A gap of more than ten hours between attempts starts a fresh streak, exceeding
+the maximum nine-hour retry interval with jitter. Inactivity alone never disables
+an endpoint. The disable transaction also reserves one notification email per
+project owner or admin in the existing email ledger; accepted or uncertain sends
+are never sent again. Register a working replacement; disabled endpoints reject test/replay.
+The email's sending claim has a recoverable two-minute lease and uses the
+organization's email tenant. Its URL shows only the scheme, host and first path
+segment; later segments are masked and the query is omitted.
+
+Delivery never follows redirects or uses proxies. DNS resolution happens inside
+the socket `ConnectCallback`, which requires every resolved address to be public
+and connects directly to a validated address. Private, loopback, link-local,
+metadata and IPv6 transition addresses are refused. HTTPS certificate validation
+remains enabled, with a ten-second connection deadline.
+
+## Secrets and verification
+
+The `whsec_` secret is generated from 32 random bytes and stored encrypted under
+the master key, bound to project and endpoint. It is returned only on creation or
+rotation. Rotation signs with both current and previous secrets for 24 hours.
+Delivery logs contain neither secrets nor request headers.
+
+Use the raw body bytes before parsing JSON. Standard Webhooks signs
+`{webhook-id}.{webhook-timestamp}.{body}` with HMAC-SHA256 using the base64-decoded
+secret after `whsec_`. `webhook-signature` contains space-separated `v1,<base64>`
+entries. Accept any valid v1 signature in constant time and reject timestamps more
+than five minutes from the current time. Deduplicate only after verification.
 
 ```js
-import { verifyWebhook } from "@terrascale/sdk/ts-auth/webhooks";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
-const event = verifyWebhook(secret, req.headers, rawBody);
+function verify(secret, headers, rawBody) {
+  const id = headers["webhook-id"];
+  const timestamp = headers["webhook-timestamp"];
+  if (!id || !/^\d+$/.test(timestamp ?? "") ||
+      Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) throw Error("Invalid timestamp");
+  const expected = createHmac("sha256", Buffer.from(secret.slice(6), "base64"))
+    .update(`${id}.${timestamp}.`).update(rawBody).digest();
+  const valid = String(headers["webhook-signature"]).split(" ").some(entry => {
+    if (!entry.startsWith("v1,")) return false;
+    const signature = Buffer.from(entry.slice(3), "base64");
+    return signature.length === expected.length && timingSafeEqual(signature, expected);
+  });
+  if (!valid) throw Error("Invalid signature");
+  return JSON.parse(rawBody.toString("utf8"));
+}
 ```
 
-```go
-import "terrascale.tech/sdk/tsauth"
+The .NET SDK verifier implements timestamp validation and constant-time signature
+comparison, including multiple v1 entries:
 
-event, err := tsauth.VerifyWebhook(secret, r.Header, rawBody)
-```
+```csharp
+using System.Text.Json;
+using TerraScale.DotNet;
 
-```python
-from terrascale import verify_webhook
-
-event = verify_webhook(secret, headers, raw_body)
-```
-
-```rust
-use terrascale::webhooks::{verify_webhook, WebhookHeaders};
-
-let event = verify_webhook(secret, &WebhookHeaders { id, timestamp, signature }, &raw_body)?;
+using var reader = new StreamReader(request.Body);
+var rawBody = await reader.ReadToEndAsync();
+JsonElement evt = TerraScaleWebhooks.VerifyWebhook(
+    secret,
+    request.Headers.ToDictionary(header => header.Key, header => header.Value.ToString()),
+    rawBody);
 ```

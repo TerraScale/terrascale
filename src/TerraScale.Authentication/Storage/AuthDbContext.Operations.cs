@@ -122,6 +122,7 @@ public sealed partial class AuthDbContext
             delivery.ToTable("email_deliveries", table =>
                 table.HasCheckConstraint("ck_email_deliveries_status", "status IN ('pending', 'sending', 'accepted', 'rejected', 'unknown')"));
             delivery.HasKey(row => new { row.Kind, row.Key, row.Recipient });
+            delivery.HasIndex(row => new { row.Kind, row.Status, row.LeaseUntil });
             Versioned(delivery);
         });
 

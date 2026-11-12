@@ -120,6 +120,7 @@ const authSections: [string, string][] = [
   ['configuration', 'Configuration'],
   ['clients', 'OAuth applications'],
   ['webhooks', 'Webhooks'],
+  ['logs', 'Logs'],
   ['branding', 'Branding'],
   ['danger', 'Danger zone'],
 ];
@@ -341,10 +342,11 @@ export const dashboardStates: readonly PageState[] = [
     ([section, label]): PageState => ({
       name: `authentication ${label.toLowerCase()}`,
       url: () => `/auth/${section}`,
-      covers: { path: new RegExp(`^/auth/${section}$`) },
+      covers: { path: new RegExp(`^/auth/${section}$`), ...(section === 'logs' ? { query: { after: optionalId } } : {}) },
       heading: section === 'overview' ? title('Project authentication', 2) : title(`Authentication: ${label}`),
       data: async (page, journey) => {
         if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
+        else if (section === 'logs') await expect(page.getByText('No events in the last 30 days.', { exact: true })).toBeVisible();
         else if (section === 'users') await expect(page.getByText('No users yet.', { exact: true })).toBeVisible();
         else if (section === 'danger') {
           await expect(page.getByText('No records.', { exact: true })).toHaveCount(3);

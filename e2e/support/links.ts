@@ -22,6 +22,7 @@ const journeyPages: readonly PagePattern[] = [
 const hostedPages: readonly RegExp[] = [
   /^\/ui\/terrascale\/device$/,
   /^\/ui\/terrascale\/sign-up$/,
+  /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(sign-up|sign-in|reset)$/,
   /^\/ui\/terrascale\/sign-in$/,
   /^\/ui\/terrascale\/reset$/,
   /^\/ui\/terrascale\/security$/,

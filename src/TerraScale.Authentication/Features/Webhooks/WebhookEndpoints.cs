@@ -14,13 +14,13 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Features.Webhooks;
 
 public sealed record WebhookEndpointRecord(string InstanceId, string Id, string ProjectId, string Url, IReadOnlyList<string> EventTypes,
-    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default);
+    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default, DateTimeOffset? FirstFailureAt = null, DateTimeOffset? DisabledAt = null, DateTimeOffset LeaseUntil = default, DateTimeOffset LastServedAt = default);
 
 public sealed record CreateWebhookEndpointRequest(string? Url, IReadOnlyList<string>? EventTypes);
 
 public sealed record WebhookEndpointBody(string Id, string Url, IReadOnlyList<string> EventTypes, DateTimeOffset CreatedAt,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Secret = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? PreviousSecretExpiresAt = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset? DisabledAt = null);
 
 public sealed record WebhookEndpointPageBody(IReadOnlyList<WebhookEndpointBody> Items, string? Next);
 
@@ -34,7 +34,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
 
     public static readonly FrozenSet<string> LifecycleEvents = new[]
     {
-        "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked",
+        "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled",
     }.ToFrozenSet(StringComparer.Ordinal);
 
     public async Task<(WebhookEndpointRecord Endpoint, string Secret)> CreateAsync(string projectId, string url, IReadOnlyList<string> eventTypes, CancellationToken cancellationToken)
@@ -49,11 +49,10 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
         var secret = NewSecret();
         var endpoint = new WebhookEndpointRecord(projectId, id, projectId, url, eventTypes,
             SecretBox.Seal(options.MasterKey, Encoding.UTF8.GetBytes(secret), Context(projectId, id)), CreatedAt: clock.GetUtcNow());
-        HashSet<string> subscribed = [.. current.SubscribedWebhookEvents ?? (IEnumerable<string>)[], .. eventTypes];
         if (!await data.SaveAsync(
             [
                 Change.Insert(endpoint),
-                ProjectAuthSettings.Write(current with { InstanceId = projectId, SubscribedWebhookEvents = [.. subscribed.Order()] }, settingsVersion),
+                ProjectAuthSettings.Write(current with { InstanceId = projectId }, settingsVersion),
             ], cancellationToken).ConfigureAwait(false))
         {
             throw new ApiException(409, "version_conflict", "The project's webhook endpoints changed concurrently; read them again and retry.");
@@ -73,20 +72,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
             return false;
         }
 
-        var (current, settingsVersion) = await settings.ReadVersionedAsync(projectId, cancellationToken).ConfigureAwait(false);
-        var endpoints = await this.ListAsync(projectId, cancellationToken).ConfigureAwait(false);
-        HashSet<string> subscribed = [.. endpoints.Where(other => other.Id != id).SelectMany(other => other.EventTypes)];
-        List<Change> changes = [Change.Delete(row)];
-        if (!subscribed.SetEquals(current.SubscribedWebhookEvents ?? (IEnumerable<string>)[]))
-        {
-            changes.Add(ProjectAuthSettings.Write(current with
-            {
-                InstanceId = projectId,
-                SubscribedWebhookEvents = subscribed.Count == 0 ? null : [.. subscribed.Order()],
-            }, settingsVersion));
-        }
-
-        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
+        return await data.SaveAsync(Change.Delete(row), cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<(WebhookEndpointRecord Endpoint, string Secret)> RotateAsync(string projectId, string id,
@@ -117,7 +103,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
 
     public static string NewSecret() => "whsec_" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
-    private static string Context(string projectId, string id) => $"webhook-endpoint:{projectId}:{id}";
+    internal static string Context(string projectId, string id) => $"webhook-endpoint:{projectId}:{id}";
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
@@ -125,4 +111,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
 [JsonSerializable(typeof(WebhookEndpointBody))]
 [JsonSerializable(typeof(WebhookEndpointPageBody))]
 [JsonSerializable(typeof(WebhookSecretBody))]
+[JsonSerializable(typeof(WebhookEventBody))]
+[JsonSerializable(typeof(WebhookEventPage))]
+[JsonSerializable(typeof(WebhookDeliveryPage))]
 internal sealed partial class WebhooksJson : JsonSerializerContext;
