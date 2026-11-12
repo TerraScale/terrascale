@@ -36,5 +36,9 @@ public sealed record DatabaseReplication(TerraBaseDatabaseRegions? Status, strin
         }
     }
 
+    public static IReadOnlyList<(string Region, TerraBaseReplicaStatus? Observation)> Rows(TerraBaseDatabaseRegions status) =>
+        [.. status.Replicas.Select(row => (row.Region, (TerraBaseReplicaStatus?)row)).Prepend((status.HomeRegion, null))
+            .OrderBy(row => Common.UI.Regions.Rank(row.Region)).ThenBy(row => row.Region, StringComparer.Ordinal)];
+
     public static string Timestamp(DateTimeOffset? value) => value?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", System.Globalization.CultureInfo.InvariantCulture) ?? "—";
 }

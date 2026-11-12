@@ -6,26 +6,6 @@
   gap: 2px;
 }
 
-/* Region placement: one map for allowed regions, primary and backup selects side by side. */
-.ts-org-placement {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: var(--ts-s4);
-}
-
-.ts-org-placement > legend {
-  margin-bottom: var(--ts-s3);
-}
-
-.ts-org-placement > .ts-field:first-of-type {
-  grid-column: 1 / -1;
-}
-
-.ts-org-placement-hint {
-  grid-column: 1 / -1;
-}
-
 /* Wizard dialog. */
 dialog.ts-org-wizard {
   width: min(52rem, calc(100vw - 2 * var(--ts-s4)));
@@ -162,12 +142,6 @@ dialog.ts-org-wizard {
 .ts-org-interval:has(input:checked) {
   background: var(--ts-surface-3);
   color: var(--ts-ink);
-}
-
-@media (max-width: 47.99rem) {
-  .ts-org-placement {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 @media (max-width: 30rem) {

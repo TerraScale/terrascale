@@ -60,7 +60,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await page.locator('button[data-plan="free"]').click();
   await expect(page.locator('#projectName')).toBeVisible();
   await audit.check('onboarding project');
-  const region = await page.locator('#region').inputValue();
+  const region = await page.locator('#onboarding-region input[name="region"]:checked').inputValue();
   await page.locator('#projectName').fill(projectName);
   await page.getByRole('button', { name: 'Create project and open Dashboard' }).click();
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/');
@@ -78,6 +78,12 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await page.getByRole('button', { name: 'New database', exact: true }).first().click();
   await expect(page.locator('#create-database[open]')).toBeVisible();
   await audit.check('new database dialog');
+  const regions = page.locator('#create-database-regions');
+  const picked = regions.locator('input[name="regions"]:checked');
+  await expect(picked).toHaveValue(new RegExp(`^${region}$`, 'i'));
+  await picked.click();
+  await expect(picked).toHaveCount(1);
+  await expect(regions.getByRole('status')).toHaveText('A database needs one region.');
   await page.locator('#database-name').fill(databaseName);
   await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
   await page.waitForURL(/\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
@@ -86,6 +92,19 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await expect(page.locator('main').getByText('ready', { exact: true }).first()).toBeVisible();
   await expect(page.locator('main').getByText(new RegExp(`^${region}$`, 'i')).first()).toBeVisible();
   await audit.check('database created');
+
+  await page.goto(`/databases/${databaseId}/replication`);
+  const placed = page.locator('#database-regions input[name="regions"]:checked');
+  await expect(placed).toHaveValue(new RegExp(`^${region}$`, 'i'));
+  await placed.press('Space');
+  await expect(placed).toHaveCount(1);
+  await expect(page.locator('#database-regions').getByRole('status')).toHaveText('A database needs one region.');
+  const saved = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/dashboard/databases/placement');
+  await page.getByRole('button', { name: 'Save regions', exact: true }).click();
+  expect((await saved).status(), 'saving the same regions').toBe(303);
+  await page.waitForLoadState('load');
+  await expect(placed).toHaveValue(new RegExp(`^${region}$`, 'i'));
+  await audit.check('database regions saved');
 
   await page.goto('/api-keys?create=key');
   const keyDialog = page.locator('#create-key[open]');

@@ -1,9 +1,10 @@
 namespace TerraScale.Dashboard.Common.UI
 {
-    // Display facts for region codes. Codes match case-insensitively; unknown codes get no name or flag.
     public static class Regions
     {
         private static readonly string[] Ordered = ["gru", "fra", "sjc"];
+
+        private static readonly string[] Flags = ["br", "de", "us"];
 
         private static readonly Dictionary<string, (string Name, string Country)> Known = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -13,7 +14,6 @@ namespace TerraScale.Dashboard.Common.UI
             ["sfo"] = ("San Francisco", "us"),
         };
 
-        // gru, fra, sjc first in that order; every other code ties and sorts by the caller.
         public static int Rank(string code)
         {
             var index = Array.FindIndex(Ordered, match => string.Equals(match, code, StringComparison.OrdinalIgnoreCase));
@@ -28,6 +28,11 @@ namespace TerraScale.Dashboard.Common.UI
         public static string Country(string code)
         {
             return Known.TryGetValue(code, out var known) ? known.Country : "";
+        }
+
+        public static string Flag(string country)
+        {
+            return Array.Find(Flags, flag => string.Equals(flag, country, StringComparison.OrdinalIgnoreCase)) ?? "";
         }
     }
 }

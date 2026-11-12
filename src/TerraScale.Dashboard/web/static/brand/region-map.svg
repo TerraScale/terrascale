@@ -1,6 +1,6 @@
 <svg viewBox="0 0 136 80" xmlns="http://www.w3.org/2000/svg" style="background-color: transparent" id="terrascale-region-map" role="img" aria-labelledby="terrascale-region-map-title terrascale-region-map-description" data-projection="vanDerGrinten" data-grid="diagonal">
   <title id="terrascale-region-map-title">TerraScale region map</title>
-  <desc id="terrascale-region-map-description">A dotted world map used as a visual background for region selection.</desc>
+  <desc id="terrascale-region-map-description">A dotted world map with every TerraScale region.</desc>
         <circle cx="8.5" cy="0" r="0.18" fill="rgba(37, 99, 235, 0.52)" />
 <circle cx="23.5" cy="0" r="0.18" fill="rgba(37, 99, 235, 0.52)" />
 <circle cx="24.5" cy="0" r="0.18" fill="rgba(37, 99, 235, 0.52)" />
@@ -4458,4 +4458,10 @@
 <circle cx="41.5" cy="77.94228634059948" r="0.18" fill="rgba(37, 99, 235, 0.52)" />
 <circle cx="41" cy="78.80831174438391" r="0.18" fill="rgba(37, 99, 235, 0.52)" />
 <circle cx="42" cy="78.80831174438391" r="0.18" fill="rgba(37, 99, 235, 0.52)" />
-      </svg>
+  <g id="terrascale-region-map-regions">
+    <circle data-region="gru" data-name="São Paulo" data-lat="-23.55" data-lng="-46.63" cx="50" cy="59.76" r="0.5" fill="none"><title>São Paulo (gru)</title></circle>
+    <circle data-region="fra" data-name="Frankfurt" data-lat="50.11" data-lng="8.68" cx="71.5" cy="20.78" r="0.5" fill="none"><title>Frankfurt (fra)</title></circle>
+    <circle data-region="sjc" data-name="San Francisco Bay Area" data-lat="37.34" data-lng="-121.89" cx="21.5" cy="29.44" r="0.5" fill="none"><title>San Francisco Bay Area (sjc)</title></circle>
+    <circle data-region="sfo" data-name="San Francisco" data-lat="37.77" data-lng="-122.42" cx="21" cy="28.58" r="0.5" fill="none"><title>San Francisco (sfo)</title></circle>
+  </g>
+</svg>
