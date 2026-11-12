@@ -49,7 +49,7 @@ function render(object, query) {
 
 const api = [
   ['GET', /^\/v1\/prices$/, () => list([...objects.values()].filter((object) => object.id.startsWith('price_')))],
-  ['POST', /^\/v1\/customers$/, (form) => store({ id: id('cus'), metadata: fields(form, 'metadata'), name: form.get('name') })],
+  ['POST', /^\/v1\/customers$/, (form) => store({ id: id('cus'), metadata: fields(form, 'metadata'), name: form.get('name'), email: form.get('email') }), {}, {}, ['name', 'email', 'metadata']],
   ['GET', /^\/v1\/customers\/search$/, (query) => {
     const organization = /^metadata\['organization_id'\]:'([0-9A-Z]{26})'$/.exec(query.get('query') ?? '')?.[1];
     if (!organization) return undefined;
@@ -60,7 +60,7 @@ const api = [
   ['POST', /^\/v1\/customers\/(cus_\w+)$/, (form, [customer]) => {
     const found = find('cus', customer);
     return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
-  }],
+  }, {}, {}, ['metadata']],
   ['POST', /^\/v1\/checkout\/sessions$/, (form) => {
     const price = find('price', form.get('line_items[0][price]'));
     if (form.get('mode') !== 'subscription' || !price || form.get('line_items[0][quantity]') !== '1' || !find('cus', form.get('customer'))) return undefined;
@@ -76,19 +76,19 @@ const api = [
     'allowed_payment_method_types[0]': (value) => value === 'card',
     'allowed_payment_method_types[1]': (value) => value === 'link',
     'allowed_payment_method_types[2]': (value) => value === null,
-  }],
+  }, ['mode', 'customer', 'client_reference_id', 'success_url', 'cancel_url', 'expires_at', 'billing_address', 'payment_method', 'allowed_payment_method_types', 'line_items', 'metadata', 'tax_id', 'customer_update', 'subscription_data']],
   ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }],
   ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session)],
   ['POST', /^\/v1\/checkout\/sessions\/(cs_test_\w+)\/expire$/, (form, [session]) => {
     const found = find('cs', session);
     return found?.status === 'open' ? Object.assign(found, { status: 'expired', url: null }) : found;
-  }],
+  }, {}, {}, []],
   ['GET', /^\/v1\/subscriptions$/, (query) => list(owned('sub', query.get('customer'))), { customer: customerId, status: /^all$/ }],
   ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription)],
   ['POST', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [subscription]) => {
     const found = find('sub', subscription);
     return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
-  }],
+  }, {}, {}, ['metadata']],
   ['DELETE', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [key]) => {
     const subscription = find('sub', key);
     if (subscription?.status === 'canceled') return { refused: 'A canceled subscription can only update its metadata and cancellation_details.' };
@@ -105,7 +105,7 @@ const api = [
     const refund = store({ id: id('re'), amount: payment.amount, payment_intent: payment.id, status: refundStatuses.get(payment.id) ?? 'succeeded' });
     log.refunds.push({ payment: payment.id, subscription: payment.subscription, amount: refund.amount });
     return refund;
-  }, { payment_intent: /^pi_\w+$/ }],
+  }, { payment_intent: /^pi_\w+$/ }, {}, ['payment_intent', 'amount']],
   ['GET', /^\/v1\/invoiceitems$/, () => list([]), { customer: customerId }],
 ];
 
@@ -213,14 +213,22 @@ async function handle(request, response, body) {
     return reply(response, failure.status, { error: { type: 'invalid_request_error', code: failure.status === 404 ? 'resource_missing' : undefined, message: 'Journey Stripe failure.' } });
   }
   const replay = request.method === 'POST' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';
-  if (replays.has(replay)) return reply(response, 200, replays.get(replay));
+  const sent = [...parameters.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([key, value]) => `${key}=${value}`).join('&');
+  const stored = replay ? replays.get(replay) : undefined;
+  if (stored && stored.parameters !== sent) {
+    return reply(response, 400, { error: { type: 'idempotency_error', message: 'Keys for idempotent requests can only be used with the same parameters they were first used with.' } });
+  }
+  if (stored) return reply(response, stored.status, stored.body);
+  const modeled = route?.[5];
+  const unknown = modeled && [...parameters.keys()].find((key) => !modeled.some((prefix) => key === prefix || key.startsWith(`${prefix}[`)));
+  if (unknown) return unexpected(response, request, url, `parameter ${unknown}`, 400, { type: 'invalid_request_error', param: unknown, message: `Received unknown parameter: ${unknown}` });
   const invalid = Object.entries(route?.[4] ?? {}).find(([key, valid]) => !valid(parameters.get(key)))?.[0];
   if (invalid) return unexpected(response, request, url, `parameter ${invalid}`, 400, { type: 'invalid_request_error', param: invalid, message: `Invalid ${invalid}.` });
   const found = route?.[2](parameters, route[1].exec(url.pathname).slice(1));
   if (!found) return unexpected(response, request, url, route ? 'no such object' : 'route');
   if (found.refused) return reply(response, 400, { error: { type: 'invalid_request_error', message: found.refused } });
   const answer = render(found, parameters);
-  if (replay) replays.set(replay, answer);
+  if (replay) replays.set(replay, { parameters: sent, status: 200, body: answer });
   const expanded = [...parameters].filter(([key]) => key.startsWith('expand[')).map(([, path]) => path);
   log.calls.push({ method: request.method, path: url.pathname.replace(/\/(cus|cs_test|sub)_\w+/g, (_, kind) => `/{${kind}}`), query: keys(url.searchParams), expand: expanded, status: 200 });
   return reply(response, 200, answer);

@@ -168,7 +168,7 @@ const organizationData: Record<string, PageState['data']> = {
   sso: async (page) => {
     await expect(page.getByText('No connection', { exact: true })).toBeVisible();
   },
-  danger: async (page, journey) => {
+  danger: async (page) => {
     await expect(page.locator('#organization-danger')).toContainText('Invite another member before transferring ownership.');
   },
 };
