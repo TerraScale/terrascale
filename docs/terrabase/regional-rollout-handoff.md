@@ -138,15 +138,19 @@ with the peer credential, and answers 503 while no writer is known.
   that cannot be reached answers `421 wrong_region`.
 
 A SQL socket holds the regional ingress lease only while it is accepted and
-while one of its frames runs; a relaying peer releases its lease once the
-relayed socket is accepted. An open socket therefore does not hold up a drain,
-though a write transaction it keeps open still delays the drain's replica pulls
-by up to the 5-second transaction limit. When the source writer's ingress hold
-starts, it closes every SQL socket it serves with 1012 (service restart) once
-the frame in flight is answered, and refuses frames that arrive later, so no
-statement runs on the old writer after the fence and clients reconnect to the
-new writer. A closed socket still sends every answer queued before its 1012 and
-ends when the client answers the close. While the hold lasts, a SQL socket
+while the statements of one of its frames run, not while their answer is sent; a
+relaying peer releases its lease once the relayed socket is accepted. An open
+socket therefore does not hold up a drain, not even one whose client stops
+reading an answer, though a write transaction it keeps open still delays the
+drain's replica pulls by up to the 5-second transaction limit. When the source
+writer's ingress hold starts, it closes every SQL socket it serves with 1012
+(service restart) once the frame in flight is answered, and refuses frames that
+arrive later, so no statement runs on the old writer after the fence and clients
+reconnect to the new writer. A closed socket still sends every answer queued
+before its 1012 and ends when the client answers the close. A client still
+receiving an answer when the rollout stops the source sees the connection drop
+(1006) without the 1012 and cannot tell whether that frame committed. While the
+hold lasts, a SQL socket
 upgrade is answered 503 with `Retry-After: 1` at once, instead of waiting for
 the hold to end and being relayed through the source, which the rollout stops
 next; REST requests still wait for the hold.

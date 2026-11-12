@@ -356,6 +356,7 @@ internal sealed class SqlSocket(
             finally
             {
                 await Session.EndRequestAsync().ConfigureAwait(false);
+                running.Dispose();
             }
 
             return await FinishAsync(request.Id, outcome, frame.Length, started, operations, cancellationToken).ConfigureAwait(false);
