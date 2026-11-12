@@ -410,7 +410,13 @@ public sealed class OidcAuthorizationStore(AuthData data, IHttpContextAccessor h
                     && !db.OidcTokens.Any(entry => entry.AuthorizationId == authorization.Id)
                     && !db.CredentialClaims.Any(claim => claim.InstanceId == authorization.InstanceId && claim.Kind == RedeemExactlyOnce.DeviceApprovalKind
                         && claim.OwnerId == authorization.Id && db.OidcAuthorizations.Any(approval => approval.Id == claim.Key)))
-                .OrderBy(authorization => authorization.CreationDate).Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+                .OrderBy(authorization => authorization.CreationDate).Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
+            + await data.InBatchesAsync(batchSize, (db, token) => db.CredentialClaims
+                .Where(claim => claim.InstanceId == OidcIssuer.Slug && claim.Kind == RedeemExactlyOnce.DeviceApprovalKind
+                    && db.CredentialClaims.Where(spent => spent.InstanceId == OidcIssuer.Slug && spent.Kind == RedeemExactlyOnce.DeviceApprovalKind
+                            && !db.OidcAuthorizations.Any(approval => approval.Id == spent.Key))
+                        .Select(spent => spent.Key).OrderBy(key => key).Take(batchSize).Contains(claim.Key))
+                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
     private async IAsyncEnumerable<OidcAuthorization> FindAsync(string? subject, string? client, string? status, string? type, [EnumeratorCancellation] CancellationToken cancellationToken)
