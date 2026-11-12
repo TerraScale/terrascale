@@ -63,7 +63,7 @@ internal static class TerraScaleOrigin
     internal static HttpResponseMessage Sent(HttpResponseMessage response, Uri origin)
     {
         if (response.RequestMessage?.RequestUri is not { } sent
-            || Uri.Compare(sent, origin, UriComponents.SchemeAndServer, UriFormat.UriEscaped, StringComparison.Ordinal) == 0)
+            || HttpScheme(sent) == HttpScheme(origin) && Uri.Compare(sent, origin, UriComponents.HostAndPort, UriFormat.UriEscaped, StringComparison.Ordinal) == 0)
         {
             return response;
         }
@@ -72,6 +72,13 @@ internal static class TerraScaleOrigin
         throw new InvalidOperationException(
             $"The HttpClient followed a redirect away from {origin.GetLeftPart(UriPartial.Authority)}: disable automatic redirects on its handler, as TerraBaseHttp.CreateHandler() does.");
     }
+
+    private static string HttpScheme(Uri uri) => uri.Scheme switch
+    {
+        "wss" => Uri.UriSchemeHttps,
+        "ws" => Uri.UriSchemeHttp,
+        var scheme => scheme,
+    };
 
     private static ArgumentException Malformed(string label, string? parameter, TerraScaleService service) =>
         new($"{label} must be exactly scheme://host[:port], such as https://{service.Host}.", parameter);
