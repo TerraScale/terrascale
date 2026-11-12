@@ -467,7 +467,6 @@ namespace TerraScale.Dashboard.Common.Databases
     // A successful producer's invalid listing cannot be treated as an unreachable region.
     internal sealed class DatabaseListingException(string message) : DatabaseProviderException(HttpStatusCode.ServiceUnavailable, message);
 
-    // TerraBase's wrong-region refusal retains the answering region and the database's placement; calls are never redirected.
     public sealed class DatabaseWrongRegionException(string? region, string? homeRegion, IReadOnlyList<string> regions)
         : DatabaseProviderException(HttpStatusCode.MisdirectedRequest, homeRegion is null
             ? "The database is served in another region. Nothing was changed."
