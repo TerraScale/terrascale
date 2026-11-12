@@ -37,8 +37,6 @@ namespace TerraScale.Dashboard.Features.Databases
                 OrganizationId = project.OrganizationId,
                 Name = name,
                 Slug = AccountService.Slug(name),
-                Region = placement.Code,
-                BackupRegion = project.BackupRegion,
                 Regions = [placement.Code],
                 Status = project.Status,
                 IsDefault = true,

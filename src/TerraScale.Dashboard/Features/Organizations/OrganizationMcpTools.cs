@@ -22,27 +22,23 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         [McpServerTool(Name = "create_project", Title = "Create project", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Create a project in an organization. Requires the owner or admin role and, for business organizations, active billing.")]
         public Task<OrganizationProjectResult> CreateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
-            [Description("Primary region code; must be one of regions. Defaults to the first of regions.")] string region = "",
-            [Description("Backup region code; must be one of regions. Defaults to the first of regions.")] string backupRegion = "",
-            [Description("Region codes TerraBase serves that the project may use, such as GRU. Omit to keep the project's current regions.")] string[]? regions = null,
+            [Description("Serving region codes the project uses, such as GRU. At least one, each once, in the order given. The first is the default region of a new database.")] string[] regions,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
         {
             return Invoke(async () =>
         {
-            var project = await operations.CreateProjectAsync(Scope(organizationId, projectId), name, region, backupRegion, regions, Cancellation);
-            return new OrganizationProjectResult(project.Id, project.OrganizationId, project.Name, project.Region, project.BackupRegion, project.Regions);
+            var project = await operations.CreateProjectAsync(Scope(organizationId, projectId), name, regions, Cancellation);
+            return new OrganizationProjectResult(project.Id, project.OrganizationId, project.Name, project.Regions);
         });
         }
 
-        [McpServerTool(Name = "update_project", Title = "Update project", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename the project projectId selects and optionally change its regions. Requires the owner or admin role.")]
+        [McpServerTool(Name = "update_project", Title = "Update project", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename the project projectId selects and optionally replace its regions. Requires the owner or admin role.")]
         public Task<OrganizationDone> UpdateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
-            [Description("Primary region code; must be one of regions. Defaults to the first of regions.")] string region = "",
-            [Description("Backup region code; must be one of regions. Defaults to the first of regions.")] string backupRegion = "",
-            [Description("Region codes TerraBase serves that the project may use, such as GRU. Omit to keep the project's current regions.")] string[]? regions = null,
+            [Description("Serving region codes that replace the project's regions, such as GRU. At least one when sent, each once, in the order given. The first is the default region of a new database. Omit to keep the current regions.")] string[]? regions = null,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
         {
             return Invoke(async () =>
-        { await operations.UpdateProjectAsync(Scope(organizationId, projectId), name, region, backupRegion, regions, Cancellation); return new OrganizationDone(true); });
+        { await operations.UpdateProjectAsync(Scope(organizationId, projectId), name, regions, Cancellation); return new OrganizationDone(true); });
         }
 
         [McpServerTool(Name = "request_organization_deletion", Title = "Request organization deletion", Idempotent = true, Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Request deletion of a business organization. Requires the owner role and confirmName equal to the organization name. Always returns step_up_required: deletion is confirmed with fresh credentials on the dashboard's danger zone page, never through unattended MCP.")]

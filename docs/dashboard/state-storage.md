@@ -176,6 +176,21 @@ and the provider refuses, before any statement runs, to rebuild a table that ano
 and writes `deletion_cleanup` only through EF Core, which names the columns it maps, so it ignores both columns and
 leaves them NULL on the rows it inserts.
 
+`DropProjectPlacementColumns` is a hand-written two-table migration inside one transaction. The provider refuses
+its generated table rebuild because `project_databases` references `organization_projects`. Instead it copies both
+tables, drops the referencing table before the referenced table, renames the copies and recreates their indexes.
+The copies retain every remaining column, constraint and database-to-project link. Project regions become the old
+non-empty primary followed by the other old list entries in their original order, removing any repeated primary
+case-insensitively; an empty primary leaves the list unchanged. The first region is where new databases start.
+A primary already first stays first; a primary later in the list moves first; a missing primary is prepended;
+an empty list gains its non-empty primary; an empty primary preserves the original list.
+
+Once this migration runs, an instance still running the previous version fails its organization reads because it
+still selects the removed columns. Requests error; no write is lost. Upgrade those instances together or run `Down`
+before rolling the code back. `Down` restores the required `region` and `backup_region` columns and fills both from
+the first region, or the empty string for an empty list. The old code used the first listed region when no backup
+was selected; the discarded historical backup choice cannot be recovered.
+
 ### Expiry
 
 `StorageSweeper` runs every 10 minutes and deletes expired `auth_flows`, `sessions` (and with them their access tokens

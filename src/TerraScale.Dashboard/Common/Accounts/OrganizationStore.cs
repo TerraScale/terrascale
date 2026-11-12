@@ -188,8 +188,6 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             Projects = rows.Projects.ToDictionary(project => project.Id, project => new ProjectRecord
             {
                 Id = project.Id,
-                Region = project.Region,
-                BackupRegion = project.BackupRegion,
                 Regions = Strings(project.Regions),
                 Status = project.Status,
                 IsDefault = project.IsDefault,
@@ -251,8 +249,6 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
         {
             Id = pair.Key,
             OrganizationId = organization.Id,
-            Region = pair.Value.Region,
-            BackupRegion = pair.Value.BackupRegion,
             Regions = Json([.. pair.Value.Regions]),
             Status = pair.Value.Status,
             IsDefault = pair.Value.IsDefault,

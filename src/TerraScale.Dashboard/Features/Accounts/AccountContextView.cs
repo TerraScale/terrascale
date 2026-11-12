@@ -26,7 +26,7 @@ namespace TerraScale.Dashboard.Features.Accounts
         private static AccountContextProject Project(ProjectRecord project, bool member)
         {
             return new(project.Id, project.OrganizationId, project.Name, project.Slug,
-            project.Region, project.BackupRegion, [.. project.Regions], project.Status, project.IsDefault,
+            [.. project.Regions], project.Status, project.IsDefault,
             member ? Limits(project.OperationLimits) : null, Date(project.CreatedAt), project.Databases.ToDictionary(item => item.Key, item =>
                 new AccountContextDatabase(item.Value.Id, item.Value.ProjectId, item.Value.Name, item.Value.Region, [.. item.Value.Regions],
                     item.Value.Status, member ? Limits(item.Value.OperationLimits) : null, Date(item.Value.CreatedAt))), project.Role);
@@ -52,7 +52,7 @@ namespace TerraScale.Dashboard.Features.Accounts
         IReadOnlyDictionary<string, AccountContextProject> Projects, string? Role);
     public sealed record AccountContextMember(string UserId, string Name, string Email, string Role, string Status, DateTimeOffset? CreatedAt, DateOnly? JoinedOn);
     public sealed record AccountContextInvitation(string Id, string Email, string Role, string Status, DateTimeOffset? CreatedAt, DateTimeOffset? ExpiresAt);
-    public sealed record AccountContextProject(string Id, string OrganizationId, string Name, string Slug, string Region, string BackupRegion,
+    public sealed record AccountContextProject(string Id, string OrganizationId, string Name, string Slug,
         IReadOnlyList<string> Regions, string Status, bool IsDefault, AccountContextLimits? OperationLimits,
         DateTimeOffset? CreatedAt, IReadOnlyDictionary<string, AccountContextDatabase> Databases, string? Role);
     public sealed record AccountContextDatabase(string Id, string ProjectId, string Name, string Region, IReadOnlyList<string> Regions,

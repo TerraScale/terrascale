@@ -411,9 +411,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 Slug = project.Slug,
                 Role = project.Role,
                 CreatedAt = project.CreatedAt,
-                Region = project.Region,
-                BackupRegion = project.BackupRegion,
-                Regions = project.Regions,
+                Regions = [.. project.Regions],
                 Status = project.Status,
                 IsDefault = project.IsDefault,
                 Databases = project.Databases.Where(item => TerraScaleIds.IsValid(item.Key) && item.Key == item.Value.Id && item.Value.ProjectId == project.Id)
