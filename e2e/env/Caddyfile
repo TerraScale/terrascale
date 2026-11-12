@@ -71,3 +71,8 @@ https://hooks.journey.terrascale.tech {
 	import edge
 	reverse_proxy 127.0.0.1:8029
 }
+
+https://cloudflare-dns.com {
+	import edge
+	reverse_proxy 127.0.0.1:8030
+}

@@ -6,7 +6,7 @@ import { journey, saveCookies, saveSecret } from './state';
 
 export type AuthManagement = { user: string; readKey: string; writeKey: string; csrf: string; ownerToken: string };
 
-async function signInToken(context: APIRequestContext, label: string): Promise<string> {
+export async function signInToken(context: APIRequestContext, label: string): Promise<string> {
   const client = '00000000000000000000000007';
   const started = await context.post(auth + '/terrascale/oauth/device', { form: { client_id: client, scope: 'openid email' } });
   expect(started.status()).toBe(200);

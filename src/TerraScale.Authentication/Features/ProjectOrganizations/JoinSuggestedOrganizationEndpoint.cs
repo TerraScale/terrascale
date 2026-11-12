@@ -1,6 +1,7 @@
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Endpoints;
 
@@ -12,7 +13,7 @@ public sealed class JoinSuggestedOrganizationEndpoint(ProjectOrganizationDirecto
     {
         Post("/ui/{slug}/organizations/{org}/join");
         Name("ui_join_project_organization");
-        Summary("Join a suggested organization");
+        Summary("Join or dismiss a suggested organization");
         Tags("Sign-in");
         Produces<string>(302, "text/html");
         AllowAnonymous();
@@ -33,8 +34,17 @@ public sealed class JoinSuggestedOrganizationEndpoint(ProjectOrganizationDirecto
             return Results.Unauthorized();
         }
 
-        var next = SignInFlow.SafeNext(this.HttpContext, (await this.HttpContext.Request.ReadFormAsync(cancellationToken))["next"]);
-        await organizations.JoinSuggestedAsync(live.User, (string)this.HttpContext.GetRouteValue("org")!, cancellationToken);
+        var form = await this.HttpContext.Request.ReadFormAsync(cancellationToken);
+        var next = SignInFlow.SafeNext(this.HttpContext, form["next"]);
+        var org = this.HttpContext.GetRouteValue("org") as string ?? throw PlatformDirectory.NotFound();
+        if (form["dismiss"] == "true")
+        {
+            await organizations.DismissSuggestionAsync(live.User, org, cancellationToken);
+        }
+        else
+        {
+            await organizations.JoinSuggestedAsync(live.User, org, cancellationToken);
+        }
         return Results.Redirect(next ?? $"/ui/{tenant}/sign-in");
     }
 }

@@ -15,7 +15,7 @@ public sealed partial class ProjectOrganizationDirectory
     public ProjectOrganizationInvitationBody InvitationBody(ProjectOrganizationInvitation invite) => new(invite.Id, invite.Email, invite.Role,
         invite.Status == "pending" && invite.ExpiresAt <= clock.GetUtcNow() ? "expired" : invite.Status, invite.CreatedAt, invite.ExpiresAt);
 
-    public async Task<ProjectOrganizationInvitationBody> InviteAsync(string project, string id, ProjectInvitationRequest request, CancellationToken cancellationToken)
+    public async Task<ProjectOrganizationInvitationBody> InviteAsync(string project, string id, ProjectInvitationRequest request, string inviter, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var email = Users.NormalizeEmail(request.Email) ?? throw Invalid("email must be a valid address.");
@@ -30,7 +30,7 @@ public sealed partial class ProjectOrganizationDirectory
         {
             Tenant = project,
             Organization = org.Value.Name,
-            Inviter = org.Value.Name,
+            Inviter = inviter,
             Link = new Uri(options.PublicOrigin, $"ui/{project}/organization-invitations?token={secret}"),
             ExpiresIn = InvitationLifetime,
         }).ConfigureAwait(false);

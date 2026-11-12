@@ -11,7 +11,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Storage.Migrations
 {
     [DbContext(typeof(AuthDbContext))]
-    [Migration("20261112194855_ProjectOrganizations")]
+    [Migration("20261112205112_ProjectOrganizations")]
     partial class ProjectOrganizations
     {
         /// <inheritdoc />
@@ -1264,6 +1264,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("email");
 
+                    b.Property<bool>("EmailVerified")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("email_verified");
+
                     b.Property<string>("InstanceId")
                         .IsRequired()
                         .HasMaxLength(26)
@@ -1940,20 +1944,55 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.ToTable("step_up_proofs", (string)null);
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationDismissal", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "OrganizationId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("project_organization_dismissals", (string)null);
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationDomain", b =>
                 {
                     b.Property<string>("ProjectId")
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
 
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
                     b.Property<string>("Domain")
                         .HasColumnType("TEXT")
                         .HasColumnName("domain");
 
-                    b.Property<string>("OrganizationId")
-                        .IsRequired()
+                    b.Property<DateTime?>("CheckedAt")
                         .HasColumnType("TEXT")
-                        .HasColumnName("organization_id");
+                        .HasColumnName("checked_at");
+
+                    b.Property<int>("FailedChecks")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("failed_checks");
 
                     b.Property<string>("VerificationToken")
                         .IsRequired()
@@ -1971,9 +2010,14 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("version");
 
-                    b.HasKey("ProjectId", "Domain");
+                    b.HasKey("ProjectId", "OrganizationId", "Domain");
 
-                    b.HasIndex("ProjectId", "OrganizationId");
+                    b.HasIndex("CheckedAt")
+                        .HasFilter("verified_at IS NOT NULL");
+
+                    b.HasIndex("ProjectId", "Domain")
+                        .IsUnique()
+                        .HasFilter("verified_at IS NOT NULL");
 
                     b.ToTable("project_organization_domains", (string)null);
                 });
@@ -2146,7 +2190,7 @@ namespace TerraScale.Authentication.Storage.Migrations
 
                     b.ToTable("project_organizations", null, t =>
                         {
-                            t.HasCheckConstraint("ck_project_organizations_counts", "admins >= 1 AND members >= admins AND (max_members IS NULL OR members <= max_members)");
+                            t.HasCheckConstraint("ck_project_organizations_counts", "admins >= 0 AND (members = 0 OR admins >= 1) AND members >= admins AND (max_members IS NULL OR members <= max_members)");
 
                             t.HasCheckConstraint("ck_project_organizations_join", "domain_join IN ('off', 'suggest', 'auto')");
 
@@ -2886,6 +2930,21 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationDismissal", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId", "OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

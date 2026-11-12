@@ -16,6 +16,6 @@ public sealed class CreateProjectOrganizationInvitationEndpoint(ProjectOrganizat
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.OrganizationBodyAsync(ProjectOrganizationsJson.Default.ProjectInvitationRequest, cancellationToken);
-        return Results.Json(await organizations.InviteAsync(project, this.Org, request, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationInvitationBody, statusCode: 201);
+        return Results.Json(await organizations.InviteAsync(project, this.Org, request, caller is ProjectCaller.SecretKey key ? key.Key.Name : caller.Person.Email, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationInvitationBody, statusCode: 201);
     }
 }

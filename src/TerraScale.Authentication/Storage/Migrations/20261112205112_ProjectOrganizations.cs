@@ -23,6 +23,13 @@ namespace TerraScale.Authentication.Storage.Migrations
                 type: "TEXT",
                 nullable: true);
 
+            migrationBuilder.AddColumn<bool>(
+                name: "email_verified",
+                table: "users",
+                type: "INTEGER",
+                nullable: false,
+                defaultValue: true);
+
             migrationBuilder.CreateTable(
                 name: "project_organizations",
                 columns: table => new
@@ -44,7 +51,7 @@ namespace TerraScale.Authentication.Storage.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_project_organizations", x => new { x.project_id, x.id });
-                    table.CheckConstraint("ck_project_organizations_counts", "admins >= 1 AND members >= admins AND (max_members IS NULL OR members <= max_members)");
+                    table.CheckConstraint("ck_project_organizations_counts", "admins >= 0 AND (members = 0 OR admins >= 1) AND members >= admins AND (max_members IS NULL OR members <= max_members)");
                     table.CheckConstraint("ck_project_organizations_join", "domain_join IN ('off', 'suggest', 'auto')");
                     table.CheckConstraint("ck_project_organizations_slug", "length(slug) BETWEEN 3 AND 63 AND slug = lower(slug)");
                     table.ForeignKey(
@@ -56,19 +63,47 @@ namespace TerraScale.Authentication.Storage.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "project_organization_domains",
+                name: "project_organization_dismissals",
                 columns: table => new
                 {
                     project_id = table.Column<string>(type: "TEXT", nullable: false),
-                    domain = table.Column<string>(type: "TEXT", nullable: false),
                     organization_id = table.Column<string>(type: "TEXT", nullable: false),
-                    verification_token = table.Column<string>(type: "TEXT", nullable: false),
-                    verified_at = table.Column<DateTime>(type: "TEXT", nullable: true),
+                    user_id = table.Column<string>(type: "TEXT", nullable: false),
                     version = table.Column<string>(type: "TEXT", maxLength: 26, nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_project_organization_domains", x => new { x.project_id, x.domain });
+                    table.PrimaryKey("PK_project_organization_dismissals", x => new { x.project_id, x.organization_id, x.user_id });
+                    table.ForeignKey(
+                        name: "FK_project_organization_dismissals_project_organizations_project_id_organization_id",
+                        columns: x => new { x.project_id, x.organization_id },
+                        principalTable: "project_organizations",
+                        principalColumns: new[] { "project_id", "id" },
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_project_organization_dismissals_users_user_id",
+                        column: x => x.user_id,
+                        principalTable: "users",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "project_organization_domains",
+                columns: table => new
+                {
+                    project_id = table.Column<string>(type: "TEXT", nullable: false),
+                    organization_id = table.Column<string>(type: "TEXT", nullable: false),
+                    domain = table.Column<string>(type: "TEXT", nullable: false),
+                    verification_token = table.Column<string>(type: "TEXT", nullable: false),
+                    verified_at = table.Column<DateTime>(type: "TEXT", nullable: true),
+                    checked_at = table.Column<DateTime>(type: "TEXT", nullable: true),
+                    failed_checks = table.Column<int>(type: "INTEGER", nullable: false),
+                    version = table.Column<string>(type: "TEXT", maxLength: 26, nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_project_organization_domains", x => new { x.project_id, x.organization_id, x.domain });
                     table.ForeignKey(
                         name: "FK_project_organization_domains_project_organizations_project_id_organization_id",
                         columns: x => new { x.project_id, x.organization_id },
@@ -133,9 +168,22 @@ namespace TerraScale.Authentication.Storage.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_project_organization_domains_project_id_organization_id",
+                name: "IX_project_organization_dismissals_user_id",
+                table: "project_organization_dismissals",
+                column: "user_id");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_project_organization_domains_checked_at",
                 table: "project_organization_domains",
-                columns: new[] { "project_id", "organization_id" });
+                column: "checked_at",
+                filter: "verified_at IS NOT NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_project_organization_domains_project_id_domain",
+                table: "project_organization_domains",
+                columns: new[] { "project_id", "domain" },
+                unique: true,
+                filter: "verified_at IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "IX_project_organization_invitations_token_hash",
@@ -164,6 +212,9 @@ namespace TerraScale.Authentication.Storage.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
+                name: "project_organization_dismissals");
+
+            migrationBuilder.DropTable(
                 name: "project_organization_domains");
 
             migrationBuilder.DropTable(
@@ -182,6 +233,10 @@ namespace TerraScale.Authentication.Storage.Migrations
             migrationBuilder.DropColumn(
                 name: "organization_role",
                 table: "webhook_outbox");
+
+            migrationBuilder.DropColumn(
+                name: "email_verified",
+                table: "users");
         }
     }
 }

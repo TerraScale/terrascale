@@ -124,6 +124,7 @@ public static class App
         builder.Services.AddSingleton<Users>();
         builder.Services.AddSingleton<WebhookOutbox>();
         builder.Services.AddSingleton<ProjectOrganizationDirectory>();
+        builder.Services.AddHostedService<ProjectOrganizationDomainWorker>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
         builder.Services.AddSingleton<PasswordHasher>();

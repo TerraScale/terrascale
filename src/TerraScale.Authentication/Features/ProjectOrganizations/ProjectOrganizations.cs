@@ -10,7 +10,7 @@ using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.ProjectOrganizations;
 
-public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookOutbox outbox, TimeProvider clock, SignInMail mail, AuthOptions options, IHttpClientFactory clients)
+public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookOutbox outbox, TimeProvider clock, SignInMail mail, AuthOptions options, IHttpClientFactory clients, ILogger<ProjectOrganizationDirectory> logger)
 {
     public static ProjectOrganizationBody Body(ProjectOrganizationRecord org) => new(org.Id, org.Name, org.Slug, org.ImageUrl,
         org.PublicMetadata, org.PrivateMetadata, org.MaxMembers, org.DomainJoin, org.CreatedAt);
@@ -50,7 +50,13 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
     public async Task DeleteAsync(string project, string id, CancellationToken cancellationToken)
     {
         var current = await this.ReadAsync(project, id, cancellationToken).ConfigureAwait(false);
-        await this.CommitAsync([Change.Delete(current), this.Event(current.Value, "organization.deleted")], cancellationToken).ConfigureAwait(false);
+        var members = await data.ReadAsync((db, token) => db.ProjectOrganizationMemberships
+            .Where(row => row.ProjectId == project && row.OrganizationId == current.Value.Id).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var invitations = await data.ReadAsync((db, token) => db.ProjectOrganizationInvitations
+            .Where(row => row.ProjectId == project && row.OrganizationId == current.Value.Id).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        await this.CommitAsync([Change.Delete(current), this.Event(current.Value, "organization.deleted"),
+            .. members.Select(member => this.Event(current.Value, "organizationMembership.deleted", member.UserId, member.Role)),
+            .. invitations.Select(invite => this.Event(current.Value, "organizationInvitation.revoked", invite.Id))], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ProjectMembershipPage> MembersAsync(string project, string id, int limit, string? after, CancellationToken cancellationToken)
@@ -166,9 +172,17 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
         return value.Value.Clone();
     }
 
-    private static ProjectOrganizationRecord AddMember(ProjectOrganizationRecord org, string role) => org.MaxMembers is { } maximum && org.Members >= maximum
-        ? throw Conflict("organization_full", "The organization's member limit was reached.")
-        : org with { Members = checked(org.Members + 1), Admins = org.Admins + (role == "admin" ? 1 : 0) };
+    private static ProjectOrganizationRecord AddMember(ProjectOrganizationRecord org, string role)
+    {
+        if (org.Admins == 0 && role != "admin")
+        {
+            throw Conflict("organization_requires_admin", "The first member of an empty organization must be an admin.");
+        }
+
+        return org.MaxMembers is { } maximum && org.Members >= maximum
+            ? throw Conflict("organization_full", "The organization's member limit was reached.")
+            : org with { Members = checked(org.Members + 1), Admins = org.Admins + (role == "admin" ? 1 : 0) };
+    }
 
     internal static string Role(string? role) => role is "admin" or "member" ? role : throw Invalid("role must be admin or member.");
     private static ApiException Invalid(string message) => new(400, "invalid_request", message);

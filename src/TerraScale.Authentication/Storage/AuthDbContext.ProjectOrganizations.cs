@@ -11,13 +11,15 @@ public sealed partial class AuthDbContext
     public DbSet<ProjectOrganizationInvitation> ProjectOrganizationInvitations => this.Set<ProjectOrganizationInvitation>();
     public DbSet<ProjectOrganizationDomain> ProjectOrganizationDomains => this.Set<ProjectOrganizationDomain>();
 
+    public DbSet<ProjectOrganizationDismissal> ProjectOrganizationDismissals => this.Set<ProjectOrganizationDismissal>();
+
     private static void ConfigureProjectOrganizations(ModelBuilder model)
     {
         model.Entity<ProjectOrganizationRecord>(org =>
         {
             org.ToTable("project_organizations", table =>
             {
-                table.HasCheckConstraint("ck_project_organizations_counts", "admins >= 1 AND members >= admins AND (max_members IS NULL OR members <= max_members)");
+                table.HasCheckConstraint("ck_project_organizations_counts", "admins >= 0 AND (members = 0 OR admins >= 1) AND members >= admins AND (max_members IS NULL OR members <= max_members)");
                 table.HasCheckConstraint("ck_project_organizations_slug", "length(slug) BETWEEN 3 AND 63 AND slug = lower(slug)");
                 table.HasCheckConstraint("ck_project_organizations_join", "domain_join IN ('off', 'suggest', 'auto')");
             });
@@ -45,10 +47,20 @@ public sealed partial class AuthDbContext
             invite.HasIndex(row => row.TokenHash).IsUnique();
             Versioned(invite);
         });
+        model.Entity<ProjectOrganizationDismissal>(dismissal =>
+        {
+            dismissal.ToTable("project_organization_dismissals");
+            dismissal.HasKey(row => new { row.ProjectId, row.OrganizationId, row.UserId });
+            dismissal.HasOne<ProjectOrganizationRecord>().WithMany().HasForeignKey(row => new { row.ProjectId, row.OrganizationId }).OnDelete(DeleteBehavior.Cascade);
+            dismissal.HasOne<UserRecord>().WithMany().HasForeignKey(row => row.UserId).OnDelete(DeleteBehavior.Cascade);
+            Versioned(dismissal);
+        });
         model.Entity<ProjectOrganizationDomain>(domain =>
         {
             domain.ToTable("project_organization_domains");
-            domain.HasKey(row => new { row.ProjectId, row.Domain });
+            domain.HasKey(row => new { row.ProjectId, row.OrganizationId, row.Domain });
+            domain.HasIndex(row => new { row.ProjectId, row.Domain }).IsUnique().HasFilter("verified_at IS NOT NULL");
+            domain.HasIndex(row => row.CheckedAt).HasFilter("verified_at IS NOT NULL");
             domain.HasOne<ProjectOrganizationRecord>().WithMany().HasForeignKey(row => new { row.ProjectId, row.OrganizationId }).OnDelete(DeleteBehavior.Cascade);
             Versioned(domain);
         });

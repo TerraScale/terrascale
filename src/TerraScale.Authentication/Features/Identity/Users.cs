@@ -8,7 +8,7 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Identity;
 
-public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock)
+public sealed partial class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock)
 {
     public static string? NormalizeEmail(string? email)
     {
@@ -32,7 +32,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
 
     internal (UserRecord User, Change[] Changes) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, Change? lifecycleEvent = null)
     {
-        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New() };
+        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New(), EmailVerified = true };
         return (user, lifecycleEvent is null ? [Change.Insert(user)] : [Change.Insert(user), lifecycleEvent]);
     }
 
@@ -89,7 +89,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 return null;
             }
 
-            var user = new UserRecord(AuthIds.New(), tenant, normalized, 0, clock.GetUtcNow()) { AuthStamp = AuthIds.New(), LinkedProviders = [identity] };
+            var user = new UserRecord(AuthIds.New(), tenant, normalized, 0, clock.GetUtcNow()) { AuthStamp = AuthIds.New(), EmailVerified = true, LinkedProviders = [identity] };
             List<Change> changes = [Change.Insert(user), Change.Insert(Link(user, identity))];
             if (await outbox.CreateAsync(tenant, "user.signed_up", user.Id, normalized, null, cancellationToken).ConfigureAwait(false) is { } lifecycleEvent)
             {
@@ -209,7 +209,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
 
         var passcode = await data.ReadAsync((db, token) => db.Passcodes.Where(row => row.InstanceId == instanceId && row.Key == userId).WithVersion()
             .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
-        List<Change> changes = [Change.Update(current with { Email = newEmail, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthIds.New() }), .. extra];
+        List<Change> changes = [Change.Update(current with { Email = newEmail, EmailVerified = true, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthIds.New() }), .. extra];
         if (await outbox.CreateAsync(instanceId, "user.updated", userId, newEmail, null, cancellationToken).ConfigureAwait(false) is { } updatedEvent)
         {
             changes.Add(updatedEvent);
@@ -279,6 +279,12 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 DeletionJob.Enqueue(instanceId, "account", userId, clock, closureGeneration: closureGeneration),
                 .. passcodes.Select(passcode => Change.Delete(passcode)),
             ];
+            if (await this.RemoveOrganizationMembershipsAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } memberships)
+            {
+                continue;
+            }
+
+            changes.AddRange(memberships);
             if (await outbox.CreateAsync(instanceId, "user.deleted", userId, current.Email, null, cancellationToken).ConfigureAwait(false) is { } deleted)
             {
                 changes.Add(deleted);
