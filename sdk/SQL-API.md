@@ -175,10 +175,11 @@ transaction:
 Frames carry a client `id`; calls may overlap and answers are matched by `id`. Nothing on a session is resent.
 
 Reconnect: when the socket drops (server restart 1001, regional handoff 1012, network loss, ping timeout), calls in
-flight fail with the close error and are not resent. The next call opens a new socket with a fresh credential. If a
-transaction was open when the socket dropped, the server rolled it back: every call except `rollback` fails with
-`transaction_rolled_back` (40000) until the caller calls `rollback`, which only clears the lost transaction. After
-`close()` the session stays closed. A refused reconnect raises the same HTTP error types as `connect()`.
+flight fail with the close error and are not resent. The next call opens a new socket with a fresh credential (except
+JavaScript: open a new session). If a transaction was open when the socket dropped, the server rolled it back: every
+call except `rollback` fails with `transaction_rolled_back` (40000) until the caller calls `rollback`, which only clears
+the lost transaction. After `close()` the session stays closed. A refused reconnect raises the same HTTP error types as
+`connect()`.
 
 ### Keep-alive and closes
 
@@ -187,7 +188,8 @@ transaction was open when the socket dropped, the server rolled it back: every c
 | An idle socket | TerraBase pings every 20 seconds and drops a client that does not answer a ping within 20 seconds. |
 | The client takes no data for 120 seconds | The edge ends the socket: an HTTP/1.1 connection closes, an HTTP/2 stream gets RST_STREAM. |
 | An upgrade without `Authorization` sends no auth frame within 5 seconds | TerraBase closes the socket with 1008. |
-| The region's writer starts handing off to another node (regional handoff) | TerraBase answers every frame it admitted before the handoff, then closes the socket with 1012 (service restart); a call still waiting for its answer when the 1012 arrives did not run. While the handoff holds the region's ingress, an upgrade answers 503 with `Retry-After: 1`. Reconnect: the new socket reaches the region's writer. |
+| The region's writer starts handing off to another node (regional handoff), socket through the edge (`api.terrascale.tech`) | The edge ends every socket to the region when its own hold starts, before TerraBase's fence: the client sees an abnormal close (1006), and a call in flight has an unknown outcome, so it may have committed. |
+| The same handoff, socket straight to TerraBase | TerraBase answers every frame it admitted before the handoff, then closes the socket with 1012 (service restart); a call still waiting for its answer when the 1012 arrives did not run. While the handoff holds the region's ingress, an upgrade answers 503 with `Retry-After: 1`. Reconnect: the new socket reaches the region's writer. |
 | TerraBase closes the socket with 1012, or with 1001 at a restart | TerraBase still sends every answer queued before the close, runs no frame that arrives later and waits for the client to answer the close. A client that never answers is dropped by the ping timeout, 40 to 50 seconds after its last frame; at a restart every connection still open 2 seconds after shutdown starts is dropped. |
 | TerraBase closes the socket for a client fault (1003, 1008, 1009, 1011) and the client does not answer within 2 seconds | TerraBase drops the connection. |
 
