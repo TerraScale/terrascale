@@ -201,15 +201,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
-            var discovery = await DiscoveryAsync(cancellationToken);
             var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
-            if (discovery.Catalog.Count > 0)
-            {
-                var selected = allRegions ? discovery.Catalog.Select(region => region.Id) : replicaRegions.Prepend(home.Id);
-                return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId,
-                    new(Name: name, Regions: [.. selected], TtlSeconds: ttlSeconds)).ResponseAsync));
-            }
-
             return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId, new(Name: name, HomeRegion: home.Id,
                 ReplicaRegions: allRegions || replicaRegions.Count == 0 ? null : replicaRegions, AllRegions: allRegions ? true : null, TtlSeconds: ttlSeconds)).ResponseAsync));
         }
