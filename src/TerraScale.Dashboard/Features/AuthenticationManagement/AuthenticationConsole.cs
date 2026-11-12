@@ -27,10 +27,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
             var known = parts switch
             {
-                ["settings" or "branding" or "configuration" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
+                ["settings" or "branding" or "configuration" or "clients" or "webhooks" or "organizations"] or ["danger", "users" or "sessions" or "clients"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
                 ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
+                ["organizations", ..] => true,
                 _ => false
             };
             if (!known)
@@ -58,6 +59,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var (session, project, cancel) = (context.Session, context.Project.Id, http.RequestAborted);
             try
             {
+                if (parts[0] == "organizations")
+                {
+                    return await OrganizationPostAsync(http, context, projects, form, parts, cancel);
+                }
+
                 switch (parts)
                 {
                     case ["settings"]:
@@ -364,6 +370,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         break;
                     case "users": var users = await projects.ListUsersAsync(session, project, Value(page.Search), Value(page.After), cancel); page = page with { Users = users.Items, Next = users.Next }; break;
                     case "sessions": var live = await projects.ListSessionsAsync(session, project, Value(page.User), Value(page.After), cancel); page = page with { Sessions = live.Items, Next = live.Next }; break;
+                    case "organizations": page = await OrganizationsAsync(http, page, projects, cancel); break;
                     case "clients": page = page with { Clients = await projects.ListClientsAsync(session, project, cancel) }; break;
                     case "logs":
                         var events = context.CanManageProject ? await projects.ListEventsAsync(session, project, Value(page.After), cancel) : new TsAuthPlatformPage<TsAuthWebhookEvent>([], null);
@@ -394,7 +401,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
     }
 
-    public sealed record AuthenticationPage(ShellModel Shell, AuthenticationSection Section, string Search, string After, string User, string Error,
+    public sealed partial record AuthenticationPage(ShellModel Shell, AuthenticationSection Section, string Search, string After, string User, string Error,
         TsAuthProjectOAuthClient? Created, TsAuthProjectClientSecret? Rotated, TsAuthWebhookEndpoint? CreatedWebhook, TsAuthWebhookSecret? RotatedWebhook)
     {
         public AccountContext Context => Shell.Context;
@@ -423,6 +430,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             new("overview", "Overview", "LayoutDashboard", ""),
             new("users", "Users", "Users", "Users"),
             new("sessions", "Sessions", "Monitor", "Users"),
+            new("organizations", "Organizations", "Building2", "Organizations"),
             new("sign-in", "Sign-in methods", "LockKeyhole", "Sign-in"),
             new("social", "Social sign-in", "Fingerprint", "Sign-in"),
             new("configuration", "Configuration", "Settings", "Sign-in"),

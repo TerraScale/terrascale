@@ -1,0 +1,106 @@
+@inherits RazorSlice<AuthenticationPage>
+@using TerraScale.Dashboard.Features.AuthenticationManagement
+@{
+    var org = Model.SelectedOrganization;
+    var manage = Model.Context.CanManageProject;
+    var root = "/api/v1/auth-management/organizations";
+    var selected = org is null ? root : root + "/" + org.Id;
+    var href = org is null ? "/auth/organizations" : "/auth/organizations?org=" + Uri.EscapeDataString(org.Id);
+    void Csrf() { <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken"> }
+    void Role(string id, string value = "member") {
+        <label for="@id">Role</label><select class="ts-select" id="@id" name="role"><option value="member" selected="@(value == "member")">Member</option><option value="admin" selected="@(value == "admin")">Admin</option></select>
+    }
+    void Action(string action, string label) {
+        <form method="post" action="@action">@{ Csrf(); }<button class="ts-btn ts-btn-secondary" type="submit">@label</button></form>
+    }
+    void Pager() {
+        <nav aria-label="Organization pages"><a class="ts-link" href="@(href + (org is null ? "?" : "&view=" + Model.OrganizationView + "&"))">First page</a>
+        @if (Model.Next is { } next) { <a class="ts-link" href="@(href + (org is null ? "?" : "&view=" + Model.OrganizationView + "&") + "after=" + Uri.EscapeDataString(next))">Next page</a> }</nav>
+    }
+}
+@if (org is null)
+{
+<header class="ts-card-header"><h2 class="ts-card-title" id="auth-organizations-title">Organizations</h2></header>
+<div class="ts-card-body">
+@if (Model.Organizations.Count == 0) { <p role="status">No organizations.</p> }
+else
+{
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Organizations"><table class="ts-table"><thead><tr><th scope="col">Name</th><th scope="col">Slug</th></tr></thead><tbody>
+@foreach (var item in Model.Organizations) { <tr><td><a class="ts-link" href="@("/auth/organizations?org=" + item.Id)">@item.Name</a></td><td>@item.Slug</td></tr> }
+</tbody></table></div>
+Pager();
+}
+</div>
+}
+else
+{
+<header class="ts-card-header"><h2 class="ts-card-title" id="auth-organizations-title">@org.Name</h2></header>
+<div class="ts-card-body">
+<nav class="ts-row" aria-label="Organization sections">
+<a class="ts-link" href="@href">Details</a><a class="ts-link" href="@(href + "&view=members")">Members</a><a class="ts-link" href="@(href + "&view=invitations")">Invitations</a><a class="ts-link" href="@(href + "&view=domains")">Domains</a>
+</nav>
+@if (Model.OrganizationView == "members")
+{
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Organization members"><table class="ts-table"><thead><tr><th scope="col">User</th><th scope="col">Role</th><th scope="col">Actions</th></tr></thead><tbody>
+@foreach (var member in Model.OrganizationMembers)
+{
+<tr><td>@member.UserId</td><td>@member.Role</td><td>@if (manage) {
+<form class="ts-form" method="post" action="@(selected + "/members/" + member.UserId + "/update")">@{ Csrf(); Role("role-" + member.UserId, member.Role); }<button class="ts-btn ts-btn-secondary" type="submit">Save role</button></form>
+Action(selected + "/members/" + member.UserId + "/delete", "Remove");
+}</td></tr>
+}
+</tbody></table></div>
+Pager();
+@if (manage) {
+<form class="ts-form" method="post" action="@(selected + "/members")">@{ Csrf(); }
+<label for="org-member-user">User ID</label><input class="ts-input" id="org-member-user" name="user_id" required>
+@{ Role("org-member-role"); }<button class="ts-btn ts-btn-primary" type="submit">Add member</button>
+</form>
+}
+}
+else if (Model.OrganizationView == "invitations")
+{
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Organization invitations"><table class="ts-table"><thead><tr><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>
+@foreach (var invitation in Model.OrganizationInvitations) { <tr><td>@invitation.Email</td><td>@invitation.Role</td><td>@invitation.Status</td><td>@if (manage && invitation.Status == "pending") { Action(selected + "/invitations/" + invitation.Id + "/revoke", "Revoke"); }</td></tr> }
+</tbody></table></div>
+Pager();
+@if (manage) {
+<form class="ts-form" method="post" action="@(selected + "/invitations")">@{ Csrf(); }
+<label for="org-invite-email">Email</label><input class="ts-input" id="org-invite-email" name="email" type="email" required>
+@{ Role("org-invite-role"); }<button class="ts-btn ts-btn-primary" type="submit">Send invitation</button>
+</form>
+}
+}
+else if (Model.OrganizationView == "domains")
+{
+@foreach (var domain in Model.OrganizationDomains) {
+<section class="ts-card"><h3 class="ts-card-title">@domain.Domain</h3><dl><dt>TXT name</dt><dd><code>@domain.RecordName</code></dd><dt>TXT value</dt><dd><code>@domain.RecordValue</code></dd><dt>Status</dt><dd>@(domain.VerifiedAt is null ? "Unverified" : "Verified")</dd></dl>
+@if (manage) { Action(selected + "/domains/" + Uri.EscapeDataString(domain.Domain) + "/verify", "Verify"); Action(selected + "/domains/" + Uri.EscapeDataString(domain.Domain) + "/delete", "Remove domain"); }
+</section>
+}
+@if (manage) {
+<form class="ts-form" method="post" action="@(selected + "/domains")">@{ Csrf(); }<label for="org-domain">Domain</label><input class="ts-input" id="org-domain" name="domain" placeholder="example.com" required><button class="ts-btn ts-btn-primary" type="submit">Add domain</button></form>
+}
+}
+</div>
+}
+@if (manage && (org is null || Model.OrganizationView.Length == 0))
+{
+<form class="ts-form ts-card-body" method="post" action="@(org is null ? root : selected + "/update")">
+@{ Csrf(); }
+<label for="org-name">Name</label><input class="ts-input" id="org-name" name="name" maxlength="128" value="@org?.Name" required>
+<label for="org-slug">Slug</label><input class="ts-input" id="org-slug" name="slug" minlength="3" maxlength="63" pattern="[a-z0-9][a-z0-9-]*[a-z0-9]" value="@org?.Slug" required>
+@if (org is null) { <label for="org-admin">Admin user ID</label><input class="ts-input" id="org-admin" name="admin_user_id" required> }
+<label for="org-image">Image URL</label><input class="ts-input" id="org-image" name="image_url" type="url" value="@org?.ImageUrl">
+<label for="org-limit">Member limit</label><input class="ts-input" id="org-limit" name="max_members" type="number" min="1" value="@org?.MaxMembers">
+<label for="org-join">Domain joining</label><select class="ts-select" id="org-join" name="domain_join">
+@foreach (var mode in new[] { "off", "suggest", "auto" }) { <option value="@mode" selected="@(org?.DomainJoin == mode)">@mode</option> }
+</select>
+<label for="org-public">Public metadata</label><textarea class="ts-textarea" id="org-public" name="public_metadata">@org?.PublicMetadata</textarea>
+<label for="org-private">Private metadata</label><textarea class="ts-textarea" id="org-private" name="private_metadata">@org?.PrivateMetadata</textarea>
+<button class="ts-btn ts-btn-primary" type="submit">@(org is null ? "Create organization" : "Save organization")</button>
+</form>
+@if (org is not null) {
+<form class="ts-form ts-card-body" method="post" action="@(selected + "/delete")">@{ Csrf(); }<p>Deleting this organization removes its memberships and invitations.</p><button class="ts-btn ts-btn-danger" type="submit">Delete organization</button></form>
+}
+}

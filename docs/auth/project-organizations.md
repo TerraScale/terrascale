@@ -1,0 +1,32 @@
+# Project organizations
+
+Project organizations group a customer's end users inside one project. They are independent of TerraScale platform organizations, which own projects and billing.
+
+All management operations use /v1/{project}/organizations. A platform sign-in token requires the project's viewer role for reads and admin role for changes. Project secret API keys require auth:read for reads and auth:write for changes; C41 records mutation outcomes. End-user tokens cannot manage organizations.
+
+| Method | Path suffix | Behavior |
+| --- | --- | --- |
+| POST | /organizations | Create an organization and its initial admin |
+| GET | /organizations | List with limit (1–100) and after |
+| GET, PUT, DELETE | /organizations/{org} | Read, replace settings, delete |
+| POST, GET | /organizations/{org}/memberships | Add a member, list members |
+| PUT, DELETE | /organizations/{org}/memberships/{user} | Change role, remove |
+| POST, GET | /organizations/{org}/invitations | Email an invitation, list |
+| DELETE | /organizations/{org}/invitations/{invitation} | Revoke a pending invitation |
+| POST, GET | /organizations/{org}/domains | Add a domain, list domains |
+| POST | /organizations/{org}/domains/{domain}/verify | Check DNS TXT |
+| DELETE | /organizations/{org}/domains/{domain} | Remove a domain |
+
+The org parameter accepts the organization ULID or slug. The project always comes from the authorized route. Create and PUT bodies contain name, slug, image_url, public_metadata, private_metadata, max_members, and domain_join. Creation additionally requires admin_user_id, an active user in the same project, so there is never an organization without an admin. PUT replaces settings; omitted metadata becomes {}, and omitted image or member limit becomes null. Names have 1–128 characters. Slugs have 3–63 lowercase ASCII letters, digits or hyphens, with an alphanumeric first and last character, and are unique per project. Each metadata object is limited to 8192 UTF-8 bytes. Management responses include private metadata; hosted pages and tokens never expose it.
+
+Membership bodies use user_id and role; roles are admin and member. Role updates use the member's user ID in the route. A conditional organization version serializes changes to member and admin counts in the same batch as the membership. Conflicting writers receive 409; the last admin cannot be removed or demoted, and max_members cannot be exceeded or reduced below current membership. Organization deletion cascades its memberships, invitations and domains; outstanding invitation links and subsequent token refreshes fail.
+
+Invitation bodies contain email and role. Only a SHA-256 hash of a 48-character CSPRNG token is stored in the invitation. The email links to /ui/{project}/organization-invitations?token=<token>. The hosted page sends signed-out users through the project's sign-in or sign-up, then asks them to accept. Same-origin POST and a live project session are required. The signed-in email must match; acceptance consumes the invitation and adds the membership atomically. Invitations expire after seven days. Existing members retain their current role when accepting another invitation. Tokens are never returned by management APIs.
+
+A domain belongs to at most one organization per project. Add returns record_name and record_value; publish that DNS TXT record before verification. The name is _terrascale-org.<domain> and the value is terrascale-org=<random verification token>. The domain_join setting is off, suggest or auto: during interactive authorization, verified email domains may offer joining or add a member. Domain verification and organization versions are asserted when joining. Removing a domain prevents future joins and preserves existing memberships.
+
+Authorize accepts organization=<id-or-slug>. A selected organization requires a current membership. Without one, a single membership is selected; multiple memberships show a hosted chooser. The prompt=none option returns interaction_required when choosing requires interaction. Access and ID tokens carry org_id, org_slug, org_role. Codes and refresh tokens retain the selected organization; redemption rereads its current membership, so role changes are reflected and removed memberships fail with invalid_grant. Switching requires a new authorization. Previously issued access tokens retain their bounded offline validity.
+
+C42 outbox events are committed with each mutation: organization.created, organization.updated, organization.deleted, organizationMembership.created, organizationMembership.updated, organizationMembership.deleted, organizationInvitation.created, organizationInvitation.accepted, organizationInvitation.revoked. Data includes organization_id; user_id is the affected user for memberships, invitation ID for invitations, and organization ID for organization changes.
+
+The dashboard's Authentication → Organizations section provides the organization list and details, members, invitations and domains. SDK surfaces are .NET Projects.*Organization*Async, JavaScript projects.organizations, Go User.*ProjectOrganization*, Python sync/async *organization* with models in auth_organizations, and Rust ProjectsClient::*organization*.

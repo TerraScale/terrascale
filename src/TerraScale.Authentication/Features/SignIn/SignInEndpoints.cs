@@ -861,6 +861,7 @@ internal static class SignInFlow
     public static string? SafeNext(HttpContext context, string? next) =>
         next is not null && Tenancy.Resolved(context) is { } tenant
             && (next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
+                || Tenancy.IsProject(tenant) && next.StartsWith($"/ui/{tenant}/organization-invitations?token=", StringComparison.Ordinal)
                 || next == SecurityPath(tenant)
                 || next == AuthOptions.DashboardOrigin + "/profile"
                 || next == AuthOptions.DashboardOrigin + "/profile?tab=security"

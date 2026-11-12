@@ -1,0 +1,32 @@
+@inherits RazorSlice<OrganizationPageModel>
+@implements IUsesLayout<HostedLayout, HostedLayoutModel>
+<div class="head"><h1>@Model.Title</h1></div>
+@if (Model.Done is { } done)
+{
+<div role="status">@done</div>
+}
+else if (Model.Invitation is { } invitation)
+{
+<form method="post" action="/ui/@Model.Tenant/organization-invitations">
+<input type="hidden" name="token" value="@invitation">
+<p>@Model.Email</p>
+<button type="submit">Accept invitation</button>
+</form>
+}
+else
+{
+@foreach (var choice in Model.Choices ?? [])
+{
+<a class="button" href="@choice.Url">@choice.Slug · @choice.Role</a>
+}
+@foreach (var suggestion in Model.Suggestions ?? [])
+{
+<form method="post" action="/ui/@Model.Tenant/organizations/@suggestion.Id/join">
+<input type="hidden" name="next" value="@Model.Next">
+<button type="submit">Join @suggestion.Slug</button>
+</form>
+}
+}
+@functions {
+    public HostedLayoutModel LayoutModel => new(Model.Title, Model.Nonce, tenant: Model.Tenant);
+}

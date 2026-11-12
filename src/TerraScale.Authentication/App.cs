@@ -12,6 +12,7 @@ using TerraScale.Authentication.Features.Observability;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.ProjectOrganizations;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Features.Webhooks;
@@ -122,6 +123,7 @@ public static class App
         builder.Services.AddSingleton<Challenges>();
         builder.Services.AddSingleton<Users>();
         builder.Services.AddSingleton<WebhookOutbox>();
+        builder.Services.AddSingleton<ProjectOrganizationDirectory>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
         builder.Services.AddSingleton<PasswordHasher>();

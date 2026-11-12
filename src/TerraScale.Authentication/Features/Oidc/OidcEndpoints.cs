@@ -15,6 +15,7 @@ using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.ProjectOrganizations;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
@@ -231,7 +232,47 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
             return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(next)}{notice}{locales}");
         }
 
-        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId));
+        OrganizationClaims? organization = null;
+        if (Tenancy.IsProject(tenant))
+        {
+            var organizations = this.HttpContext.RequestServices.GetRequiredService<ProjectOrganizationDirectory>();
+            if (parameters.Any(parameter => parameter.Key == "organization" && parameter.Value.Count != 1))
+            {
+                return OidcResults.Forbid(Errors.InvalidRequest, "organization must appear once.");
+            }
+
+            var selected = (string?)request.GetParameter("organization");
+            if (selected is not null)
+            {
+                organization = await organizations.ClaimsAsync(tenant, selected, signedIn.User.Id, cancellationToken);
+                if (organization is null)
+                {
+                    return OidcResults.Forbid(Errors.AccessDenied, "The user is not a member of this organization.");
+                }
+            }
+            else
+            {
+                var suggestions = request.HasPromptValue(PromptValues.None) ? [] : await organizations.AutoJoinAsync(signedIn.User, cancellationToken);
+                var choices = await organizations.ChoicesAsync(tenant, signedIn.User.Id, cancellationToken);
+                if (choices.Count > 1 || suggestions.Count > 0)
+                {
+                    if (request.HasPromptValue(PromptValues.None))
+                    {
+                        return OidcResults.Forbid(Errors.InteractionRequired, "Choose an organization.");
+                    }
+
+                    var resume = $"/{tenant}/oauth/authorize{QueryString.Create(parameters)}";
+                    return OrganizationPageModel.Render(this.HttpContext, new(tenant, "", "Choose an organization", Next: resume,
+                        Choices: [.. choices.Select(choice => new OrganizationChoice(choice.Slug, choice.Role,
+                            $"/{tenant}/oauth/authorize{QueryString.Create(parameters.Where(parameter => parameter.Key != "organization").Append(new("organization", choice.Id)))}"))],
+                        Suggestions: suggestions));
+                }
+
+                organization = choices.SingleOrDefault();
+            }
+        }
+
+        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId), organization: organization);
     }
 }
 
@@ -352,8 +393,18 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
             return OidcResults.Forbid(Errors.InvalidRequest, FixedRefreshTokens.InvalidNotice);
         }
 
+        OrganizationClaims? organization = null;
+        if (principal.GetClaim("org_id") is { } orgId)
+        {
+            organization = await this.HttpContext.RequestServices.GetRequiredService<ProjectOrganizationDirectory>().ClaimsAsync(tenant, orgId, user.Id, cancellationToken);
+            if (organization is null)
+            {
+                return OidcResults.Forbid(Errors.InvalidGrant, "The organization membership ended.");
+            }
+        }
+
         return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, authenticationTime, principal.GetScopes(),
-            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt);
+            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt, organization);
     }
 }
 
@@ -629,7 +680,7 @@ internal static class OidcResults
     /// platform owner (<see cref="PlatformBootstrap.OwnerEmail"/>) always carries it.
     /// </summary>
     public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
-        DateTimeOffset? refreshExpiresAt = null)
+        DateTimeOffset? refreshExpiresAt = null, OrganizationClaims? organization = null)
     {
         // TerraBase and platform scopes come only from the role-checked token exchange (TS-598), never with a sign-in,
         // although ts-dashboard holds their permissions for the exchange.
@@ -657,12 +708,17 @@ internal static class OidcResults
             identity.SetClaim(PlatformRoleClaim, PlatformRoleAdmin);
         }
 
+        if (organization is not null)
+        {
+            identity.SetClaim("org_id", organization.Id).SetClaim("org_slug", organization.Slug).SetClaim("org_role", organization.Role);
+        }
+
         var email = identity.HasScope(Scopes.Email);
         identity.SetDestinations(claim => claim.Type switch
         {
             Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
-            Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
+            Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" => [Destinations.AccessToken, Destinations.IdentityToken],
             OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             _ => [],
         });

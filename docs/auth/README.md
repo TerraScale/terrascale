@@ -40,3 +40,5 @@ Account deletion spans independent products. Auth records only its verified resu
 Use `make auth-build` and `make auth-check` from the monorepo root. CI builds and checks ts-auth on every PR that changes it and runs the journey against it ([`e2e/AGENTS.md`](../../e2e/AGENTS.md)).
 
 Deploy only green main. SDK publishing, legal terms and secret rotation for launch remain [deferred](../decisions/go-live.md).
+
+- [Project organizations](project-organizations.md)

@@ -8,6 +8,11 @@
       "title": "auth:read lists users; auth:write disables and re-enables a project user"
     },
     {
+      "id": "auth.organizations",
+      "group": "a",
+      "title": "project organization CRUD, initial admin membership and invitations through every SDK"
+    },
+    {
       "id": "sql.execute.positional",
       "group": "a",
       "title": "execute with positional arguments",
@@ -136,7 +141,7 @@
         "big": "9007199254740993",
         "r": 1.5,
         "flag": true,
-        "t": "héllo ✓",
+        "t": "h\u00e9llo \u2713",
         "b": "AAEC/w==",
         "absent": null
       },

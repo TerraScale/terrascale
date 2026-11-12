@@ -1937,6 +1937,220 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.ToTable("step_up_proofs", (string)null);
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationDomain", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Domain")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("domain");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("VerificationToken")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("verification_token");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("verified_at");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "Domain");
+
+                    b.HasIndex("ProjectId", "OrganizationId");
+
+                    b.ToTable("project_organization_domains", (string)null);
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationInvitation", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("email");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("role");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("token_hash");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "OrganizationId", "Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("project_organization_invitations", (string)null);
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationMembership", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("role");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "OrganizationId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ProjectId", "UserId");
+
+                    b.ToTable("project_organization_memberships", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_project_organization_memberships_role", "role IN ('admin', 'member')");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Admins")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("admins");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DomainJoin")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("domain_join");
+
+                    b.Property<string>("ImageUrl")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("image_url");
+
+                    b.Property<int?>("MaxMembers")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("max_members");
+
+                    b.Property<int>("Members")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("members");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("PrivateMetadata")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("private_metadata");
+
+                    b.Property<string>("PublicMetadata")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("public_metadata");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("slug");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "Id");
+
+                    b.HasIndex("ProjectId", "Slug")
+                        .IsUnique();
+
+                    b.ToTable("project_organizations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_project_organizations_counts", "admins >= 1 AND members >= admins AND (max_members IS NULL OR members <= max_members)");
+
+                            t.HasCheckConstraint("ck_project_organizations_join", "domain_join IN ('off', 'suggest', 'auto')");
+
+                            t.HasCheckConstraint("ck_project_organizations_slug", "length(slug) BETWEEN 3 AND 63 AND slug = lower(slug)");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.ProjectTenants.ProjectAuthSettingsRecord", b =>
                 {
                     b.Property<string>("InstanceId")
@@ -2432,6 +2646,14 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("occurred_at");
 
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("OrganizationRole")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_role");
+
                     b.Property<string>("ProjectId")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -2661,6 +2883,48 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationDomain", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationInvitation", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationMembership", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

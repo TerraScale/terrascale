@@ -4,7 +4,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Features.Webhooks;
 
 public sealed record WebhookOutboxRecord(string InstanceId, string ProjectId, string EventType, string EventId, DateTimeOffset OccurredAt,
-    string UserId, string? Email, string? Provider, string Status, int Attempts, DateTimeOffset NextAttemptAt, string? SessionId = null, string? EndpointId = null);
+    string UserId, string? Email, string? Provider, string Status, int Attempts, DateTimeOffset NextAttemptAt, string? SessionId = null, string? EndpointId = null, string? OrganizationId = null, string? OrganizationRole = null);
 
 
 public sealed class WebhookOutbox(TimeProvider clock)
@@ -18,9 +18,9 @@ public sealed class WebhookOutbox(TimeProvider clock)
     }
 
     public WebhookOutboxRecord NewEvent(string projectId, string eventType, string userId, string? email = null, string? provider = null,
-        string? sessionId = null, string? endpointId = null)
+        string? sessionId = null, string? endpointId = null, string? organizationId = null, string? organizationRole = null)
     {
         var occurredAt = clock.GetUtcNow();
-        return new(projectId, projectId, eventType, AuthIds.New(), occurredAt, userId, email, provider, PendingStatus, 0, occurredAt, sessionId, endpointId);
+        return new(projectId, projectId, eventType, AuthIds.New(), occurredAt, userId, email, provider, PendingStatus, 0, occurredAt, sessionId, endpointId, organizationId, organizationRole);
     }
 }

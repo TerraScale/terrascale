@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from terrascale import AsyncTerraScale, Statement, TerraScale, is_valid_id, new_id
+from terrascale.auth_organizations import OrganizationRequest, OrganizationInvitationRequest
 from terrascale.errors import ServiceUnavailableError
 
 spec = json.loads(Path(os.environ["E2E_OPERATIONS"]).read_text(encoding="utf-8"))
@@ -72,6 +73,21 @@ def auth_manage_user(op):
             same((await write.enable_user(user)).disabled, False, "async write key enables")
 
     asyncio.run(asynchronous())
+
+
+def auth_organizations(op):
+    user = os.environ["E2E_AUTH_USER"]
+    with TerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:
+        created = write.create_organization(project, OrganizationRequest("SDK organization", table.replace("_", "-"), user, None, {}, {}, None, "off"))
+        try:
+            with TerraScale(api_key=os.environ["E2E_AUTH_READ_KEY"], project=project) as read:
+                same(read.get_organization(project, created.id).id, created.id, "organization read")
+                same(any(item.id == created.id for item in read.list_organizations(project).items), True, "organization listed")
+                same(read.list_organization_members(project, created.id).items[0].role, "admin", "initial admin")
+                write.create_organization_invitation(project, created.id, OrganizationInvitationRequest("org-" + run + "@example.com", "member"))
+                same(read.list_organization_invitations(project, created.id).items[0].status, "pending", "invitation listed")
+        finally:
+            write.delete_organization(project, created.id)
 
 
 def execute_positional(op):
@@ -409,6 +425,7 @@ def placement_set(op):
 
 operations = {
     "auth.manage_user": auth_manage_user,
+    "auth.organizations": auth_organizations,
     "sql.execute.positional": execute_positional,
     "sql.execute.named": execute_named,
     "sql.execute.statement": execute_statement,

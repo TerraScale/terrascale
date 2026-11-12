@@ -79,6 +79,29 @@ const operations = {
     const enabled = await auth.enableUser(write, project, user);
     check(enabled.ok && !enabled.value.disabled, 'write key enables');
   },
+  async 'auth.organizations'() {
+    const auth = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: 'terrascale' }).projects.organizations;
+    const write = process.env.E2E_AUTH_WRITE_KEY;
+    const read = process.env.E2E_AUTH_READ_KEY;
+    const user = process.env.E2E_AUTH_USER;
+    const created = await auth.createOrganization(write, project, { name: 'SDK organization', slug: table.replaceAll('_', '-'),
+      admin_user_id: user, image_url: null, public_metadata: {}, private_metadata: {}, max_members: null, domain_join: 'off' });
+    check(created.ok, 'organization created');
+    if (!created.ok) return;
+    const id = created.value.id;
+    try {
+      const found = await auth.getOrganization(read, project, id);
+      check(found.ok && found.value.id === id, 'organization read');
+      const listed = await auth.listOrganizations(read, project);
+      check(listed.ok && listed.value.items.some(item => item.id === id), 'organization listed');
+      const members = await auth.listOrganizationMembers(read, project, id);
+      check(members.ok && members.value.items.some(item => item.user_id === user && item.role === 'admin'), 'initial admin');
+      const invite = await auth.createOrganizationInvitation(write, project, id, { email: 'org-' + run + '@example.com', role: 'member' });
+      check(invite.ok, 'organization invitation created');
+      const invites = await auth.listOrganizationInvitations(read, project, id);
+      check(invites.ok && invites.value.items.some(item => item.status === 'pending'), 'organization invitation listed');
+    } finally { check((await auth.deleteOrganization(write, project, id)).ok, 'organization deleted'); }
+  },
   async 'placement.create'() {
     const created = await client.createDatabase(project, `e2e-js-${run}-placed`, { regions: ['gru', 'fra'] });
     try {
