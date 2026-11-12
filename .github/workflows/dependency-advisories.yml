@@ -35,33 +35,48 @@ jobs:
           set -euo pipefail
           dotnet restore TerraScale.slnx --locked-mode
           dotnet list TerraScale.slnx package --vulnerable --include-transitive > findings.txt
-          dotnet build src/TerraScale.Endpoints/TerraScale.Endpoints.csproj --no-restore -c Release -v q
-          runtime=$(python3 - <<'PY'
-          import json, pathlib
-          assets = json.loads(pathlib.Path("src/TerraScale.Endpoints/obj/project.assets.json").read_text())
-          graph = pathlib.Path(assets["project"]["frameworks"]["net11.0"]["runtimeIdentifierGraphPath"])
-          root = graph.parents[2]
-          refs = sorted(path.name for path in (root / "packs/Microsoft.NETCore.App.Ref").iterdir() if path.name.startswith("11.0.") and "-" not in path.name)
-          print(refs[-1])
-          PY
-          )
-          python3 - "$runtime" >> findings.txt <<'PY'
-          import gzip, json, sys, urllib.request
-          version = sys.argv[1]
+          python3 - >> findings.txt <<'PY'
+          import gzip, json, re, subprocess, urllib.request
+
+          def core(value):
+              numbers = []
+              for piece in value.split(".") if value else []:
+                  if not piece.isdigit():
+                      raise SystemExit(f"runtime version is not numeric: {value}")
+                  numbers.append(int(piece))
+              width = max(len(numbers), 4)
+              return tuple(numbers + [0] * (width - len(numbers)))
+
+          def release(value):
+              labels = value.split(".") if value else ()
+              return tuple((0, int(label)) if label.isdigit() else (1, label.lower()) for label in labels)
 
           def parts(value):
-              core, _, pre = value.partition("-")
-              return tuple(int(piece) for piece in core.split(".")), pre
+              value = value.split("+", 1)[0]
+              head, _, pre = value.partition("-")
+              return core(head), release(pre)
 
-          def before(left, right):
-              return left[0] < right[0] or (left[0] == right[0] and left[1] < right[1])
+          def compare(left, right):
+              if left[0] != right[0]:
+                  return -1 if left[0] < right[0] else 1
+              if not left[1] and not right[1]:
+                  return 0
+              if not left[1]:
+                  return 1
+              if not right[1]:
+                  return -1
+              shared = min(len(left[1]), len(right[1]))
+              if left[1][:shared] != right[1][:shared]:
+                  return -1 if left[1][:shared] < right[1][:shared] else 1
+              return (len(left[1]) > len(right[1])) - (len(left[1]) < len(right[1]))
 
           def inside(spec, value):
-              low, high = spec[1:-1].split(",")
-              current = parts(value)
-              if low and (before(current, parts(low)) or (current == parts(low) and spec[0] == "(")):
+              body = spec[1:-1]
+              low, high = body.split(",", 1)
+              current = parts(value.strip())
+              if low.strip() and (compare(current, parts(low.strip())) < 0 or (compare(current, parts(low.strip())) == 0 and spec[0] == "(")):
                   return False
-              if high and (before(parts(high), current) or (current == parts(high) and spec[-1] == ")")):
+              if high.strip() and (compare(parts(high.strip()), current) < 0 or (compare(parts(high.strip()), current) == 0 and spec[-1] == ")")):
                   return False
               return True
 
@@ -70,24 +85,45 @@ jobs:
               body = gzip.decompress(body) if body[:2] == b"\x1f\x8b" else body
               return json.loads(body)
 
-          index = load("https://api.nuget.org/v3/vulnerabilities/index.json")
-          base = next(item["@id"] for item in index if item["@name"] == "base")
-          advisories = load(base).get("microsoft.netcore.app.runtime.linux-x64", [])
-          hits = [item for item in advisories if inside(item["versions"], version)]
-          print(f"Pinned runtime pack Microsoft.NETCore.App.Runtime.linux-x64 {version}")
-          if not hits:
-              print("The pinned runtime pack has no vulnerable package given the current sources.")
-          for item in hits:
-              print(f"has the following vulnerable packages: Microsoft.NETCore.App.Runtime.linux-x64 {version} {item['url']}")
+          props = subprocess.run(["dotnet", "--list-sdks"], check=True, capture_output=True, text=True).stdout
+          pin = json.loads(open("global.json").read())["sdk"]["version"]
+          root = next(line.split(" ", 1)[1].strip("[]") for line in props.splitlines() if line.startswith(pin + " "))
+          text = open(f"{root}/{pin}/Microsoft.NETCoreSdk.BundledVersions.props").read()
+          band = next(block for block in re.split(r"(?=KnownFrameworkReference )", text) if 'Include="Microsoft.NETCore.App"' in block and 'TargetFramework="net11.0"' in block)
+          version = re.search(r'LatestRuntimeFrameworkVersion="([^"]+)"', band).group(1)
+          packs = [
+              "Microsoft.NETCore.App.Runtime.linux-arm64",
+              "Microsoft.NETCore.App.Runtime.linux-x64",
+              "Microsoft.AspNetCore.App.Runtime.linux-arm64",
+              "Microsoft.AspNetCore.App.Runtime.linux-x64",
+          ]
+          pages = [load(item["@id"]) for item in load("https://api.nuget.org/v3/vulnerabilities/index.json")]
+          for pack in packs:
+              hits = [item for page in pages for item in page.get(pack.lower(), []) if inside(item["versions"], version)]
+              print(f"Pinned runtime pack {pack} {version}")
+              if not hits:
+                  print("The pinned runtime pack has no vulnerable package given the current sources.")
+              for item in hits:
+                  print(f"has the following vulnerable packages: {pack} {version} {item['url']}")
           PY
+          set +e
           (cd sdk/go && go install golang.org/x/vuln/cmd/govulncheck@v1.9.0 && "$(go env GOPATH)/bin/govulncheck" ./...) >> findings.txt
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then
+            exit "$code"
+          fi
           if grep -E 'has the following vulnerable packages|Vulnerability #' findings.txt; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Open, update or close the issue
         run: |
           set -euo pipefail
-          gh api --paginate "repos/$GH_REPO/issues?state=open&per_page=100" --jq '.[] | select(.title == env.TITLE and .pull_request == null) | .number' > open.txt
+          if ! gh label create dependency-advisories --description "A weekly scan found a vulnerable package" > label.txt 2>&1; then
+            grep -q 'already exists' label.txt
+            cat label.txt
+          fi
+          gh api --paginate "repos/$GH_REPO/issues?state=open&labels=dependency-advisories&per_page=100" --jq '.[] | select(.title == env.TITLE and .pull_request == null) | .number' > open.txt
           open=$(head -1 open.txt)
           if [ "${{ steps.findings.outputs.found }}" != true ]; then
             if [ -n "$open" ]; then gh issue close "$open" --reason completed --comment "The weekly scan found no vulnerable package."; fi
