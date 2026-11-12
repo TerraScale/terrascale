@@ -6,8 +6,8 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.HomePage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.Home
-<main class="ts-page ts-home"><header class="ts-home-header"><h1 class="ts-home-header-title">@(Model.Tab == "connect" ? "Connect" : "Overview")</h1><div class="ts-page-actions"><a class="ts-btn ts-btn-secondary" href="/api-keys">@Icons.Render("KeyRound", 16)<span>API keys</span></a><a class="ts-btn ts-btn-primary" href="/databases?create=1">@Icons.Render("Plus", 16)<span>New database</span></a></div></header>
-    <div class="ts-toolbar ts-home-toolbar"><nav class="ts-tabs" aria-label="Overview sections"><a class="ts-tab" href="/" aria-current="@(Model.Tab != "connect" ? "page" : null)"><span>Overview</span></a><a class="ts-tab" href="/?tab=connect" aria-current="@(Model.Tab == "connect" ? "page" : null)"><span>Connect</span></a></nav></div>
+<main class="ts-page ts-home"><h1 class="ts-sr-only">@(Model.Tab == "connect" ? "Connect" : "Overview")</h1>
+    <div class="ts-toolbar ts-home-toolbar"><nav class="ts-tabs" aria-label="Overview sections"><a class="ts-tab" href="/" aria-current="@(Model.Tab != "connect" ? "page" : null)"><span>Overview</span></a><a class="ts-tab" href="/?tab=connect" aria-current="@(Model.Tab == "connect" ? "page" : null)"><span>Connect</span></a></nav><div class="ts-page-actions"><a class="ts-btn ts-btn-secondary" href="/api-keys">@Icons.Render("KeyRound", 16)<span>API keys</span></a><a class="ts-btn ts-btn-primary" href="/databases?create=1">@Icons.Render("Plus", 16)<span>New database</span></a></div></div>
     @if (Model.Tab == "connect")
     {
         <ul class="ts-grid ts-home-connect">@foreach (var option in ConnectOptions)

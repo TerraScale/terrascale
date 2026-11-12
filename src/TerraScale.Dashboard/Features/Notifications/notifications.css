@@ -9,36 +9,9 @@
   cursor: pointer;
 }
 
-/* Page header: title and organization on the left, read-all on the right. */
-.ts-notifications-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--ts-s3) var(--ts-s4);
-}
-
-.ts-notifications-header > .ts-stack-sm {
-  flex: 1 1 280px;
-  min-width: 0;
-  gap: var(--ts-s2);
-}
-
-.ts-notifications-header h1 {
-  font-size: var(--ts-fs-3xl);
-  font-weight: 600;
-}
-
-.ts-notifications-header > .ts-page-actions {
-  margin-left: auto;
-}
-
-/* Narrow screens: read-all drops under the title, aligned with it. */
-@media (max-width: 767px) {
-  .ts-notifications-header > .ts-page-actions {
-    margin-left: 0;
-    justify-content: flex-start;
-  }
+.ts-alerts-back {
+  justify-content: flex-end;
+  margin-bottom: calc(var(--ts-s10) * -1 + var(--ts-s3));
 }
 
 /* Filter tabs on the left, summary on the right, no hairline under the tabs. */
