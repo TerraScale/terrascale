@@ -6,9 +6,11 @@ dialog and the **Regions** card on the database's **Replication** tab render the
 last selected region cannot be unselected. Only organization members with management access can change the regions;
 everyone else sees the map read-only. Platform databases keep their placement.
 
-Region discovery determines the engine contract. With a catalog, create and Replication use the shared map with
+Region discovery supplies the available regions. With a catalog, create and Replication use the shared map with
 region icons. Creates send the selected `regions` set, and placement saves send the complete set in one management
-call. An all-regions database keeps that mode while every offered region stays selected. If a region is still copying,
+call when the engine's database response exposes a `regions` set. A discovery catalog alone does not establish
+support for region-set placement: engines returning home and replicas save through those operations even when
+discovery succeeds. An all-regions database keeps that mode while every offered region stays selected. If a region is still copying,
 the editor retains the requested selection, records the engine placement and shows a status message. Saving again
 completes the change once copying finishes. A stale route refreshes placement before resubmitting; concurrent edits
 require reviewing the region set first.

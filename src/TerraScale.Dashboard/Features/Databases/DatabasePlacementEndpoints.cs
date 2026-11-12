@@ -27,7 +27,9 @@ namespace TerraScale.Dashboard.Features.Databases
             try
             {
                 var discovery = await backend.DiscoveryAsync(http.RequestAborted);
-                var database = discovery.Catalog.Count > 0
+                var regionsContract = discovery.Catalog.Count > 0 && (await backend.GetAsync(DatabaseService.Scope(context),
+                    await databases.HomeAsync(context, DatabaseService.Database(context, id), http.RequestAborted), id, http.RequestAborted)).Regions is not null;
+                var database = regionsContract
                     ? await databases.PlaceRegionsAsync(context, id, Selection(form, ""), [.. form["offered"].OfType<string>()], http.RequestAborted)
                     : await ApplyAsync(databases, backend, context, id, Selection(form, ""), http.RequestAborted);
                 return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "replication")) : Results.Json(DatabaseEndpoints.DatabaseOutput(database));
