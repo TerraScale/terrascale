@@ -1,7 +1,6 @@
 using System.Text.Json.Serialization;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
@@ -33,13 +32,14 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(credentials, page.NextCursor, page.HasMore, limit);
         }
 
-        [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a project API key from the dashboard after hosted confirmation. Unattended MCP calls return step_up_required. The dashboard reveals the secret once. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires the organization owner/admin role or this project's member role.")]
+        [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Validate a project API key request and return step_up_required: MCP never receives a secret, and the key is created on the dashboard's API keys page, which needs no confirmation and reveals the secret once. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires the organization owner/admin role or this project's member role.")]
         public Task<ProjectApiKeySecret> CreateApiKey(string name,
             [Description(ApiKeyService.ScopeDescription)] string[] scopes,
             string databaseId = "", int expiresInDays = 0, string[]? allowedCidrs = null, string? organizationId = null, string? projectId = null)
         {
-            _ = keys.PrepareCreate(Scope(organizationId, projectId), "api-key", name, databaseId, scopes, expiresInDays, allowedCidrs ?? []);
-            throw StepUpFlow.Required();
+            var context = Scope(organizationId, projectId);
+            _ = keys.PrepareCreate(context, "api-key", name, databaseId, scopes, expiresInDays, allowedCidrs ?? []);
+            throw new AccountAccessException("Create this key in the dashboard: " + WorkspaceUrl.For(context, "/api-keys?create=key"), 403, "step_up_required");
         }
 
         [McpServerTool(Name = "create_scoped_key", Title = "Create scoped key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Mint a short-lived key for one database from the API key authenticating this MCP connection. access is read or read_write; ttlSeconds is 60 to 2,592,000, default 3600, capped by the parent key. The secret is returned once. Scoped keys cannot mint keys or manage databases. OAuth and personal access tokens cannot mint scoped keys.")]

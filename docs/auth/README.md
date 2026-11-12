@@ -30,6 +30,8 @@ Account deletion spans independent products. Auth records only its verified resu
 - [Account-deletion receipts](account-deletion-receipts.md).
 - [Dashboard deletion handoff](dashboard-deletion-handoff.md).
 - [Restart survival](operations/restart-survival.md).
+- [Token request bursts](operations/token-bursts.md).
+- [Health answers name the build's commit](operations/health-revision.md).
 - [Private response cache policy](../security/private-response-cache-policy.md).
 
 ## Development

@@ -49,6 +49,21 @@ internal sealed class LocalAttemptStore(TimeProvider clock) : IAttemptStore
             && this.buckets.TryUpdate(address, this.Next(rowData), current));
     }
 
+    public Task<bool> TryChargeAsync(string instanceId, string key, IReadOnlyList<string> others, long window, int maximum, CancellationToken cancellationToken)
+    {
+        var address = (instanceId, key);
+        while (this.buckets.TryGetValue(address, out var current) && current.Body.Window <= window
+            && (current.Body.Window == window ? current.Body.Used : 0L) + others.Sum(other => this.buckets.TryGetValue((instanceId, other), out var entry) && entry.Body.Window == window ? entry.Body.Used : 0L) < maximum)
+        {
+            if (this.buckets.TryUpdate(address, this.Next(new AttemptBucket(window, current.Body.Window == window ? current.Body.Used + 1 : 1)), current))
+            {
+                return Task.FromResult(true);
+            }
+        }
+
+        return Task.FromResult(false);
+    }
+
     private Entry Next(AttemptBucket rowData) =>
         new(rowData, Interlocked.Increment(ref this.versions).ToString(CultureInfo.InvariantCulture), clock.GetUtcNow());
 

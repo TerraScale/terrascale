@@ -109,7 +109,7 @@ components:
       properties:
         purpose:
           type: string
-          enum: [delete_account, delete_organization, start_ownership_transfer, change_plan, create_pat, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client, create_webhook_endpoint, rotate_webhook_secret, change_email, add_passkey]
+          enum: [delete_account, delete_organization, start_ownership_transfer, change_plan, create_pat, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client, create_webhook_endpoint, rotate_webhook_secret, change_email, add_passkey, delete_passkey]
         audience:
           type: string
           enum: [ts-auth, ts-dashboard]

@@ -14,17 +14,6 @@ namespace TerraScale.Authentication.Features.RateLimiting;
 /// <param name="RetryAfter">How long this replica must wait before retrying.</param>
 public readonly record struct AttemptRejection(DateTimeOffset Until, TimeSpan RetryAfter);
 
-/// <summary>
-/// Fixed attempt windows (one minute unless a caller chooses another) and elapsed cooldowns shared by every replica through conditional writes to
-/// TerraBase, for authentication, recovery, verification and token endpoints. Each region conditionally updates only its
-/// own bucket on its region's single TerraBase node; reads sum the three replicated components.
-/// Delayed replication can admit extra attempts, but never replaces another region's contribution. A replica with a
-/// slower clock never resets a window another replica has already advanced. When storage fails, the same budgets run
-/// on this replica's in-memory buckets (<see cref="LocalAttemptStore"/>) instead, so brute-force protection holds per
-/// replica and an outage of the limiter's storage never takes sign-in down by itself; every fallback is logged and
-/// counted. Other storage faults (rejected credentials, damaged buckets), persistent contention, or a full in-memory
-/// store fail closed with 503; an attempt is never admitted unrecorded.
-/// </summary>
 public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, AuthOptions options, string region = "gru", ILogger<AttemptLimiter>? logger = null)
 {
     /// <summary>The TerraBase table holding up to three regional <see cref="AttemptBucket"/> records per limited subject, plus notice claims.</summary>
@@ -47,6 +36,8 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
     private static readonly Meter Meter = new(AuthMetrics.MeterName);
 
     private static readonly Counter<long> Fallbacks = Meter.CreateCounter<long>("ts_auth.rate_limit_fallback", description: "Rate-limit checks served from this replica's memory because storage failed.");
+
+    private static readonly Counter<long> Refusals = Meter.CreateCounter<long>("ts_auth.rate_limit_refused", description: "Attempts refused because their budget was used up.");
 
     // Fallback warnings are sampled to one a minute; the counter records every one.
     private long warnedAt = long.MinValue;
@@ -144,6 +135,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             var debt = debts.Sum();
             if (debt + step > capacity)
             {
+                Refusals.Add(1, new KeyValuePair<string, object?>("purpose", purpose));
                 return TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((debt + step - capacity) / 1000.0)));
             }
 
@@ -273,6 +265,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         var address = cooldown ? purpose : $"{purpose}/{windowSeconds}s";
         var keys = Regions.Select(component => this.BucketKey(address, component + ":" + subject)).ToArray();
         var key = keys[this.regionIndex];
+        string[] others = [.. keys.Where((_, component) => component != this.regionIndex)];
 
         // Every lost conditional write means another attempt was admitted (or the window rolled
         // over, or the bucket was created), so maximum + 2 rounds always reach a decision unless
@@ -299,6 +292,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             var used = components.Where(component => component?.Value.Window == effective).Sum(component => (long)component!.Value.Used);
             if (used >= maximum)
             {
+                Refusals.Add(1, new KeyValuePair<string, object?>("purpose", purpose));
                 var end = cooldown
                     ? DateTimeOffset.FromUnixTimeMilliseconds(effective) + window
                     : DateTimeOffset.FromUnixTimeSeconds((effective + 1) * windowSeconds);
@@ -306,10 +300,12 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             }
 
             var current = components[this.regionIndex];
-            var bucket = new AttemptBucket(effective, current?.Value.Window == effective ? checked(current.Value.Used + 1) : 1);
+            var own = current?.Value.Window == effective ? current.Value.Used : 0;
             if (current is null
-                ? await source.TryCreateAsync(instanceId, key, bucket, cancellationToken)
-                : await source.TryReplaceAsync(instanceId, key, bucket, current.Version, cancellationToken))
+                ? await source.TryCreateAsync(instanceId, key, new AttemptBucket(effective, 1), cancellationToken)
+                : cooldown
+                    ? await source.TryReplaceAsync(instanceId, key, new AttemptBucket(effective, checked(own + 1)), current.Version, cancellationToken)
+                    : await source.TryChargeAsync(instanceId, key, others, effective, maximum, cancellationToken))
             {
                 return null;
             }

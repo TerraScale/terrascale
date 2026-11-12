@@ -12,15 +12,12 @@ using ZLogger;
 namespace TerraScale.Authentication.Features.RateLimiting;
 
 /// <summary>
-/// Charges every token POST to the socket peer's shared minute budget before forwarding and OpenIddict checks credentials.
-/// Explicit trusted proxies also charge a separate resolved-client budget after forwarding.
 /// IPv4-mapped addresses share the IPv4 budget; IPv6 shares a /64 and an additional /48 budget.
 /// Untrusted forwarding headers and submitted client identifiers never select a bucket. Missing peers and storage failures
 /// fail closed with an OAuth error.
 /// </summary>
 public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimiter limiter, AuthOptions options, ILogger<TokenRateLimitMiddleware> logger, bool clientLimit)
 {
-    /// <summary>Trusted proxies have this many clients' token capacity in their aggregate socket budget.</summary>
     public const int ProxyFactor = 4;
 
     private const string TokenPath = "/" + OidcIssuer.Slug + "/oauth/token";
@@ -105,6 +102,11 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         if (!clientLimit && options.TrustedProxies.Contains(peer!.IsIPv4MappedToIPv6 ? peer.MapToIPv4() : peer))
         {
             context.Items[TrustedProxyKey] = true;
+            if (IPAddress.IsLoopback(peer))
+            {
+                return null;
+            }
+
             maximum = (int)Math.Min((long)maximum * ProxyFactor, int.MaxValue);
             // Proxy and ordinary peer capacities must not compete in a shared IPv6 prefix or folded bucket.
             purpose = "token-proxy-ip";
