@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { hostedReady, onboard, onHosted, signInWithPassword, signUp, verify } from '../support/hosted';
+import { regionsSettled } from '../support/overview';
 import { newAddress } from '../support/inbox';
 import { shell } from '../support/shell';
 import { ownerSession, saveCookies, saveSecret, journey } from '../support/state';
@@ -25,6 +26,7 @@ test('a second user signs up on a phone, the Free plan refuses to invite them, a
   const selection = new URL(page.url()).searchParams;
   const identity = { email, displayName: name, organizationId: selection.get('organizationId') ?? '', organizationName: 'Personal', projectId: selection.get('projectId') ?? '', projectName };
   await shell(page, identity);
+  await regionsSettled(page);
   await audit.check('second user overview');
 
   const ownerContext = await auditedContext(browser, { viewport: desktop, storageState: ownerSession() });

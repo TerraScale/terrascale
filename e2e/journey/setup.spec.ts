@@ -5,6 +5,7 @@ import { cloudflareSendCount, newAddress, nextMail } from '../support/inbox';
 import { saveJourney, saveSecret, saveSession } from '../support/state';
 import { shell } from '../support/shell';
 import { hostedReady } from '../support/hosted';
+import { regionsSettled } from '../support/overview';
 import { auth, dash, onLocalStack } from '../support/stack';
 import { enterSecret } from '../support/secret';
 
@@ -69,6 +70,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   const projectId = selection.get('projectId') ?? '';
   const identity = { email, displayName, organizationId, organizationName: 'Personal', projectId, projectName };
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Overview');
+  await regionsSettled(page);
   await expect(stat(page, 'Databases')).toHaveText('0');
   await expect(stat(page, 'Organization members')).toHaveText('1');
   await shell(page, identity);

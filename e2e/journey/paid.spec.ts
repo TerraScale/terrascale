@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { onboard, signUp, verify } from '../support/hosted';
+import { regionsSettled } from '../support/overview';
 import { createApiKey, createDatabase, databaseNames, stripeLog } from '../support/paid';
 import { shell } from '../support/shell';
 import { dash, stateDir, stripeStandIn } from '../support/stack';
@@ -37,6 +38,7 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
   const organizationId = selection.get('organizationId') ?? '';
   const projectId = selection.get('projectId') ?? '';
   await shell(page, { email, displayName, organizationId, organizationName: 'Personal', projectId, projectName });
+  await regionsSettled(page);
   await audit.check('paid owner overview on Free');
 
   await page.goto('/organization');
