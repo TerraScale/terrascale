@@ -174,11 +174,31 @@ transaction:
 
 Frames carry a client `id`; calls may overlap and answers are matched by `id`. Nothing on a session is resent.
 
-Reconnect: when the socket drops (server restart 1001, network loss, ping timeout), calls in flight fail with the
-close error and are not resent. The next call opens a new socket with a fresh credential. If a transaction was open
-when the socket dropped, the server rolled it back: every call except `rollback` fails with `transaction_rolled_back`
-(40000) until the caller calls `rollback`, which only clears the lost transaction. After `close()` the session stays
-closed. A refused reconnect raises the same HTTP error types as `connect()`.
+Reconnect: when the socket drops (server restart 1001, regional handoff 1012, network loss, ping timeout), calls in
+flight fail with the close error and are not resent. The next call opens a new socket with a fresh credential. If a
+transaction was open when the socket dropped, the server rolled it back: every call except `rollback` fails with
+`transaction_rolled_back` (40000) until the caller calls `rollback`, which only clears the lost transaction. After
+`close()` the session stays closed. A refused reconnect raises the same HTTP error types as `connect()`.
+
+### Keep-alive and closes
+
+| Event | What happens |
+|---|---|
+| An idle socket | TerraBase pings every 20 seconds and drops a client that does not answer a ping within 20 seconds. |
+| The client takes no data for 120 seconds | The edge ends the socket: an HTTP/1.1 connection closes, an HTTP/2 stream gets RST_STREAM. |
+| An upgrade without `Authorization` sends no auth frame within 5 seconds | TerraBase closes the socket with 1008. |
+| The region's writer starts handing off to another node (regional handoff) | TerraBase answers every frame it admitted before the handoff, then closes the socket with 1012 (service restart); a call still waiting for its answer when the 1012 arrives did not run. Reconnect: the new socket reaches the region's writer. |
+| The client does not answer TerraBase's close within 2 seconds | TerraBase drops the connection. |
+
+What each SDK does on a 1012 today:
+
+| SDK | Calls in flight | The next call | Code |
+|---|---|---|---|
+| .NET | fail with `WebSocketException` (`ConnectionClosedPrematurely`, the message names 1012) | opens a new socket | `sdk/dotnet/src/TerraScale.DotNet/TerraBase/Sql/TerraBaseSqlSession.cs:274-277, 296-301, 184-198` |
+| JS/TS | reject with `SqlSocketClosedError` (`closeCode` 1012) | rejects with the same error; the caller opens a new session with `database.connect()` | `sdk/js/src/v1/sql-socket.js:64, 199, 237-243` |
+| Go | fail with `terrabase: SQL session socket closed: …` wrapping the close error | redials | `sdk/go/v1/sql_session.go:292-307, 208-231` |
+| Python | raise `TerraScaleError`, or `CommitUncertainError` for a commit or an execute outside a transaction | reopens | `sdk/python/src/terrascale/session.py:216-240, 89-96` (async: `389-404`) |
+| Rust | fail with `Error::Transport` (`SQL session closed: TerraBase closed the socket (1012: …)`) | opens a new socket | `sdk/rust/src/v1/sql_session.rs:443-453, 461-477, 382-417` |
 
 ## Values
 
