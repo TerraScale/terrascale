@@ -83,7 +83,7 @@ break;
 @switch (Model.Step)
 {
 case SignInStep.Email:
-<form method="post" action="/ui/@Model.Slug/sign-in@(Model.Theme.Passcode ? "" : "/password")">
+<form method="post" action="@Model.Link(Model.Theme.Passcode ? "sign-in" : "sign-in/password")">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="sign-in-email">@Model.Copy.Email</label>
@@ -96,9 +96,9 @@ case SignInStep.Email:
 }
 @if (Model.Theme.Password)
 {
-<button type="submit" class="@(Model.Theme.Passcode ? "secondary" : "")" formaction="/ui/@Model.Slug/sign-in/password"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@(Model.Theme.Passcode ? Model.Copy.UsePassword : Model.Copy.ContinuePassword)</button>
+<button type="submit" class="@(Model.Theme.Passcode ? "secondary" : "")" formaction="@Model.Link("sign-in/password")"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@(Model.Theme.Passcode ? Model.Copy.UsePassword : Model.Copy.ContinuePassword)</button>
 }
-<button type="button" id="passkey-sign-in" class="secondary" hidden data-i18n="@Model.Copy.PasskeyI18n" data-options="/ui/@Model.Slug/sign-in/passkey/options" data-verify="/ui/@Model.Slug/sign-in/passkey"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-lock-keyhole"></use></svg>@Model.Copy.Passkey</button>
+<button type="button" id="passkey-sign-in" class="secondary" hidden data-i18n="@Model.Copy.PasskeyI18n" data-options="/ui/@Model.Slug/sign-in/passkey/options" data-verify="@Model.Link("sign-in/passkey")"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-lock-keyhole"></use></svg>@Model.Copy.Passkey</button>
 </div>
 </form>
 @if (Model.Slug != TerraScale.Authentication.Features.Oidc.OidcIssuer.InstanceId && Model.Theme.Providers.Count > 0)
@@ -122,7 +122,7 @@ case SignInStep.Email:
 </div>
 break;
 case SignInStep.Password:
-<form method="post" action="/ui/@Model.Slug/sign-in/password">
+<form method="post" action="@Model.Link("sign-in/password")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">@Model.Copy.Change</a></div>
@@ -134,7 +134,7 @@ case SignInStep.Password:
 </form>
 @if (Model.Theme.Passcode)
 {
-<form method="post" action="/ui/@Model.Slug/sign-in">
+<form method="post" action="@Model.Link("sign-in")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg>@Model.Copy.EmailCodeButton</button>
@@ -142,7 +142,7 @@ case SignInStep.Password:
 }
 break;
 case SignInStep.Code:
-<form method="post" action="/ui/@Model.Slug/sign-in/verify">
+<form method="post" action="@Model.Link("sign-in/verify")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <div class="field">
@@ -151,7 +151,7 @@ case SignInStep.Code:
 </div>
 <button type="submit">@Model.Copy.VerifySignIn</button>
 </form>
-<form method="post" action="/ui/@Model.Slug/sign-in">
+<form method="post" action="@Model.Link("sign-in")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 @if (Model.CodeBudgetExhausted)
@@ -166,13 +166,19 @@ else
 <div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.DifferentEmail</a><a href="@Model.Link("sign-up")">@Model.Copy.CreateAccount</a></div>
 break;
 case SignInStep.Continue:
+@if (Model.Refresh is { })
+{
 <a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+}
 break;
 case SignInStep.SignedIn:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@Model.Copy.SignedIn</p></div>
 break;
 case SignInStep.Sso:
+@if (Model.Refresh is { })
+{
 <a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+}
 break;
 case SignInStep.SignedOut:
 @if (Model.Refresh is { })
@@ -201,7 +207,7 @@ case SignInStep.Rejected:
 <a class="btn" href="@Model.Link("sign-in")">@Model.Copy.BackToSignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignUp:
-<form method="post" action="/ui/@Model.Slug/sign-up">
+<form method="post" action="@Model.Link("sign-up")">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="sign-up-email">@Model.Copy.Email</label>
@@ -225,7 +231,7 @@ case SignInStep.SignUp:
 <p class="alt"><a href="@Model.Link("sign-in")">@Model.Copy.SignIn</a></p>
 break;
 case SignInStep.SignUpCode:
-<form method="post" action="/ui/@Model.Slug/sign-up/verify">
+<form method="post" action="@Model.Link("sign-up/verify")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="pending_token" value="@Model.PendingToken">
@@ -235,7 +241,7 @@ case SignInStep.SignUpCode:
 </div>
 <button type="submit">@Model.Copy.VerifyEmail</button>
 </form>
-<form method="post" action="/ui/@Model.Slug/sign-up/resend">
+<form method="post" action="@Model.Link("sign-up/resend")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="pending_token" value="@Model.PendingToken">
@@ -251,7 +257,7 @@ else
 <div class="row"><a href="@Model.Link("sign-up")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.ChangeEmail</a></div>
 break;
 case SignInStep.Reset:
-<form method="post" action="/ui/@Model.Slug/reset">
+<form method="post" action="@Model.Link("reset")">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="reset-email">@Model.Copy.Email</label>
@@ -262,7 +268,7 @@ case SignInStep.Reset:
 <p class="alt"><a href="@Model.Link("sign-in")">@Model.Copy.SignIn</a></p>
 break;
 case SignInStep.ResetCode:
-<form method="post" action="/ui/@Model.Slug/reset/complete">
+<form method="post" action="@Model.Link("reset/complete")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <div class="field">
@@ -276,7 +282,7 @@ case SignInStep.ResetCode:
 <p class="hint">@Model.Copy.SubSettingSignsOut</p>
 <button type="submit">@Model.Copy.SetNewPassword</button>
 </form>
-<form method="post" action="/ui/@Model.Slug/reset/resend">
+<form method="post" action="@Model.Link("reset/resend")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 @if (Model.CodeBudgetExhausted)
@@ -291,7 +297,10 @@ else
 <div class="row"><a href="@Model.Link("reset")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.DifferentEmail</a></div>
 break;
 case SignInStep.ResetDone:
+@if (Model.Refresh is { })
+{
 <a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.SignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+}
 break;
 case SignInStep.DeviceEnter:
 <form method="get" action="/ui/@Model.Slug/device">
@@ -328,7 +337,7 @@ case SignInStep.DeviceApproved:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@Model.Copy.DeviceApproved</p></div>
 break;
 case SignInStep.Mfa:
-<form method="post" action="/ui/@Model.Slug/sign-in/mfa">
+<form method="post" action="@Model.Link("sign-in/mfa")">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="challenge" value="@Model.Challenge">

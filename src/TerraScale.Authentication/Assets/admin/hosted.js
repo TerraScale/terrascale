@@ -153,9 +153,9 @@ function passkeyDecode(text) {
   }
   function follow(html) {
     var page = new DOMParser().parseFromString(html, 'text/html');
-    if (page.querySelector('meta[http-equiv="refresh"]')) return;
-    var link = page.querySelector('a.btn');
-    if (link) window.location.href = link.href;
+    var link = page.querySelector('a.delayed-continue');
+    if (link) window.location.replace(link.href);
+    else window.location.reload();
   }
   button.addEventListener('click', function () {
     var address = email ? email.value.trim() : '';

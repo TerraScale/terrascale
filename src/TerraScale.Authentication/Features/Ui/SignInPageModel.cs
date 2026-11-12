@@ -1,3 +1,4 @@
+using System.Text;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.ProjectTenants;
@@ -233,24 +234,25 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     internal static string? NavigationTarget(string? url)
     {
-        if (string.IsNullOrEmpty(url))
+        if (string.IsNullOrEmpty(url) || url.Length > 4096)
         {
             return null;
         }
 
-        var encoded = string.Empty;
+        var encoded = new StringBuilder(url.Length);
         foreach (var rune in url.EnumerateRunes())
         {
-            encoded += rune.Value is > 32 and < 127 ? rune.ToString() : Uri.EscapeDataString(rune.ToString());
+            encoded.Append(rune.Value is > 32 and < 127 ? rune.ToString() : Uri.EscapeDataString(rune.ToString()));
         }
 
-        var target = encoded;
+        var target = encoded.ToString();
         if (!Uri.TryCreate(target, UriKind.RelativeOrAbsolute, out var parsed))
         {
             return null;
         }
 
-        return parsed.IsAbsoluteUri ? parsed.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped) : target;
+        target = parsed.IsAbsoluteUri ? parsed.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped) : target;
+        return target.Length <= 4096 ? target : null;
     }
 
     private static string? ContinueTo(SignInPageModel model) => model.Step switch

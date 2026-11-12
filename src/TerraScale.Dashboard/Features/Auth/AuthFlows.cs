@@ -78,19 +78,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private async Task<Stored<T>?> ReadAsync<T>(HttpContext context, string cookie, string purpose)
         {
-            var token = context.Request.Cookies[cookie];
-            if (!IsToken(token))
-            {
-                return null;
-            }
-
-            var hash = Key(token);
-            AuthFlowRow? row;
-            await using (var db = await storage.CreateDbContextAsync(context.RequestAborted))
-            {
-                row = await db.AuthFlows.AsNoTracking().SingleOrDefaultAsync(flow => flow.TokenHash == hash && flow.Purpose == purpose, context.RequestAborted);
-            }
-
+            var row = await FindAsync(context, cookie, purpose);
             if (row is null)
             {
                 return null;
@@ -100,6 +88,19 @@ namespace TerraScale.Dashboard.Features.Auth
             try { return new(row, Open<T>(row, credentials.SessionEncryptionKey, purpose)); }
             catch (Exception error) when (error is CryptographicException or FormatException or JsonException)
             { throw new IOException("Authentication flow is invalid."); }
+        }
+
+        private async Task<AuthFlowRow?> FindAsync(HttpContext context, string cookie, string purpose)
+        {
+            var token = context.Request.Cookies[cookie];
+            if (!IsToken(token))
+            {
+                return null;
+            }
+
+            var hash = Key(token);
+            await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
+            return await db.AuthFlows.AsNoTracking().SingleOrDefaultAsync(flow => flow.TokenHash == hash && flow.Purpose == purpose, context.RequestAborted);
         }
 
         private async Task<bool> TakeAsync(AuthFlowRow row, CancellationToken cancellationToken)
@@ -125,15 +126,26 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public async Task<AlertSecretHandoff?> TakeAlertSecretAsync(HttpContext context, AccountContext account)
         {
-            var stored = await ReadAsync<AlertSecretHandoff>(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose);
-            context.Response.Cookies.Delete(AlertSecretCookie, Options(context));
-            if (stored is null || !await TakeAsync(stored.Row, context.RequestAborted))
+            if (!context.Request.Cookies.ContainsKey(AlertSecretCookie))
             {
                 return null;
             }
 
-            return stored.Row.ExpiresAt > time.GetUtcNow().UtcDateTime && stored.Value.UserId == account.UserId &&
-                stored.Value.Browser == StepUpFlow.Browser(context) && stored.Value.ProjectId == account.Project?.Id ? stored.Value : null;
+            context.Response.Cookies.Delete(AlertSecretCookie, Options(context));
+            var row = await FindAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose);
+            if (row is null || !await TakeAsync(row, context.RequestAborted))
+            {
+                return null;
+            }
+
+            var credentials = await identity.ReadAsync(context.RequestAborted);
+            AlertSecretHandoff value;
+            try { value = Open<AlertSecretHandoff>(row, credentials.SessionEncryptionKey, AuthFlowRow.AlertSecretPurpose); }
+            catch (Exception error) when (error is CryptographicException or FormatException or JsonException)
+            { return null; }
+
+            return row.ExpiresAt > time.GetUtcNow().UtcDateTime && value.UserId == account.UserId &&
+                value.Browser == StepUpFlow.Browser(context) && value.ProjectId == account.Project?.Id ? value : null;
         }
 
         private const string AlertSecretCookie = "ts-dashboard-alert-secret";

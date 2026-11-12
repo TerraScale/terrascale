@@ -21,7 +21,7 @@ export async function openSignUp(page: Page, audit: Audit, label: string): Promi
 export async function submitSignUp(page: Page, audit: Audit, email: string, password: string, label: string): Promise<void> {
   await page.locator('#sign-up-email').fill(email);
   await enterSecret(page.locator('#sign-up-password'), password);
-  await page.locator('form[action="/ui/terrascale/sign-up"] button[type=submit]').click();
+  await page.locator('form:has(#sign-up-email) button[type=submit]').click();
   await expect(page).toHaveTitle('Verify your email · TerraScale');
   await audit.check(`${label} sign-up verify`);
 }

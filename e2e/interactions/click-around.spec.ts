@@ -188,6 +188,9 @@ test('an alert webhook secret is shown once, including two parallel reads, and i
   await expect(page).toHaveURL((url) => url.origin === dash && url.pathname === '/notifications/alerts' && [...url.searchParams.keys()].every((key) => ['organizationId', 'projectId'].includes(key)));
   await expect(page.locator('#alert-rules tr').filter({ hasText: name })).toHaveCount(1);
   await audit.check('alert webhook secret created');
+  await page.getByRole('button', { name: 'Continue to alerts', exact: true }).click();
+  await expect(page.locator('#alert-secret-panel')).toBeHidden();
+  await expect(revealed).toBeEmpty();
   await page.reload();
   await expect(revealed).toHaveCount(0);
   expect((await page.content()).includes(secret), 'the webhook secret is never shown again').toBe(false);

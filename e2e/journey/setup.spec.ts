@@ -33,7 +33,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
 
   await page.locator('#sign-up-email').fill(email);
   await enterSecret(page.locator('#sign-up-password'), password);
-  await page.locator('form[action="/ui/terrascale/sign-up"] button[type=submit]').click();
+  await page.locator('form:has(#sign-up-email) button[type=submit]').click();
   await expect(page).toHaveTitle('Verify your email · TerraScale');
   await expect(page.locator('form:has(#sign-up-code-digit) input[type=hidden][name=pending_token]')).toHaveCount(1);
   await audit.check('sign-up verify');

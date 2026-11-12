@@ -57,7 +57,7 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await audit.check('member sign-up from the invitation');
   await page.locator('#sign-up-email').fill(email);
   await enterSecret(page.locator('#sign-up-password'), password);
-  await page.locator('form[action="/ui/terrascale/sign-up"] button[type=submit]').click();
+  await page.locator('form:has(#sign-up-email) button[type=submit]').click();
   await expect(page).toHaveTitle('Verify your email · TerraScale');
   await audit.check('member sign-up verify');
   const code = /^\s*(\d{6})\s*$/m.exec((await nextMail(email, 1)).text)?.[1] ?? '';

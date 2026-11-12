@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
-import { hostedReady, onHosted, openSignUp, signInWithPassword, submitSignUp } from '../support/hosted';
+import { hostedReady, onboard, onHosted, openSignUp, signInWithPassword, signUp, submitSignUp, verify } from '../support/hosted';
+import { newAddress, nextMail } from '../support/inbox';
 import { auth, dash, desktop, mobile, onLocalStack } from '../support/stack';
 import { journey, saveCookies, saveSecret } from '../support/state';
 
@@ -8,6 +9,72 @@ const sizes = [
   { label: '1440x900', options: { viewport: desktop } },
   { label: '390x844', options: { viewport: mobile, isMobile: true, hasTouch: true, deviceScaleFactor: 2 } },
 ] as const;
+
+test('a second user enrolls a passkey and signs back in to the dashboard and a requested page', async ({ browser }, info) => {
+  const owner = journey();
+  const email = await newAddress(`passkey-${owner.runId}-${Date.now().toString(36)}`);
+  const password = randomBytes(24).toString('base64url');
+  saveSecret('passkey-user-password', password);
+  const context = await auditedContext(browser, { viewport: desktop });
+  const page = await context.newPage();
+  const audit = new Audit(page, info);
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('WebAuthn.enable');
+  await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true } });
+  try {
+    await signUp(page, audit, email, password, 'passkey user');
+    await verify(page, email);
+    await onboard(page, audit, 'Passkey user', `Passkey ${owner.runId}`, 'passkey user');
+    await page.goto(`${auth}/ui/terrascale/security`);
+    await hostedReady(page);
+    await page.locator('#passkey-name').fill('Journey passkey');
+    await page.locator('#passkey-add button[type=submit]').click();
+    await expect(page.locator('input[name=name][value="Journey passkey"]')).toBeVisible();
+    await audit.check('passkey enrolled through account security');
+
+    for (const path of ['/', '/databases', null]) {
+      await page.goto(`${dash}/profile`);
+      await page.locator('.ts-account-trigger').click();
+      await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await page.waitForURL(onHosted('sign-in'));
+      await page.goto(path === null ? `${auth}/ui/terrascale/sign-in` : `${dash}${path}`);
+      await page.waitForURL(onHosted('sign-in'));
+      await hostedReady(page);
+      await page.locator('#sign-in-email').fill(email);
+      if (path === null) {
+        await Promise.all([
+          page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame()),
+          page.locator('#passkey-sign-in').click(),
+        ]);
+        await expect(page.locator('#passkey-sign-in')).toBeEnabled();
+        await page.goto(dash);
+      } else {
+        await page.locator('#passkey-sign-in').click();
+      }
+      await expect(page, `passkey sign-in continues to ${path ?? 'the dashboard after reload'}`).toHaveURL((url) => url.origin === dash && url.pathname === (path ?? '/'));
+      await expect(page.locator('.ts-account-trigger')).toContainText('Passkey user');
+      await audit.check(`passkey sign-in reaches ${path}`);
+    }
+    const reset = await page.request.post(`${auth}/ui/terrascale/reset?ui_locales=pt-BR`, { headers: { Origin: auth }, form: { email } });
+    expect(reset.status()).toBe(200);
+    const resetAction = /action="([^"]*\/reset\/complete[^"]*)"/.exec(await reset.text())?.[1]?.replaceAll('&amp;', '&');
+    expect(resetAction).toBe('/ui/terrascale/reset/complete?ui_locales=pt-BR');
+    const mail = await nextMail(email, 1);
+    const code = /^\s*(\d{6})\s*$/m.exec(mail.text)?.[1] ?? '';
+    expect(code).toMatch(/^\d{6}$/);
+    const newPassword = randomBytes(24).toString('base64url');
+    saveSecret('passkey-user-reset-password', newPassword);
+    const completed = await page.request.post(`${auth}${resetAction}`, { headers: { Origin: auth }, form: { email, code, password: newPassword } });
+    expect(completed.status()).toBe(200);
+    const continuation = /class="btn delayed-continue" href="([^"]+)"/.exec(await completed.text())?.[1];
+    expect(continuation).toBe('/ui/terrascale/sign-in?ui_locales=pt-BR');
+    console.log(`reset continuation: ${continuation}`);
+    await audit.finish();
+  } finally {
+    await saveCookies(context);
+    await context.close();
+  }
+});
 
 for (const size of sizes) {
   for (const theme of ['light', 'dark'] as const) {

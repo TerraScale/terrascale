@@ -20,6 +20,8 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql("DELETE FROM auth_flows WHERE purpose = 'ts-dashboard-alert-secret'");
+
             migrationBuilder.DropCheckConstraint(
                 name: "ck_auth_flows_purpose",
                 table: "auth_flows");
