@@ -491,6 +491,8 @@ multiple('R11 a conflicting promotion is refused before takeover and succeeds af
   try {
     await seed(cells, x.id, projectId);
     await observed(cells, x.id, projectId);
+    await page.goto(`${dash}/databases/${x.id}/replication`);
+    await expect(page.locator('#database-regions input[name="regions"][value="gru" i]')).toBeChecked();
     await rename(cells, home, x.id, occupied, projectId);
     const before = await json<Record<string, unknown>>(await cells.get(`${home}${database(x.id, projectId)}`));
     await answer(await patch(cells, x.id, ['fra'], projectId), 409, 'name_taken');
