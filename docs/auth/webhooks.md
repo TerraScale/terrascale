@@ -87,7 +87,10 @@ first; each project gets its oldest due endpoint next. Each endpoint pass sends
 at most ten deliveries within 30 seconds and stops after its first failure.
 The pass deadline also cancels any in-flight request.
 
-A database version claim leases the endpoint and delivery for two minutes. Only
+A database version claim leases a separate endpoint delivery-state row and the delivery for two minutes.
+Lease, fairness and delivery-health updates never change the endpoint configuration version, so they cannot
+conflict with secret rotation or endpoint deletion. Test-event enqueue inserts the event and delivery without
+asserting a worker-owned version; the endpoint foreign key prevents orphaned deliveries. Only
 one worker can claim an endpoint at a time across nodes. Attempts are persisted
 before sending, with completion status, latency, HTTP status and the first 1024
 response bytes. A restart recovers expired leases; unfinished attempts are marked

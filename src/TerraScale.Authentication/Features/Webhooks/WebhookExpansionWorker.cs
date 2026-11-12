@@ -29,7 +29,8 @@ public sealed partial class WebhookExpansionWorker(AuthData data, AuthSchema sch
                 foreach (var row in events)
                 {
                     var endpoints = await data.ReadAsync((db, token) => db.WebhookEndpoints
-                        .Where(endpoint => endpoint.ProjectId == row.Value.ProjectId && endpoint.DisabledAt == null && endpoint.CreatedAt <= row.Value.OccurredAt)
+                        .Where(endpoint => endpoint.ProjectId == row.Value.ProjectId && endpoint.CreatedAt <= row.Value.OccurredAt
+                            && db.WebhookEndpointStates.Any(state => state.EndpointId == endpoint.Id && state.DisabledAt == null))
                         .ToListAsync(token), stoppingToken).ConfigureAwait(false);
                     List<Change> changes = [Change.Update(row, row.Value with { Status = "expanded" })];
                     changes.AddRange(endpoints.Where(endpoint => endpoint.EventTypes.Contains(row.Value.EventType))

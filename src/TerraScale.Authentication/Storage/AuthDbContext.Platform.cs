@@ -34,6 +34,8 @@ public sealed partial class AuthDbContext
 
     public DbSet<WebhookEndpointRecord> WebhookEndpoints => this.Set<WebhookEndpointRecord>();
 
+    public DbSet<WebhookEndpointStateRecord> WebhookEndpointStates => this.Set<WebhookEndpointStateRecord>();
+
     public DbSet<WebhookDeliveryRecord> WebhookDeliveries => this.Set<WebhookDeliveryRecord>();
 
     public DbSet<WebhookAttemptRecord> WebhookAttempts => this.Set<WebhookAttemptRecord>();
@@ -157,10 +159,18 @@ public sealed partial class AuthDbContext
             endpoint.HasKey(row => row.Id);
             endpoint.HasOne<ProjectRecord>().WithMany().HasForeignKey(row => row.ProjectId).OnDelete(DeleteBehavior.Cascade);
             endpoint.HasIndex(row => new { row.ProjectId, row.Id });
-            endpoint.HasIndex(row => new { row.ProjectId, row.LastServedAt }).IsDescending(false, true);
-            endpoint.HasIndex(row => new { row.DisabledAt, row.LeaseUntil });
             endpoint.Property(row => row.EventTypes).HasJson(StorageJson.Default.IReadOnlyListString);
             Versioned(endpoint);
+        });
+
+        model.Entity<WebhookEndpointStateRecord>(state =>
+        {
+            state.ToTable("webhook_endpoint_states");
+            state.HasKey(row => row.EndpointId);
+            state.HasOne<WebhookEndpointRecord>().WithOne().HasForeignKey<WebhookEndpointStateRecord>(row => row.EndpointId).OnDelete(DeleteBehavior.Cascade);
+            state.HasIndex(row => new { row.ProjectId, row.LastServedAt }).IsDescending(false, true);
+            state.HasIndex(row => new { row.DisabledAt, row.LeaseUntil });
+            Versioned(state);
         });
 
         model.Entity<WebhookDeliveryRecord>(delivery =>
