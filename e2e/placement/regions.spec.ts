@@ -284,7 +284,7 @@ test('R8 a TTL branch keeps its identity through catalog sync, a move and a rena
     expect(before).toEqual(ttl);
     expect(before.name).toBe(renamed.name);
     expect(before.expiresAt).not.toBe(original.expiresAt);
-    const facts = ({ homeRegion, replicaRegions, placementVersion, allRegions, regions, ...identity }: Record<string, unknown>) => identity;
+    const facts = ({ region, homeRegion, replicaRegions, placementVersion, allRegions, regions, ...identity }: Record<string, unknown>) => identity;
     await expect.poll(async () => facts(await json<Record<string, unknown>>(await cells.get(`${replica}${database(id)}`))),
       { message: 'the existing replica receives name and expiry changes without a placement change', timeout: 45_000, intervals: [250, 500, 1000] })
       .toEqual(facts(before));
