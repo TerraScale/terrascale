@@ -7,6 +7,7 @@ public sealed class AuthFlowRow
 {
     public const string OidcPurpose = "ts-dashboard-oidc";
     public const string StepUpPurpose = "ts-dashboard-step-up";
+    public const string AlertSecretPurpose = "ts-dashboard-alert-secret";
 
     public required string Id { get; init; }
 
@@ -32,7 +33,7 @@ public sealed class AuthFlowRow
             {
                 table.HasCheckConstraint("ck_auth_flows_id", "length(id) = 26");
                 table.HasCheckConstraint("ck_auth_flows_token_hash", "length(token_hash) = 64");
-                table.HasCheckConstraint("ck_auth_flows_purpose", $"purpose IN ('{OidcPurpose}', '{StepUpPurpose}')");
+                table.HasCheckConstraint("ck_auth_flows_purpose", $"purpose IN ('{OidcPurpose}', '{StepUpPurpose}', '{AlertSecretPurpose}')");
                 table.HasCheckConstraint("ck_auth_flows_nonce", "length(nonce) = 12");
                 table.HasCheckConstraint("ck_auth_flows_tag", "length(tag) = 16");
                 table.HasCheckConstraint("ck_auth_flows_lifetime", "expires_at > created_at");

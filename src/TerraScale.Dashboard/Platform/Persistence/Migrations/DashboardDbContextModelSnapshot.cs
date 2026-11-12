@@ -693,7 +693,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_auth_flows_nonce", "length(nonce) = 12");
 
-                            t.HasCheckConstraint("ck_auth_flows_purpose", "purpose IN ('ts-dashboard-oidc', 'ts-dashboard-step-up')");
+                            t.HasCheckConstraint("ck_auth_flows_purpose", "purpose IN ('ts-dashboard-oidc', 'ts-dashboard-step-up', 'ts-dashboard-alert-secret')");
 
                             t.HasCheckConstraint("ck_auth_flows_tag", "length(tag) = 16");
 

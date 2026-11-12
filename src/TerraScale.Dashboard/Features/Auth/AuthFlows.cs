@@ -117,6 +117,26 @@ namespace TerraScale.Dashboard.Features.Auth
             }
         }
 
+        public async Task HoldAlertSecretAsync(HttpContext context, string ruleName, string secret)
+        {
+            await EndAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose);
+            await StoreAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose, new AlertSecretHandoff(ruleName, secret), time.GetUtcNow().AddMinutes(2));
+        }
+
+        public async Task<AlertSecretHandoff?> TakeAlertSecretAsync(HttpContext context)
+        {
+            var stored = await ReadAsync<AlertSecretHandoff>(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose);
+            context.Response.Cookies.Delete(AlertSecretCookie, Options(context));
+            if (stored is null || stored.Row.ExpiresAt <= time.GetUtcNow().UtcDateTime || !await TakeAsync(stored.Row, context.RequestAborted))
+            {
+                return null;
+            }
+
+            return stored.Value;
+        }
+
+        private const string AlertSecretCookie = "ts-dashboard-alert-secret";
+
         private async Task EndAsync(HttpContext context, string cookie, string purpose)
         {
             var token = context.Request.Cookies[cookie];
@@ -177,6 +197,14 @@ namespace TerraScale.Dashboard.Features.Auth
         }
 
         private sealed record Stored<T>(AuthFlowRow Row, T Value);
+    }
+
+    public sealed record AlertSecretHandoff(string RuleName, string Secret)
+    {
+        public override string ToString()
+        {
+            return "Alert secret [REDACTED]";
+        }
     }
 
     public abstract record OidcTake

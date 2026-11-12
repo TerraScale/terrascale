@@ -7,7 +7,7 @@
 @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
 @if (Model.Created is { } created && Model.Secret is { } secret)
 {
-<section class="ts-card" id="alert-secret-panel" aria-labelledby="alert-secret-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="alert-secret-title">Webhook signing secret for @created.Name</h2></div></header><div class="ts-card-body ts-stack"><p>Copy it now: it is shown only once.</p><pre class="ts-code" id="alert-secret" data-on:pagehide__window="el.textContent = ''">@secret</pre><button class="ts-btn ts-btn-primary" type="button" command="close" commandfor="alert-secret-panel">Continue to alerts</button></div></section>
+<section class="ts-card" id="alert-secret-panel" popover="manual" aria-labelledby="alert-secret-title" data-init="el.showPopover()"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="alert-secret-title">Webhook signing secret for @created.Name</h2></div></header><div class="ts-card-body ts-stack"><p>Copy it now: it is shown only once.</p><pre class="ts-code" id="alert-secret">@secret</pre><button class="ts-btn ts-btn-primary" type="button" command="close" commandfor="alert-secret-panel">Continue to alerts</button></div></section>
 }
 <section class="ts-card ts-card-flush" aria-labelledby="alert-rules-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="alert-rules-title">Alert rules for @Model.Project.Name</h2></div></header><div class="ts-card-body">
 @if (Model.Rules.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No alert rules yet.</p></div> }
