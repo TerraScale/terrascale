@@ -16,26 +16,29 @@ internal sealed partial class EngineManagementService
     private readonly HashSet<string> _platformClosuresReported = [with(StringComparer.Ordinal)];
     private string? _closuresAfter;
 
-    public async ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken)
+    private string? _closureRegionsAfter;
+
+    public async ValueTask<CloseProjectResult> CloseProjectAsync(
+        string projectId, string closureId, string authorityOrganizationId, int version, bool forwarded, CancellationToken cancellationToken)
     {
         if (PlatformDatabases.IsPlatformProject(projectId))
         {
             return ManagementErrors.PlatformProjectProtected;
         }
 
-        var result = await FenceProjectAsync(projectId, closureId, authorityOrganizationId, version, cancellationToken).ConfigureAwait(false);
+        var regions = await closureFanout.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        var result = await FenceProjectAsync(projectId, closureId, authorityOrganizationId, version, regions, forwarded, cancellationToken).ConfigureAwait(false);
         if (result is not ProjectClosureStatus { Status: ProjectClosure.Pending })
         {
             return result;
         }
 
-        var until = time.GetUtcNow() + ErasureBudget;
-        await EraseClosingDatabasesAsync(projectId, until, cancellationToken).ConfigureAwait(false);
-        await EraseClosingFilesAsync(projectId, until, cancellationToken).ConfigureAwait(false);
+        await Task.WhenAll(EraseClosingAsync(projectId, forwarded ? ForwardedErasureBudget : ErasureBudget, cancellationToken),
+            forwarded ? Task.CompletedTask : AcknowledgeRegionsAsync(projectId, [], cancellationToken)).ConfigureAwait(false);
         string? scanned = null;
         while (true)
         {
-            var step = await WriteAsync<ClosureStep>(transaction => RefreshClosureAsync(transaction, projectId, cancellationToken),
+            var step = await WriteAsync<ClosureStep>(transaction => RefreshClosureAsync(transaction, projectId, forwarded, cancellationToken),
                 static error => new(error, null), cancellationToken).ConfigureAwait(false);
             if (step.Result is not ProjectClosureStatus { Status: ProjectClosure.Pending } || step.Scan is null or "complete" || step.Scan == scanned)
             {
@@ -46,18 +49,26 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    private async ValueTask<ClosureStep> RefreshClosureAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken)
+    private async Task EraseClosingAsync(string projectId, TimeSpan budget, CancellationToken cancellationToken)
+    {
+        var until = time.GetUtcNow() + budget;
+        await EraseClosingDatabasesAsync(projectId, until, cancellationToken).ConfigureAwait(false);
+        await EraseClosingFilesAsync(projectId, until, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<ClosureStep> RefreshClosureAsync(IStorageTransaction transaction, string projectId, bool forwarded, CancellationToken cancellationToken)
     {
         var record = await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("a project closure fence is missing");
         await RefreshClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);
-        return new(await ClosureStatusAsync(transaction, record, cancellationToken).ConfigureAwait(false),
+        return new(await ClosureStatusAsync(transaction, record, forwarded, cancellationToken).ConfigureAwait(false),
             await GetAsync(transaction, ProjectClosure.Scans(projectId), options.MachineId, Id, cancellationToken).ConfigureAwait(false));
     }
 
     private sealed record ClosureStep(CloseProjectResult Result, string? Scan);
 
-    private async ValueTask<CloseProjectResult> FenceProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken) =>
+    private async ValueTask<CloseProjectResult> FenceProjectAsync(
+        string projectId, string closureId, string authorityOrganizationId, int version, IReadOnlyList<string> regions, bool forwarded, CancellationToken cancellationToken) =>
         await WriteAsync<CloseProjectResult>(async transaction =>
         {
             if (await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false) is { } existing)
@@ -79,7 +90,7 @@ internal sealed partial class EngineManagementService
                 }
 
                 await RefreshClosureReceiptAsync(transaction, existing, cancellationToken).ConfigureAwait(false);
-                return await ClosureStatusAsync(transaction, existing, cancellationToken).ConfigureAwait(false);
+                return await ClosureStatusAsync(transaction, existing, forwarded, cancellationToken).ConfigureAwait(false);
             }
 
             if (!await ClosureOrganizationMatchesAsync(transaction, projectId, authorityOrganizationId, cancellationToken).ConfigureAwait(false))
@@ -93,11 +104,11 @@ internal sealed partial class EngineManagementService
             }
 
             var record = new ProjectClosureRecord(projectId, closureId, authorityOrganizationId, time.GetUtcNow(),
-                [.. CatalogHolders(options.MachineId).Order(StringComparer.Ordinal)], version);
+                [.. CatalogHolders(options.MachineId).Concat(regions.Select(ProjectClosure.RegionHolder)).Order(StringComparer.Ordinal)], version);
             await PutAsync(transaction, ProjectClosure.Kind, projectId, record, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
             await RefreshClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             logger.ZLogInformation($"Project {projectId:@Project} is fenced for closure {closureId:@Closure}");
-            return await ClosureStatusAsync(transaction, record, cancellationToken).ConfigureAwait(false);
+            return await ClosureStatusAsync(transaction, record, forwarded, cancellationToken).ConfigureAwait(false);
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
     private async ValueTask<bool> ClosureOrganizationMatchesAsync(IStorageTransaction transaction, string project, string authorityOrganization, CancellationToken token)
@@ -158,23 +169,127 @@ internal sealed partial class EngineManagementService
     private ValueTask<ProjectClosureReceipt?> OwnClosureReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken) =>
         GetAsync(transaction, ProjectClosure.Receipts(record.ProjectId), options.MachineId, ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken);
 
-    private async ValueTask<ProjectClosureStatus> ClosureStatusAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
+    private async ValueTask<ProjectClosureStatus> ClosureStatusAsync(IStorageTransaction transaction, ProjectClosureRecord record, bool forwarded, CancellationToken cancellationToken)
     {
         var holders = CatalogHolders(options.MachineId);
-        holders.UnionWith(record.ExpectedHolders);
+        holders.UnionWith(forwarded ? record.ExpectedHolders.Where(holder => !ProjectClosure.IsRegionHolder(holder)) : record.ExpectedHolders);
         var pending = 0;
         foreach (var holder in holders)
         {
             var receipt = await GetAsync(transaction, ProjectClosure.Receipts(record.ProjectId), holder, ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken)
                 .ConfigureAwait(false);
-            if (receipt is not { Empty: true, EvidenceVersion: 2 } || receipt.FormatVersion != record.FormatVersion || receipt.MachineId != holder || receipt.ProjectId != record.ProjectId
-                || receipt.ClosureId != record.ClosureId)
+            if (receipt is null || !receipt.Confirms(record, holder))
             {
                 pending++;
             }
         }
 
         return new ProjectClosureStatus(pending == 0 ? ProjectClosure.Accepted : ProjectClosure.Pending, record.ClosureId, pending);
+    }
+
+    private async Task<IReadOnlyList<string>> AcknowledgeRegionsAsync(string projectId, HashSet<string> unanswered, CancellationToken cancellationToken)
+    {
+        var waiting = await ReadAsync<WaitingClosure?>(async transaction =>
+        {
+            if (await GetAsync(transaction, ProjectClosure.Kind, projectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)
+                is not { FormatVersion: 1 or 2 } closure || closure.ProjectId != projectId)
+            {
+                return null;
+            }
+
+            List<string> regions = [];
+            foreach (var holder in closure.ExpectedHolders.Where(ProjectClosure.IsRegionHolder))
+            {
+                var receipt = await GetAsync(transaction, ProjectClosure.Receipts(projectId), holder, ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken)
+                    .ConfigureAwait(false);
+                if (receipt is null || !receipt.Confirms(closure, holder))
+                {
+                    regions.Add(ProjectClosure.HolderRegion(holder));
+                }
+            }
+
+            return new(closure, regions);
+        }, static _ => null, cancellationToken).ConfigureAwait(false);
+        if (waiting is null)
+        {
+            return [];
+        }
+
+        string[] asked = [.. waiting.Regions.Where(region => !unanswered.Contains(region))];
+        var answers = await Task.WhenAll(asked.Select(region => closureFanout.SendAsync(region, waiting.Closure, cancellationToken))).ConfigureAwait(false);
+        List<string> silent = [];
+        for (var index = 0; index < asked.Length; index++)
+        {
+            if (answers[index] == RegionClosure.Unanswered)
+            {
+                silent.Add(asked[index]);
+            }
+            else if (answers[index] == RegionClosure.Acknowledged)
+            {
+                _ = await WriteAsync<bool>(transaction => RecordRegionReceiptAsync(transaction, waiting.Closure, asked[index], cancellationToken),
+                    static _ => false, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return silent;
+    }
+
+    private async ValueTask<bool> RecordRegionReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord sent, string region, CancellationToken cancellationToken)
+    {
+        var holder = ProjectClosure.RegionHolder(region);
+        if (await GetAsync(transaction, ProjectClosure.Kind, sent.ProjectId, ManagementJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false) is not { } current
+            || current.ProjectId != sent.ProjectId || current.ClosureId != sent.ClosureId || current.AuthorityOrganizationId != sent.AuthorityOrganizationId
+            || current.FormatVersion != sent.FormatVersion || !current.ExpectedHolders.Contains(holder))
+        {
+            return false;
+        }
+
+        await PutAsync(transaction, ProjectClosure.Receipts(sent.ProjectId), holder,
+            new ProjectClosureReceipt(sent.ProjectId, sent.ClosureId, holder, Empty: true, time.GetUtcNow(), sent.FormatVersion, EvidenceVersion: 2),
+            ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private sealed record WaitingClosure(ProjectClosureRecord Closure, IReadOnlyList<string> Regions);
+
+    internal async ValueTask ForwardClosuresAsync(CancellationToken cancellationToken)
+    {
+        if (!catalogGate.Value.IsOpen)
+        {
+            return;
+        }
+
+        try
+        {
+            var page = await ReadAsync<RecordPage?>(async transaction => await transaction.ListAsync(ProjectClosure.Kind, _closureRegionsAfter,
+                CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
+            if (page is null)
+            {
+                return;
+            }
+
+            HashSet<string> unanswered = new(StringComparer.Ordinal);
+            foreach (var stored in page.Records)
+            {
+                try
+                {
+                    if (EntityPayload.Read(stored, ManagementJsonContext.Default.ProjectClosureRecord) is { } record && record.ExpectedHolders.Any(ProjectClosure.IsRegionHolder))
+                    {
+                        unanswered.UnionWith(await AcknowledgeRegionsAsync(stored.Id, unanswered, cancellationToken).ConfigureAwait(false));
+                    }
+                }
+                catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    closureFanout.Failed(stored.Id, error);
+                }
+            }
+
+            _closureRegionsAfter = page.HasMore ? page.Records[^1].Id : null;
+        }
+        catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            closureFanout.Failed(null, error);
+        }
     }
 
     private async ValueTask ConvergeClosuresAsync(CancellationToken cancellationToken)

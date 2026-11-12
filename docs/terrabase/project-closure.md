@@ -15,8 +15,8 @@ after a lost response, a restart or a repeated request presents the same identit
 
 | Answer | Meaning | Written |
 | --- | --- | --- |
-| 200 `{"status": "accepted"}` | Every expected holder recorded an empty receipt under the fence. | fence (earlier) |
-| 202 `{"status": "pending", "pendingHolders": n}` | Fence persisted; some holders have not confirmed emptiness, or one sees a database. | fence |
+| 200 `{"status": "accepted"}` | Every expected holder recorded an empty receipt under the fence, and every other serving region the fence names acknowledged it. | fence (earlier) |
+| 202 `{"status": "pending", "pendingHolders": n}` | Fence persisted; some holders or regions have not confirmed emptiness, or one sees a database. | fence |
 | 409 `not_empty` | Version 1 only: this node sees a database, project API key, backup destination or file bucket. | nothing |
 | 409 `closure_conflict` | A fence for this project exists with another closure id or authority organization. | nothing |
 | 409 `binding_conflict` | TerraBase's own binding names another authority organization, or an unverified legacy namespace holds the id. | nothing |
@@ -30,8 +30,11 @@ after a lost response, a restart or a repeated request presents the same identit
 - The fence is `project_closures/<project>` in `_system`, outside `projects/<project>/` so project-state prefix deletes
   never tombstone it. Closure records are never collected, so it is permanent.
 - The request's transaction resolves TerraBase's own mapping and binding, checks local emptiness and writes the fence
-  plus this machine's receipt atomically. Expected holders are the retained catalog members plus this machine, the same
-  rule as permanent database purge.
+  plus this machine's receipt atomically. Expected holders are this machine plus one holder `region:<name>` for every
+  other serving region of the peers file. The region that takes the request sends the same closure to each of those
+  regions with the header `X-TerraBase-Closure-Scope: region`; a region answers such a request for itself alone, and
+  its `200 accepted` becomes that holder's receipt ([account-project-erasure.md](account-project-erasure.md), "Every
+  region").
 - Database registration, project API key issue (`EngineApiKeyStore`), backup destination saves
   (`ProjectBackupDestinations`), file bucket creation, upload reservation and upload completion
   (`FileStorageService`) all read the fence in their committing transaction. A file request answers 404 once it is there. Project-key and destination writes

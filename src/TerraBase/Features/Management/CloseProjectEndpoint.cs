@@ -13,9 +13,11 @@ internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<P
         Put("/admin/projects/{project}/closure");
         Name("closeProject");
         Summary("Fences a ts-auth project for closure");
-        Description("Version 1 requires an empty project. Version 2 is ts-auth's explicit account-erasure handoff: permanently fences the project, purges its databases in every region, revokes its TerraBase keys, removes its backup destination and erases its file buckets with their files. 200 accepted once every catalog holder confirmed the project empty and active database erasure; 202 pending while any has not "
+        Description("Version 1 requires an empty project. Version 2 is ts-auth's explicit account-erasure handoff: permanently fences the project, purges its databases in every region, revokes its TerraBase keys, removes its backup destination and erases its file buckets with their files. "
+            + "The region that takes the request sends the same closure to every other serving region, which fences and erases its own records. 200 accepted once every catalog holder and every one of those regions confirmed the project empty and active database erasure; 202 pending while any has not "
             + "(or one sees a database). 409 not_empty, closure_conflict, binding_conflict or platform_project_protected (the ts-auth and ts-dashboard platform projects) writes nothing. A never-enrolled project is fenced too: "
-            + "there is no 404. Retry with the same closureId after a lost response.");
+            + "there is no 404. Retry with the same closureId after a lost response. A request that carries " + ClosureFanout.ScopeHeader + ": " + ClosureFanout.RegionScope
+            + " comes from another region: it is answered for this region alone and is not sent on.");
         Tags("Administration");
         Produces<ProjectClosureStatus>();
         Produces<ProjectClosureStatus>(StatusCodes.Status202Accepted);
@@ -35,7 +37,8 @@ internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<P
             return ErrorResponse.From(new Validation("version must be 1 or 2; project, closureId and authorityOrganizationId must be canonical uppercase ULIDs"));
         }
 
-        return await catalog.CloseProjectAsync(project, request.ClosureId!, request.AuthorityOrganizationId!, request.Version, cancellationToken).ConfigureAwait(false) switch
+        var forwarded = HttpContext.Request.Headers[ClosureFanout.ScopeHeader] is [ClosureFanout.RegionScope];
+        return await catalog.CloseProjectAsync(project, request.ClosureId!, request.AuthorityOrganizationId!, request.Version, forwarded, cancellationToken).ConfigureAwait(false) switch
         {
             ProjectClosureStatus { Status: ProjectClosure.Accepted } accepted => TypedResults.Ok(accepted),
             ProjectClosureStatus pending => TypedResults.Json(pending, ManagementJsonContext.Default.ProjectClosureStatus, statusCode: StatusCodes.Status202Accepted),

@@ -16,6 +16,8 @@ internal sealed partial class EngineManagementService
 {
     private static readonly TimeSpan ErasureBudget = TimeSpan.FromSeconds(10);
 
+    private static readonly TimeSpan ForwardedErasureBudget = TimeSpan.FromSeconds(3);
+
     private async ValueTask EraseClosingDatabasesAsync(string project, DateTimeOffset until, CancellationToken token)
     {
         var pending = await ReadAsync<IReadOnlyList<ClosingDatabase>>(async transaction =>
