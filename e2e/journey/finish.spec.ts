@@ -87,20 +87,22 @@ test.describe('database deletion', () => {
     const current = journey();
     const headers = await placementHeaders(request);
     const databases = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases`;
-    const servingResponse = await request.get('https://api.terrascale.tech/v1/regions');
-    expect(servingResponse.status()).toBe(200);
-    const serving = (await servingResponse.json()).regions as string[];
-    const writer = current.databaseRegion.toLowerCase();
-    const other = serving.find(region => region !== writer);
-    const name = `placement-${current.runId}`;
-    const created = await request.post(databases, { headers, data: { name, regions: [writer] } });
-    expect(created.status()).toBe(201);
-    const database = await created.json();
-    expect(database.regions).toEqual([writer]);
-    expect(database.homeRegion).toBe(writer);
-    expect(database.replicaRegions).toEqual([]);
-    const url = `${databases}/${database.id}`;
+    const createdIds: string[] = [];
     try {
+      const servingResponse = await request.get('https://api.terrascale.tech/v1/regions');
+      expect(servingResponse.status()).toBe(200);
+      const serving = (await servingResponse.json()).regions as string[];
+      const writer = current.databaseRegion.toLowerCase();
+      const other = serving.find(region => region !== writer);
+      const name = `placement-${current.runId}`;
+      const created = await request.post(databases, { headers, data: { name, regions: [writer] } });
+      expect(created.status()).toBe(201);
+      const database = await created.json();
+      createdIds.push(database.id);
+      expect(database.regions).toEqual([writer]);
+      expect(database.homeRegion).toBe(writer);
+      expect(database.replicaRegions).toEqual([]);
+      const url = `${databases}/${database.id}`;
       const selected = other ? [writer, other] : [writer];
       const added = await request.patch(url, { headers, data: { regions: selected } });
       expect(added.status()).toBe(200);
@@ -116,25 +118,28 @@ test.describe('database deletion', () => {
       const repeated = await request.patch(url, { headers, data: { regions: [writer] } });
       expect(repeated.status()).toBe(200);
       expect((await repeated.json()).regions).toEqual([writer]);
-    } finally {
       expect((await request.delete(url, { headers })).status()).toBe(204);
-    }
-    if (other) {
-      const ordered = [writer, other].sort().reverse();
-      const two = await request.post(databases, { headers, data: { name, regions: ordered } });
-      expect(two.status()).toBe(201);
-      const body = await two.json();
-      expect(body.homeRegion).toBe(ordered[0]);
-      expect(body.regions).toEqual([writer, other].sort());
+      if (other) {
+        const ordered = [writer, other].sort().reverse();
+        const two = await request.post(databases, { headers, data: { name, regions: ordered } });
+        expect(two.status()).toBe(201);
+        const body = await two.json();
+        createdIds.push(body.id);
+        expect(body.homeRegion).toBe(ordered[0]);
+        expect(body.regions).toEqual([writer, other].sort());
+        expect((await request.delete(`${databases}/${body.id}`, { headers })).status()).toBe(204);
+      }
+      const legacy = await request.post(databases, { headers, data: { name, homeRegion: writer, replicaRegions: [] } });
+      expect(legacy.status()).toBe(201);
+      const body = await legacy.json();
+      createdIds.push(body.id);
+      expect(body.homeRegion).toBe(writer);
+      expect(body.replicaRegions).toEqual([]);
+      expect(body.regions).toEqual([writer]);
       expect((await request.delete(`${databases}/${body.id}`, { headers })).status()).toBe(204);
+    } finally {
+      for (const id of createdIds) await request.delete(`${databases}/${id}`, { headers });
     }
-    const legacy = await request.post(databases, { headers, data: { name, homeRegion: writer, replicaRegions: [] } });
-    expect(legacy.status()).toBe(201);
-    const body = await legacy.json();
-    expect(body.homeRegion).toBe(writer);
-    expect(body.replicaRegions).toEqual([]);
-    expect(body.regions).toEqual([writer]);
-    expect((await request.delete(`${databases}/${body.id}`, { headers })).status()).toBe(204);
   });
 });
 

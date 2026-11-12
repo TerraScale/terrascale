@@ -63,7 +63,10 @@ async function provider<T>(spacing: typeof requestSpacing, method: string, path:
   const response = await fetch(`${mailTm}${path}`, { method, headers, body: body && JSON.stringify(body) }).catch((error: Error) => {
     throw new Error(`inbox provider mail.tm: ${method} ${path} failed: ${error.cause ?? error.message}`);
   });
-  if (!response.ok) throw new Error(`inbox provider mail.tm: ${method} ${path} answered HTTP ${response.status}`);
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+    throw new Error(`inbox provider mail.tm: ${method} ${path} answered HTTP ${response.status}: ${detail}`);
+  }
   return (await response.json()) as T;
 }
 
