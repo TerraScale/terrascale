@@ -71,8 +71,9 @@ test('a second user enrolls a passkey and signs back in to the dashboard and a r
         await page.waitForURL(onHosted('sign-in'));
         await hostedReady(page);
         expect(dialogs).toEqual([]);
-        await expect(page.locator('#passkey-sign-in')).toBeEnabled();
-        await page.goto(dash);
+        await expect(page.getByRole('link', { name: 'Continue', exact: true })).toHaveAttribute('href', dash);
+        await audit.check('signed in without a continuation offers the dashboard');
+        await page.getByRole('link', { name: 'Continue', exact: true }).click();
       } else {
         await page.locator('#passkey-sign-in').click();
       }

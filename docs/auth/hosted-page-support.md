@@ -23,6 +23,8 @@ characters. A signed-in page without a usable continuation offers the platform
 dashboard, from `AuthOptions.DashboardOrigin`, or the same tenant's security page
 for a project account. Neither destination comes from a request-supplied client
 redirect. A signed-out page without a continuation offers sign-in again.
+Returning to sign-in or sign-up with a live session and no continuation shows
+the signed-in page and its destination link.
 
 Passkey sign-in follows same-origin or HTTPS continuation links. Without one,
 it navigates to the page's same-origin sign-in GET address, so a page returned

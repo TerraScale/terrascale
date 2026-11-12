@@ -788,18 +788,11 @@ internal static class SignInFlow
         return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
     }
 
-    /// <summary>
-    /// A redirect back to the authorization request in <paramref name="next"/> when the browser already holds a live
-    /// session for the page's tenant, so a signed-in visitor sent to sign in or sign up again (an application that lost
-    /// its own session) returns without a second sign-in; otherwise null. The authorization endpoint still enforces
-    /// max_age and prompt; a request that demands a new sign-in carries ts_login_after and always gets the form, so this
-    /// never loops.
-    /// </summary>
     public static async Task<IResult?> ResumeAsync(HttpContext context, string? next, CancellationToken cancellationToken)
     {
         var tenant = Tenant(context);
-        if (next is null || !next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
-            || next.Contains($"{AuthorizeEndpoint.LoginAfter}=", StringComparison.Ordinal)
+        if (next is not null && (!next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
+            || next.Contains($"{AuthorizeEndpoint.LoginAfter}=", StringComparison.Ordinal))
             || context.Request.Cookies[Tenancy.SessionCookie(tenant)] is not { Length: > 0 } token)
         {
             return null;
@@ -808,7 +801,10 @@ internal static class SignInFlow
         try
         {
             return await context.RequestServices.GetRequiredService<Sessions>().ResolveAsync(tenant, token, cancellationToken) is null
-                ? null : Results.Redirect(next);
+                ? null
+                : next is null
+                    ? SignInPageModel.Render(context, new SignInPageModel(SignInStep.SignedIn, tenant))
+                    : Results.Redirect(next);
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
