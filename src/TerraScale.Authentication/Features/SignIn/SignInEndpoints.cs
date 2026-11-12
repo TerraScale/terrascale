@@ -866,6 +866,7 @@ internal static class SignInFlow
                 || next == AuthOptions.DashboardOrigin + "/profile?tab=security"
                 || !Tenancy.IsProject(tenant) && (next == DevicePath || next.StartsWith(DevicePath + "?", StringComparison.Ordinal)))
             && next.Length <= 4096
+            && SignInPageModel.NavigationTarget(next) is not null
             && !next.Any(character => character is '\\' or '#' || char.IsControl(character) || char.IsWhiteSpace(character))
             ? next
             : null;
