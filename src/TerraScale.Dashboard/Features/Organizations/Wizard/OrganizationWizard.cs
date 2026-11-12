@@ -72,7 +72,6 @@ public static class OrganizationWizard
             }
 
             await http.RequestServices.GetRequiredService<OrganizationOperations>().CreateProjectAsync(context, name,
-                form["region"].ToString(), form["backupRegion"].ToString(),
                 [.. form["regions"].Select(value => value ?? "").Where(value => value.Length > 0)], http.RequestAborted);
             return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
         }
@@ -110,9 +109,7 @@ public static class OrganizationWizard
             ProjectDraftName = step == "project" ? name : "",
             OrganizationDraftPlan = plan,
             OrganizationDraftInterval = interval,
-            ProjectDraftRegions = form is null ? null : [.. form["regions"].Select(value => value ?? "").Where(page.Regions.Contains)],
-            ProjectDraftPrimaryRegion = form?["region"].ToString() ?? "",
-            ProjectDraftBackupRegion = form?["backupRegion"].ToString() ?? ""
+            ProjectDraftRegions = form is null ? null : [.. form["regions"].Select(value => value ?? "").Where(page.Regions.Contains)]
         });
         slice.StatusCode = status;
         return slice;

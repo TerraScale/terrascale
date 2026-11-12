@@ -11,7 +11,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 {
     [DbContext(typeof(DashboardDbContext))]
-    [Migration("20261111215735_CreatePendingOrganizationCheckouts")]
+    [Migration("20261112003455_CreatePendingOrganizationCheckouts")]
     partial class CreatePendingOrganizationCheckouts
     {
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -312,11 +312,6 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("id");
 
-                    b.Property<string>("BackupRegion")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("backup_region");
-
                     b.Property<bool>("IsDefault")
                         .HasColumnType("INTEGER")
                         .HasColumnName("is_default");
@@ -329,11 +324,6 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     b.Property<long>("ReadLimit")
                         .HasColumnType("INTEGER")
                         .HasColumnName("read_limit");
-
-                    b.Property<string>("Region")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("region");
 
                     b.Property<string>("Regions")
                         .IsRequired()
