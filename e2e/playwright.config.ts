@@ -1,6 +1,9 @@
 import { defineConfig } from '@playwright/test';
 import { browserHome, dash, desktop, mailWait, mobile, production, sessionFile } from './support/stack';
 
+const placementRequested = process.env.E2E_PLACEMENT_SELECTED === '1' || process.argv.includes('placement') || process.argv.includes('--project=placement');
+if (placementRequested) process.env.E2E_PLACEMENT_SELECTED = '1';
+
 const secretFree = { trace: 'off' } as const;
 
 export default defineConfig({
@@ -26,6 +29,25 @@ export default defineConfig({
     launchOptions: { env: { ...process.env, HOME: browserHome } },
   },
   projects: [
+    ...(placementRequested ? [{
+      name: 'placement-setup',
+      testMatch: 'journey/setup.spec.ts',
+      teardown: 'placement-close',
+      metadata: { setup: 'placement-setup' },
+      use: secretFree,
+    }, {
+      name: 'placement',
+      testMatch: 'placement/*.spec.ts',
+      testIgnore: 'placement/close.spec.ts',
+      dependencies: process.env.E2E_REGIONS === '2' ? ['placement-setup'] : [],
+      metadata: { setup: 'placement-setup' },
+      use: secretFree,
+    }, {
+      name: 'placement-close',
+      testMatch: 'placement/close.spec.ts',
+      metadata: { setup: 'placement-setup' },
+      use: { storageState: sessionFile('placement-setup'), ...secretFree },
+    }] : []),
     { name: 'setup', testMatch: 'journey/setup.spec.ts', teardown: 'finish', metadata: { setup: 'setup' }, use: secretFree },
     { name: 'desktop-setup', testMatch: 'journey/setup.spec.ts', teardown: 'desktop-close', metadata: { setup: 'desktop-setup' }, use: secretFree },
     {

@@ -32,6 +32,54 @@ To iterate: `bash e2e/env/local.sh prepare`, `bash e2e/env/local.sh start`,
 `bash e2e/env/local.sh exec bash e2e/env/up.sh`, then from `e2e/`
 `bash env/local.sh exec npx playwright test --project pages-desktop`, and `bash e2e/env/local.sh stop`.
 
+## Two local TerraBase regions
+
+Placement work uses an opt-in pair of real cells, with the same builds and namespaces:
+
+```sh
+export E2E_REGIONS=2
+bash e2e/env/local.sh prepare
+bash e2e/env/local.sh start
+bash e2e/env/local.sh exec bash e2e/env/up.sh
+cd e2e
+bash env/local.sh exec npx playwright test --project placement
+bash env/local.sh stop
+```
+
+The namespace remembers the mode chosen by `start`; later `exec` and `stop` need no switch. Without it, the
+Development cell, service startup and default test list stay the same. The placement project is selected explicitly;
+selecting it in one-region mode reports its tests skipped with the reason that `E2E_REGIONS=2` is required.
+
+The pair runs as Production because Development refuses `TS_PEERS_FILE`. The peers file in `$E2E_STATE/peers`
+names `journey-1 gru 127.0.0.1` and `journey-2 fra 127.0.0.2`. Both use port 8081 on their own address for
+authenticated HTTP/2 peer calls, with the run's shared peer credential. Namespace-local routes give a call to one
+peer the other's source address, which the pull endpoint uses to identify the replica. The client, metrics and
+PostgreSQL ports are 8080/9091/6432 for gru and 8180/9191/6532 for fra; the data directories are
+`$E2E_STATE/terrabase` and `$E2E_STATE/terrabase-fra`. The edge and run CA cover
+`gru.api.terrascale.tech` and `fra.api.terrascale.tech`. The dashboard and ts-auth keep using gru's internal listener.
+Discovery returns gru and fra, both known to the dashboard map; the default cell still identifies as local.
+
+Both regions use the same signed R2 stand-in, with separate `terrascale-gru-files` and `terrascale-fra-files`
+object namespaces. Production also requires backup and shape credentials: the same stand-in serves the
+`journey-backups` and `ts-terrabase-shapes-prod` buckets, using generated run credentials and HTTPS through the
+edge. Its extra platform-bucket operations are accepted only in two-region mode. It implements the single-object
+S3 operations, listings and unversioned deletion needed here, without multipart uploads or bucket snapshots.
+
+Placement has its own setup account and project key, using the normal journey setup. Its API fixture deletes that
+account's seed database to free the Free plan's one database slot. Each scenario deletes its temporary database or
+bucket, and `placement-close` deletes the account. Specs added under `placement/` use the placement project's
+`metadata.setup` and registered secrets, as the interactions specs do. Run one such spec with:
+
+```sh
+bash env/local.sh exec npx playwright test placement/placement.spec.ts --project placement
+```
+
+Other existing projects can run in two-region mode by starting this same stack first and selecting their project
+normally. No two-region CI job is configured; adding one requires its own journey shard with `E2E_REGIONS=2`,
+the placement project and the normal prepare/start/up/stop lifecycle. The pair shares one machine and third-party
+stand-ins, has no network delay and uses catalog-sweep replication without NATS; it does not model geographic
+latency, regional host failure or production's NATS notifications.
+
 ## The production target
 
 `bash e2e/env/production.sh` runs the same specs and config against production from the machine's own network: no

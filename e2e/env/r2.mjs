@@ -131,6 +131,10 @@ createServer((request, response) => {
     if (request.headers.origin === origin) cors(response);
     const denied = signed(request, rawPath, query);
     if (denied) return unexpected(request, response, 403, 'SignatureDoesNotMatch', denied);
+    if (platform && query.has('uploadId')) return unexpected(request, response, 400, 'InvalidRequest', 'multipart uploads are not implemented');
+    if (platform && /^[0-9a-f]{64}$/.test(request.headers['x-amz-content-sha256'] ?? '')
+      && request.headers['x-amz-content-sha256'] !== sha256(body, 'hex'))
+      return unexpected(request, response, 400, 'BadDigest', 'payload differs from its signed hash');
     if (platformBucket && request.method === 'HEAD') {
       response.writeHead(200, { 'content-length': 0 });
       return response.end();
