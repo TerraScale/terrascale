@@ -273,6 +273,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         var address = cooldown ? purpose : $"{purpose}/{windowSeconds}s";
         var keys = Regions.Select(component => this.BucketKey(address, component + ":" + subject)).ToArray();
         var key = keys[this.regionIndex];
+        string[] others = [.. keys.Where((_, component) => component != this.regionIndex)];
 
         // Every lost conditional write means another attempt was admitted (or the window rolled
         // over, or the bucket was created), so maximum + 2 rounds always reach a decision unless
@@ -311,7 +312,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
                 ? await source.TryCreateAsync(instanceId, key, new AttemptBucket(effective, 1), cancellationToken)
                 : cooldown
                     ? await source.TryReplaceAsync(instanceId, key, new AttemptBucket(effective, checked(own + 1)), current.Version, cancellationToken)
-                    : await source.TryChargeAsync(instanceId, key, effective, (int)(maximum - (used - own)), cancellationToken))
+                    : await source.TryChargeAsync(instanceId, key, others, effective, maximum, cancellationToken))
             {
                 return null;
             }

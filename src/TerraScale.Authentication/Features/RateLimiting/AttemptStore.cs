@@ -14,7 +14,7 @@ public interface IAttemptStore
 
     Task<bool> TryReplaceAsync(string instanceId, string key, AttemptBucket bucket, string version, CancellationToken cancellationToken);
 
-    Task<bool> TryChargeAsync(string instanceId, string key, long window, int limit, CancellationToken cancellationToken);
+    Task<bool> TryChargeAsync(string instanceId, string key, IReadOnlyList<string> others, long window, int maximum, CancellationToken cancellationToken);
 }
 
 public sealed class TerraBaseAttemptStore(AuthData data) : IAttemptStore
@@ -35,9 +35,11 @@ public sealed class TerraBaseAttemptStore(AuthData data) : IAttemptStore
     public Task<bool> TryReplaceAsync(string instanceId, string key, AttemptBucket bucket, string version, CancellationToken cancellationToken) =>
         Guard(() => data.SaveAsync(Change.Update(Record(instanceId, key, bucket), version), cancellationToken), cancellationToken);
 
-    public Task<bool> TryChargeAsync(string instanceId, string key, long window, int limit, CancellationToken cancellationToken) =>
+    public Task<bool> TryChargeAsync(string instanceId, string key, IReadOnlyList<string> others, long window, int maximum, CancellationToken cancellationToken) =>
         Guard(async () => await data.ReadAsync((db, token) => db.RateLimits
-            .Where(row => row.InstanceId == instanceId && row.Key == key && (row.Window < window || (row.Window == window && row.Used < limit)))
+            .Where(row => row.InstanceId == instanceId && row.Key == key && row.Window <= window
+                && (row.Window == window ? row.Used : 0)
+                    + db.RateLimits.Where(other => other.InstanceId == instanceId && others.Contains(other.Key) && other.Window == window).Sum(other => other.Used) < maximum)
             .ExecuteUpdateAsync(row => row
                 .SetProperty(bucket => bucket.Used, bucket => bucket.Window == window ? bucket.Used + 1 : 1)
                 .SetProperty(bucket => bucket.Window, window)
