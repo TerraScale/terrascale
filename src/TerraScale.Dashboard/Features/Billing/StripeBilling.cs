@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Stripe;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.TerraBase.Contracts;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 using TerraScale.Dashboard.Common.Validation;
@@ -12,7 +13,7 @@ namespace TerraScale.Dashboard.Features.Billing
     // Every entitlement is derived from a bound checkout and Stripe's current
     // subscription. Browser return parameters and webhook snapshots grant nothing.
     public sealed partial class StripeBilling(IDashboardIdentity identity, IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, AccountService accounts,
-        IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger)
+        IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger, ServiceSloTelemetry telemetry)
     {
         internal const string Origin = "https://dash.terrascale.tech";
         internal static readonly TimeSpan CheckoutLifetime = TimeSpan.FromHours(1);

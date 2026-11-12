@@ -637,29 +637,23 @@ namespace TerraScale.Dashboard.Common.Accounts
             return context with { Account = selected, Loaded = null };
         }
 
-        internal async Task<OrganizationRecord> CompleteBusinessAsync(SessionRecord session, string name, string checkoutId, BillingPlan plan, CancellationToken cancellationToken)
+        internal async Task<OrganizationRecord> CompleteBusinessAsync(SessionRecord session, PendingOrganizationCheckout draft, CancellationToken cancellationToken)
         {
-            name = ValidName(name);
-            var live = await platform.CreateOrganizationAsync(session, name, checkoutId, cancellationToken);
+            var live = await platform.CreateOrganizationAsync(session, draft.Name, draft.CheckoutId, cancellationToken);
             var org = new OrganizationRecord
             {
                 Id = live.Id,
                 Name = live.Name,
                 Slug = Slug(live.Name),
                 Kind = "business",
-                PlanId = plan.Id,
+                PlanId = draft.PlanId,
                 BillingStatus = "active",
                 PaymentMethodValidated = true,
                 OwnerUserId = session.UserId,
                 CreatedAt = live.CreatedAt,
                 Members = new() { [session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = live.CreatedAt } }
             };
-            try { await organizationStore.CreateAsync(org, cancellationToken); }
-            catch (DbUpdateConcurrencyException)
-            {
-                var current = await organizationStore.FindAsync(org.Id, cancellationToken);
-                org = current is { Erased: false } ? current.Organization : throw new AccountAccessException("Organization is unavailable.", 404);
-            }
+            org = await organizationStore.CompleteCheckoutAsync(org, draft, cancellationToken);
 
             await UpdateAccountAsync(session, account =>
             {

@@ -27,13 +27,16 @@ public static class OrganizationWizard
         {
             if (form["step"] == "cancel-checkout")
             {
-                var draft = await payments.PendingOrganizationAsync(context.UserId, http.RequestAborted);
-                if (draft is not null && form["draft_id"] == draft.DraftId)
+                var draftId = form["draft_id"].ToString();
+                var draft = await payments.OrganizationDraftForCancellationAsync(context.UserId, draftId, http.RequestAborted);
+                var result = await payments.CancelPendingOrganizationAsync(context.Session, http, draftId,
+                    "Organization checkout canceled.", http.RequestAborted);
+                if (result.OrganizationId is { } organizationId)
                 {
-                    if (await payments.CancelPendingOrganizationAsync(context.UserId, draft.DraftId, http.RequestAborted))
-                    {
-                        await OrganizationCheckoutNavigation.RefusedAsync(http, context.UserId, "Organization checkout canceled. Your payment was refunded.", http.RequestAborted);
-                    }
+                    return HttpRedirects.SeeOther("/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organizationId));
+                }
+                if (draft is not null)
+                {
                     http.Items[nameof(PendingOrganizationCheckout)] = draft;
                 }
                 return OrganizationView.Create(await OrganizationEndpoints.PageModelAsync(http, context, placement, wizardOverride: "payment"));

@@ -6,7 +6,7 @@ import { test, expect } from '../support/audit';
 import { onboard, signUp, verify } from '../support/hosted';
 import { createApiKey, createDatabase, databaseNames, stripeLog } from '../support/paid';
 import { shell } from '../support/shell';
-import { dash, stateDir } from '../support/stack';
+import { dash, stateDir, stripeStandIn } from '../support/stack';
 import { saveJourney, saveSecret, saveSession } from '../support/state';
 
 const checkout = 'https://checkout.stripe.com';
@@ -167,8 +167,36 @@ test('organization checkout creates nothing before payment and completes exactly
   await page.waitForURL((url) => url.origin === checkout);
   const checkoutId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
   expect(await owner.organizations()).toEqual(before);
-  await page.getByRole('button', { name: 'Subscribe', exact: true }).click();
+  const checkoutUrl = page.url();
+  await page.goto('/organization?newOrganization=organization');
+  const cancelForm = await wizard.locator('form').evaluate((form) => Object.fromEntries(new FormData(form as HTMLFormElement).entries()) as Record<string, string>);
+  const paid = await page.request.post(checkoutUrl, { maxRedirects: 0 });
+  expect(paid.status()).toBe(303);
+  const stripeKey = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n').find((line) => line.startsWith('sk_test_'));
+  if (!stripeKey) throw new Error('The local stack has no Stripe credential');
+  const stripeHeaders = { authorization: 'Bearer ' + stripeKey, 'stripe-version': '2026-09-30.endive' };
+  const paidResponse = await page.request.get('https://api.stripe.com/v1/checkout/sessions/' + checkoutId, { headers: stripeHeaders });
+  expect(paidResponse.status()).toBe(200);
+  const paidSession = await paidResponse.json();
+  const failure = await fetch(stripeStandIn + '/failure', {
+    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + paidSession.subscription, status: 404, remaining: 2 }),
+  });
+  expect(failure.status).toBe(200);
+  await page.goto(paid.headers().location);
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/organization' && url.searchParams.get('newOrganization') === 'project');
+  const afterFailure = await stripeLog();
+  expect(afterFailure.calls.filter((call) => call.path === '/v1/subscriptions/' + paidSession.subscription && call.status === 404)).toHaveLength(2);
+  const staleCancel = await page.request.post('/api/v1/dashboard/organization/new-organization', { form: cancelForm, maxRedirects: 0 });
+  expect(staleCancel.status()).toBe(303);
+  await page.goto(staleCancel.headers().location);
+  await expect(page.locator('#organization-checkout-notice')).toContainText('Checkout cannot be canceled.');
+  await page.goto('/organization?tab=billing');
+  await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
+  await expect(page.locator('#billing-summary .ts-billing-plan .ts-badge')).toHaveText('Active');
+  const afterResume = await stripeLog();
+  expect(afterResume.cancels.filter((entry) => entry.subscription === paidSession.subscription)).toHaveLength(0);
+  expect(afterResume.refunds.filter((entry) => entry.subscription === paidSession.subscription)).toHaveLength(0);
+  console.log('organization checkout after mark: Stripe metadata 404 twice; stale wizard cancel refused; no cancel or refund; next navigation has Pro with its binding');
   const created = (await owner.organizations()).filter((org) => org.name === name);
   expect(created).toHaveLength(1);
   const organization = created[0];
@@ -198,30 +226,56 @@ test('organization checkout creates nothing before payment and completes exactly
   await canceledWizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
   await page.waitForURL((url) => url.origin === checkout);
   const canceledId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
-  const paid = await page.request.post(page.url(), { maxRedirects: 0 });
-  expect(paid.status()).toBe(303);
-  const stripeKey = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n').find((line) => line.startsWith('sk_test_'));
-  if (!stripeKey) throw new Error('The local stack has no Stripe credential');
-  const stripeHeaders = { authorization: 'Bearer ' + stripeKey, 'stripe-version': '2026-09-30.endive' };
+  const refusedPayment = await page.request.post(page.url(), { maxRedirects: 0 });
+  expect(refusedPayment.status()).toBe(303);
   const sessionResponse = await page.request.get('https://api.stripe.com/v1/checkout/sessions/' + canceledId, { headers: stripeHeaders });
   expect(sessionResponse.status()).toBe(200);
-  const paidSession = await sessionResponse.json();
-  const canceled = await page.request.delete('https://api.stripe.com/v1/subscriptions/' + paidSession.subscription, { headers: stripeHeaders });
+  const refusedSession = await sessionResponse.json();
+  const canceled = await page.request.delete('https://api.stripe.com/v1/subscriptions/' + refusedSession.subscription, { headers: stripeHeaders });
   expect(canceled.status()).toBe(200);
-  await page.goto(paid.headers().location);
+  const invoices = await page.request.get('https://api.stripe.com/v1/invoices', {
+    headers: stripeHeaders, params: { customer: refusedSession.customer, subscription: refusedSession.subscription, status: 'paid' },
+  });
+  expect(invoices.status()).toBe(200);
+  const payments = await page.request.get('https://api.stripe.com/v1/invoice_payments', {
+    headers: stripeHeaders, params: { invoice: (await invoices.json()).data[0].id, status: 'paid' },
+  });
+  expect(payments.status()).toBe(200);
+  const paymentId = (await payments.json()).data[0].payment.payment_intent;
+  const pendingRefund = await fetch(stripeStandIn + '/refund-status', { method: 'POST', body: JSON.stringify({ payment: paymentId, status: 'requires_action' }) });
+  expect(pendingRefund.status).toBe(200);
+  await page.goto(refusedPayment.headers().location);
+  await expect(page.locator('#organization-checkout-notice')).toContainText('Your refund is requires_action.');
+  await expect(page.locator('#organization-checkout-notice')).toContainText('You can start a new checkout.');
+  await page.reload();
+  await expect(page.locator('#organization-checkout-notice')).toHaveCount(0);
+  await page.goto('/organization?newOrganization=organization');
+  await canceledWizard.locator('input[name=name]').fill(canceledName);
+  await canceledWizard.getByRole('button', { name: 'Continue to billing', exact: true }).click();
+  await canceledWizard.locator('input[name=plan][value=pro]').check();
+  await canceledWizard.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.waitForURL((url) => url.origin === checkout);
+  const unsettled = await page.request.get('https://api.stripe.com/v1/refunds', { headers: stripeHeaders, params: { payment_intent: paymentId } });
+  expect(unsettled.status()).toBe(200);
+  expect((await unsettled.json()).data[0].status).toBe('requires_action');
+  await page.getByRole('link', { name: 'Cancel', exact: true }).click();
+  await page.waitForURL((url) => url.origin === dash);
+  const settledRefund = await fetch(stripeStandIn + '/refund-status', { method: 'POST', body: JSON.stringify({ payment: paymentId, status: 'succeeded' }) });
+  expect(settledRefund.status).toBe(200);
+  await page.goto('/organization');
   await expect(page.locator('#organization-checkout-notice')).toContainText("The payment didn't go through.");
   await expect(page.locator('#organization-checkout-notice')).toHaveAttribute('role', 'status');
   await expect(page.locator('#organization-checkout-notice')).toContainText('Your payment was refunded.');
   const refusedLog = await stripeLog();
-  expect(refusedLog.cancels.filter((entry) => entry.subscription === paidSession.subscription)).toHaveLength(1);
-  const refunds = refusedLog.refunds.filter((entry) => entry.subscription === paidSession.subscription);
+  expect(refusedLog.cancels.filter((entry) => entry.subscription === refusedSession.subscription)).toHaveLength(1);
+  const refunds = refusedLog.refunds.filter((entry) => entry.subscription === refusedSession.subscription);
   expect(refunds).toHaveLength(1);
   expect(refunds[0].amount).toBe(2000);
   expect((await owner.organizations()).filter((org) => org.name === canceledName)).toHaveLength(0);
   await audit.check('payment canceled before return creates no organization');
   await page.reload();
   await expect(page.locator('#organization-checkout-notice')).toHaveCount(0);
-  console.log('organization checkout: subscription canceled before return; cancel and full refund recorded; no organization; payment refusal displayed once');
+  console.log('organization checkout: requires_action refund retained beside a fresh draft; new draft canceled; settled refund keeps original refusal reason once; no organization; one full refund');
 
 });
 

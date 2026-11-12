@@ -54,6 +54,15 @@ public sealed partial class StripeBilling
             throw new OnboardingValidationException("Cancel the pending checkout in the organization setup wizard before starting another.");
         }
 
+        if (draft.State == "creating")
+        {
+            return CheckoutReturnUrl(draft.CheckoutId);
+        }
+        if (draft.State != "pending")
+        {
+            throw new OnboardingValidationException("Checkout cancellation is being completed. Open the organization page to continue.");
+        }
+
         var checkout = await DraftCheckoutAsync(session, draft, cancellationToken);
         return checkout.Status == "complete" ? CheckoutReturnUrl(checkout.Id)
             : checkout.Status == "open" && checkout.Url is { Length: > 0 } url ? url
@@ -63,7 +72,7 @@ public sealed partial class StripeBilling
     internal async Task<PendingOrganizationCheckout?> PendingOrganizationAsync(string userId, CancellationToken cancellationToken)
     {
         await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        return await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.UserId == userId, cancellationToken);
+        return await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.UserId == userId && row.State != "refund_pending", cancellationToken);
     }
 
     private async Task<Stripe.Checkout.Session> CreateDraftCheckoutAsync(SessionRecord session, string draftId, string name, BillingPlan plan, string interval, DateTime createdAt, CancellationToken cancellationToken)
@@ -123,12 +132,15 @@ public sealed partial class StripeBilling
         return checkout;
     }
 
-    private async Task<string?> CompletePendingOrganizationAsync(SessionRecord session, HttpContext request, CancellationToken cancellationToken)
+    private async Task<string?> CompletePendingOrganizationAsync(SessionRecord session, HttpContext request, PendingOrganizationCheckout draft, CancellationToken cancellationToken)
     {
-        var draft = await PendingOrganizationAsync(session.UserId, cancellationToken);
-        if (draft is null)
+        if (draft.State == "creating")
         {
-            return null;
+            return await CompleteCreatingOrganizationAsync(session, draft, cancellationToken);
+        }
+        if (draft.State is "canceling" or "refund_pending")
+        {
+            throw new OrganizationCheckoutRefusedException(draft.RefusalReason);
         }
 
         var checkout = await DraftCheckoutAsync(session, draft, cancellationToken);
@@ -137,7 +149,8 @@ public sealed partial class StripeBilling
             && request.Request.Query["payment"] == "canceled" && request.Request.Query["draft_id"] == draft.DraftId;
         if (checkout.Status == "open" && canceled)
         {
-            checkout = await client.V1.Checkout.Sessions.ExpireAsync(checkout.Id, cancellationToken: cancellationToken);
+            request.Items[nameof(PendingOrganizationCheckout)] = draft;
+            throw new OrganizationCheckoutRefusedException("Organization checkout canceled.");
         }
 
         if (checkout.Status == "expired")
@@ -158,6 +171,15 @@ public sealed partial class StripeBilling
         if (checkout.Mode != "subscription" || checkout.SubscriptionId is not { Length: > 0 } subscriptionId || checkout.CustomerId is not { Length: > 0 } customerId)
         {
             throw new OrganizationCheckoutRefusedException("Stripe checkout has no subscription or customer. Start again.");
+        }
+
+        if (checkout.PaymentStatus == "paid")
+        {
+            draft = await RecordPaidDraftAsync(draft, cancellationToken);
+            if (draft.State != "pending")
+            {
+                return await CompletePendingOrganizationAsync(session, request, draft, cancellationToken);
+            }
         }
 
         var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId,
@@ -193,49 +215,44 @@ public sealed partial class StripeBilling
             throw new OrganizationCheckoutRefusedException("The payment didn't go through. Start organization setup again.");
         }
 
-        var organization = await accounts.CompleteBusinessAsync(session, draft.Name, checkout.Id, mapped.Plan, cancellationToken);
-        var metadata = new Dictionary<string, string> { ["organization_id"] = organization.Id };
-        if (subscription.Metadata.GetValueOrDefault("organization_id") != organization.Id)
+        while (true)
         {
-            await client.V1.Subscriptions.UpdateAsync(subscriptionId, new() { Metadata = metadata }, Idempotent("organization-subscription-" + draft.DraftId), cancellationToken);
-        }
-
-        await client.V1.Customers.UpdateAsync(customerId, new() { Metadata = metadata }, Idempotent("organization-owner-" + draft.DraftId), cancellationToken);
-        var binding = new BillingBinding
-        {
-            OrganizationId = organization.Id,
-            CustomerId = customerId,
-            RequestId = draft.DraftId,
-            CheckoutId = checkout.Id,
-            Plan = draft.Plan,
-            Interval = draft.Interval,
-            StartedAt = new DateTimeOffset(DateTime.SpecifyKind(draft.CreatedAt, DateTimeKind.Utc)),
-            SubscriptionId = subscriptionId,
-            EffectivePlan = mapped.Plan.Key,
-            EffectiveInterval = mapped.Interval,
-            Status = subscription.Status,
-            State = "active",
-            RenewalAt = subscription.Status is "canceled" or "incomplete_expired" ? null : item!.CurrentPeriodEnd,
-            ReturnPath = "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organization.Id)
-        };
-        if (!await storage.InsertAsync(binding, cancellationToken))
-        {
-            binding = await ReadAsync(organization.Id, cancellationToken) ?? throw new IOException("Organization billing did not persist.");
-            if (binding.RequestId != draft.DraftId || binding.CheckoutId != checkout.Id || binding.SubscriptionId != subscriptionId || binding.CustomerId != customerId)
+            var current = await ReadPendingOrganizationAsync(draft.DraftId, cancellationToken);
+            if (current is null)
             {
-                throw new IOException("Organization billing belongs to a different checkout.");
+                return (await CheckoutAsync(draft.CheckoutId, cancellationToken))?.OrganizationId;
+            }
+            if (current.State != "pending")
+            {
+                return await CompletePendingOrganizationAsync(session, request, current, cancellationToken);
+            }
+
+            current.State = "creating";
+            current.PaidAt = time.GetUtcNow().UtcDateTime;
+            current.CustomerId = customerId;
+            current.SubscriptionId = subscriptionId;
+            current.SubscriptionStatus = subscription.Status;
+            current.PlanId = mapped.Plan.Id;
+            current.RenewalAt = item!.CurrentPeriodEnd;
+            if (await storage.ReplaceAsync(current, cancellationToken))
+            {
+                return await CompleteCreatingOrganizationAsync(session, current, cancellationToken);
             }
         }
+    }
 
-        if (!await storage.InsertAsync(new StripeCustomerRow { Id = AccountService.NewId(), OrganizationId = organization.Id, CustomerId = customerId, CreatedAt = time.GetUtcNow().UtcDateTime }, cancellationToken) &&
-            (await CustomerAsync(customerId, cancellationToken))?.OrganizationId != organization.Id)
+    private async Task<string> CompleteCreatingOrganizationAsync(SessionRecord session, PendingOrganizationCheckout draft, CancellationToken cancellationToken)
+    {
+        try
         {
-            throw new IOException("Organization customer belongs to a different checkout.");
+            var organization = await accounts.CompleteBusinessAsync(session, draft, cancellationToken);
+            await plans.PublishAsync(organization, cancellationToken);
+            return organization.Id;
         }
-
-        await IndexCheckoutAsync(binding, cancellationToken);
-        await RefreshAsync(organization.Id, cancellationToken);
-        await RemovePendingOrganizationAsync(draft, cancellationToken);
-        return organization.Id;
+        catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or StripeException or OperationCanceledException)
+        {
+            telemetry.ReportOrganizationCreationFailure();
+            throw;
+        }
     }
 }

@@ -5,6 +5,11 @@ using CheckoutSession = Stripe.Checkout.Session;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
+internal sealed class OrganizationRefundUnsettledException(string status) : IOException("Organization invoice refund is " + status + ".")
+{
+    public string Status { get; } = status;
+}
+
 public sealed partial class StripeBilling
 {
     private async Task<bool> CancelDraftPaymentAsync(PendingOrganizationCheckout draft, CancellationToken cancellationToken)
@@ -15,7 +20,7 @@ public sealed partial class StripeBilling
         {
             checkout = await client.V1.Checkout.Sessions.GetAsync(draft.CheckoutId, cancellationToken: cancellationToken);
         }
-        catch (StripeException error) when (PermanentStripeFailure(error))
+        catch (StripeException error) when (MissingStripeObject(error) && draft.PaidAt is null)
         {
             return false;
         }
@@ -24,6 +29,11 @@ public sealed partial class StripeBilling
         {
             await ExpireDraftCheckoutAsync(draft.CheckoutId, cancellationToken);
             checkout = await client.V1.Checkout.Sessions.GetAsync(draft.CheckoutId, cancellationToken: cancellationToken);
+        }
+
+        if (checkout.PaymentStatus == "paid")
+        {
+            draft = await RecordPaidDraftAsync(draft, cancellationToken);
         }
 
         if (checkout.SubscriptionId is not { Length: > 0 } subscriptionId)
@@ -35,7 +45,7 @@ public sealed partial class StripeBilling
             return false;
         }
 
-        if (!await CancelDraftSubscriptionAsync(client, subscriptionId, cancellationToken))
+        if (!await CancelDraftSubscriptionAsync(client, subscriptionId, draft.PaidAt is not null, cancellationToken))
         {
             return false;
         }
@@ -72,14 +82,14 @@ public sealed partial class StripeBilling
         return refunded;
     }
 
-    private static async Task<bool> CancelDraftSubscriptionAsync(StripeClient client, string subscriptionId, CancellationToken cancellationToken)
+    private static async Task<bool> CancelDraftSubscriptionAsync(StripeClient client, string subscriptionId, bool paid, CancellationToken cancellationToken)
     {
         Subscription subscription;
         try
         {
             subscription = await client.V1.Subscriptions.GetAsync(subscriptionId, cancellationToken: cancellationToken);
         }
-        catch (StripeException error) when (PermanentStripeFailure(error))
+        catch (StripeException error) when (MissingStripeObject(error) && !paid)
         {
             return false;
         }
@@ -101,7 +111,7 @@ public sealed partial class StripeBilling
                 }
             }
         }
-        catch (StripeException error) when (MissingStripeObject(error))
+        catch (StripeException error) when (MissingStripeObject(error) && !paid)
         {
             return false;
         }
@@ -124,7 +134,7 @@ public sealed partial class StripeBilling
         {
             if (refund.Status is "pending" or "requires_action")
             {
-                throw new IOException("Organization invoice refund is pending.");
+                throw new OrganizationRefundUnsettledException(refund.Status);
             }
             if (refund.Status == "succeeded")
             {
@@ -147,7 +157,7 @@ public sealed partial class StripeBilling
             Idempotent("organization-refund-" + payment.Id + "-" + refunded.ToString(CultureInfo.InvariantCulture) + "-" + lastFailure), cancellationToken);
         if (result.Status != "succeeded")
         {
-            throw new IOException("Organization invoice refund has not succeeded.");
+            throw new OrganizationRefundUnsettledException(result.Status);
         }
     }
 }

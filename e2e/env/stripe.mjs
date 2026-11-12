@@ -7,6 +7,8 @@ const endpoint = 'https://dash.terrascale.tech/api/v1/billing/stripe/webhook';
 const objects = new Map();
 const checkouts = new Map();
 const replays = new Map();
+const failures = new Map();
+const refundStatuses = new Map();
 const log = { calls: [], events: [], cancels: [], refunds: [], unexpected: [] };
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -94,7 +96,7 @@ const api = [
   ['POST', /^\/v1\/refunds$/, (form) => {
     const payment = find('pi', form.get('payment_intent'));
     if (!payment || Number(form.get('amount')) !== payment.amount) return undefined;
-    const refund = store({ id: id('re'), amount: payment.amount, payment_intent: payment.id, status: 'succeeded' });
+    const refund = store({ id: id('re'), amount: payment.amount, payment_intent: payment.id, status: refundStatuses.get(payment.id) ?? 'succeeded' });
     log.refunds.push({ payment: payment.id, subscription: payment.subscription, amount: refund.amount });
     return refund;
   }, { payment_intent: /^pi_\w+$/ }],
@@ -156,6 +158,19 @@ function unexpected(response, request, url, reason, status = 404, error = { type
 async function handle(request, response, body) {
   const url = new URL(request.url, `https://${request.headers.host}`);
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/log') return reply(response, 200, log);
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/failure') {
+    const failure = JSON.parse(body);
+    failures.set(failure.method + ' ' + failure.path, failure);
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/refund-status') {
+    const { payment, status } = JSON.parse(body);
+    refundStatuses.set(payment, status);
+    for (const refund of objects.values()) {
+      if (refund.id.startsWith('re_') && refund.payment_intent === payment) refund.status = status;
+    }
+    return reply(response, 200, {});
+  }
   if (url.hostname === 'checkout.stripe.com') {
     const session = find('cs', /^\/c\/pay\/(cs_test_\w+)$/.exec(url.pathname)?.[1]);
     if (session?.status !== 'open' || !['GET', 'POST'].includes(request.method)) return unexpected(response, request, url, 'no open checkout session');
@@ -171,6 +186,12 @@ async function handle(request, response, body) {
   const route = api.find(([method, path]) => method === request.method && path.test(url.pathname));
   const unfiltered = Object.entries(route?.[3] ?? {}).find(([key, value]) => !value.test(parameters.get(key) ?? ''))?.[0];
   if (unfiltered) return unexpected(response, request, url, `filter ${unfiltered}`);
+  const failure = failures.get(request.method + ' ' + url.pathname);
+  if (failure?.remaining > 0) {
+    failure.remaining -= 1;
+    log.calls.push({ method: request.method, path: url.pathname, status: failure.status });
+    return reply(response, failure.status, { error: { type: 'invalid_request_error', code: failure.status === 404 ? 'resource_missing' : undefined, message: 'Journey Stripe failure.' } });
+  }
   const replay = request.method === 'POST' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';
   if (replays.has(replay)) return reply(response, 200, replays.get(replay));
   const invalid = Object.entries(route?.[4] ?? {}).find(([key, valid]) => !valid(parameters.get(key)))?.[0];

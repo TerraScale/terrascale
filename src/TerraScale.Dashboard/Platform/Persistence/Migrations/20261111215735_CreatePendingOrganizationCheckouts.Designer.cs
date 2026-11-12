@@ -14,7 +14,6 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
     [Migration("20261111215735_CreatePendingOrganizationCheckouts")]
     partial class CreatePendingOrganizationCheckouts
     {
-        /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
@@ -1000,9 +999,9 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 
             modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.PendingOrganizationCheckout", b =>
                 {
-                    b.Property<string>("UserId")
+                    b.Property<string>("DraftId")
                         .HasColumnType("TEXT")
-                        .HasColumnName("user_id");
+                        .HasColumnName("draft_id");
 
                     b.Property<string>("CheckoutId")
                         .IsRequired()
@@ -1013,10 +1012,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("created_at");
 
-                    b.Property<string>("DraftId")
+                    b.Property<string>("CustomerId")
                         .IsRequired()
                         .HasColumnType("TEXT")
-                        .HasColumnName("draft_id");
+                        .HasColumnName("customer_id");
 
                     b.Property<string>("Interval")
                         .IsRequired()
@@ -1028,11 +1027,58 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("name");
 
+                    b.Property<DateTime?>("PaidAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("paid_at");
+
                     b.Property<string>("Plan")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("TEXT")
                         .HasColumnName("plan");
+
+                    b.Property<string>("PlanId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan_id");
+
+                    b.Property<DateTime?>("RefundNoticeAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("refund_notice_at");
+
+                    b.Property<string>("RefundStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("refund_status");
+
+                    b.Property<string>("RefusalReason")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("refusal_reason");
+
+                    b.Property<DateTime?>("RenewalAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("renewal_at");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("state");
+
+                    b.Property<string>("SubscriptionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<string>("SubscriptionStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_status");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
 
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
@@ -1040,17 +1086,20 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("version");
 
-                    b.HasKey("UserId");
+                    b.HasKey("DraftId");
 
                     b.HasIndex("CheckoutId")
                         .IsUnique();
 
-                    b.HasIndex("DraftId")
-                        .IsUnique();
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasFilter("state <> 'refund_pending'");
 
                     b.ToTable("pending_organization_checkouts", null, t =>
                         {
                             t.HasCheckConstraint("ck_pending_organization_checkouts_checkout", "length(checkout_id) > 0");
+
+                            t.HasCheckConstraint("ck_pending_organization_checkouts_creating", "state <> 'creating' OR paid_at IS NOT NULL AND length(customer_id) > 0 AND length(subscription_id) > 0 AND subscription_status IN ('active', 'trialing') AND length(plan_id) > 0 AND renewal_at IS NOT NULL AND refusal_reason = ''");
 
                             t.HasCheckConstraint("ck_pending_organization_checkouts_id", "length(user_id) = 26 AND length(draft_id) = 26");
 
@@ -1059,6 +1108,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                             t.HasCheckConstraint("ck_pending_organization_checkouts_name", "length(name) BETWEEN 1 AND 128");
 
                             t.HasCheckConstraint("ck_pending_organization_checkouts_plan", "length(plan) BETWEEN 1 AND 128");
+
+                            t.HasCheckConstraint("ck_pending_organization_checkouts_refusal", "state NOT IN ('canceling', 'refund_pending') OR length(refusal_reason) > 0");
+
+                            t.HasCheckConstraint("ck_pending_organization_checkouts_state", "state IN ('pending', 'creating', 'canceling', 'refund_pending')");
                         });
                 });
 

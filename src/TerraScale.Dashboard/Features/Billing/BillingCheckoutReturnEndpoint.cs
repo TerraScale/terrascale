@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return AccountEndpoints.LoginRedirect(http);
             }
 
-            var draft = await billing.PendingOrganizationAsync(context.Session.UserId, cancellationToken);
+            var draft = await billing.OrganizationDraftForReturnAsync(context.Session.UserId, http.Request.Query["session_id"].ToString(), cancellationToken);
             if (draft is not null && http.Request.Query["session_id"] == draft.CheckoutId)
             {
                 var completion = await billing.ResumeOrganizationAsync(context.Session, http);

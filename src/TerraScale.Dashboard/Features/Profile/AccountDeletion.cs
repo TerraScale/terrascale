@@ -98,7 +98,8 @@ namespace TerraScale.Dashboard.Features.Profile
                     http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow().AddDays(15));
                 await WriteOperationAsync(http, storage, identity, operation);
                 persisted = true;
-                await billing.CancelPendingOrganizationAsync(context.UserId, null, cancellationToken);
+                operation = await PrepareCheckoutDeletionAsync(http, platform, storage, identity, billing, operation);
+                sole = [.. operation.Organizations];
                 try
                 {
                     if (!await platform.DeleteAccountAsync(context.Session, operation.Receipt, operation.Authorization, cancellationToken))
@@ -161,7 +162,12 @@ namespace TerraScale.Dashboard.Features.Profile
                     return Results.Problem(StepUpFlow.Required().Message, statusCode: 403,
                         extensions: new Dictionary<string, object?> { ["code"] = "step_up_required" });
                 }
-                await billing.CancelPendingOrganizationAsync(operation.Session.UserId, null, http.RequestAborted);
+                if (!completed)
+                {
+                    operation = await PrepareCheckoutDeletionAsync(http, platform, storage,
+                        http.RequestServices.GetRequiredService<IDashboardIdentity>(), billing, operation);
+                    completed = await platform.DeleteAccountAsync(operation.Session, operation.Receipt, operation.Authorization, http.RequestAborted);
+                }
                 return completed ? await CompleteAsync(http, sessions, platform, storage, tokens, billing, operation) : HttpRedirects.SeeOther("/account-deletion");
             }
             catch (AccountAccessException error)
@@ -176,6 +182,25 @@ namespace TerraScale.Dashboard.Features.Profile
                 return Results.Text(error.Message + " Dashboard records have been retained. Return to your profile to resolve the issue.", statusCode: error.StatusCode);
             }
             catch (Exception error) when (Transient(error, http)) { return Retry(http); }
+        }
+
+        private static async Task<Operation> PrepareCheckoutDeletionAsync(HttpContext http, ITsAuthPlatform platform,
+            IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, StripeBilling billing, Operation operation)
+        {
+            await billing.PrepareOrganizationAccountDeletionAsync(operation.Session, http, http.RequestAborted);
+            var context = await http.RequestServices.GetRequiredService<AccountService>().GetContextAsync(operation.Session, http.RequestAborted);
+            List<string> organizations = [];
+            foreach (var organization in context.Organizations)
+            {
+                var members = await platform.ListMembersAsync(operation.Session, organization.Id, http.RequestAborted);
+                if (members.All(member => member.UserId == operation.Session.UserId))
+                {
+                    organizations.Add(organization.Id);
+                }
+            }
+            operation = operation with { Organizations = [.. organizations] };
+            await WriteOperationAsync(http, storage, identity, operation);
+            return operation;
         }
 
         private static IResult Retry(HttpContext http)
@@ -247,17 +272,28 @@ namespace TerraScale.Dashboard.Features.Profile
                 using var aes = new AesGcm(Convert.FromBase64String((await identity.ReadAsync(http.RequestAborted)).SessionEncryptionKey), 16);
                 aes.Encrypt(nonce, bytes, ciphertext, tag, Encoding.UTF8.GetBytes(Operations + key));
                 await using var db = await storage.CreateDbContextAsync(http.RequestAborted);
-                db.AccountDeletions.Add(new AccountDeletionRow
+                var row = await db.AccountDeletions.SingleOrDefaultAsync(item => item.KeyHash == key, http.RequestAborted);
+                if (row is null)
                 {
-                    Id = AccountService.NewId(),
-                    KeyHash = key,
-                    UserId = operation.Session.UserId,
-                    Nonce = nonce,
-                    Ciphertext = ciphertext,
-                    Tag = tag,
-                    CreatedAt = http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime,
-                    Version = AccountService.NewId(),
-                });
+                    db.AccountDeletions.Add(new AccountDeletionRow
+                    {
+                        Id = AccountService.NewId(),
+                        KeyHash = key,
+                        UserId = operation.Session.UserId,
+                        Nonce = nonce,
+                        Ciphertext = ciphertext,
+                        Tag = tag,
+                        CreatedAt = http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime,
+                        Version = AccountService.NewId(),
+                    });
+                }
+                else
+                {
+                    row.Nonce = nonce;
+                    row.Ciphertext = ciphertext;
+                    row.Tag = tag;
+                    row.Version = AccountService.NewId();
+                }
                 await db.SaveChangesAsync(http.RequestAborted);
             }
             finally { CryptographicOperations.ZeroMemory(bytes); }

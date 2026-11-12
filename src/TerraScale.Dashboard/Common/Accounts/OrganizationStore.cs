@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Features.Billing;
 
 namespace TerraScale.Dashboard.Common.Accounts;
 
@@ -55,14 +56,99 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             throw new IOException("Organization identity is invalid.");
         }
 
-        var rows = Write(organization, AccountService.NewId(), null);
         await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        StageCreate(db, organization);
+        await RowSync.CreateAsync(db, cancellationToken);
+    }
+
+    private static void StageCreate(DashboardDbContext db, OrganizationRecord organization)
+    {
+        var rows = Write(organization, AccountService.NewId(), null);
         db.Add(rows.Root);
         db.AddRange(rows.Projects);
         db.AddRange(rows.Databases);
         db.AddRange(rows.AuditEvents);
         db.AddRange(rows.Reservations);
-        await RowSync.CreateAsync(db, cancellationToken);
+    }
+
+    internal async Task<OrganizationRecord> CompleteCheckoutAsync(OrganizationRecord organization, PendingOrganizationCheckout draft, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var pending = await db.PendingOrganizationCheckouts.SingleOrDefaultAsync(row => row.DraftId == draft.DraftId, cancellationToken);
+            if (pending is null)
+            {
+                var binding = await db.Billing.AsNoTracking().SingleOrDefaultAsync(row => row.OrganizationId == organization.Id, cancellationToken);
+                var stored = await FindAsync(organization.Id, cancellationToken);
+                if (stored is not { Erased: false } || binding?.RequestId != draft.DraftId || binding.CheckoutId != draft.CheckoutId
+                    || binding.CustomerId != draft.CustomerId || binding.SubscriptionId != draft.SubscriptionId)
+                {
+                    throw new AccountAccessException("Organization completion changed concurrently. Retry organization setup.", 409);
+                }
+
+                return stored.Organization;
+            }
+            if (pending.State != "creating" || pending.UserId != draft.UserId)
+            {
+                throw new AccountAccessException("Organization is not ready to be created.", 409);
+            }
+
+            var billing = new BillingBinding
+            {
+                OrganizationId = organization.Id,
+                Version = AccountService.NewId(),
+                CustomerId = pending.CustomerId,
+                RequestId = pending.DraftId,
+                CheckoutId = pending.CheckoutId,
+                Plan = pending.Plan,
+                Interval = pending.Interval,
+                StartedAt = RowSync.At(pending.CreatedAt),
+                SubscriptionId = pending.SubscriptionId,
+                EffectivePlan = pending.Plan,
+                EffectiveInterval = pending.Interval,
+                Status = pending.SubscriptionStatus,
+                State = "active",
+                TrialUsed = true,
+                RenewalAt = pending.RenewalAt is { } renewal ? RowSync.At(renewal) : null,
+                ReturnPath = "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organization.Id)
+            };
+            StageCreate(db, organization);
+            db.Add(billing);
+            db.Add(new StripeCustomerRow
+            {
+                Id = AccountService.NewId(),
+                OrganizationId = organization.Id,
+                CustomerId = pending.CustomerId,
+                CreatedAt = pending.CreatedAt
+            });
+            db.Add(new StripeCheckoutRow
+            {
+                Id = AccountService.NewId(),
+                OrganizationId = organization.Id,
+                CustomerId = pending.CustomerId,
+                CheckoutId = pending.CheckoutId,
+                RequestId = pending.DraftId,
+                ProjectId = "",
+                ReturnPath = billing.ReturnPath,
+                Plan = pending.Plan,
+                Interval = pending.Interval,
+                CreatedAt = pending.CreatedAt
+            });
+            db.Remove(pending);
+            try
+            {
+                await RowSync.CreateAsync(db, cancellationToken);
+                return organization;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                if (await FindAsync(organization.Id, cancellationToken) is { Erased: true })
+                {
+                    throw new AccountAccessException("Organization deletion is pending.", 409);
+                }
+            }
+        }
     }
 
     public async Task ReplaceAsync(StoredOrganization stored, CancellationToken cancellationToken)
