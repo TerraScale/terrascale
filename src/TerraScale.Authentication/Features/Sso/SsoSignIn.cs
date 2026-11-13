@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json.Serialization;
 using System.Text.Json;
@@ -211,18 +212,21 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
             pending.OrganizationId, pending.ConnectionUpdatedAt, false));
     }
 
-    internal async Task<IResult> LinkPromptAsync(HttpContext context, SsoUnlinked unlinked, SsoState pending, CancellationToken cancellationToken) =>
-        await platform.OrganizationAsync(pending.OrganizationId, cancellationToken).ConfigureAwait(false) is { } organization
-            ? SignInPageModel.Render(context, new SignInPageModel(SignInStep.SsoLink, PlatformDirectory.Instance, unlinked.User.Email, pending.Next)
+    internal async Task<IResult> LinkPromptAsync(HttpContext context, CancellationToken cancellationToken) =>
+        this.Proof(context) is { LinkVersion: null, Confirmed: false } proof
+        && await platform.OrganizationAsync(proof.OrganizationId, cancellationToken).ConfigureAwait(false) is { } organization
+            ? SignInPageModel.Render(context, new SignInPageModel(SignInStep.SsoLink, PlatformDirectory.Instance, proof.Email, proof.Next)
             {
-                SsoOrganization = organization.Value.Name,
-                SsoIssuer = new Uri(pending.Issuer).Host,
+                SsoOrganization = DisplayName(organization.Value.Name),
+                SsoIssuer = proof.Issuer,
+                SsoConfirmation = Digest(proof),
             })
             : SignInFlow.Refused(context);
 
-    internal SsoProof? Confirm(HttpContext context)
+    internal SsoProof? Confirm(HttpContext context, string? confirmation)
     {
-        if (this.Proof(context) is not { LinkVersion: null, Confirmed: false } proof)
+        if (this.Proof(context) is not { LinkVersion: null, Confirmed: false } proof
+            || confirmation is not { Length: 64 } || !Tokens.FixedTimeEquals(Digest(proof), confirmation))
         {
             return null;
         }
@@ -231,6 +235,14 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
         this.WriteProof(context, confirmed);
         return confirmed;
     }
+
+    private static string Digest(SsoProof proof) => Tokens.Sha256Hex(JsonSerializer.Serialize(proof, SsoStateJson.Default.SsoProof));
+
+    private static string DisplayName(string name) => string.Concat(name.EnumerateRunes()
+        .Where(rune => Rune.GetUnicodeCategory(rune) is not (UnicodeCategory.Control or UnicodeCategory.Format))
+        .Select(rune => rune.ToString()));
+
+    internal bool HasProof(HttpContext context) => this.Proof(context) is { LinkVersion: not null } or { Confirmed: true };
 
     private void WriteProof(HttpContext context, SsoProof proof)
     {
@@ -261,14 +273,28 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
 
         proof = proof is { Subject.Length: > 0 } && proof.ExpiresAt > clock.GetUtcNow() ? proof : null;
         context.Items[ProofCookie] = proof;
+        if (proof is null)
+        {
+            Clear(context);
+        }
+
         return proof;
     }
 
-    private static void Clear(HttpContext context)
+    internal static void Clear(HttpContext context)
     {
         if (context.Items.TryGetValue(ProofCookie, out var held) && held is not null || context.Request.Cookies.ContainsKey(ProofCookie))
         {
             context.Response.Cookies.Delete(ProofCookie, ProofOptions);
+            context.Response.OnStarting(() =>
+            {
+                if (context.Items[ProofCookie] is null)
+                {
+                    context.Response.Cookies.Delete(ProofCookie, ProofOptions);
+                }
+
+                return Task.CompletedTask;
+            });
         }
 
         context.Items[ProofCookie] = null;
@@ -307,7 +333,7 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
 
     internal string? FactorProofFor(HttpContext context, UserRecord user) =>
         this.ProofFor(context, user.Id, user.AuthEpoch, user.AuthStamp) is { } proof
-            ? Tokens.Sha256Hex(JsonSerializer.Serialize(proof, SsoStateJson.Default.SsoProof))
+            ? Digest(proof)
             : null;
 
     internal void AdvanceEnrollment(HttpContext context, UserRecord previous, UserRecord enrolled)
@@ -362,7 +388,7 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
         var joining = await platform.RoleAsync(connection.OrganizationId, user.Id, cancellationToken).ConfigureAwait(false) is null;
         List<Change>? changes = joining
             ? await platform.JoinAsync(connection.OrganizationId, user.Id, connection.DefaultRole, cancellationToken).ConfigureAwait(false)
-            : [Change.Assert(user), Change.Assert(organization)];
+            : [];
         if (changes is null)
         {
             return null;
@@ -376,6 +402,7 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
             return null;
         }
 
+        changes.Add(Change.Assert(user));
         changes.Add(Change.Assert(found));
         changes.Add(Change.Assert(organization));
         var record = Link(user, connection, proof.Subject);

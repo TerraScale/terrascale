@@ -13,10 +13,10 @@ internal static class RequiredMfaEnrollment
     internal static async Task<ChallengedSignIn> ReadAsync(HttpContext context, string? challenge, string factor, CancellationToken cancellationToken)
     {
         var tenant = SignInFlow.Tenant(context);
-        var policy = Tenancy.IsProject(tenant)
-            ? (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, cancellationToken)).Configuration ?? ConfigurationBody.Default
-            : ConfigurationBody.Default;
-        if (factor == "totp" && !policy.AllowTotp || factor == "passkey" && !policy.AllowPasskey
+        var policy = (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, cancellationToken)).Configuration ?? ConfigurationBody.Default;
+        var project = Tenancy.IsProject(tenant);
+        if (project && !policy.RequireMfa || !project && !context.RequestServices.GetRequiredService<SsoSignIn>().HasProof(context)
+            || factor == "totp" && !policy.AllowTotp || factor == "passkey" && !policy.AllowPasskey
             || await context.RequestServices.GetRequiredService<TotpCredentials>().ChallengedAsync(tenant, challenge, "enrollment", cancellationToken) is not { } pending
             || !Tenancy.IsProject(tenant)
                 && context.RequestServices.GetRequiredService<SsoSignIn>().FactorProofFor(context, pending.User) != pending.SsoProof

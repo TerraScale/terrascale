@@ -17,7 +17,7 @@ public sealed class SsoCallbackEndpoint(SsoSignIn sso, Sessions sessions, TotpCr
         Get(SsoSignIn.CallbackPath);
         Name("ui_sso_callback");
         Summary("Finish a single sign-on");
-        Description("The OpenID Connect redirect URI. The state must match the browser's tsauth_sso cookie, which is cleared. The code is redeemed with PKCE and the client secret; the ID token must be signed by the issuer's keys, for the client, unexpired, carry the nonce and an email in the verified domain (email_verified true). New accounts are linked at creation. Existing unlinked accounts first see the organization, the identity provider's host and the asserted email, and confirm the link (POST /ui/terrascale/sso/link); they then complete an ordinary sign-in with a first credential and any required second factor to link the connection, issuer and subject at the current connection version. Without that confirmation no link is written. Linked identities need no local primary proof. Enrolled factors and required factor enrollment complete before sign-in. Completion continues to next; validation failure answers 401.");
+        Description("The OpenID Connect redirect URI. The state must match the browser's tsauth_sso cookie, which is cleared. The code is redeemed with PKCE and the client secret; the ID token must be signed by the issuer's keys, for the client, unexpired, carry the nonce and an email in the verified domain (email_verified true). New accounts are linked at creation. Existing unlinked accounts first see the organization, the identity provider's full issuer and the asserted email, and confirm the link (POST /ui/terrascale/sso/link); they then complete an ordinary sign-in with a first credential and any required second factor to link the connection, issuer and subject at the current connection version. Without that confirmation no link is written. Linked identities need no local primary proof. Enrolled factors and required factor enrollment complete before sign-in. Completion continues to next; validation failure answers 401.");
         Tags("Sign-in");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
@@ -57,7 +57,7 @@ public sealed class SsoCallbackEndpoint(SsoSignIn sso, Sessions sessions, TotpCr
         sso.BeginProof(this.HttpContext, completed, pending);
         return await completed.Match(
             linked => this.LinkedAsync(linked, pending, cancellationToken),
-            unlinked => sso.LinkPromptAsync(this.HttpContext, unlinked, pending, cancellationToken));
+            unlinked => sso.LinkPromptAsync(this.HttpContext, cancellationToken));
     }
 
     private async Task<IResult> LinkedAsync(SsoLinked linked, SsoState pending, CancellationToken cancellationToken)

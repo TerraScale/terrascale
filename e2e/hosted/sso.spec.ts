@@ -10,7 +10,7 @@ import { saveCookies, saveSecret } from '../support/state';
 
 const origin = { Origin: auth };
 const ui = auth + '/ui/terrascale';
-const issuer = 'https://login.journey-idp.example';
+const issuer = 'https://login.journey-idp.example/realms/journey';
 const security = '/ui/terrascale/security';
 
 test.describe.configure({ mode: 'serial' });
@@ -70,11 +70,12 @@ async function linkPrompt(context: BrowserContext, response: { status(): number;
   expect(response.status()).toBe(200);
   const html = await response.text();
   expect(html).toContain('id="sso-link-confirm"');
-  expect(html).toContain('<dd id="sso-link-organization">SSO journey</dd>');
-  expect(html).toContain('<dd id="sso-link-issuer">' + new URL(issuer).host + '</dd>');
-  expect(html).toContain('<dd id="sso-link-email">' + email + '</dd>');
+  expect(html).toContain('<dd id="sso-link-organization"><bdi>SSO journey</bdi></dd>');
+  expect(html).toContain('<dd id="sso-link-issuer">' + issuer + '</dd>');
+  expect(html).toContain('<dd id="sso-link-email"><bdi>' + email + '</bdi></dd>');
   expect(html).not.toContain('id="sign-in-password"');
-  const confirmed = await context.request.post(ui + '/sso/link', { headers: origin, form: {} });
+  const confirmation = /name="confirmation" value="([a-f0-9]{64})"/.exec(html)![1];
+  const confirmed = await context.request.post(ui + '/sso/link', { headers: origin, form: { confirmation } });
   expect(confirmed.status()).toBe(200);
   expect(await confirmed.text()).toContain('id="sign-in-password"');
 }
@@ -122,7 +123,7 @@ test('SSO links identities once and completes required MFA without blocking enro
   try {
     const bootstrapHeaders = { Authorization: 'Bearer ' + await signInToken(bootstrap.context.request, 'sso-bootstrap') };
     let headers = bootstrapHeaders;
-    const created = await owner.request.post(auth + '/v1/terrascale/organizations', { headers, data: { name: 'SSO journey' } });
+    const created = await owner.request.post(auth + '/v1/terrascale/organizations', { headers, data: { name: 'SSO \u202Ejourney\u202C' } });
     expect(created.status()).toBe(201);
     const organization = (await created.json()).id;
     const root = auth + '/v1/terrascale/organizations/' + organization;
@@ -163,15 +164,40 @@ test('SSO links identities once and completes required MFA without blocking enro
         expect((await owner.request.delete(root + '/members/' + membership.user_id, { headers })).status()).toBe(204);
       }
       await context.clearCookies();
-      expect((await context.request.post(ui + '/reset', { headers: origin, form: { email: address } })).status()).toBe(200);
-      const mail = await nextMail(address, 0);
-      const code = /^\s*(\d{6})\s*$/m.exec(mail.text)![1];
-      saveSecret(address + '-reset-code', code);
-      expect((await context.request.post(ui + '/reset/complete', {
-        headers: origin, form: { email: address, code, password },
-      })).status()).toBe(200);
+      if (context === raceUser) {
+        await linkPrompt(context, await context.request.get(ui + '/sso', { params: { email: address } }), address);
+      }
+      const resetter = context === raceUser ? await auditedContext(browser, { viewport: desktop }) : context;
+      try {
+        expect((await resetter.request.post(ui + '/reset', { headers: origin, form: { email: address } })).status()).toBe(200);
+        const mail = await nextMail(address, 0);
+        const code = /^\s*(\d{6})\s*$/m.exec(mail.text)![1];
+        saveSecret(address + '-reset-code', code);
+        expect((await resetter.request.post(ui + '/reset/complete', {
+          headers: origin, form: { email: address, code, password },
+        })).status()).toBe(200);
+      } finally {
+        if (resetter !== context) {
+          await saveCookies(resetter);
+          await resetter.close();
+        }
+      }
       expect((await members()).some(item => item.email === address)).toBe(context === owner);
       await noSession(context);
+      if (context === raceUser) {
+        const resetFinish = await context.request.post(ui + '/sign-in/password', {
+          headers: origin, form: { email: address, password },
+        });
+        expect(resetFinish.status()).toBe(200);
+        expect(await resetFinish.text()).toContain('/ui/terrascale/sso?email=');
+        await noSession(context);
+        expect((await members()).some(item => item.email === address)).toBe(false);
+        const resetFresh = await context.request.get(ui + '/sso', { params: { email: address } });
+        expect(resetFresh.status()).toBe(200);
+        expect(await resetFresh.text()).toContain('id="sso-link-confirm"');
+        await noSession(context);
+        expect((await members()).some(item => item.email === address)).toBe(false);
+      }
     }
     const ownerId = (await members()).find(item => item.email === ownerEmail)!.user_id;
     const bootstrapId = (await members()).find(item => item.email === bootstrap.current.email)!.user_id;
@@ -208,6 +234,27 @@ test('SSO links identities once and completes required MFA without blocking enro
     expect((await member.cookies()).some(cookie => cookie.name === 'tsauth_sso_proof')).toBe(false);
     await noSession(member);
     expect((await members()).some(item => item.email === email)).toBe(false);
+    await memberPage.goto(ui + '/sso?email=' + encodeURIComponent(email));
+    await hostedReady(memberPage);
+    const displayedConfirmation = await memberPage.locator('input[name=confirmation]').inputValue();
+    await configure(true, { [email]: 'second-tab-subject' });
+    const secondTab = await member.newPage();
+    await secondTab.goto(ui + '/sso?email=' + encodeURIComponent(email));
+    await hostedReady(secondTab);
+    const currentProof = (await member.cookies()).find(cookie => cookie.name === 'tsauth_sso_proof')!;
+    saveSecret('sso-newer-tab-proof', currentProof.value);
+    const currentConfirmation = await secondTab.locator('input[name=confirmation]').inputValue();
+    expect(currentConfirmation).not.toBe(displayedConfirmation);
+    await memberPage.locator('#sso-link-confirm').click();
+    await expect(memberPage.locator('#sso-link-confirm')).toBeVisible();
+    await expect(memberPage.locator('input[name=confirmation]')).toHaveValue(currentConfirmation);
+    await expect(memberPage.locator('#sign-in-password')).toHaveCount(0);
+    expect((await member.cookies()).find(cookie => cookie.name === 'tsauth_sso_proof')!.value).toBe(currentProof.value);
+    await noSession(member);
+    expect((await members()).some(item => item.email === email)).toBe(false);
+    await memberAudit.check('A stale SSO confirmation displays the current proof without confirming or deleting it');
+    await secondTab.close();
+    await configure(true);
     await linkPrompt(member, await start(), email);
     const staleProof = (await member.cookies()).find(cookie => cookie.name === 'tsauth_sso_proof')!;
     saveSecret('sso-stale-proof', staleProof.value);
@@ -266,7 +313,7 @@ test('SSO links identities once and completes required MFA without blocking enro
     await memberPage.goto(ui + '/sso?email=' + encodeURIComponent(email));
     await hostedReady(memberPage);
     await expect(memberPage.locator('#sso-link-organization')).toHaveText('SSO journey');
-    await expect(memberPage.locator('#sso-link-issuer')).toHaveText(new URL(issuer).host);
+    await expect(memberPage.locator('#sso-link-issuer')).toHaveText(issuer);
     await expect(memberPage.locator('#sso-link-email')).toHaveText(email);
     await expect(memberPage.locator('#sign-in-password')).toHaveCount(0);
     await memberAudit.check('An existing account confirms linking its SSO identity after a cross-site provider redirect');
@@ -440,6 +487,7 @@ test('SSO links identities once and completes required MFA without blocking enro
     await expect(admin.locator('input[name=name][value="SSO journey"]')).toBeVisible();
     await adminAudit.check('An unrelated SSO continuation does not refuse owner sign-in');
     await linkPrompt(raceUser, await raceUser.request.get(ui + '/sso', { params: { email: raceEmail } }), raceEmail);
+    await linkPrompt(raceUser, await raceUser.request.get(ui + '/sso', { params: { email: raceEmail } }), raceEmail);
     const raceProof = await raceUser.request.post(ui + '/sign-in/password', { headers: origin, form: { email: raceEmail, password } });
     expect(raceProof.status()).toBe(200);
     const raceChallenge = await mfaChallenge(memberPage, await raceProof.text());
@@ -464,6 +512,18 @@ test('SSO links identities once and completes required MFA without blocking enro
     expect(raceRetry.status()).toBe(200);
     expect(await raceRetry.text()).toContain('action="/ui/terrascale/sign-in/enroll/totp"');
     expect(await raceRetry.text()).not.toContain('id="mfa-code"');
+    await noSession(raceUser);
+    const invalidChallenge = await mfaChallenge(memberPage, await raceRetry.text());
+    saveSecret('sso-invalid-proof-challenge', invalidChallenge);
+    const invalidProof = (await raceUser.cookies()).find(cookie => cookie.name === 'tsauth_sso_proof')!;
+    await raceUser.addCookies([{ ...invalidProof, value: 'invalid-proof' }]);
+    const invalidEnrollment = await raceUser.request.post(ui + '/security/passkeys/verify', {
+      headers: { ...origin, 'X-TerraScale-Mfa-Challenge': invalidChallenge }, data: {},
+    });
+    expect(invalidEnrollment.status()).toBe(403);
+    expect((await invalidEnrollment.json()).error.code).toBe('mfa_required');
+    expect(invalidEnrollment.headers()['set-cookie']).toContain('tsauth_sso_proof=;');
+    expect((await raceUser.cookies()).some(cookie => cookie.name === 'tsauth_sso_proof')).toBe(false);
     await noSession(raceUser);
     await adminAudit.finish();
     await memberAudit.finish();

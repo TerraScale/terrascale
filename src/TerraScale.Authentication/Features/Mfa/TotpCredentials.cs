@@ -197,6 +197,17 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
 
     internal async Task<IssuedRecoveryCodes?> ConfirmAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
+        var issued = await this.ActivateAsync(caller, code, authorization, cancellationToken).ConfigureAwait(false);
+        if (issued is not null)
+        {
+            await FactorEnrollmentNotice.SendAsync(email, issued.User, cancellationToken).ConfigureAwait(false);
+        }
+
+        return issued;
+    }
+
+    internal async Task<IssuedRecoveryCodes?> ActivateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(caller);
         await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
@@ -224,7 +235,6 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             return null;
         }
 
-        await FactorEnrollmentNotice.SendAsync(email, advanced, cancellationToken).ConfigureAwait(false);
         return new IssuedRecoveryCodes(advanced, codes, recoveryExpires);
     }
 
@@ -424,7 +434,8 @@ public sealed record ChallengedSignIn(UserRecord User, CredentialBinding Complet
     internal string? SsoProof { get; init; }
 }
 
-internal sealed record MfaChallenge(string Id, string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings, string Purpose, bool InboxProven, string? SsoProof);
+internal sealed record MfaChallenge(string Id, string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings, string Purpose, bool InboxProven,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SsoProof = null);
 
 internal sealed record MfaAuthorization(Change Operation, DateTimeOffset ExpiresAt);
 

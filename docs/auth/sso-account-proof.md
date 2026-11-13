@@ -12,14 +12,18 @@ no newer-version exception. A different subject is a different identity.
 An account created by this callback is saved with its membership and identity
 link atomically. It needs no local primary credential. An existing account without
 a matching link first sees a confirmation page naming the organization, the
-identity provider's host and the email the provider asserted. Only after the
-person chooses "Link this sign-in to your account" (POST /ui/terrascale/sso/link,
-which records the confirmation inside the sealed continuation) does one ordinary
+identity provider's full issuer (including its path) and the email the provider
+asserted. Only after the person chooses "Link this sign-in to your account"
+(POST /ui/terrascale/sso/link, with a constant-time match of the displayed
+continuation digest, recording confirmation inside the sealed continuation)
+does one ordinary
 sign-in complete the link and any new membership: a first credential (password,
 emailed code or passkey), followed by the second factor when ordinary sign-in
 requires one. An unconfirmed continuation is never used: posting a credential
 without the confirmation deletes it and ordinary sign-in rules apply, so no link
-is written.
+is written. A stale confirmation form preserves the newer continuation and
+displays its own confirmation page. Organization names omit control and
+formatting characters for display; the name and email use bidirectional isolation.
 A user-verified passkey completes ordinary sign-in by itself. An authenticator
 or recovery code alone cannot link an existing account. Existing sessions alone
 do not link identities. Social sign-in does not carry the continuation and
@@ -31,7 +35,9 @@ mailbox control gives without single sign-on. The link's foreign keys delete it 
 organization membership.
 
 The browser continuation lasts ten minutes from the callback, independently of
-time at the provider. It binds the user and authentication state, identity,
+time at the provider. Invalid and expired cookies are explicitly deleted,
+including when an error envelope replaces response headers. It binds the user
+and authentication state, identity,
 organization and connection version. A stale or unrelated continuation cookie
 is deleted and ordinary sign-in continues. A matching continuation whose
 connection changed requires a fresh SSO sign-in.
@@ -48,10 +54,16 @@ authenticator enrollment advances the continuation to the newly authenticated
 account state. Required authenticator enrollment checks the continuation before
 it activates the authenticator; if the continuation is refused after that (a
 concurrent connection or membership change), the page still shows the new
-recovery codes and no session is issued. When the organization requires MFA,
+recovery codes and no session is issued. Completion exceptions after activation
+also return the recovery codes, including a refused session creation after
+another authentication-state change. When the organization requires MFA,
 the completed SSO session must carry MFA proof; a user-verified passkey counts
 as that factor only inside an SSO continuation. Sign-ins without SSO keep the
-platform's ordinary MFA rules.
+platform's ordinary MFA rules. A non-SSO factor challenge omits the optional
+ssoProof member and has the exact serialized bytes used without this change;
+challenges in flight continue across deployment in both directions. An SSO
+challenge carries that member and is refused by a previous build's strict reader.
+Every authentication instance must run this build before SSO linking is relied on.
 
 | Account and identity | Callback continuation | Link and session completion |
 | --- | --- | --- |
@@ -61,6 +73,13 @@ platform's ordinary MFA rules.
 | Existing account, no matching link, has factor | Link confirmation, the ordinary password page, then the ordinary second factor | Confirm and complete both steps before linking; a complete ordinary passkey sign-in also counts |
 | Existing account, no matching link, credential posted without confirmation | The unconfirmed continuation is deleted | Ordinary sign-in rules; no link |
 | Existing account, no matching link, factor-only POST | A challenge issued outside this continuation does not match its digest | No session and no link |
+
+The completion transaction asserts the exact user row whose epoch and stamp were
+validated against the continuation, alongside any newer row read by membership
+planning. A reset between validation and the write therefore prevents both the
+membership and the identity link from committing. Connection and organization
+rows, existing identity links, new-account creation, factor activation and
+session creation also retain their conditional writes.
 
 ## Ordinary credentials and session paths
 

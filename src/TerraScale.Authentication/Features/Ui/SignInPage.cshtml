@@ -219,11 +219,12 @@ case SignInStep.Sso:
 break;
 case SignInStep.SsoLink:
 <dl class="facts" id="sso-link-facts">
-<div><dt>@Model.Copy.Organization</dt><dd id="sso-link-organization">@Model.SsoOrganization</dd></div>
+<div><dt>@Model.Copy.Organization</dt><dd id="sso-link-organization"><bdi>@Model.SsoOrganization</bdi></dd></div>
 <div><dt>@Model.Copy.IdentityProvider</dt><dd id="sso-link-issuer">@Model.SsoIssuer</dd></div>
-<div><dt>@Model.Copy.Account</dt><dd id="sso-link-email">@Model.Email</dd></div>
+<div><dt>@Model.Copy.Account</dt><dd id="sso-link-email"><bdi>@Model.Email</bdi></dd></div>
 </dl>
 <form method="post" action="/ui/@Model.Slug/sso/link">
+<input type="hidden" name="confirmation" value="@Model.SsoConfirmation" />
 <div class="actions">
 <button type="submit" id="sso-link-confirm"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-shield-check"></use></svg>@Model.Copy.LinkSso</button>
 </div>

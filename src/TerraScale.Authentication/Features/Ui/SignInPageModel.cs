@@ -171,6 +171,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     public string? SsoIssuer { get; init; }
 
+    public string? SsoConfirmation { get; init; }
+
     public string? AccountUrl => this.Next is { } next && (next == AuthOptions.DashboardOrigin + "/profile"
         || next == AuthOptions.DashboardOrigin + "/profile?tab=security")
         ? next

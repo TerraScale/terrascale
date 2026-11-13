@@ -1,7 +1,7 @@
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { createServer } from 'node:http';
 
-const issuer = 'https://login.journey-idp.example';
+const issuer = 'https://login.journey-idp.example/realms/journey';
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'journey', alg: 'RS256', use: 'sig' };
 const domains = new Map();
@@ -20,12 +20,12 @@ createServer(async (request, response) => {
     domains.set(config.domain, config);
     return send(200, {});
   }
-  if (url.pathname === '/.well-known/openid-configuration') return send(200, {
+  if (url.pathname === new URL(issuer).pathname + '/.well-known/openid-configuration') return send(200, {
     issuer, authorization_endpoint: issuer + '/authorize', token_endpoint: issuer + '/token', jwks_uri: issuer + '/jwks',
     response_types_supported: ['code'], subject_types_supported: ['public'], id_token_signing_alg_values_supported: ['RS256'],
   });
-  if (url.pathname === '/jwks') return send(200, { keys: [jwk] });
-  if (url.pathname === '/authorize') {
+  if (url.pathname === new URL(issuer).pathname + '/jwks') return send(200, { keys: [jwk] });
+  if (url.pathname === new URL(issuer).pathname + '/authorize') {
     const email = url.searchParams.get('login_hint');
     const config = domains.get(email?.split('@')[1]);
     if (!config || url.searchParams.get('code_challenge_method') !== 'S256') return send(400, {});
@@ -36,7 +36,7 @@ createServer(async (request, response) => {
     response.writeHead(302, { location: callback.href });
     return response.end();
   }
-  if (url.pathname === '/token' && request.method === 'POST') {
+  if (url.pathname === new URL(issuer).pathname + '/token' && request.method === 'POST') {
     const form = new URLSearchParams(body);
     const pending = codes.get(form.get('code'));
     codes.delete(form.get('code'));
