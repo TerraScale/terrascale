@@ -150,9 +150,11 @@ test('history lost while the backup store is unreachable is one hole, survives a
     console.log(`hole of ${created.id}: unavailable ${error.unavailableFrom} to ${error.unavailableTo}; ${holes + 1} on ${writer.name} after its restart`);
 
     const restore = async (at: number) => {
-      const operation = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+      const started = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
         data: { pointInTime: new Date(at).toISOString(), name: name('hole-restore') },
-      }), 202);
+      });
+      expect(started.status(), await started.text()).toBe(202);
+      const operation = await started.json() as { id: string };
       let copy = '';
       await expect.poll(async () => {
         const state = await json<{ status: string; database: string; errorCode?: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/restores/${operation.id}`));
@@ -163,10 +165,12 @@ test('history lost while the backup store is unreachable is one hole, survives a
       restored.push(copy);
       return ledger.read(cells, 'gru', copy);
     };
-    const before = await restore(from);
-    expect(storedAt < from - from % 1000 ? [[[1, 'before-outage']]] : [[], [[1, 'before-outage']]]).toContainEqual(before);
+    const window = await json<{ earliest: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`));
+    const second = Math.max(Date.parse(window.earliest), from - from % 1000);
+    const before = await restore(second);
+    expect(storedAt < second ? [[[1, 'before-outage']]] : [[], [[1, 'before-outage']]]).toContainEqual(before);
     expect(await restore(to)).toEqual([[1, 'before-outage'], [2, 'during-outage']]);
-    console.log(`restores of ${created.id}: ${JSON.stringify(before)} at the hole's start, both rows at the replacement snapshot`);
+    console.log(`restores of ${created.id}: ${JSON.stringify(before)} at ${new Date(second).toISOString()}, before the hole; both rows at the replacement snapshot`);
   } finally {
     if (outage) await backupStore('up');
     for (const copy of restored) await removeDatabase(cells, copy);

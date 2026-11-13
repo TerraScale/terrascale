@@ -93,7 +93,7 @@ internal sealed partial class ContinuousBackup
 
         if (retained.Anchor > stored.Cursor.Position)
         {
-            var hole = new BackupHole(stored.Cursor.Position, retained.Anchor, stored.PlatformAt ?? stored.ShippedAt, retained.AnchorAt, Open: true);
+            var hole = new BackupHole(stored.Cursor.Position, retained.Anchor, Millisecond(stored.PlatformAt ?? stored.ShippedAt), retained.AnchorAt, Open: true);
             await RestartAsync(file, account with { Stored = null, Upload = null, Holes = account.Holes + 1, LastHole = hole }, null, cancellationToken).ConfigureAwait(false);
             _holesRecorded.Add(1);
             _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} lost its history from position {hole.From} to {hole.To} before it was stored; hole {account.Holes + 1} is recorded and a new generation starts");
@@ -140,9 +140,11 @@ internal sealed partial class ContinuousBackup
         Stored = stored,
         Upload = null,
         LastHole = account.LastHole is { Open: true } hole && account.Stored is null
-            ? hole with { To = stored.Cursor.Position, ToAt = stored.SnapshotAt, Open = false }
+            ? hole with { To = stored.Cursor.Position, ToAt = Millisecond(stored.SnapshotAt), Open = false }
             : account.LastHole,
     };
+
+    private static DateTimeOffset Millisecond(DateTimeOffset at) => DateTimeOffset.FromUnixTimeMilliseconds(at.ToUnixTimeMilliseconds());
 
     private async Task StorePositionAsync(ShippedFile file, BackupStored stored, string key, FileStream content, string kind,
         CancellationToken cancellationToken)
