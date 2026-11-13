@@ -152,7 +152,9 @@ def crash_request(point, method, path, body=None):
     start(point)
     with concurrent.futures.ThreadPoolExecutor() as executor:
         pending = (
-            executor.submit(hook, "rewrite", database) if point == "rewrite" else executor.submit(request, method, path, body)
+            executor.submit(hook, "rewrite", database)
+            if point.startswith("rewrite")
+            else executor.submit(request, method, path, body)
         )
 
         def expired(signum, frame):
@@ -165,9 +167,10 @@ def crash_request(point, method, path, body=None):
             assert os.WIFSTOPPED(status), "node exited before reaching the boundary"
             keys = list((state / "data" / organization / project).glob("*.db.key"))
             assert len(keys) == 1
-            assert pathlib.Path(str(keys[0])[:-4]).exists() == (point == "rewrite")
+            assert pathlib.Path(str(keys[0])[:-4]).exists() == point.startswith("rewrite")
             print(
-                point + ": main " + ("present" if point == "rewrite" else "absent") + ", key present at filesystem boundary",
+                point + ": main " + ("present" if point.startswith("rewrite") else "absent")
+                + ", key present at filesystem boundary",
                 flush=True,
             )
         finally:
@@ -257,6 +260,12 @@ try:
     assert len(retained) == 1 and float(retained[0].rsplit(" ", 1)[1]) <= 32
     assert sql(project, database, ["SELECT count(*) FROM durable;"])["results"][0]["rows"] == [[101]]
     print("101 acknowledged rows, no backup tap: " + retained[0], flush=True)
+    end()
+
+    crash_request("rewrite-intent", "", "")
+    start()
+    assert sql(project, database, ["SELECT count(*) FROM durable;"])["results"][0]["rows"] == [[101]]
+    print("rewrite dual-intent before rename restart: copy healthy; 101 acknowledged rows remain", flush=True)
     end()
 
     crash_request("rewrite", "", "")

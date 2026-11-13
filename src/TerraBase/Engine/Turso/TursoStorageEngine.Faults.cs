@@ -8,7 +8,7 @@ internal sealed partial class TursoStorageEngine
 {
     internal bool FileExists(TenantContext database) => File.Exists(Locate(database).Path);
 
-    internal async Task<string?> RecoverCopyAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken)
+    internal async Task<string?> RecoverCopyAsync(TenantContext database, Ulid incarnation, Ulid replacement, CancellationToken cancellationToken)
     {
         var path = Locate(database).Path;
         try
@@ -28,7 +28,8 @@ internal sealed partial class TursoStorageEngine
                 }
 
                 command.CommandText = TursoStatements.Incarnation;
-                return command.ExecuteScalar() as string == incarnation.ToString()
+                var recovered = command.ExecuteScalar() as string;
+                return recovered == incarnation.ToString() || recovered == replacement.ToString()
                     ? null : "the recovered database incarnation does not match its write intent";
             }, cancellationToken).ConfigureAwait(false);
         }

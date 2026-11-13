@@ -163,7 +163,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         }
     }
 
-    internal async Task RewriteIntentAsync(TursoDatabaseStore store, Ulid incarnation, CancellationToken cancellationToken)
+    internal async Task RewriteIntentAsync(TursoDatabaseStore store, Ulid incarnation, Ulid replacement, CancellationToken cancellationToken)
     {
         if (store.IsSystem)
         {
@@ -180,7 +180,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
                     WHERE organization = $organization AND project = $project AND database = $database AND run <> $faulting;
                     """);
                 Key.Of(store.Tenant!).Bind(update);
-                update.Parameters.AddWithValue("$incarnation", incarnation.ToString());
+                update.Parameters.AddWithValue("$incarnation", incarnation == replacement ? incarnation.ToString() : $"{incarnation}:{replacement}");
                 update.Parameters.AddWithValue("$faulting", Faulting);
                 return update.ExecuteNonQuery();
             }, cancellationToken).ConfigureAwait(false);
@@ -309,10 +309,11 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
             using var reservation = Reserve(Page);
             var intents = await InSystemAsync(engine.IntentStore!, command =>
             {
-                List<(long Rowid, Key Key, Ulid Incarnation, bool Faulting)> intents = [];
+                List<(long Rowid, Key Key, Ulid Incarnation, Ulid Replacement, bool Faulting)> intents = [];
                 using (var select = command("""
                     SELECT rowid, organization, project, database, incarnation,
-                        length(organization) = 26 AND length(project) = 26 AND length(database) = 26 AND length(incarnation) = 26,
+                        length(organization) = 26 AND length(project) = 26 AND length(database) = 26
+                            AND (length(incarnation) = 26 OR (length(incarnation) = 53 AND substr(incarnation, 27, 1) = ':')),
                         run = $faulting
                     FROM _tb_write_intent ORDER BY rowid LIMIT $limit;
                     """))
@@ -328,7 +329,10 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
                             throw new InvalidDataException("a write intent is not one the ledger writes");
                         }
 
-                        intents.Add((reader.GetInt64(0), new Key(reader.GetString(1), reader.GetString(2), reader.GetString(3)), Stored(reader.GetString(4)),
+                        var identity = reader.GetString(4);
+                        var incarnation = Stored(identity[..26]);
+                        var replacement = identity.Length == 26 ? incarnation : Stored(identity[27..]);
+                        intents.Add((reader.GetInt64(0), new Key(reader.GetString(1), reader.GetString(2), reader.GetString(3)), incarnation, replacement,
                             reader.GetInt64(6) != 0));
                     }
                 }
@@ -341,12 +345,12 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
             }
 
             Dictionary<long, string> failures = [];
-            foreach (var (rowid, key, incarnation, faulting) in intents)
+            foreach (var (rowid, key, incarnation, replacement, faulting) in intents)
             {
                 var started = Stopwatch.GetTimestamp();
                 if (!Deleted(key))
                 {
-                    var failure = await engine.RecoverCopyAsync(key.Tenant, incarnation, cancellationToken).ConfigureAwait(false);
+                    var failure = await engine.RecoverCopyAsync(key.Tenant, incarnation, replacement, cancellationToken).ConfigureAwait(false);
                     if (failure is not null)
                     {
                         failures.Add(rowid, failure);
@@ -360,7 +364,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
             }
             _ = await InSystemAsync(system, command =>
             {
-                foreach (var (rowid, key, incarnation, _) in intents)
+                foreach (var (rowid, key, incarnation, _, _) in intents)
                 {
                     if (failures.TryGetValue(rowid, out var reason)
                         && Faulted(key, ReadRow(command, key), incarnation, reason) is { } row)
@@ -373,7 +377,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
             }, cancellationToken, rows: 0).ConfigureAwait(false);
             _ = await InSystemAsync(engine.IntentStore!, command =>
             {
-                foreach (var (rowid, _, _, _) in intents)
+                foreach (var (rowid, _, _, _, _) in intents)
                 {
                     using var delete = command("DELETE FROM _tb_write_intent WHERE rowid = $rowid;");
                     delete.Parameters.AddWithValue("$rowid", rowid);

@@ -4,7 +4,7 @@ Database creation flushes the initialized database and wrapped key, publishes th
 
 Deletion removes the database and syncs its directory before removing its wrapped key and other sidecars. It syncs those removals and any removed parent directories before completing. Startup completes sidecar cleanup after an interrupted deletion.
 
-A write intent left by an interrupted process triggers a database open, journal recovery and integrity check. An unclean exit alone does not fault the copy. Previously recorded storage faults remain faults; an unreadable database, failed integrity check or mismatched incarnation also requires recovery.
+A write intent left by an interrupted process triggers a database open, journal recovery and integrity check. An unclean exit alone does not fault the copy. During a rewrite handoff, recovery accepts either the replaced or replacement incarnation named by the intent and still requires successful log replay and integrity checking. Previously recorded storage faults remain faults; an unreadable database, failed integrity check or mismatched incarnation also requires recovery.
 
 Connections explicitly use WAL journaling. Point-in-time rewind commits with full synchronization. Change capture without a backup tap can discard completed transactions while respecting active shape, replica and rewrite retention floors.
 

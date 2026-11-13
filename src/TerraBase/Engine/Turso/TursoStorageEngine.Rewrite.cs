@@ -123,12 +123,13 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                     (offset, _, _) = await store.WriteRewriteAsync(scratch, minimumOffset, replay, target, finalPass: true, final.Token).ConfigureAwait(false);
                     try
                     {
-                        await Ledger.RewriteIntentAsync(store, target, final.Token).ConfigureAwait(false);
+                        await Ledger.RewriteIntentAsync(store, source, target, final.Token).ConfigureAwait(false);
                         await store.WriteLane.RunAsync(() =>
                         {
                             Replace(path, scratch, step, store, final.Token, ref renamed);
                             return true;
                         }, final.Token).ConfigureAwait(false);
+                        await Ledger.RewriteIntentAsync(store, target, target, final.Token).ConfigureAwait(false);
                     }
                     catch (Exception error) when (renamed)
                     {
@@ -139,7 +140,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
 
                     catch
                     {
-                        await Ledger.RewriteIntentAsync(store, source, CancellationToken.None).ConfigureAwait(false);
+                        await Ledger.RewriteIntentAsync(store, source, source, CancellationToken.None).ConfigureAwait(false);
                         throw;
                     }
 

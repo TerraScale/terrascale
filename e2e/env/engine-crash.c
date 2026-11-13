@@ -14,12 +14,14 @@ static void stopped(const char *operation, const char *path, int result) {
 }
 int rename(const char *from, const char *to) {
     int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
+    if (strstr(from, ".rewriting")) stopped("rewrite-intent", to, 0);
     int result = real(from, to);
     stopped(strstr(from, ".rewriting") ? "rewrite" : "publish", to, result);
     return result;
 }
 int link(const char *from, const char *to) {
     int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "link");
+    if (strstr(from, ".rewriting")) stopped("rewrite-intent", to, 0);
     int result = real(from, to);
     stopped(strstr(from, ".rewriting") ? "rewrite" : "publish", to, result);
     return result;
