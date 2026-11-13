@@ -202,6 +202,10 @@ internal sealed partial class TursoStorageTransaction(
     void IStorageTransaction.FenceRegionalWriter(long epoch)
     {
         var gate = store.Leases ?? throw new InvalidOperationException("regional writer gate is missing");
+        if (_regionalEpoch is { } admitted && admitted != epoch)
+        {
+            throw new StorageBusyException();
+        }
         gate.ThrowIfRegionalWriterChanged(epoch);
         _regionalEpoch = epoch;
     }
