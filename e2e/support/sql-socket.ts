@@ -30,8 +30,12 @@ export async function rawSqlSocket(url: string, credential?: string) {
   const [response, socket, head] = await upgraded;
   expect(response.statusCode).toBe(101);
   const events = new EventEmitter();
-  const closing = once(events, 'closing').then(([event]) => event as { code: number; reason: string });
-  const closed = new Promise<void>(resolve => socket.once('close', resolve));
+  let closeFrame!: (event: { code: number; reason: string }) => void;
+  const closing = new Promise<{ code: number; reason: string }>(resolve => { closeFrame = resolve; });
+  const closed = new Promise<void>(resolve => socket.once('close', () => {
+    closeFrame({ code: 1006, reason: '' });
+    resolve();
+  }));
   socket.on('error', (error: Error) => events.emit('transportError', error));
   let buffered = Buffer.alloc(0);
   socket.on('data', (chunk: Buffer) => {
@@ -47,7 +51,9 @@ export async function rawSqlSocket(url: string, credential?: string) {
       buffered = buffered.subarray(prefix + length);
       if (opcode === 1) events.emit('message', JSON.parse(payload.toString()));
       if (opcode === 8) {
-        events.emit('closing', { code: payload.readUInt16BE(), reason: payload.subarray(2).toString() });
+        const event = { code: payload.readUInt16BE(), reason: payload.subarray(2).toString() };
+        closeFrame(event);
+        events.emit('closing', event);
       }
     }
   });
@@ -55,7 +61,6 @@ export async function rawSqlSocket(url: string, credential?: string) {
   if (head.length > 0) socket.unshift(head);
   return { socket: socket as Socket, closing, closed, events };
 }
-
 
 export function pacedWrite(socket: Socket, bytes: Buffer, bytesPerSecond: number, chunkBytes: number): Promise<boolean> {
   return new Promise((resolve, reject) => {

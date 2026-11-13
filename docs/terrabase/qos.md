@@ -1,6 +1,6 @@
 # Organization quality of service
 
-Resource admission belongs to the organization and is shared across its projects, databases and credentials. The runtime reads the catalog plan rather than trusting a client-selected plan. Replication and system maintenance retain process safety limits even when commercial quotas do not apply.
+Resource admission belongs to the organization and is shared across its projects, databases and credentials. The runtime reads the catalog plan rather than trusting a client-selected plan. Replication and system maintenance retain process safety limits even when commercial quotas do not apply. Platform database requests use the process concurrency, engine and memory bounds without consuming the commercial request-rate allowance.
 
 ## SQL work and memory
 

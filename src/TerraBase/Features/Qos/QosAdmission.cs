@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -7,6 +8,7 @@ namespace TerraBase.Features.Qos;
 internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQosAdmission
 {
     private const int MaxTenants = 4096;
+    private static readonly QosPolicy PlatformPolicy = QosPolicy.For(PlanTier.Enterprise) with { RequestsPerSecond = 0, Burst = 0 };
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Lane> _lanes = [];
     private readonly Counter<long> _rejected = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.qos.rejected");
@@ -15,7 +17,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
     public IDisposable? TryEnter(TenantContext tenant, out int retryAfter)
     {
         ArgumentNullException.ThrowIfNull(tenant);
-        var policy = QosPolicy.For(tenant.Plan);
+        var policy = Policy(tenant.OrganizationId, tenant.Plan);
         retryAfter = 1;
         lock (_gate)
         {
@@ -27,7 +29,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                     foreach (var pair in _lanes.ToArray())
                     {
                         var existing = pair.Value;
-                        var existingPolicy = QosPolicy.For(existing.Plan);
+                        var existingPolicy = Policy(pair.Key, existing.Plan);
                         var replenished = existing.Tokens + Math.Max(0, time.GetElapsedTime(existing.LastSeen, now).TotalSeconds) * existingPolicy.RequestsPerSecond;
                         if (existing.Active == 0 && (existingPolicy.RequestsPerSecond == 0 || replenished >= existingPolicy.Burst)
                             && (existingPolicy.EngineSeconds == 0 || Engine(existing, existingPolicy, now) >= existingPolicy.EngineBurst))
@@ -98,7 +100,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                 return;
             }
 
-            var policy = QosPolicy.For(lane.Plan);
+            var policy = Policy(tenant.OrganizationId, lane.Plan);
             if (policy.EngineSeconds == 0)
             {
                 return;
@@ -110,6 +112,9 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
             lane.LastSeen = Math.Max(lane.LastSeen, now);
         }
     }
+
+    private static QosPolicy Policy(string organization, PlanTier plan) =>
+        PlatformDatabases.IsPlatform(organization) ? PlatformPolicy : QosPolicy.For(plan);
 
     private double Engine(Lane lane, QosPolicy policy, long now) =>
         Math.Min(policy.EngineBurst, lane.Engine + Math.Max(0, time.GetElapsedTime(lane.LastSeen, now).TotalSeconds) * policy.EngineSeconds);

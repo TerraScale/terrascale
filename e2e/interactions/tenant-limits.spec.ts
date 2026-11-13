@@ -45,8 +45,8 @@ async function partialWebsocket(credential: string) {
   const result = once(raw.events, 'message');
   raw.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT 1' }] }))));
   expect((await result)[0].results[0].rows).toEqual([[1]]);
-  const closed = raw.closing.then(event => { raw.socket.destroy(); return event; });
-  return { ...raw, closed };
+  raw.closing.then(() => raw.socket.destroy());
+  return raw;
 }
 
 async function openSockets(count: number, credentials: readonly string[], clients: Awaited<ReturnType<typeof websocket>>[]) {
@@ -117,7 +117,7 @@ test('one serving process shares session caps and bounds incomplete messages wit
 
       const pgTrickle = pacedWrite(first.socket, message('Q', Buffer.from('SELECT 42' + ' '.repeat(100) + '\0')), 1, 1);
       const wsTrickle = pacedWrite(fragmented.socket, frame(1, Buffer.from(' '.repeat(100))), 1, 1);
-      const [pgPartial, wsPartial] = await Promise.all([first.closed, fragmented.closed]);
+      const [pgPartial, wsPartial] = await Promise.all([first.closed, fragmented.closing]);
       expect(await pgTrickle).toBe(false);
       expect(await wsTrickle).toBe(false);
       expect(pgPartial).toContain('C57P05');
