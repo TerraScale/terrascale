@@ -27,7 +27,7 @@ import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
 const apiKey = process.env.TERRASCALE_API_KEY;
 const auth = createTsAuthClient({ apiBaseUrl: "https://auth.terrascale.tech", instanceSlug: "terrascale" });
 const db = createTerraBaseV1Client({ project: process.env.TERRASCALE_PROJECT_ID,
-  token: async () => (await auth.oidc.token(apiKey.slice(0, apiKey.indexOf("_")), apiKey,
+  token: async () => (await auth.oidc.token((apiKey.startsWith("sk_") ? apiKey.slice(3) : apiKey).split("_")[0], apiKey,
     { grant_type: "client_credentials", project: process.env.TERRASCALE_PROJECT_ID, scope: "sql:read sql:write" })).value.access_token,
 }).database(process.env.TERRASCALE_DATABASE_NAME);
 const rows = await db.query("SELECT 1");`,

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { test as base, expect, type APIRequestContext, type APIResponse, type APIRequest } from '@playwright/test';
 import { auth } from '../support/stack';
+import { keyId } from '../support/api-key';
 import { journey, saveSecret } from '../support/state';
 
 export const home = 'https://gru.api.terrascale.tech';
@@ -15,7 +16,7 @@ export async function authenticatedCells(api: APIRequest, request: APIRequestCon
     const response = await request.post(`${auth}/terrascale/oauth/token`, {
       form: {
         grant_type: 'client_credentials',
-        client_id: apiKey.slice(0, 26),
+        client_id: keyId(apiKey),
         client_secret: apiKey,
         project: projectId,
         scope: 'sql:read sql:write databases:read databases:write',

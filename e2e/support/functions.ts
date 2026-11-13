@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext } from '@playwright/test';
 import { auth } from './stack';
+import { keyId } from './api-key';
 import { journey, saveSecret } from './state';
 
 export const functionSource = 'async function handler(event) { console.log("functions journey"); return { ok: true }; }';
@@ -7,7 +8,7 @@ export const functionSource = 'async function handler(event) { console.log("func
 export async function functionAccess(request: APIRequestContext): Promise<Record<string, string>> {
   const current = journey();
   const response = await request.post(`${auth}/terrascale/oauth/token`, {
-    headers: { Authorization: `Basic ${Buffer.from(`${current.apiKey.slice(0, 26)}:${current.apiKey}`).toString('base64')}` },
+    headers: { Authorization: `Basic ${Buffer.from(`${keyId(current.apiKey)}:${current.apiKey}`).toString('base64')}` },
     form: { grant_type: 'client_credentials', project: current.projectId },
   });
   expect(response.status(), 'exchange the journey API key for project authority').toBe(200);

@@ -14,10 +14,11 @@ function required(name: string): string {
 async function accessToken(): Promise<string> {
   if (cached && Date.now() < cached.renewAt) return cached.token;
   const key = required("TERRASCALE_API_KEY");
+  const keyBody = key.startsWith("sk_") ? key.slice(3) : key;
   const response = await fetch(tokenUrl, {
     method: "POST",
     headers: {
-      authorization: `Basic ${Buffer.from(`${key.split("_")[0]}:${key}`).toString("base64")}`,
+      authorization: `Basic ${Buffer.from(`${keyBody.split("_")[0]}:${key}`).toString("base64")}`,
       "content-type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({ grant_type: "client_credentials" }),

@@ -329,7 +329,11 @@ func startIssuer(org, project, apiKey string) (*issuer, []byte, tls.Certificate,
 			return
 		}
 		user, pass, ok := r.BasicAuth()
-		if !ok || user != a.apiKey[:26] || pass != a.apiKey || r.PostForm.Get("grant_type") != "client_credentials" {
+		id := a.apiKey
+		if strings.HasPrefix(id, "sk_") {
+			id = id[3:]
+		}
+		if !ok || user != id[:26] || pass != a.apiKey || r.PostForm.Get("grant_type") != "client_credentials" {
 			write(w, 400, map[string]string{"error": "invalid_grant"})
 			return
 		}

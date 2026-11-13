@@ -6,6 +6,7 @@ import { performance } from 'node:perf_hooks';
 import { expect, type APIRequestContext, type APIResponse } from '@playwright/test';
 import { test, json, project } from '../placement/support';
 import { auth, stateDir } from '../support/stack';
+import { keyId } from '../support/api-key';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { signInToken } from '../support/auth-management';
 import { request as addressedRequest } from '../support/client-address';
@@ -28,7 +29,7 @@ async function grant(request: APIRequestContext, projectToken = false) {
 
   const current = journey();
   const value = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
-    form: { grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey,
+    form: { grant_type: 'client_credentials', client_id: keyId(current.apiKey), client_secret: current.apiKey,
       project: current.projectId, scope: 'sql:read sql:write databases:read databases:write' },
   }));
   saveSecret('signing-keys-project-token', value.access_token);

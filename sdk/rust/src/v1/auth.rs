@@ -87,17 +87,18 @@ impl Auth {
             Credential::ApiKey(key) => {
                 let project = project
                     .ok_or_else(|| Error::InvalidInput("API keys require a project".into()))?;
+                let body = key.strip_prefix("sk_").unwrap_or(key.as_str());
                 if !key.is_ascii()
-                    || key.len() != 79
-                    || !super::ids::is_valid_id(&key[..26])
-                    || key.as_bytes()[26] != b'_'
-                    || !key.as_bytes()[27..]
+                    || body.len() != 79
+                    || !super::ids::is_valid_id(&body[..26])
+                    || body.as_bytes()[26] != b'_'
+                    || !body.as_bytes()[27..]
                         .iter()
                         .all(|b| b"0123456789abcdefghjkmnpqrstvwxyz".contains(b))
                 {
                     return Err(Error::InvalidInput("invalid TerraScale API key".into()));
                 }
-                let basic = header("Basic", &STANDARD.encode(format!("{}:{key}", &key[..26])))?;
+                let basic = header("Basic", &STANDARD.encode(format!("{}:{key}", &body[..26])))?;
                 Ok(Self::Key(Arc::new(KeyAuth {
                     basic,
                     project: project.to_owned(),
