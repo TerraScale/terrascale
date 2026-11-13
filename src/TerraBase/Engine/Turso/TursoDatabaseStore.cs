@@ -2,8 +2,6 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
-using System.Security.Cryptography;
-using System.Text;
 using Turso.Data.Sqlite;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
@@ -36,10 +34,6 @@ internal sealed partial class TursoDatabaseStore(
         command.CommandText = "SELECT coalesce((SELECT max(change_id) FROM turso_cdc) - (SELECT min(change_id) FROM turso_cdc) + 1, 0);";
         Volatile.Write(ref _retainedCdcRows, (long)command.ExecuteScalar()!);
     }
-
-    private const int SchemaVersion = 1;
-
-    internal static readonly byte[] FormatDigest = SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql));
 
     private const string OffsetSchemaSql = """
         CREATE TABLE commit_offset (
@@ -1220,42 +1214,25 @@ internal sealed partial class TursoDatabaseStore(
 
     private static void Bootstrap(string name, SqliteConnection connection, CancellationToken cancellationToken)
     {
-        var version = Version(name, connection, transaction: null);
-        if (version == SchemaVersion)
+        var version = StorageMigrations.FileVersion(connection);
+        if (version != 0)
         {
+            StorageMigrations.Apply(name, connection, cancellationToken);
             return;
         }
 
         using var transaction = connection.BeginTransaction(deferred: false);
-
-        version = Version(name, connection, transaction);
-        if (version == SchemaVersion)
+        if (Scalar(connection, transaction, "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1;") is not null)
         {
-            return;
-        }
-
-        if (version != 0 || Scalar(connection, transaction, "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1;") is not null)
-        {
-            throw new InvalidOperationException("data-directory contains an old database format; discard the affected data before starting");
+            throw new InvalidOperationException("a database without a storage version contains tables; no migration path exists");
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         var schema = name == TursoStorageEngine.SystemName ? SystemSchemaSql : ClientSchemaSql;
-        Scalar(connection, transaction, schema + $"PRAGMA user_version = {SchemaVersion};");
+        Scalar(connection, transaction, schema + $"PRAGMA user_version = {StorageFormat.Version};");
         RenewIncarnation(connection, transaction);
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();
-    }
-
-    private static int Version(string name, SqliteConnection connection, SqliteTransaction? transaction)
-    {
-        var version = Convert.ToInt32(
-            Scalar(connection, transaction, "PRAGMA user_version;"),
-            CultureInfo.InvariantCulture);
-        return version is 0 or SchemaVersion
-            ? version
-            : throw new InvalidOperationException(
-                $"database '{name}' has schema version {version}, an old database format; discard the affected data before starting");
     }
 
     private static Ulid RenewIncarnation(SqliteConnection connection, SqliteTransaction? transaction)

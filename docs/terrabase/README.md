@@ -30,6 +30,7 @@ The product goal is to write in any region and read in any region, with free rea
 - [Listener metadata](security.md): closed fallback when a route has no listener metadata.
 - [API-key ownership](customer-api-key-ownership.md) and [revocation](key-revocation.md).
 - [Cross-project isolation](cross-project-errors.md).
+- [Storage migrations](storage-migrations.md).
 - [SQL catalog](sql-catalog.md), [plain-row system records](decisions/2026-11-04-plain-row-storage.md) and [IDs](id-contract.md).
 
 Public routes use `/v1`. ts-auth issues credentials; TerraBase validates project tokens offline and enforces the project, database and scope boundaries. `sql:read` permits SQL reads; writes and DDL also require `sql:write`. End-user tokens read shapes only through table read grants.

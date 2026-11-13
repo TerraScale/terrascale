@@ -27,7 +27,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal const string SystemName = "_system";
 
     private static readonly byte[] LayoutRecord = Encoding.ASCII.GetBytes(StorageFormat.Id);
-    private static readonly SearchValues<char> FormatCharacters = SearchValues.Create("0123456789abcdef-");
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
 
     internal const string LockFileName = ".terrabase.lock";
@@ -226,7 +225,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         TimeSpan remaining;
         lock (_readinessGate)
         {
-            if (Volatile.Read(ref _disposed) || Ledger.FailedClosed is not null)
+            if (!Volatile.Read(ref _migrated) || Volatile.Read(ref _disposed) || Ledger.FailedClosed is not null)
             {
                 return false;
             }
@@ -771,6 +770,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     public async ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken)
     {
+        await MigrateStorageAsync(cancellationToken).ConfigureAwait(false);
 
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
 

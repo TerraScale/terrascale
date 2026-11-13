@@ -4,6 +4,7 @@ using System.Net;
 using TerraBase.Features.Replicas;
 using Google.Protobuf;
 using TerraBase.Engine;
+using TerraBase.Engine.Turso;
 using TerraBase.Engine.Revisions;
 using TerraBase.Errors;
 using TerraBase.Hosting;
@@ -40,6 +41,11 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
+        if (HttpContext.Request.Headers[StorageFormat.Header] != StorageFormat.Id)
+        {
+            return ErrorResponse.From(new Unavailable("page copy waits until both nodes use the same storage format", "storage_format_mismatch"));
+        }
+
         if (!string.Equals(HttpContext.Request.ContentType, MediaType, StringComparison.OrdinalIgnoreCase))
         {
             return ErrorResponse.From(new UnsupportedMediaType($"the body is {MediaType}"));
@@ -150,6 +156,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         response.StatusCode = StatusCodes.Status200OK;
         response.ContentType = MediaType;
         response.Headers.CacheControl = "no-store";
+        response.Headers[StorageFormat.Header] = StorageFormat.Id;
         response.Headers[DatabaseRevision.Header] = start.Revision.ToString();
         response.Headers[RevisionPullStart.CdcHeader] = start.CdcPosition.ToString(CultureInfo.InvariantCulture);
         PullAnswer.WriteHeader(response.BodyWriter, start);

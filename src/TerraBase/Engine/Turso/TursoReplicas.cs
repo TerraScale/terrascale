@@ -465,8 +465,10 @@ internal sealed partial class TursoReplicas(
                 Content = new ByteArrayContent(new PullUpdatesRequest { ClientRevision = held.ToString(), Encoding = PageEncoding.Raw, StreamKind = StreamKind.Pages }.ToByteArray()),
             };
             request.Content.Headers.ContentType = new MediaTypeHeaderValue(PullAnswer.MediaType);
+            _ = request.Headers.TryAddWithoutValidation(StorageFormat.Header, StorageFormat.Id);
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode || !response.Headers.TryGetValues(DatabaseRevision.Header, out var values)
+            if (!response.IsSuccessStatusCode || !response.Headers.TryGetValues(StorageFormat.Header, out var formats)
+                || formats.SingleOrDefault() != StorageFormat.Id || !response.Headers.TryGetValues(DatabaseRevision.Header, out var values)
                 || !DatabaseRevision.TryParse(values.FirstOrDefault(), out var to) || to.Incarnation != held.Incarnation || response.Content.Headers.ContentLength > MaxPrefetchBytes)
             {
                 return null;
@@ -592,9 +594,16 @@ internal sealed partial class TursoReplicas(
                 _ = copy.Headers.TryAddWithoutValidation(name, values);
             }
 
+            _ = copy.Headers.TryAddWithoutValidation(StorageFormat.Header, StorageFormat.Id);
             try
             {
                 var response = await http.SendAsync(copy, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                if (response.IsSuccessStatusCode && (!response.Headers.TryGetValues(StorageFormat.Header, out var formats)
+                    || formats.SingleOrDefault() != StorageFormat.Id))
+                {
+                    response.Dispose();
+                    throw new HttpRequestException("page copy waits until both nodes use the same storage format");
+                }
                 if (response.IsSuccessStatusCode && response.Headers.TryGetValues(DatabaseRevision.Header, out var values))
                 {
                     var position = response.Headers.TryGetValues(RevisionPullStart.CdcHeader, out var positions)

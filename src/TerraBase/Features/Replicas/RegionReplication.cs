@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using TerraBase.Configuration;
 using TerraBase.Engine.Revisions;
+using TerraBase.Engine.Turso;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.HomePush;
@@ -320,8 +321,8 @@ internal sealed partial class RegionReplication(
 
     private void Notice(string subject, byte[]? data)
     {
-        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _] || replica != options.Region || (home == options.Region && owners.Writer) || data is null
-            || !RevisionPush.TryRead(data, out var notice, out var answer) || notice is null)
+        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _, var format] || replica != options.Region || (home == options.Region && owners.Writer) || data is null
+            || format != StorageFormat.Id || !RevisionPush.TryRead(data, out var notice, out var answer) || notice is null)
         {
             return;
         }

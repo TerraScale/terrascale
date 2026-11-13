@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Enumeration;
 using System.Text;
 using TerraBase.Configuration;
@@ -47,12 +48,7 @@ internal sealed partial class TursoStorageEngine
         var recorded = ownership.Length > 0;
         if (recorded)
         {
-            var format = RecordedFormat(ownership);
-            if (format != StorageFormat.Id)
-            {
-                throw new TerraBaseConfigurationException(
-                    $"data directory has storage format {format}; this build writes {StorageFormat.Id}; start with an empty data directory (no automatic migration)");
-            }
+            _ = DirectoryVersion(dataDirectory, ownership);
         }
 
         var entries = Directory.EnumerateFileSystemEntries(dataDirectory)
@@ -70,9 +66,51 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
+    private const string MigrationFile = ".terrabase.migration";
+
+    private static int DirectoryVersion(string directory, FileStream ownership)
+    {
+        var journal = Path.Combine(directory, MigrationFile);
+        RejectLink(journal);
+        var text = File.Exists(journal) ? File.ReadAllText(journal) : RecordedFormat(ownership);
+        var from = text;
+        if (text.StartsWith("migrating:", StringComparison.Ordinal))
+        {
+            var parts = text["migrating:".Length..].Split("->", StringSplitOptions.None);
+            if (parts.Length != 2 || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var target))
+            {
+                throw new TerraBaseConfigurationException("the storage migration record is malformed");
+            }
+            StorageMigrations.RequirePath(target);
+            from = parts[0];
+        }
+        else if (text == StorageMigrations.PreviousId)
+        {
+            from = "23";
+        }
+
+        if (!int.TryParse(from, NumberStyles.None, CultureInfo.InvariantCulture, out var version))
+        {
+            throw new TerraBaseConfigurationException("the data directory has an unrecognized storage format; no migration path exists");
+        }
+        StorageMigrations.RequirePath(version);
+        return version;
+    }
+
+    private static byte[] EncodingBytes(string value) => Encoding.ASCII.GetBytes(value);
+
+    private static void WriteFormat(FileStream ownership, string value)
+    {
+        var bytes = EncodingBytes(value);
+        ownership.Position = 0;
+        ownership.Write(bytes);
+        ownership.SetLength(bytes.Length);
+        ownership.Flush(flushToDisk: true);
+    }
+
     private static string RecordedFormat(FileStream ownership)
     {
-        if (ownership.Length > 32)
+        if (ownership.Length > 64)
         {
             return "unversioned";
         }
@@ -80,8 +118,7 @@ internal sealed partial class TursoStorageEngine
         Span<byte> record = stackalloc byte[(int)ownership.Length];
         ownership.Position = 0;
         ownership.ReadExactly(record);
-        var text = Encoding.ASCII.GetString(record);
-        return text.Contains('-', StringComparison.Ordinal) && !text.AsSpan().ContainsAnyExcept(FormatCharacters) ? text : "unversioned";
+        return Encoding.ASCII.GetString(record);
     }
 
     internal static bool IsLockConflict(IOException error)

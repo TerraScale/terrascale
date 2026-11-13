@@ -14,11 +14,12 @@ check: it fails when any job it needs failed or was cancelled, and a skipped job
 - Every job that builds or lints checks out the merge commit GitHub prepares, as the journey does.
 - `checks` runs the policy checks: the legacy-name scan (fail mode), actionlint with shellcheck on the workflows,
   merged EF Core migrations stay unchanged while their project exists (`scripts/ci/migrations-frozen.py`), the
-  storage train (`scripts/terrabase/storage-format-check.sh`), the retired-hosting-provider grep, and a rule that fails
+  storage format gate (`scripts/check-storage-format.sh`), the retired-hosting-provider grep, and a rule that fails
   when the pull request adds a file outside `e2e/`, or moves one in, whose folder or name marks it as a test (the
   pattern is in the `No test file outside the journey` step of `ci.yml`).
-- The storage train reads the pull request's labels when `checks` runs: after you add or remove a storage-format label,
-  re-run `checks` (a label change starts no new run).
+- The storage gate compares schema constants with the checked-in format lock. A schema change requires a new
+  format version and a forward migration step. Existing lock entries remain immutable, and migration steps
+  remain unchanged for at least 60 days. Labels cannot bypass this gate.
 - `libs`, `auth` and `terrabase` restore their own solution filter locked and check whitespace format; `terrabase`,
   the only leg that builds the native-library driver, also verifies the pinned native libraries. `libs` and `auth`
   build their solution filter in Release with analyzers and warnings as errors; `libs` also checks code style, `auth`

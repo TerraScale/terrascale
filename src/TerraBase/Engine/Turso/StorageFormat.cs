@@ -1,8 +1,12 @@
+using System.Globalization;
+
 namespace TerraBase.Engine.Turso;
 
 public static class StorageFormat
 {
-    public const int Version = 23;
+    public const int Version = 24;
 
-    public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(TursoDatabaseStore.FormatDigest)[..12]}";
+    internal const string Header = "TerraBase-Storage-Format";
+
+    public static string Id { get; } = Version.ToString(CultureInfo.InvariantCulture);
 }
