@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Net;
 using TerraBase.Hosting;
+using TerraBase.Features.Platform;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Qos;
@@ -8,6 +9,7 @@ namespace TerraBase.Features.Qos;
 internal sealed class QosSessions
 {
     public static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan AnswerTimeout = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan MessageTimeout = TimeSpan.FromSeconds(30);
     public const int MinimumMessageBytesPerSecond = 16 * 1024;
     private const int MaxSessions = 4096;
@@ -17,6 +19,8 @@ internal sealed class QosSessions
     private readonly Dictionary<string, (int Count, int Limit)> _counts = [];
     private readonly Dictionary<IPAddress, int> _preauthentication = [];
     private readonly Counter<long> _refusals;
+    private readonly Counter<long> _admissions;
+    private readonly Counter<long> _preauthenticationAdmissions;
     private int _active;
     private int _relays;
 
@@ -25,7 +29,10 @@ internal sealed class QosSessions
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase.qos.relay.sessions", () => Volatile.Read(ref _relays));
         _refusals = meter.CreateCounter<long>("terrabase.qos.session.refusals");
+        _admissions = meter.CreateCounter<long>("terrabase.qos.session.admissions");
+        _preauthenticationAdmissions = meter.CreateCounter<long>("terrabase.qos.preauthentication.admissions");
         meter.CreateObservableGauge("terrabase.qos.active.sessions", () => Volatile.Read(ref _active));
+        meter.CreateObservableGauge("terrabase.qos.preauthentication.sessions", PreauthenticationCount);
         meter.CreateObservableGauge("terrabase.qos.organization.session.utilization", Utilization);
     }
 
@@ -37,8 +44,21 @@ internal sealed class QosSessions
         }
     }
 
+    private int PreauthenticationCount()
+    {
+        lock (_gate)
+        {
+            return _preauthentication.Values.Sum();
+        }
+    }
+
     public IDisposable? TryEnter(TenantContext tenant, bool relay = false)
     {
+        if (PlatformDatabases.IsPlatform(tenant.OrganizationId))
+        {
+            return new Lease(() => { });
+        }
+
         lock (_gate)
         {
             var entry = _counts.GetValueOrDefault(tenant.OrganizationId);
@@ -54,6 +74,7 @@ internal sealed class QosSessions
 
             _counts[tenant.OrganizationId] = (entry.Count + 1, limit);
             _active++;
+            _admissions.Add(1);
             if (relay)
             {
                 _relays++;
@@ -63,8 +84,13 @@ internal sealed class QosSessions
         }
     }
 
-    public SessionPreauthentication? TryPreauthenticate(IPAddress? address, TimeSpan deadline, CancellationToken cancellationToken)
+    public SessionPreauthentication? TryPreauthenticate(IPAddress? address, TimeSpan deadline, CancellationToken cancellationToken, string? verifiedOrganization = null)
     {
+        if (PlatformDatabases.IsPlatform(verifiedOrganization))
+        {
+            return new SessionPreauthentication(new Lease(() => { }), deadline, cancellationToken);
+        }
+
         address = (address ?? IPAddress.None).MapToIPv6();
         lock (_gate)
         {
@@ -76,6 +102,7 @@ internal sealed class QosSessions
             }
 
             _preauthentication[address] = count + 1;
+            _preauthenticationAdmissions.Add(1);
         }
 
         return new SessionPreauthentication(new Lease(() => LeavePreauthentication(address)), deadline, cancellationToken);

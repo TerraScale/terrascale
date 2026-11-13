@@ -15,7 +15,7 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed class HomeSessionEndpoint(
     ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local, QosSessions sessions,
-    TimeProvider time)
+    TimeProvider time, IHostApplicationLifetime lifetime)
     : EndpointWithoutRequest<IResult>
 {
     private static readonly SqlError NotHere = new(SqlErrors.WrongRegion, "this region is not the database's home for that replica region");
@@ -162,9 +162,9 @@ internal sealed class HomeSessionEndpoint(
                 }
 
                 HomeSessionAnswer answer;
-                if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, cancellationToken).ConfigureAwait(false))
+                if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, lifetime.ApplicationStopping).ConfigureAwait(false))
                 {
-                    await AnswerAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), cancellationToken).ConfigureAwait(false);
+                    await AnswerAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), lifetime.ApplicationStopping).ConfigureAwait(false);
                     continue;
                 }
 
@@ -179,7 +179,7 @@ internal sealed class HomeSessionEndpoint(
                             "execute" => SqlScript.Classify(call.Sql) switch
                             {
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
-                                SqlStatementPlan plan => await session.ExecuteAsync(new SqlPlannedCommand(plan, command), cancellationToken).ConfigureAwait(false) switch
+                                SqlStatementPlan plan => await session.ExecuteAsync(new SqlPlannedCommand(plan, command), lifetime.ApplicationStopping).ConfigureAwait(false) switch
                                 {
                                     SqlResult result => Answered(session, result),
                                     SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
@@ -188,13 +188,13 @@ internal sealed class HomeSessionEndpoint(
                             "describe" => SqlScript.Classify(call.Sql) switch
                             {
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
-                                SqlStatementPlan plan => await session.DescribeAsync(plan, command, cancellationToken).ConfigureAwait(false) switch
+                                SqlStatementPlan plan => await session.DescribeAsync(plan, command, lifetime.ApplicationStopping).ConfigureAwait(false) switch
                                 {
                                     SqlDescription description => new HomeSessionAnswer(session.IsAutocommit, Description: description),
                                     SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
                                 },
                             },
-                            "batch" => await BatchAsync(session, call.Batch, cancellationToken).ConfigureAwait(false),
+                            "batch" => await BatchAsync(session, call.Batch, lifetime.ApplicationStopping).ConfigureAwait(false),
                             _ => new HomeSessionAnswer(session.IsAutocommit, new SqlError(SqlErrors.InvalidRequest, "op is execute, describe or batch")),
                         };
                     }

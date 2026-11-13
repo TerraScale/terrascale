@@ -5,6 +5,8 @@ using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Memory;
+using TerraBase.Tenancy;
 using TerraBase.Features.Sql;
 using TerraBase.Features.Replicas;
 using TerraBase.Features.Regions;
@@ -12,7 +14,7 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Postgres;
 
-internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential credential, TimeProvider time, IMeterFactory meters)
+internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential credential, TimeProvider time, IMeterFactory meters, IMemoryBudget memory)
 {
     private readonly Counter<long> _outputTimeouts = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.qos.relay.output.timeouts");
 
@@ -48,13 +50,14 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
         return message;
     }
 
-    internal async Task RunAsync(HomeNode home, byte[] startup, IPAddress? client, PipeReader input, PipeWriter output, CancellationToken closed)
+    internal async Task RunAsync(HomeNode home, TenantContext tenant, byte[] startup, IPAddress? client, PipeReader input, PipeWriter output, CancellationToken closed)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(closed);
         stop.CancelAfter(TimeSpan.FromSeconds(10));
         using var state = new SessionRelay(time);
         var established = false;
-        using var upstream = new Upstream(startup, input, state, stop.Token);
+        var closing = 0;
+        using var upstream = new Upstream(startup, input, state, memory, tenant, BeginClose, stop.Token);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Address, Path))
         {
             Version = HttpVersion.Version20,
@@ -106,20 +109,22 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
 
             established = true;
             stop.CancelAfter(Timeout.InfiniteTimeSpan);
-            await RelayAsync(downstream, output, state, stop.Token).ConfigureAwait(false);
+            await RelayAsync(downstream, output, state, tenant, stop.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (established && !closed.IsCancellationRequested && !stop.IsCancellationRequested && upstream.Expiry is null)
+        catch (OperationCanceledException) when (established && !closed.IsCancellationRequested && !stop.IsCancellationRequested && upstream.Expiry is null && !state.Answer.IsCancellationRequested)
         {
             _outputTimeouts.Add(1);
         }
         catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !closed.IsCancellationRequested)
         {
-            if (established && upstream.Expiry is { } expiry)
+            if (established)
             {
-                using var drain = new CancellationTokenSource(Shutdown.DrainBudget);
+                BeginClose();
+                var refusal = state.Pending.Commits ? SqlErrors.OutcomeUnknown(home.Region)
+                    : upstream.Expiry is { } expiry ? new SqlError(SqlErrors.QueryCanceled, expiry.Message) : HomeSessions.Unreachable(home.Region);
                 var writer = new PgWriter(output);
-                writer.Error(expiry.State, expiry.Message, fatal: true);
-                await writer.FlushAsync(drain.Token).ConfigureAwait(false);
+                writer.Error(state.Pending.Commits ? refusal.Sqlstate : upstream.Expiry?.State ?? refusal.Sqlstate, refusal.Message, fatal: true);
+                await writer.FlushAsync(stop.Token).ConfigureAwait(false);
             }
             else if (!established)
             {
@@ -132,56 +137,72 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
             input.CancelPendingRead();
             await upstream.DrainAsync().ConfigureAwait(false);
         }
+
+        void BeginClose()
+        {
+            if (Interlocked.Exchange(ref closing, 1) == 0)
+            {
+                stop.CancelAfter(Shutdown.DrainBudget);
+            }
+        }
     }
 
-    private static async Task RelayAsync(Stream downstream, PipeWriter output, SessionRelay state, CancellationToken cancellationToken)
+    private async Task RelayAsync(Stream downstream, PipeWriter output, SessionRelay state, TenantContext tenant, CancellationToken cancellationToken)
     {
+        using var receiving = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, state.Answer.Token);
         var header = new byte[5];
-        var buffer = new byte[16 * 1024];
         while (true)
         {
-            if (await downstream.ReadAsync(header.AsMemory(0, 1), cancellationToken).ConfigureAwait(false) == 0)
+            if (!await ReadAnswerAsync(downstream, header, state.Answer, receiving.Token).ConfigureAwait(false))
             {
-                return;
+                throw new EndOfStreamException("the relay ended before its next response");
             }
 
-            await downstream.ReadExactlyAsync(header.AsMemory(1), cancellationToken).ConfigureAwait(false);
-            var remaining = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1)) - 4;
-            if (remaining < 0 || remaining > HomeSessionFrames.MaxBytes)
+            var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1)) - 4;
+            if (length < 0 || length > HomeSessionFrames.MaxBytes)
             {
                 throw new InvalidDataException("invalid relay response length");
             }
 
-            output.Write(header);
-            bool? transaction = null;
-            while (remaining > 0)
+            using var reservation = memory.TryReserve(length, tenant) ?? throw new QosMemoryException();
+            var body = new byte[length];
+            if (!await ReadAnswerAsync(downstream, body, state.Answer, receiving.Token).ConfigureAwait(false))
             {
-                var take = Math.Min(remaining, buffer.Length);
-                await downstream.ReadExactlyAsync(buffer.AsMemory(0, take), cancellationToken).ConfigureAwait(false);
-                if (header[0] == 'Z')
-                {
-                    transaction = buffer[0] != 'I';
-                }
-
-                output.Write(buffer.AsSpan(0, take));
-                remaining -= take;
-                using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                sending.CancelAfter(QosSessions.MessageTimeout);
-                var flushed = await output.FlushAsync(sending.Token).ConfigureAwait(false);
-                if (flushed.IsCompleted || flushed.IsCanceled)
-                {
-                    return;
-                }
+                throw new EndOfStreamException("a relay response ended early");
             }
 
+            bool? transaction = header[0] == 'Z' && body.Length > 0 ? body[0] != 'I'
+                : header[0] == 'C' && body.AsSpan().SequenceEqual("BEGIN\0"u8) ? true
+                : header[0] == 'C' && (body.AsSpan().SequenceEqual("COMMIT\0"u8) || body.AsSpan().SequenceEqual("ROLLBACK\0"u8)) ? false : null;
+            output.Write(header);
+            output.Write(body);
             state.Answered((char)header[0], transaction);
-            using var final = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            final.CancelAfter(QosSessions.MessageTimeout);
-            if ((await output.FlushAsync(final.Token).ConfigureAwait(false)).IsCompleted)
+            using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            sending.CancelAfter(QosSessions.MessageTimeout);
+            var flushed = await output.FlushAsync(sending.Token).ConfigureAwait(false);
+            if (flushed.IsCompleted || flushed.IsCanceled)
             {
                 return;
             }
         }
+    }
+
+    private static async ValueTask<bool> ReadAnswerAsync(Stream stream, Memory<byte> bytes, SessionMessageDeadline deadline, CancellationToken cancellationToken)
+    {
+        var received = 0;
+        while (received < bytes.Length)
+        {
+            var count = await stream.ReadAsync(bytes[received..], cancellationToken).ConfigureAwait(false);
+            if (count == 0)
+            {
+                return received == 0 ? false : throw new EndOfStreamException("a relay response ended early");
+            }
+
+            received += count;
+            deadline.Progress(count);
+        }
+
+        return true;
     }
 
     private static async Task RefuseAsync(PipeWriter output, HomeNode home, CancellationToken cancellationToken)
@@ -197,10 +218,11 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
         writer.Write([(byte)0]);
     }
 
-    private sealed class Upstream(byte[] startup, PipeReader input, SessionRelay state, CancellationToken stop) : HttpContent
+    private sealed class Upstream(byte[] startup, PipeReader input, SessionRelay state, IMemoryBudget memory, TenantContext tenant, Action beginClose, CancellationToken stop) : HttpContent
     {
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => SerializeToStreamAsync(stream, context, CancellationToken.None);
 
+        private readonly PgRelayRequests _requests = new(memory, tenant);
         private Task _forwarding = Task.CompletedTask;
 
         public (string State, string Message)? Expiry { get; private set; }
@@ -233,6 +255,8 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                     var header = await ReadAsync(5, deadline, waiting.Token).ConfigureAwait(false);
                     if (header is null)
                     {
+                        beginClose();
+                        await state.DrainAsync(cancellationToken).ConfigureAwait(false);
                         return;
                     }
 
@@ -259,7 +283,8 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                         'C' => '3',
                         _ => '\0',
                     };
-                    state.Sent(reply);
+                    var intent = _requests.Sent((char)header[0], body, state.State);
+                    state.Sent(reply, commits: intent.Commits, completed: intent.Completed);
                     await stream.WriteAsync(header, cancellationToken).ConfigureAwait(false);
                     await stream.WriteAsync(body, cancellationToken).ConfigureAwait(false);
                     if (header[0] is (byte)'P' or (byte)'B' or (byte)'D' or (byte)'E' or (byte)'C')
@@ -271,13 +296,24 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                 }
                 catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    await state.DrainAsync(cancellationToken).ConfigureAwait(false);
+                    beginClose();
                     Expiry = deadline.IsTransaction && !deadline.IsPartial
                         ? ("57014", SqlErrors.TransactionExpired.Message)
                         : ("57P05", deadline.IsPartial ? "incomplete message timeout exceeded" : "session idle timeout exceeded");
+                    await state.DrainAsync(cancellationToken).ConfigureAwait(false);
                     throw;
                 }
             }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _requests.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
 
         private async ValueTask<byte[]?> ReadAsync(int count, SessionMessageDeadline deadline, CancellationToken cancellationToken)

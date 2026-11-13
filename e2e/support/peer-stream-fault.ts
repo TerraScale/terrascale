@@ -52,6 +52,7 @@ export async function holdPeerReplies(address: string, port: number, destination
   const events = new EventEmitter();
   const held: (() => void)[] = [];
   let holding = false;
+  let prefixBytes = 0;
   server.on('session', session => {
     sessions.add(session);
     session.on('error', error => events.emit('transportError', error));
@@ -80,7 +81,19 @@ export async function holdPeerReplies(address: string, port: number, destination
       held.push(deliver);
       events.emit('held');
     };
-    outgoing.on('data', (chunk: Buffer) => send(() => { if (!stream.destroyed) stream.write(chunk); }));
+    outgoing.on('data', (chunk: Buffer) => {
+      if (holding && prefixBytes > 0) {
+        const count = Math.min(prefixBytes, chunk.length);
+        stream.write(chunk.subarray(0, count));
+        prefixBytes -= count;
+        chunk = chunk.subarray(count);
+        events.emit('prefix');
+      }
+      if (chunk.length > 0) {
+        const bytes = Buffer.from(chunk);
+        send(() => { if (!stream.destroyed) stream.write(bytes); });
+      }
+    });
     outgoing.once('end', () => send(() => { if (!stream.destroyed) stream.end(); }));
   });
   const listening = once(server, 'listening');
@@ -89,7 +102,11 @@ export async function holdPeerReplies(address: string, port: number, destination
   return {
     events,
     cut: () => { for (const session of sessions) session.destroy(); held.splice(0); },
-    hold: () => { holding = true; },
+    hold: (bytes = 0) => { holding = true; prefixBytes = bytes; },
+    ping: async () => {
+      await Promise.all([...sessions].map(session => new Promise<void>((resolve, reject) =>
+        session.ping(error => error ? reject(error) : resolve()))));
+    },
     release: () => {
       holding = false;
       for (const deliver of held.splice(0)) deliver();

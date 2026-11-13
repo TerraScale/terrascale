@@ -308,10 +308,12 @@ test('a statement budget failure leaves an explicit transaction aborted until co
       expect(await run('INSERT INTO cancelled_session_rows VALUES (1)')).toEqual([]);
       expect(await run('WITH RECURSIVE r(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM r WHERE x<1000000000) SELECT SUM(x) FROM r')).toContain('C57014');
       expect(await run('INSERT INTO cancelled_session_rows VALUES (2)')).toContain('C25P02');
+      expect((await call('INSERT INTO cancelled_session_rows VALUES (7)')).status()).toBe(200);
+      expect(pg.socket.destroyed).toBe(false);
       await run('COMMIT');
       const read = await call('SELECT value FROM cancelled_session_rows');
       expect(read.status()).toBe(200);
-      expect((await read.json()).results[0].rows).toEqual([]);
+      expect((await read.json()).results[0].rows).toEqual([[7]]);
     } finally {
       pg.socket.destroy();
       await pg.closed;
@@ -369,6 +371,40 @@ test('honest uploads that progress beyond thirty seconds finish on both protocol
       if (!pg.socket.destroyed) pg.socket.end(message('X', Buffer.alloc(0)));
       ws.socket.destroy();
       await Promise.all([pg.closed, ws.closed]);
+    }
+  });
+});
+
+test('a WebSocket managed cancellation releases the writer while the failed session stays open', async ({ request }) => {
+  await onLocalStack(async () => {
+    const credential = await token(request, 'sql:read sql:write');
+    const call = (sql: string) => request.post(api + path() + '/sql/execute', {
+      headers: { authorization: 'Bearer ' + credential }, data: { statements: [{ sql }] },
+    });
+    expect((await call('CREATE TABLE ws_cancelled_rows (value INTEGER)')).status()).toBe(200);
+    const ws = await rawSqlSocket('http://127.0.0.1:8080' + path() + '/sql/ws', credential);
+    const run = async (request: object) => {
+      const reply = once(ws.events, 'message');
+      ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, ...request }))));
+      return (await reply)[0];
+    };
+    try {
+      expect((await run({ type: 'begin' })).transaction).toBe(true);
+      expect((await run({ type: 'execute', statements: [{ sql: 'INSERT INTO ws_cancelled_rows VALUES (1)' }] })).type).toBe('result');
+      expect(await run({ type: 'execute', statements: [{ sql: 'WITH RECURSIVE r(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM r WHERE x<1000000000) SELECT SUM(x) FROM r' }] }))
+        .toMatchObject({ type: 'error', error: { code: 'query_canceled', sqlstate: '57014' } });
+      expect((await call('INSERT INTO ws_cancelled_rows VALUES (7)')).status()).toBe(200);
+      expect(ws.socket.destroyed).toBe(false);
+      expect(await run({ type: 'execute', statements: [{ sql: 'INSERT INTO ws_cancelled_rows VALUES (2)' }] }))
+        .toMatchObject({ type: 'error', error: { sqlstate: '25P02' } });
+      await run({ type: 'commit' });
+      const read = await call('SELECT value FROM ws_cancelled_rows');
+      expect(read.status()).toBe(200);
+      expect((await read.json()).results[0].rows).toEqual([[7]]);
+    } finally {
+      ws.socket.destroy();
+      await ws.closed;
+      expect((await call('DROP TABLE ws_cancelled_rows')).status()).toBe(200);
     }
   });
 });

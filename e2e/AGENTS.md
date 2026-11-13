@@ -142,6 +142,8 @@ Other existing projects can run in two-region mode by starting this same stack f
 normally. The placement pair shares one machine and third-party stand-ins, has no network delay and uses
 catalog-sweep replication without NATS; it does not model geographic latency or regional host failure.
 
+The CI session-limits shard selects only `placement/session-limits.spec.ts` with one worker and two cells. It covers input and answer progress, session admission, platform EF traffic, unknown outcomes and native commit completion. Its peer-stream faults retain a live HTTP/2 connection while withholding an answer body.
+
 ## Multi-region fault lane
 
 The `multi-region faults` shard of `journey.yml` shares the normal service and SDK build artifacts. It sets

@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { expect } from '@playwright/test';
 import { rawSqlSocket, frame, scheduleStatement } from '../support/sql-socket';
@@ -309,6 +310,11 @@ test('a commit whose answer arrives after the transaction deadline is reported a
     await cutAnswer;
     fault.cut();
     expect((await unknown)[0]).toMatchObject({ id: 4, type: 'error', error: { code: 'write_outcome_unknown', sqlstate: '08007' } });
+    const closedUnknown = await Promise.race([
+      ws.closing,
+      once(AbortSignal.timeout(3000), 'abort').then(() => { throw new Error('unknown outcome did not close the public session'); }),
+    ]);
+    expect(closedUnknown.reason).toBe('write_outcome_unknown');
     expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3]]);
   } finally {
     cancelCommit();
@@ -563,3 +569,195 @@ for (const kind of ['local WebSocket', 'local Postgres', 'forwarded SQL', 'WebSo
     }
   });
 }
+
+for (const kind of ['forwarded SQL', 'WebSocket relay', 'Postgres relay', 'Postgres extended relay'] as const) {
+  test(kind + ' bounds a live peer stalled inside a commit answer and closes the unknown session', async ({ cells, request }) => {
+    const forwarded = kind === 'forwarded SQL';
+    const pgRelay = kind.startsWith('Postgres');
+    const extended = kind === 'Postgres extended relay';
+    const created = await json<Database>(await cells.post(home + project() + '/databases', {
+      data: { name: name('partial-answer'), homeRegion: 'gru', replicaRegions: forwarded ? ['fra'] : [] },
+    }), 201);
+    const token = await credential(request);
+    const route = database(created.id) + '/sql/ws';
+    const peersPath = join(stateDir, 'peers');
+    const peers = readFileSync(peersPath, 'utf8');
+    const fault = await holdPeerReplies('127.0.0.5', 8081, 'http://127.0.0.1:8081',
+      forwarded ? '/v1/internal/sql/session' : pgRelay ? '/v1/internal/postgres' : route);
+    let ws: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
+    let pg: Awaited<ReturnType<typeof postgres>> | undefined;
+    const active = async (port: number) => {
+      const response = await request.get('http://127.0.0.1:' + port + '/metrics');
+      expect(response.status()).toBe(200);
+      const line = (await response.text()).split('\n').find(row => /^terrabase_qos_active_sessions(?:\{| )/.test(row));
+      expect(line).toBeDefined();
+      return Number(line!.split(' ').at(-1));
+    };
+    try {
+      await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
+      await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (1)');
+      if (forwarded) await replicated(cells, replica, created.id, 1);
+      writeFileSync(peersPath, peers.replace('journey-1 gru 127.0.0.1', 'journey-1 gru 127.0.0.5'));
+      if (pgRelay) {
+        pg = await postgres(6532, created.id);
+        expect(await pg.connected).toBe(true);
+        await pg.begin();
+        const ready = once(pg.results, 'ready');
+        pg.socket.write(message('Q', Buffer.from('INSERT INTO placement_rows VALUES (7)\0')));
+        await ready;
+        if (extended) {
+          const bound = once(pg.results, 'bound');
+          pg.socket.write(Buffer.concat([
+            message('P', Buffer.concat([Buffer.from('commit-statement\0COMMIT\0'), Buffer.alloc(2)])),
+            message('B', Buffer.concat([Buffer.from('commit-portal\0commit-statement\0'), Buffer.alloc(6)])),
+            message('H', Buffer.alloc(0)),
+          ]));
+          await bound;
+        }
+      } else {
+        ws = await rawSqlSocket('http://127.0.0.1:8180' + route, token);
+        const beganTransaction = await execute(ws, 'BEGIN');
+        expect(beganTransaction, JSON.stringify(beganTransaction)).toMatchObject({ type: 'result', transaction: true });
+        expect((await execute(ws, 'INSERT INTO placement_rows VALUES (7)')).type).toBe('result');
+      }
+      fault.hold(pgRelay ? 6 : 8);
+      const prefix = once(fault.events, 'prefix', { signal: AbortSignal.timeout(10_000) });
+      const answer = Promise.race([
+        pg ? pg.closed : once(ws!.events, 'message'),
+        once(AbortSignal.timeout(35_000), 'abort').then(() => { throw new Error('stalled answer exceeded its progress bound'); }),
+        ...(ws ? [ws.closing.then(close => { throw new Error('closed before outcome answer: ' + JSON.stringify(close)); })] : []),
+      ]);
+      const began = performance.now();
+      (pg?.socket ?? ws!.socket).write(pg ? extended
+        ? message('E', Buffer.concat([Buffer.from('commit-portal\0'), Buffer.alloc(4)])) : message('Q', Buffer.from('COMMIT\0'))
+        : frame(1, Buffer.from(JSON.stringify({ id: 9, type: 'commit' }))));
+      await prefix;
+      console.log(kind + ': prefix forwarded after ' + Math.round(performance.now() - began) + ' ms');
+      await fault.ping();
+      console.log(kind + ': peer ping answered after ' + Math.round(performance.now() - began) + ' ms');
+      if (pg) {
+        expect(await answer).toContain('C08007');
+        expect(pg.errors.some(error => error.includes('the session is closed'))).toBe(true);
+        expect(pg.errors.join(' ')).not.toContain('rolled back');
+      } else {
+        expect((await answer)[0]).toMatchObject({ id: 9, type: 'error', error: { code: 'write_outcome_unknown', sqlstate: '08007' } });
+        expect((await ws!.closing).reason).toBe('write_outcome_unknown');
+      }
+      expect(performance.now() - began, 'partial answer has a 30-second base plus bytes/rate budget').toBeLessThan(35_000);
+      for (const port of [9091, 9191]) {
+        await expect.poll(() => active(port), { message: 'returned session admission on ' + port }).toBe(0);
+      }
+      expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [7]]);
+      fault.release();
+      if (ws) {
+        ws.socket.destroy();
+        await ws.closed;
+        ws = await rawSqlSocket('http://127.0.0.1:8180' + route, await credential(request));
+        const beganTransaction = await execute(ws, 'BEGIN');
+        expect(beganTransaction, JSON.stringify(beganTransaction)).toMatchObject({ type: 'result', transaction: true });
+        expect((await execute(ws, 'SELECT 42')).results[0].rows).toEqual([[42]]);
+        expect((await execute(ws, 'ROLLBACK')).transaction).toBe(false);
+      } else {
+        pg = await postgres(6532, created.id);
+        expect(await pg.connected).toBe(true);
+        await pg.begin();
+        expect(await pg.query()).toBe('42');
+      }
+    } finally {
+      fault.release();
+      writeFileSync(peersPath, peers);
+      ws?.socket.destroy();
+      pg?.socket.destroy();
+      if (ws) await ws.closed;
+      if (pg) await pg.closed;
+      await fault.close();
+      await removeDatabase(cells, created.id);
+    }
+  });
+}
+
+test('a WebSocket relay close drains a stalled answer within its closing budget', async ({ cells, request }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('drain-answer'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  const token = await credential(request);
+  const route = database(created.id) + '/sql/ws';
+  const peersPath = join(stateDir, 'peers');
+  const peers = readFileSync(peersPath, 'utf8');
+  const fault = await holdPeerReplies('127.0.0.5', 8081, 'http://127.0.0.1:8081', route);
+  let ws: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
+  try {
+    await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
+    writeFileSync(peersPath, peers.replace('journey-1 gru 127.0.0.1', 'journey-1 gru 127.0.0.5'));
+    ws = await rawSqlSocket('http://127.0.0.1:8180' + route, token);
+    const beganTransaction = await execute(ws, 'BEGIN');
+    expect(beganTransaction, JSON.stringify(beganTransaction)).toMatchObject({ type: 'result', transaction: true });
+    expect((await execute(ws, 'INSERT INTO placement_rows VALUES (7)')).type).toBe('result');
+    fault.hold();
+    const held = once(fault.events, 'held');
+    ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 9, type: 'commit' }))));
+    await held;
+    await fault.ping();
+    const incomplete = frame(1, Buffer.from(JSON.stringify({ id: 10, type: 'execute', statements: [{ sql: 'SELECT 42' }] })));
+    ws.socket.write(incomplete.subarray(0, incomplete.length - 1));
+    const reply = Promise.race([
+      once(ws.events, 'message', { signal: AbortSignal.timeout(33_000) }),
+      ws.closing.then(close => { throw new Error('closed before drain outcome: ' + JSON.stringify(close)); }),
+    ]);
+    const began = performance.now();
+    expect((await reply)[0]).toMatchObject({ id: 9, type: 'error', error: { code: 'write_outcome_unknown', sqlstate: '08007' } });
+    expect((await ws.closing).reason).toBe('write_outcome_unknown');
+    expect(performance.now() - began).toBeLessThan(33_000);
+    expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows')).results[0].rows).toEqual([[7]]);
+    const metrics = await request.get('http://127.0.0.1:9191/metrics');
+    expect(await metrics.text()).toMatch(/terrabase_qos_relay_sessions(?:\{[^\n]*\})? 0(?:\n|$)/);
+  } finally {
+    fault.release();
+    writeFileSync(peersPath, peers);
+    ws?.socket.destroy();
+    if (ws) await ws.closed;
+    await fault.close();
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('verified platform EF transactions bypass new session accounting and retain request admission', async ({ request }) => {
+  const metrics = async () => {
+    const response = await request.get('http://127.0.0.1:9091/metrics');
+    expect(response.status()).toBe(200);
+    return response.text();
+  };
+  const admitted = (body: string) => body.split('\n').filter(line => /^terrabase_qos_request_duration_seconds_count\{/.test(line))
+    .reduce((sum, line) => sum + Number(line.split(' ').at(-1)), 0);
+  const before = await metrics();
+  const runner = spawn('dotnet', [join(stateDir, 'build/social/Journey.Social.dll'), 'platform-sessions'], {
+    env: { ...process.env, E2E_STATE: stateDir }, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const exited = once(runner, 'exit');
+  let stderr = '';
+  runner.stderr.on('data', chunk => { stderr += chunk; });
+  try {
+    const ready = await Promise.race([
+      once(runner.stdout, 'data').then(([data]) => data.toString()),
+      exited.then(([code]) => { throw new Error('platform EF runner exited ' + code + ': ' + stderr); }),
+    ]);
+    expect(ready).toContain('16 platform EF transactions completed');
+    let during = '';
+    await expect.poll(async () => admitted(during = await metrics())).toBeGreaterThan(admitted(before) + 32);
+    expect(during).toMatch(/terrabase_qos_active_sessions(?:\{[^\n]*\})? 0(?:\n|$)/);
+    expect(during).toMatch(/terrabase_qos_preauthentication_sessions(?:\{[^\n]*\})? 0(?:\n|$)/);
+    expect(during).toMatch(/terrabase_qos_organization_session_utilization(?:\{[^\n]*\})? 0(?:\n|$)/);
+    expect(admitted(during)).toBeGreaterThan(admitted(before) + 32);
+    const refusals = (body: string) => body.split('\n').filter(line => /^terrabase_qos_session_refusals_total(?:\{| )/.test(line));
+    expect(refusals(during)).toEqual(refusals(before));
+    const admissions = (body: string) => body.split('\n').filter(line => /^terrabase_qos_(session|preauthentication)_admissions_total(?:\{| )/.test(line));
+    expect(admissions(during)).toEqual(admissions(before));
+    runner.stdin.end('release\n');
+    expect((await exited)[0], stderr).toBe(0);
+  } finally {
+    if (runner.exitCode === null) {
+      runner.kill('SIGTERM');
+      await exited;
+    }
+  }
+});

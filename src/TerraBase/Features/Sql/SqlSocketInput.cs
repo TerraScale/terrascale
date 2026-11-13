@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.Features;
+using System.Net;
 
 namespace TerraBase.Features.Sql;
 
@@ -62,6 +63,71 @@ internal sealed class SqlSocketInput(TimeProvider time)
         if (connect is { IsExtendedConnect: true, Protocol: "websocket" })
         {
             context.Features.Set<IHttpExtendedConnectFeature>(new Connect(connect, input));
+        }
+    }
+
+    public HttpMessageInvoker Observe(HttpClient http) => new(new Forward(http, this));
+
+    private sealed class Forward(HttpClient http, SqlSocketInput input) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            response.Content = new ObservedContent(response.Content, input);
+            return response;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                http.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class ObservedContent : HttpContent
+    {
+        private readonly HttpContent _content;
+        private readonly SqlSocketInput _input;
+
+        public ObservedContent(HttpContent content, SqlSocketInput input)
+        {
+            (_content, _input) = (content, input);
+            foreach (var header in content.Headers)
+            {
+                Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => _content.CopyToAsync(stream);
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken) =>
+            _content.CopyToAsync(stream, cancellationToken);
+
+        protected override Stream CreateContentReadStream(CancellationToken cancellationToken) => new Transport(_content.ReadAsStream(cancellationToken), _input);
+
+        protected override Task<Stream> CreateContentReadStreamAsync() => CreateContentReadStreamAsync(CancellationToken.None);
+
+        protected override async Task<Stream> CreateContentReadStreamAsync(CancellationToken cancellationToken) =>
+            new Transport(await _content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false), _input);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _content.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
     }
 

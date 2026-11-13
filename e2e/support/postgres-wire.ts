@@ -41,6 +41,7 @@ export async function postgres(port = 6432, database = journey().databaseId) {
       }
       if (packet.type === 'Z') { admitted(true); results.emit('ready'); }
       if (packet.type === 'D') results.emit('row', packet.body.subarray(6).toString());
+      if (packet.type === '2') results.emit('bound');
       if (packet.type === 'E') {
         errors.push(...packet.body.toString().split('\0').filter(Boolean));
         admitted(false);

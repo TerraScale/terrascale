@@ -81,6 +81,10 @@ request logs, with its received and sent bytes.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
+Relayed answers use the same progress rule as input. Once an answer starts arriving, its deadline is its start plus 30 seconds plus the bytes received divided by 16 KiB/s. Before the first answer byte, the entry waits at most ten minutes, then closes without cancelling accepted execution or commit at the home. A close drain shares the two-second closing budget from the start of closing. Transaction age limits govern waiting for input; there is no hard wall-clock lifetime for a transaction. There is no end-to-end guarantee while old and new builds serve together.
+
+A session closes after a `write_outcome_unknown` answer (SQLSTATE 08007, HTTP 503). WebSocket uses close reason `write_outcome_unknown`; PostgreSQL sends a fatal error stating that the session is closed. The outcome is unknown, not rolled back or retryable. Reconcile by reading back the expected data from a new session before writing again.
+
 An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
 open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
 autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.

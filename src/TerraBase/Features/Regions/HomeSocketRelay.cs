@@ -14,6 +14,7 @@ using TerraBase.Features.Replicas;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using ZLogger;
 
 namespace TerraBase.Features.Regions;
 
@@ -27,7 +28,8 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(home);
         context.ReleaseRequestLease();
-        using var preauthentication = sessions.TryPreauthenticate(IpAllowlists.ClientOf(context), SqlSocket.AuthDeadline, cancellationToken);
+        using var preauthentication = sessions.TryPreauthenticate(IpAllowlists.ClientOf(context), SqlSocket.AuthDeadline, cancellationToken,
+            context.User.IsOperator() ? context.Features.Get<ApiKey>()?.OrganizationId : null);
         var offered = context.WebSockets.WebSocketRequestedProtocols.Contains(SqlSocketEndpoint.Protocol, StringComparer.Ordinal);
         using var client = await context.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext
         {
@@ -151,6 +153,8 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             upstream.Options.SetRequestHeader(HomeForwarding.ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
         }
 
+        var answers = new SqlSocketInput(time);
+        using var observing = answers.Observe(http.CreateClient(HomeLocator.HttpClientName));
         credential.Sign(upstream.Options);
         try
         {
@@ -159,10 +163,11 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             var route = new UriBuilder(
                 new Uri(home.Address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()))
             { Scheme = "ws" }.Uri;
-            await upstream.ConnectAsync(route, http.CreateClient(HomeLocator.HttpClientName), timeout.Token).ConfigureAwait(false);
+            await upstream.ConnectAsync(route, observing, timeout.Token).ConfigureAwait(false);
         }
         catch (Exception error) when (error is WebSocketException or HttpRequestException or OperationCanceledException)
         {
+            context.RequestServices.GetRequiredService<ILogger<HomeSocketRelay>>().ZLogWarning(error, $"The home SQL WebSocket could not be opened");
             await RefuseAsync(client, SqlErrors.Unavailable, "the home could not serve the session; retry", cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -184,8 +189,8 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
 
         var memory = context.RequestServices.GetRequiredService<IMemoryBudget>();
-        var toHome = PumpAsync(client, upstream, BeginClose, state, context.Features.GetRequiredFeature<SqlSocketInput>(), time, memory, tenant, shutdown.Token);
-        var toClient = PumpAsync(upstream, client, BeginClose, state, input: null, time, memory, tenant, shutdown.Token);
+        var toHome = PumpAsync(client, upstream, BeginClose, state, context.Features.GetRequiredFeature<SqlSocketInput>(), answers: null, time, memory, tenant, home.Region, shutdown.Token);
+        var toClient = PumpAsync(upstream, client, BeginClose, state, input: null, answers, time, memory, tenant, home.Region, shutdown.Token);
         try
         {
             await Task.WhenAny(toHome, toClient).ConfigureAwait(false);
@@ -225,12 +230,12 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             ? null : new TenantContext(organization, plan, project);
     }
 
-    private static async Task RefuseAsync(WebSocket client, string code, string message, CancellationToken cancellationToken)
+    private static async Task RefuseAsync(WebSocket client, string code, string message, CancellationToken cancellationToken, long? id = null)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(Shutdown.DrainBudget);
         var error = new SqlError(code, message);
-        var reply = new SqlSocketError(null, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), "").Error, false);
+        var reply = new SqlSocketError(id, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), "").Error, false);
         try
         {
             await client.SendAsync(JsonSerializer.SerializeToUtf8Bytes(reply, SqlJsonContext.Default.SqlSocketError), WebSocketMessageType.Text, true, deadline.Token)
@@ -243,7 +248,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
     }
 
-    private static async Task PumpAsync(WebSocket from, WebSocket to, Action beginClose, SessionRelay state, SqlSocketInput? input, TimeProvider time, IMemoryBudget memory, TenantContext tenant, CancellationToken cancellationToken)
+    private static async Task PumpAsync(WebSocket from, WebSocket to, Action beginClose, SessionRelay state, SqlSocketInput? input, SqlSocketInput? answers, TimeProvider time, IMemoryBudget memory, TenantContext tenant, string home, CancellationToken cancellationToken)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
         try
@@ -252,12 +257,17 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             {
                 WebSocketReceiveResult read;
                 bool? answered = null;
-                using var deadline = input is null ? new SessionMessageDeadline(time, null, executing: true) : state.Wait();
+                var deadline = input is null ? state.Answer : state.Wait();
                 var closing = Task.CompletedTask;
                 var expiry = deadline.Token.Register(() => closing = ExpireAsync());
                 if (input is not null)
                 {
                     input.Progress = (bytes, started) => deadline.Progress(bytes, started);
+                }
+
+                if (answers is not null)
+                {
+                    answers.Progress = (bytes, started) => deadline.Progress(bytes, started);
                 }
 
                 var maxBytes = input is null ? HomeSessionFrames.MaxBytes : SqlBatch.MaxBytes;
@@ -268,11 +278,6 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                     do
                     {
                         read = await from.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
-                        if (input is null && read.Count > 0)
-                        {
-                            deadline.Progress(read.Count);
-                        }
-
                         if (read.MessageType == WebSocketMessageType.Close)
                         {
                             break;
@@ -301,12 +306,30 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                     while (!read.EndOfMessage);
                     deadline.Complete();
                     input?.Complete();
+                    answers?.Complete();
                     if (read.MessageType != WebSocketMessageType.Close)
                     {
                         if (input is not null)
                         {
                             using var call = JsonDocument.Parse(message.GetBuffer().AsMemory(0, (int)message.Length));
-                            state.Sent('R', call.RootElement.TryGetProperty("type", out var kind) && kind.GetString() == "begin");
+                            var kind = call.RootElement.TryGetProperty("type", out var type) ? type.GetString() : null;
+                            var snapshot = state.State;
+                            var transactionOpen = snapshot.Transaction && !snapshot.Pending;
+                            var commits = kind == "commit";
+                            if (kind == "execute" && call.RootElement.TryGetProperty("statements", out var statements) && statements.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var statement in statements.EnumerateArray())
+                                {
+                                    if (statement.TryGetProperty("sql", out var sql) && sql.ValueKind == JsonValueKind.String
+                                        && SqlScript.Classify(sql.GetString()) is SqlStatementPlan plan)
+                                    {
+                                        commits |= plan.Kind == SqlStatementKind.Commit || !transactionOpen && plan.Kind == SqlStatementKind.Write;
+                                        transactionOpen = plan.Kind == SqlStatementKind.Begin || transactionOpen && plan.Kind is not (SqlStatementKind.Rollback or SqlStatementKind.Commit);
+                                    }
+                                }
+                            }
+
+                            state.Sent('R', kind == "begin", commits, call.RootElement.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.Number && id.TryGetInt64(out var number) ? number : null);
                         }
                         else
                         {
@@ -330,18 +353,49 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                         input.Progress = null;
                     }
 
+                    if (answers is not null)
+                    {
+                        answers.Progress = null;
+                    }
+
                     await expiry.DisposeAsync().ConfigureAwait(false);
                     await closing.ConfigureAwait(false);
+                    if (input is not null)
+                    {
+                        deadline.Dispose();
+                    }
                 }
 
                 async Task ExpireAsync()
                 {
+                    beginClose();
                     if (input is not null)
                     {
-                        await state.DrainAsync(cancellationToken).ConfigureAwait(false);
+                        try
+                        {
+                            await state.DrainAsync(cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            var pending = state.Pending;
+                            if (pending.Commits)
+                            {
+                                await RefuseAsync(from, SqlErrors.WriteOutcomeUnknown, SqlErrors.OutcomeUnknown(home).Message, cancellationToken, pending.Id).ConfigureAwait(false);
+                            }
+
+                            to.Abort();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        var pending = state.Pending;
+                        var error = pending.Commits ? SqlErrors.OutcomeUnknown(home) : HomeSessions.Unreachable(home);
+                        await RefuseAsync(to, error.Code, error.Message, cancellationToken, pending.Id).ConfigureAwait(false);
+                        from.Abort();
+                        return;
                     }
 
-                    beginClose();
                     var reason = deadline.IsPartial ? "incomplete message timeout exceeded"
                         : deadline.IsTransaction ? SqlErrors.TransactionExpired.Message : "session idle timeout exceeded";
                     await CloseAsync(from, WebSocketCloseStatus.PolicyViolation, reason, cancellationToken).ConfigureAwait(false);
@@ -372,7 +426,15 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             }
 
             beginClose();
-            await CloseAsync(to, WebSocketCloseStatus.EndpointUnavailable, "the relayed session ended", cancellationToken).ConfigureAwait(false);
+            if (input is null && state.Pending.Commits && !cancellationToken.IsCancellationRequested)
+            {
+                var pending = state.Pending;
+                await RefuseAsync(to, SqlErrors.WriteOutcomeUnknown, SqlErrors.OutcomeUnknown(home).Message, cancellationToken, pending.Id).ConfigureAwait(false);
+            }
+            else
+            {
+                await CloseAsync(to, WebSocketCloseStatus.EndpointUnavailable, "the relayed session ended", cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {

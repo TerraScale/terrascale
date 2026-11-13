@@ -87,7 +87,7 @@ internal sealed class SqlSocket(
         await using var cutOff = _revoked.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the credential was revoked")).ConfigureAwait(false);
         using var admitting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, fence);
         (_database, _canWrite, _fence, _admitting) = (database, canWrite, fence, admitting.Token);
-        using var preauthentication = sessions.TryPreauthenticate(IpAllowlists.ClientOf(context), AuthDeadline, cancellationToken);
+        using var preauthentication = sessions.TryPreauthenticate(IpAllowlists.ClientOf(context), AuthDeadline, cancellationToken, database?.OrganizationId);
         if (preauthentication is null)
         {
             await RefuseAsync(null, SessionLimit, cancellationToken).ConfigureAwait(false);
@@ -430,7 +430,7 @@ internal sealed class SqlSocket(
             SqlBatchOutcome outcome;
             try
             {
-                outcome = await RunAsync(request, cancellationToken).ConfigureAwait(false);
+                outcome = await RunAsync(request, Listeners.ArrivedOn(context) == TerraBaseListener.Internal ? lifetime.ApplicationStopping : cancellationToken).ConfigureAwait(false);
             }
             catch (StorageCopyFaultedException)
             {
@@ -593,6 +593,12 @@ internal sealed class SqlSocket(
             var (statements, errors) = operations.Statements(Database);
             logs.Record(Database, "OTHER", route, status, elapsed, operations.Count(Database),
                 EntityIds.New().ToString(), statements, errors);
+        }
+
+        if (outcome is SqlBatchFailure { Error.Code: SqlErrors.WriteOutcomeUnknown })
+        {
+            await CloseAsync(WebSocketCloseStatus.InternalServerError, SqlErrors.WriteOutcomeUnknown).ConfigureAwait(false);
+            return false;
         }
 
         return true;

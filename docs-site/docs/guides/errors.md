@@ -481,6 +481,10 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 503, SQLSTATE 08007 — a write committed or may have committed: its durable copy in another region was not confirmed in time, or the region you called forwarded it, or a SQL session's commit, to the database's writer and got no answer. Read what the write would have produced before repeating it, above all for a non-idempotent write. This classification depends on sending the request, not its transaction age. A delayed commit answer remains the commit's real result. An old server forwarding this unfamiliar code preserves its code and message but uses its unknown-code mapping, SQLSTATE 0A000 and HTTP 400. Mixed builds do not guarantee the new mapping or transaction-wait behaviour end to end. Retry: not blindly.
 
+Relayed answers use the same progress rule as input. Once an answer starts arriving, its deadline is its start plus 30 seconds plus the bytes received divided by 16 KiB/s. Before the first answer byte, the entry waits at most ten minutes, then closes without cancelling accepted execution or commit at the home. A close drain shares the two-second closing budget from the start of closing. Transaction age limits govern waiting for input; there is no hard wall-clock lifetime for a transaction. There is no end-to-end guarantee while old and new builds serve together.
+
+A session closes after a `write_outcome_unknown` answer (SQLSTATE 08007, HTTP 503). WebSocket uses close reason `write_outcome_unknown`; PostgreSQL sends a fatal error stating that the session is closed. The outcome is unknown, not rolled back or retryable. Reconcile by reading back the expected data from a new session before writing again.
+
 ### `wrong_region`
 
 421, SQLSTATE 08004 — the region you called does not serve the database, or could not get the request to its writer; nothing was written. Resend to the region named in the response. Retry: yes.

@@ -100,7 +100,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     return;
                 }
 
-                await services.GetRequiredService<PostgresRelay>().RunAsync(relay.Home, relay.Startup, relay.Client, input, pipe, closed).ConfigureAwait(false);
+                await services.GetRequiredService<PostgresRelay>().RunAsync(relay.Home, relay.Tenant, relay.Startup, relay.Client, input, pipe, closed).ConfigureAwait(false);
             }
 
             if (session is not null)
@@ -114,7 +114,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, session.Until,
                     async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, session.Project, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
                     refused, services.GetRequiredService<TimeProvider>());
-                await ServeAsync(session, input, output, closed).ConfigureAwait(false);
+                await ServeAsync(session, input, output, relayed, closed).ConfigureAwait(false);
             }
         }
         catch (StorageCopyFaultedException)
@@ -462,8 +462,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return new PgError("3D000", "the database does not exist in this project");
     }
 
-    private async Task ServeAsync(Session session, PipeReader input, PgWriter output, CancellationToken cancellationToken)
+    private async Task ServeAsync(Session session, PipeReader input, PgWriter output, bool relayed, CancellationToken cancellationToken)
     {
+        var executing = relayed ? services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping : cancellationToken;
         var failed = false;
         while (true)
         {
@@ -523,7 +524,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 switch ((char)type)
                 {
                     case 'Q':
-                        if (await QueryAsync(session, message.CString(), output, cancellationToken).ConfigureAwait(false) is { } error)
+                        if (await QueryAsync(session, message.CString(), output, executing).ConfigureAwait(false) is { } error)
                         {
                             Fail(session, output, error);
                             if (error.Fatal)
@@ -545,7 +546,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                         break;
                     case 'P' or 'B' or 'D' or 'E' or 'C':
-                        if (!failed && await ExtendedAsync(session, (char)type, message, output, cancellationToken).ConfigureAwait(false) is { } refused)
+                        if (!failed && await ExtendedAsync(session, (char)type, message, output, executing).ConfigureAwait(false) is { } refused)
                         {
                             Fail(session, output, refused);
                             if (refused.Fatal)
@@ -1285,50 +1286,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             {
                 _running?.Cancel();
             }
-        }
-    }
-    private sealed class PgReader(byte[] data)
-    {
-        private static readonly UTF8Encoding Utf8 = new(false, true);
-        private int _position;
-
-        public byte Byte() => Take(1)[0];
-
-        public short Int16() => BinaryPrimitives.ReadInt16BigEndian(Take(2));
-
-        public int Int32() => BinaryPrimitives.ReadInt32BigEndian(Take(4));
-
-        public int Count() => Int16() is >= 0 and var count ? count : throw new InvalidDataException("negative count");
-
-        public byte[]? Bytes() => Int32() is var length and >= 0 ? Take(length).ToArray() : null;
-
-        public string CString()
-        {
-            var end = Array.IndexOf(data, (byte)0, _position);
-            if (end < 0)
-            {
-                throw new InvalidDataException("unterminated string");
-            }
-
-            try
-            {
-                return Utf8.GetString(Take(end - _position + 1)[..^1]);
-            }
-            catch (DecoderFallbackException)
-            {
-                throw new InvalidDataException("invalid UTF-8");
-            }
-        }
-
-        private ReadOnlySpan<byte> Take(int count)
-        {
-            if (count < 0 || count > data.Length - _position)
-            {
-                throw new InvalidDataException("message shorter than its contents");
-            }
-
-            _position += count;
-            return data.AsSpan(_position - count, count);
         }
     }
 }

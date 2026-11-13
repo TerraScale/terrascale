@@ -1,21 +1,56 @@
 using TerraBase.Features.Sql;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.Qos;
 
 internal sealed class SessionRelay(TimeProvider time) : IDisposable
 {
     private readonly Lock _gate = new();
-    private readonly Queue<(char Reply, long Sent)> _pending = new();
+    private readonly Queue<(char Reply, long Sent, bool Commits, long? Id, Action<bool>? Completed)> _pending = new();
     private readonly SqlTransactionClock _transaction = new(time);
     private SessionMessageDeadline? _waiting;
     private TaskCompletionSource? _settled;
     private bool _inTransaction;
     private bool _failed;
+    private readonly SessionMessageDeadline _answer = new(time, null, executing: true);
+
+    public SessionMessageDeadline Answer => _answer;
+
+    public (bool Transaction, bool Pending) State
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return (_inTransaction, _pending.Count > 0);
+            }
+        }
+    }
+
+    public (bool Commits, long? Id) Pending
+    {
+        get
+        {
+            lock (_gate)
+            {
+                foreach (var call in _pending)
+                {
+                    if (call.Commits)
+                    {
+                        return (true, call.Id);
+                    }
+                }
+
+                return (false, _pending.TryPeek(out var first) ? first.Id : null);
+            }
+        }
+    }
 
     public void Dispose()
     {
         lock (_gate)
         {
+            _answer.Dispose();
             _waiting?.Dispose();
             _waiting = null;
         }
@@ -30,7 +65,7 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
         }
     }
 
-    public void Sent(char reply, bool begins = false)
+    public void Sent(char reply, bool begins = false, bool commits = false, long? id = null, Action<bool>? completed = null)
     {
         lock (_gate)
         {
@@ -49,26 +84,39 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
 
                 if (_pending.Count == 0)
                 {
+                    _answer.ExpectAnswer(true);
                     _settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 }
 
-                _pending.Enqueue((reply, time.GetTimestamp()));
+                _pending.Enqueue((reply, time.GetTimestamp(), commits, id, completed));
             }
         }
     }
 
-    public Task DrainAsync(CancellationToken cancellationToken)
+    public async Task DrainAsync(CancellationToken cancellationToken)
     {
+        Task settled;
         lock (_gate)
         {
-            return (_settled?.Task ?? Task.CompletedTask).WaitAsync(cancellationToken);
+            settled = _settled?.Task ?? Task.CompletedTask;
         }
+
+        using var closing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _answer.Token);
+        closing.CancelAfter(Shutdown.DrainBudget - TimeSpan.FromMilliseconds(250));
+        await settled.WaitAsync(closing.Token).ConfigureAwait(false);
     }
 
     public void Answered(char reply, bool? transaction = null)
     {
         lock (_gate)
         {
+            var pending = _pending.Count;
+            var answers = _pending.TryPeek(out var expected) && (expected.Reply == reply || expected.Reply == 'T' && reply == 'n'
+                || expected.Reply == 'C' && reply is 's' or 'I');
+            if (answers || reply == 'E' && expected.Reply != 'Z')
+            {
+                _answer.Complete();
+            }
             if (transaction is { } open)
             {
                 _inTransaction = open;
@@ -92,13 +140,17 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
                 _failed = true;
                 while (_pending.TryPeek(out var next) && next.Reply != 'Z')
                 {
-                    _pending.Dequeue();
+                    _pending.Dequeue().Completed?.Invoke(false);
                 }
             }
-            else if (_pending.TryPeek(out var next) && (next.Reply == reply || next.Reply == 'T' && reply == 'n'
-                || next.Reply == 'C' && reply is 's' or 'I'))
+            else if (answers)
             {
-                _pending.Dequeue();
+                _pending.Dequeue().Completed?.Invoke(true);
+            }
+
+            if (_pending.Count != pending)
+            {
+                _answer.ExpectAnswer(_pending.Count > 0);
             }
 
             if (_pending.Count == 0)

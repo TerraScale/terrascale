@@ -9,6 +9,7 @@ internal sealed class SessionMessageDeadline : IDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly ITimer _timer;
     private bool _completed;
+    private bool _disposed;
     private bool _expired;
     private bool _cancelling;
     private long? _started;
@@ -67,6 +68,20 @@ internal sealed class SessionMessageDeadline : IDisposable
         CancelExpired();
     }
 
+    public void ExpectAnswer(bool expected)
+    {
+        lock (_gate)
+        {
+            if (!_expired && !_disposed)
+            {
+                _completed = !expected;
+                _started = null;
+                _bytes = 0;
+                Arm(expected ? QosSessions.AnswerTimeout : Timeout.InfiniteTimeSpan);
+            }
+        }
+    }
+
     public void Resume(TimeSpan? transaction)
     {
         lock (_gate)
@@ -101,7 +116,7 @@ internal sealed class SessionMessageDeadline : IDisposable
     {
         lock (_gate)
         {
-            _completed = true;
+            _completed = _disposed = true;
             _timer.Dispose();
             if (!_cancelling)
             {

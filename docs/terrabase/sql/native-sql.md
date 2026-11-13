@@ -81,3 +81,7 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 SQL reads are free with monthly fair use. Shape reads are free and unmetered. Committed writes bill the larger of changed rows and started 4 KiB of database growth; rollback and refused statements add no write units. See [operation allowances](../operation-allowance.md).
 
 SQL storage counts toward the organization quota. The used-page delta is checked at commit and persisted in `_tb_sql_storage`; SQL commit offsets invalidate cached accounting. [Continuous backup](../backup.md) captures committed SQL changes, including schema changes, for recovery.
+
+Relayed answers use the same progress rule as input. Once an answer starts arriving, its deadline is its start plus 30 seconds plus the bytes received divided by 16 KiB/s. Before the first answer byte, the entry waits at most ten minutes, then closes without cancelling accepted execution or commit at the home. A close drain shares the two-second closing budget from the start of closing. Transaction age limits govern waiting for input; there is no hard wall-clock lifetime for a transaction. There is no end-to-end guarantee while old and new builds serve together.
+
+A session closes after a `write_outcome_unknown` answer (SQLSTATE 08007, HTTP 503). WebSocket uses close reason `write_outcome_unknown`; PostgreSQL sends a fatal error stating that the session is closed. The outcome is unknown, not rolled back or retryable. Reconcile by reading back the expected data from a new session before writing again.
