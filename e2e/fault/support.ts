@@ -192,14 +192,18 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
     await expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
       message: 'the restarted writer opens its listeners',
     }).toBe(true);
-    if (access) {
-      const response = await fetch(`http://127.0.0.1:${node.port}${access.path}`, { headers: { authorization: `Bearer ${access.token}` } });
-      expect([200, 503], 'a valid credential succeeds or reports that startup is not ready').toContain(response.status);
-      console.log(`startup authentication ${node.name}: HTTP ${response.status}`);
-    }
     await expect.poll(() => nodeStatus(node), {
       message: 'the restarted node restores its ready regional role',
     }).toMatchObject({ writer, ready: true });
+    if (access) {
+      const response = await fetch(`http://127.0.0.1:${node.port}${access.path}`, { headers: { authorization: `Bearer ${access.token}` } });
+      if (response.status === 503) {
+        expect(await response.json()).toMatchObject({ error: { code: 'auth_unavailable' } });
+      } else {
+        expect(response.status, 'a valid credential is never refused after writer admission returns').toBe(200);
+      }
+      console.log(`startup authentication after writer admission ${node.name}: HTTP ${response.status}`);
+    }
     await expect.poll(async () => {
       const response = await fetch(`http://127.0.0.1:${node.port + 1011}/metrics`);
       expect(response.status).toBe(200);
