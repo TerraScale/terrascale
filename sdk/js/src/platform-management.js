@@ -145,7 +145,7 @@ function signInToken(token) {
 function projectApiKey(value) {
   if (typeof value !== "string") throw new TypeError("projectApiKey must be a canonical platform project API key.");
   const body = value.startsWith("sk_") ? value.slice(3) : value;
-  if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0123456789abcdefghjkmnpqrstvwxyz]{52}$/u.test(body))
+  if (!/^(?:sk_)?[0-7][0-9A-HJKMNP-TV-Z]{25}_[0123456789abcdefghjkmnpqrstvwxyz]{52}$/u.test(body))
     throw new TypeError("projectApiKey must be a canonical platform project API key.");
   return value;
 }

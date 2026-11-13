@@ -152,7 +152,7 @@ export class V1Transport {
     if (apiKey !== undefined) {
       if (config.token !== undefined) throw new TypeError("Supply exactly one of token or apiKey.");
       const body = apiKey.startsWith("sk_") ? apiKey.slice(3) : apiKey;
-      if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$/u.test(body))
+      if (!/^(?:sk_)?[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$/u.test(body))
         throw new TypeError("apiKey must be optional sk_, a canonical ULID, an underscore and 52 lowercase Base32 characters.");
       this.#authOrigin = keyExchangeOrigin(authBaseUrl, config.endpointResolver === undefined ? canonicalBaseUrl(config.baseUrl ?? publicBaseUrl) : undefined);
       this.#apiKeyBasic = `Basic ${btoa(`${body.slice(0, 26)}:${apiKey}`)}`;
