@@ -27,6 +27,8 @@ internal closed record class SqlFailure;
 
 internal sealed record class Error : SqlFailure;
 
+internal sealed record class KnownError : SqlFailure;
+
 internal sealed record class StorageFailure : SqlFailure;
 
 internal sealed record class Syntax : SqlFailure;
