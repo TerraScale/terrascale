@@ -8,6 +8,7 @@ import { production, stateDir } from '../support/stack';
 import { saveSecret } from '../support/state';
 
 test.skip(production, 'key rotation requires restarting a throwaway node');
+test.describe.configure({ mode: 'default' });
 
 test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining wrappers', async () => {
   mkdirSync(stateDir, { recursive: true });

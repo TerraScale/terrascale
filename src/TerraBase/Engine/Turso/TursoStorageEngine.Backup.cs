@@ -89,6 +89,83 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
+    public async ValueTask PreserveDatabaseAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        var (key, path) = Locate(database);
+        while (true)
+        {
+            Task? pending;
+            TursoDatabaseStore? retired = null;
+            await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                ThrowIfIntentPending(key);
+                pending = (Task?)_initializing.GetValueOrDefault(key) ?? _migrating.GetValueOrDefault(key);
+                if (pending is null)
+                {
+                    if (_stores.TryRemove(key, out var store))
+                    {
+                        retired = store;
+                        await Io.RunAsync(() => { store.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
+                        await Pool.DrainedAsync(store).WaitAsync(QueryBudget, Time, cancellationToken).ConfigureAwait(false);
+                        if (Pool.FailedClosesOf(store) > 0)
+                        {
+                            throw new IOException("the previous handoff database still has native handles; all files are preserved");
+                        }
+                    }
+                    await Io.RunAsync(() =>
+                    {
+                        RejectDatabaseLinks(path);
+                        var directory = Path.GetDirectoryName(path)!;
+                        if (!Directory.Exists(directory))
+                        {
+                            return true;
+                        }
+                        var files = Directory.GetFiles(directory, Path.GetFileName(path) + "*")
+                            .Where(file => file == path || file.StartsWith(path + "-", StringComparison.Ordinal)
+                                || file.StartsWith(path + ".", StringComparison.Ordinal)).ToArray();
+                        if (files.Length == 0)
+                        {
+                            return true;
+                        }
+                        var retained = Path.Combine(_dataDirectory, ".handoff", EntityIds.New().ToString(), key.Organization, key.Project);
+                        DatabaseKeys.RejectLink(Path.Combine(_dataDirectory, ".handoff"));
+                        Directory.CreateDirectory(retained);
+                        for (var ancestor = retained; ; ancestor = Path.GetDirectoryName(ancestor)!)
+                        {
+                            DirectorySync(ancestor);
+                            if (ancestor == _dataDirectory)
+                            {
+                                break;
+                            }
+                        }
+                        foreach (var file in files.OrderBy(file => file == path))
+                        {
+                            DatabaseKeys.RejectLink(file);
+                            File.Move(file, Path.Combine(retained, Path.GetFileName(file)), overwrite: false);
+                            DirectorySync(retained);
+                            DirectorySync(directory);
+                        }
+                        Interlocked.Increment(ref _fileEpoch);
+                        return true;
+                    }, CancellationToken.None).ConfigureAwait(false);
+                    _ = _publishing.TryRemove(key, out _);
+                    return;
+                }
+            }
+            finally
+            {
+                ExitCreation();
+                if (retired is not null)
+                {
+                    Notify(DatabaseDeleted, retired, key.Database);
+                }
+            }
+            await pending.WaitAsync(QueryBudget, Time, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public async ValueTask ImportDatabaseAsync(TenantContext database, string file, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(file);

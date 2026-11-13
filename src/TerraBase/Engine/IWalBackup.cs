@@ -29,5 +29,7 @@ public interface IWalBackup
 
     ValueTask ImportDatabaseAsync(TenantContext database, string file, CancellationToken cancellationToken);
 
+    ValueTask PreserveDatabaseAsync(TenantContext database, CancellationToken cancellationToken);
+
     ValueTask<byte[]> ChecksumAsync(string file, CancellationToken cancellationToken);
 }

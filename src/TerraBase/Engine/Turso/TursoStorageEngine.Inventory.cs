@@ -155,7 +155,7 @@ internal sealed partial class TursoStorageEngine
                 || name.Contains(".rewriting", StringComparison.Ordinal) || name.Contains(".migrating", StringComparison.Ordinal));
             try
             {
-                if (name.Contains(".promote.db", StringComparison.Ordinal)
+                if (area == ".handoff" || name.Contains(".promote.db", StringComparison.Ordinal)
                     || name.Contains(".key.rewrapping", StringComparison.Ordinal) || name.Contains(".creating", StringComparison.Ordinal)
                     || name.Contains(".key.tmp", StringComparison.Ordinal)
                     || name.EndsWith(".key", StringComparison.Ordinal) && !File.Exists(path[..^4]))
@@ -163,7 +163,7 @@ internal sealed partial class TursoStorageEngine
                     retainedFiles++;
                     retainedBytes += ((FileInfo)entry).Length;
                 }
-                if ((ScratchDirectories.Contains(area) || payloadArtifact) && ((FileInfo)entry).Length > 0
+                if ((ScratchDirectories.Contains(area) || area == ".handoff" || payloadArtifact) && ((FileInfo)entry).Length > 0
                     && !(area == ".tmp" && EmptyNativeScratch(path)))
                 {
                     Unknown(counts);

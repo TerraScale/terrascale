@@ -309,7 +309,9 @@ internal sealed partial class RegionalHandoff(
 
             try
             {
-                await services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
+                var imports = services.GetRequiredService<IWalBackup>();
+                await imports.PreserveDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+                await imports.ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
                 _prepared[position.Database] = position.Revision;
             }
             catch
