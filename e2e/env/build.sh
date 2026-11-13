@@ -14,6 +14,7 @@ case $service in
     rm -rf "$out/terrabase"
     cp -a src/TerraBase/bin/Release/net11.0 "$out/terrabase"
     python3 e2e/fault/build-receipts.py "$root" "$out"
+    python3 e2e/usage/build.py "$root" "$out/usage"
     ;;
   ts-auth)
     dotnet restore src/TerraScale.Authentication/TerraScale.Authentication.csproj --locked-mode

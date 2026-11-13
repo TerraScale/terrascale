@@ -86,7 +86,7 @@ internal sealed partial class UsageMeter
                         }
 
                         var saved = JsonSerializer.Deserialize(record.Json.Span, ManagementJsonContext.Default.UsageTotals)!;
-                        units = new(units.Reads + saved.Reads, units.Writes + saved.Writes) { StorageByteHours = checked(units.StorageByteHours + saved.StorageByteHours) };
+                        units = new(units.Reads + saved.Reads, units.Writes + saved.Writes) { StorageByteHours = checked(units.StorageByteHours + saved.StorageByteHours), Persisted = true };
                     }
 
                     if (!page.HasMore)
