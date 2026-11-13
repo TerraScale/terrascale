@@ -35,7 +35,8 @@ jobs:
           RUN_UPDATED: ${{ github.event.workflow_run.updated_at }}
           COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
           RELEASE_STEPS: '["Release to every region", "Release the pinned arm64 digest to each region"]'
-          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main", "main-auth", "main-auth-ordered", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
+          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main-auth", "main-auth-ordered", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
+          PUBLISH_JOBS: '["main"]'
         run: |
           set -euo pipefail
           [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
@@ -61,9 +62,9 @@ jobs:
           done > "$RUNNER_TEMP/jobs.json"
           released=$(jq -rs --argjson steps "$RELEASE_STEPS" '[.[] | .id as $id | .jobs[]
             | select(any(.steps[]; .conclusion == "success" and (.name | IN($steps[])))) | "\(.name) in run \($id)"] | join(", ")' "$RUNNER_TEMP/jobs.json")
-          unknown=$(jq -rs --argjson runs "$runs" --argjson known "$RELEASE_JOBS" --argjson steps "$RELEASE_STEPS" '[.[] | .id as $id
+          unknown=$(jq -rs --argjson runs "$runs" --argjson known "$RELEASE_JOBS" --argjson publish "$PUBLISH_JOBS" --argjson steps "$RELEASE_STEPS" '[.[] | .id as $id
             | ($runs[] | select(.id == $id)) as $run | $known[$run.path] as $names | [.jobs[] | select(.name | IN($names[]))] as $jobs
-            | (if $run.event == "push" and (.jobs | length) > 0 and ($jobs | length) == 0 then "\($run.name) run \($id) has none of the jobs \($names | join(", "))" else empty end),
+            | (if $run.event == "push" and (.jobs | length) > 0 and ($jobs | length) == 0 and (any(.jobs[]; .name | IN($publish[])) | not) then "\($run.name) run \($id) has none of the jobs \($names | join(", "))" else empty end),
               ($jobs[] | select(.conclusion == "success" and (any(.steps[]; .name | IN($steps[])) | not))
                 | "job \(.name) of \($run.name) run \($id) has none of the steps \($steps | join(", "))")] | join("; ")' "$RUNNER_TEMP/jobs.json")
           if [ -n "$unknown" ]; then
