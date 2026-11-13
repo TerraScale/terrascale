@@ -138,7 +138,7 @@ internal sealed partial class EngineManagementService
 
             var restored = record.Database with { ExpiresAt = null };
             await CatalogTables.PutDatabaseAsync(transaction, restored, cancellationToken).ConfigureAwait(false);
-            await RemoveDeletedAsync(transaction, record, cancellationToken).ConfigureAwait(false);
+            await DeletedDatabases.RemoveAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             return restored;
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
@@ -228,7 +228,7 @@ internal sealed partial class EngineManagementService
                 return false;
             }
             _ = await UnregisterRecordAsync(transaction, current.Storage, current.Database, token, customerDeletion: true).ConfigureAwait(false);
-            await RemoveDeletedAsync(transaction, current, token).ConfigureAwait(false);
+            await DeletedDatabases.RemoveAsync(transaction, current, token).ConfigureAwait(false);
             return true;
         }, cancellationToken).ConfigureAwait(false);
         if (result is true)
@@ -247,12 +247,6 @@ internal sealed partial class EngineManagementService
             false => new Conflict("the deleted database changed during purge", "database_purging"),
             Unavailable error => error,
         };
-    }
-
-    private static async ValueTask RemoveDeletedAsync(IStorageTransaction transaction, DeletedDatabaseRecord record, CancellationToken cancellationToken)
-    {
-        _ = await transaction.DeleteAsync(DeletedDatabases.Kind, record.Database.Id, cancellationToken).ConfigureAwait(false);
-        _ = await transaction.DeleteAsync(DeletedDatabases.Project(record.Database.ProjectId), record.Database.Id, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask PurgeDeletedDatabasesAsync(CancellationToken cancellationToken)
@@ -327,7 +321,7 @@ internal sealed partial class EngineManagementService
                 return false;
             }
             _ = await UnregisterRecordAsync(transaction, record.Storage, record.Database, token, customerDeletion: true).ConfigureAwait(false);
-            await RemoveDeletedAsync(transaction, record, token).ConfigureAwait(false);
+            await DeletedDatabases.RemoveAsync(transaction, record, token).ConfigureAwait(false);
             return true;
         }, cancellationToken).ConfigureAwait(false);
         if (result is true)

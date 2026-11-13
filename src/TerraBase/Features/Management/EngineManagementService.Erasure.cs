@@ -147,8 +147,14 @@ internal sealed partial class EngineManagementService
             ManagementJsonContext.Default.DeletedDatabaseRecord, record => record.Database.Id, token).ConfigureAwait(false);
         foreach (var record in deleted.Items)
         {
+            using var authority = await retention.EnterAsync(record.Database.Id, token).ConfigureAwait(false);
+            if (authority is null)
+            {
+                return false;
+            }
+            authority.Fence(transaction);
             _ = await UnregisterRecordAsync(transaction, record.Storage, record.Database, token, customerDeletion: true).ConfigureAwait(false);
-            await RemoveDeletedAsync(transaction, record, token).ConfigureAwait(false);
+            await DeletedDatabases.RemoveAsync(transaction, record, token).ConfigureAwait(false);
         }
         return deleted.Next is null;
     }
