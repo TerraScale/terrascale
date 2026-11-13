@@ -138,6 +138,8 @@ internal sealed partial class TursoDatabaseStore(
     internal TursoRevisionLedger Revisions { get; } = new(path, schemaMemory, tenant);
     private volatile StrongBox<Ulid> _incarnation = new(Ulid.Empty);
 
+    internal Ulid CreationIdentity { get; set; }
+
     public Ulid Incarnation => _incarnation.Value;
 
     public TenantContext? Tenant { get; } = tenant;
@@ -607,6 +609,9 @@ internal sealed partial class TursoDatabaseStore(
             {
                 await session.ExecuteAsync(WriteLane, () =>
                 {
+                    ThrowIfUnavailable();
+                    using var refused = ReadCancellation(cancellationToken);
+                    using var interrupted = refused.Token.Register(() => TursoBindings.Interrupt(session.Native));
                     Revisions.Attach(session.Connection);
                     return true;
                 }, cancellationToken).ConfigureAwait(false);
@@ -658,27 +663,23 @@ internal sealed partial class TursoDatabaseStore(
             }
 
             await using var operation = await BeginOperationAsync(CancellationToken.None).ConfigureAwait(false);
+            using var refused = ReadCancellation(CancellationToken.None);
+            using var interrupted = refused.Token.Register(() => TursoBindings.Interrupt(writer.Native));
             await WriteLane.RunAsync(() =>
             {
                 try
                 {
-                    if (Revisions.IsAttachedTo(writer.Connection))
-                    {
-                        Revisions.Checkpoint(writer.Connection);
-                    }
-                    else
-                    {
-                        Scalar(writer.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
-                    }
+                    ThrowIfUnavailable();
+                    refused.Token.ThrowIfCancellationRequested();
+                    CheckpointWriter(writer);
                 }
                 finally
                 {
                     Discard(writer);
                     pool.CloseIdleOf(this);
                 }
-
                 return true;
-            }, CancellationToken.None).ConfigureAwait(false);
+            }, refused.Token).ConfigureAwait(false);
             operation?.Complete();
             WritersEvicted?.Add(1);
         }
@@ -1249,12 +1250,17 @@ internal sealed partial class TursoDatabaseStore(
 
     internal async Task BootstrapAsync(CancellationToken cancellationToken)
     {
+        using var refused = ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         var session = await RentAsync(cancellationToken).ConfigureAwait(false);
+        using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(session.Native));
         try
         {
             await session.ExecuteAsync(io, () =>
             {
 
+                ThrowIfUnavailable();
+                cancellationToken.ThrowIfCancellationRequested();
                 session.Settings(queryOnly: false, full: false);
 
                 Format = Bootstrap(name, session.Connection, cancellationToken);

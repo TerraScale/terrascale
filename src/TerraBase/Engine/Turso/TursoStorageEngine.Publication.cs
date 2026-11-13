@@ -68,9 +68,9 @@ internal sealed partial class TursoStorageEngine
                 && (IsId(database) || database is SystemName or IntentName) && IsId(nonce))
             {
                 var target = Path.Combine(directory, database + FileExtension);
-                if (!File.Exists(target))
+                if (!File.Exists(target) && !File.Exists(target + "-wal"))
                 {
-                    DeleteSidecars(target);
+                    DeleteFileIfPresent(target + DatabaseKeys.Suffix);
                 }
                 DeleteFiles(Path.Combine(directory, name));
                 changed = true;

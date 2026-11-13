@@ -18,6 +18,8 @@ internal sealed partial class TursoStorageEngine
 {
     private static readonly string[] ProofFiles = ["", "-wal"];
 
+    internal string CopyPath(TenantContext database) => Locate(database).Path;
+
     internal bool FileExists(TenantContext database) => HasDatabaseFiles(database, CancellationToken.None);
 
     internal async Task<StorageProof> RecoverCopyAsync(TenantContext database, Ulid incarnation, Ulid replacement, CancellationToken cancellationToken)

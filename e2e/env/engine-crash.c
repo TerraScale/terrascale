@@ -44,9 +44,21 @@ static int proof_failure(const char *path) {
     FILE *file = fopen(control, "r");
     if (!file) return 0;
     char kind[8] = {0};
-    int read = fscanf(file, "%7s", kind);
+    int parsed = fscanf(file, "%7s", kind);
     fclose(file);
-    if (read != 1) return 0;
+    if (parsed != 1) return 0;
+    if (!strcmp(kind, "hold")) {
+        char release[4096];
+        (void)snprintf(release, sizeof(release), "%s.release", control);
+        fprintf(stderr, "proof file claim held\n");
+        fflush(stderr);
+        int fd = open(release, O_RDONLY);
+        char signal;
+        if (fd >= 0) {
+            (void)read(fd, &signal, 1);
+            close(fd);
+        }
+    }
     errno = !strcmp(kind, "locked") ? EWOULDBLOCK : EIO;
     return 1;
 }

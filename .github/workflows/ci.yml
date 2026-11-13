@@ -83,6 +83,20 @@ jobs:
             engine:
               - src/TerraBase/Engine/**/!(AGENTS.md|CLAUDE.md)
               - src/vendor/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Backup/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Hosting/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Health/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Configuration/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Memory/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Qos/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Tenancy/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Program.cs
+              - src/TerraBase/TerraBase.csproj
+              - src/TerraBase/Features/Sql/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Postgres/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Shapes/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Sync/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Replicas/**/!(AGENTS.md|CLAUDE.md)
               - e2e/env/engine-crash*
               - e2e/env/build.sh
               - scripts/terrabase/**
@@ -802,7 +816,7 @@ jobs:
   journey:
     needs: changes
     if: >-
-      (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
+      (github.event_name == 'pull_request' && (needs.changes.outputs.journey == 'true' || needs.changes.outputs.engine == 'true'))
       || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
       || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
     uses: ./.github/workflows/journey.yml
@@ -816,4 +830,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:
-      - run: test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false
+      - run: |
+          test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false
+          test "${{ needs.changes.outputs.engine != 'true' || needs.journey.result == 'success' }}" = true

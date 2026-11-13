@@ -149,6 +149,10 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
             if (TursoStorageTransaction.Damaged(error))
             {
                 store?.NoteCopyFault("the file or its log reported damage while opening a session");
+                if (store is not null)
+                {
+                    await store.Flagged.ConfigureAwait(false);
+                }
             }
             if (Volatile.Read(ref opening))
             {

@@ -171,7 +171,10 @@ internal sealed partial class TursoStorageEngine
         var connectionString = await Encryption.ExistingAsync(path, Io, cancellationToken).ConfigureAwait(false);
         return await Io.RunAsync(() =>
         {
-            using var connection = new SqliteConnection(connectionString);
+            using var connection = new SqliteConnection(connectionString)
+            {
+                CloseRefusal = () => cancellationToken.IsCancellationRequested ? "the migration copy lease was refused" : null,
+            };
             cancellationToken.ThrowIfCancellationRequested();
             TursoSession.OpenExisting(connection, path);
             using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(TursoSession.Handle(connection)));
@@ -181,6 +184,7 @@ internal sealed partial class TursoStorageEngine
                 return false;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             Checkpoint(name, connection);
             cancellationToken.ThrowIfCancellationRequested();
             return true;

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Collections;
+using System.Linq;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -113,6 +115,100 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         Taps.Remove(database);
     }
 
+    private const BindingFlags Hidden = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    private static async Task FirstOpenAsync(IStorageEngine engine, TenantContext tenant, string code, CancellationToken cancellationToken)
+    {
+        var stores = (IDictionary)engine.GetType().GetField("_stores", Hidden)!.GetValue(engine)!;
+        var key = (tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!);
+        if (stores[key] is IDisposable previous)
+        {
+            previous.Dispose();
+            stores.Remove(key);
+        }
+        File.WriteAllText(Environment.GetEnvironmentVariable("ENGINE_INTEGRITY_CONTROL")!, "open" + code);
+        try
+        {
+            _ = await engine.OpenDatabaseAsync(tenant, cancellationToken);
+            throw new InvalidOperationException("the first session did not throw its injected engine error");
+        }
+        catch (SqliteException error) when (error.SqliteErrorCode is 10 or 11 or 26)
+        {
+            Console.WriteLine("first session open threw " + error.SqliteErrorCode);
+        }
+        var ledger = engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
+        var path = Path.Combine(Environment.GetEnvironmentVariable("TERRABASE_DATA_DIRECTORY")!, tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId + ".db");
+        var candidate = engine.GetType().GetMethod("CreateTenantStore", Hidden)!.Invoke(engine, [key, path])!;
+        candidate.GetType().GetProperty("Settled", Hidden)!.SetValue(candidate, true);
+        candidate.GetType().GetMethod("Rewritten", Hidden)!.Invoke(candidate, [Ulid.NewUlid()]);
+        try
+        {
+            await (Task)ledger.GetType().GetMethod("RecordIntentAsync", Hidden)!.Invoke(ledger, [candidate, cancellationToken])!;
+            throw new InvalidOperationException("a different incarnation overwrote the identity-free fault marker");
+        }
+        catch (Exception error) when (error.GetType().Name == "StorageCopyFaultedException")
+        {
+            Console.WriteLine("identity-free intent refused a different incarnation write");
+        }
+        ((IDisposable)candidate).Dispose();
+    }
+
+    private static async Task CheckpointRaceAsync(IStorageEngine engine, TenantContext tenant, bool close, CancellationToken cancellationToken)
+    {
+        var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+        await using (var write = await store.BeginDurableTransactionAsync(cancellationToken))
+        {
+            _ = await write.CommitAsync(cancellationToken);
+        }
+        var preparation = store.GetType().GetMethod("PrepareCopyAsync", Hidden)!.Invoke(store, [cancellationToken])!;
+        var preparing = (Task)preparation.GetType().GetMethod("AsTask")!.Invoke(preparation, null)!;
+        await preparing;
+        var operation = (IAsyncDisposable)preparing.GetType().GetProperty("Result")!.GetValue(preparing)!;
+        var lane = store.GetType().GetProperty("WriteLane", Hidden)!.GetValue(store)!;
+        var enqueue = lane.GetType().GetMethods().Single(method => method.Name == "RunAsync" && method.IsGenericMethod).MakeGenericMethod(typeof(bool));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var blocking = (Task<bool>)enqueue.Invoke(lane, [new Func<bool>(() =>
+        {
+            entered.SetResult();
+            release.Wait(cancellationToken);
+            return true;
+        }), cancellationToken])!;
+        await entered.Task;
+        var checkpoint = (Task)store.GetType().GetMethod(close ? "CheckpointOnCloseAsync" : "EvictWriterAsync", Hidden)!.Invoke(store, null)!;
+        if ((int)lane.GetType().GetProperty("Queued", Hidden)!.GetValue(lane)! == 0)
+        {
+            throw new InvalidOperationException("checkpoint was not queued behind the native blocker");
+        }
+        var path = (string)store.GetType().GetProperty("FilePath", Hidden)!.GetValue(store)!;
+        var before = File.ReadAllBytes(path + "-wal");
+        try
+        {
+            var ledger = engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
+            await (ValueTask)ledger.GetType().GetMethod("RecordAsync", Hidden)!.Invoke(ledger, [tenant, store.Incarnation, "the checkpoint race recorded proven damage"])!;
+        }
+        finally
+        {
+            release.Set();
+        }
+        await blocking;
+        try
+        {
+            await checkpoint;
+        }
+        catch (OperationCanceledException) when (store.Refused.IsCancellationRequested)
+        {
+            Console.WriteLine("queued checkpoint cancelled before native work");
+        }
+        operation.GetType().GetMethod("Complete")!.Invoke(operation, null);
+        await operation.DisposeAsync();
+        if (!before.AsSpan().SequenceEqual(File.ReadAllBytes(path + "-wal")))
+        {
+            throw new InvalidOperationException("a queued checkpoint changed the faulted WAL");
+        }
+        Console.WriteLine((close ? "close" : "eviction") + " race: WAL byte-identical after concurrent fault");
+    }
+
     public void OnNext(DiagnosticListener listener)
     {
         if (listener.Name == "Microsoft.Extensions.Hosting")
@@ -158,6 +254,18 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                 {
                     var engine = services.GetRequiredService<IStorageEngine>();
                     var tenant = new TenantContext(parts[1], PlanTier.Hobby, parts[2], parts[3]);
+                    if (parts[0] == "first-open")
+                    {
+                        await FirstOpenAsync(engine, tenant, parts[4], cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] is "eviction-race" or "close-race")
+                    {
+                        await CheckpointRaceAsync(engine, tenant, parts[0] == "close-race", cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
                     if (parts[0].StartsWith("tap-", StringComparison.Ordinal))
                     {
                         await ProbeTapAsync(engine, tenant, parts[0], cancellationToken);

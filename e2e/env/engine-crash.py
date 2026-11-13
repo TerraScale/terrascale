@@ -66,6 +66,7 @@ idle_drained = threading.Event()
 proof_finished = threading.Condition()
 proof_events = 0
 rollback_count = 0
+proof_held = threading.Event()
 
 
 def request(method, path, body=None, actor=True):
@@ -149,6 +150,8 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
                     idle_observed.append(retained_rows)
                     if retained_rows < 32:
                         idle_drained.set()
+                if b"proof file claim held" in line:
+                    proof_held.set()
                 if b"engine crash hook ready" in line:
                     hook_ready.set()
                 if b"Application started" in line:
@@ -353,6 +356,128 @@ def recovered(identities):
 
 
 def boundary_cases(selected=None):
+    if selected in (None, "first-open"):
+        for code in (10, 11, 26):
+            start(integrity=True)
+            identity = request("POST", f"/v1/projects/{project}/databases", {"name": "first-open-" + str(code)})["id"]
+            hook("first-open", identity, code)
+            assert hook("ledger", identity) == [0, 1]
+            before = files(identity)
+            unavailable(identity, "copy_faulted")
+            hook("migration-refused", identity)
+            assert hook("ledger", identity) == [0, 1]
+            assert files(identity) == before
+            end(hard=True, rollback=False)
+            start()
+            unavailable(identity, "copy_faulted")
+            hook("migration-refused", identity)
+            assert hook("ledger", identity) == [1, 0]
+            assert files(identity) == before
+            end()
+            print(
+                f"first session {code}: durable identity-free marker refused reopen, migration and overwrite; "
+                "permanent after restart",
+                flush=True,
+            )
+
+    if selected in (None, "creation"):
+        start(integrity=True)
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "creation-bound"})["id"]
+        replacement = request("POST", f"/v1/projects/{project}/databases", {"name": "different-creation"})["id"]
+        hook("first-open", identity, 11)
+        end()
+        directory = state / "data" / organization / project
+        for file in directory.glob(identity + ".db*"):
+            file.unlink()
+        for suffix in ("", ".key", "-wal"):
+            source = directory / (replacement + ".db" + suffix)
+            if source.exists():
+                shutil.copyfile(source, directory / (identity + ".db" + suffix))
+        before = files(identity)
+        start()
+        unavailable(identity, "recovery_pending")
+        assert hook("ledger", identity) == [0, 1], "the old intent faulted a different creation"
+        hook("migration-refused", identity)
+        assert files(identity) == before
+        end()
+        start()
+        assert hook("ledger", identity) == [0, 1]
+        assert files(identity) == before
+        request("DELETE", f"/v1/projects/{project}/databases/{identity}")
+        assert hook("ledger", identity) == [0, 0]
+        end()
+        print(
+            "different creation at same location: no inherited permanent fault; intent retained until explicit deletion",
+            flush=True,
+        )
+
+    if selected in (None, "checkpoints", "eviction", "close"):
+        for kind in ("eviction", "close"):
+            if selected in ("eviction", "close") and selected != kind:
+                continue
+            start()
+            identity = request("POST", f"/v1/projects/{project}/databases", {"name": kind + "-race"})["id"]
+            sql(project, identity, ["CREATE TABLE evidence(id INTEGER PRIMARY KEY);", "INSERT INTO evidence VALUES (1);"])
+            hook(kind + "-race", identity)
+            before = files(identity)
+            unavailable(identity, "copy_faulted")
+            end()
+            assert files(identity) == before
+            print(kind + " queued checkpoint refused after concurrent fault; WAL byte-identical including close", flush=True)
+
+    if selected in (None, "independent"):
+        start()
+        copies = [
+            request("POST", f"/v1/projects/{project}/databases", {"name": "independent-" + str(index)})["id"]
+            for index in range(3)
+        ]
+        for identity in copies[:2]:
+            hook("intent", identity)
+        end(hard=True, rollback=False)
+        control = state / "proof-control"
+        control.write_text("io")
+        second_key = state / "data" / organization / project / (copies[1] + ".db.key")
+        second_key.chmod(0)
+        start(proof_target=copies[0] + ".db")
+        assert gauge("terrabase_storage_proof_pending") == 2
+        assert request("GET", "/readyz", actor=False) is not None
+        release = pathlib.Path(str(control) + ".release")
+        os.mkfifo(release)
+        proof_held.clear()
+        control.write_text("hold")
+        assert proof_held.wait(15), "the background proof did not acquire its copy claim"
+        try:
+            second_key.chmod(0o600)
+            deadline = time.monotonic() + 15
+            with proof_finished:
+                while hook("ledger", copies[1]) != [0, 0]:
+                    remaining = deadline - time.monotonic()
+                    assert remaining > 0, "another proof waited behind the held copy"
+                    proof_finished.wait(remaining)
+            recorded = time.perf_counter()
+            hook("fault", copies[2])
+            elapsed = time.perf_counter() - recorded
+            assert elapsed < 5, elapsed
+            assert hook("ledger", copies[2]) == [1, 0]
+            assert hook("ledger", copies[0]) == [0, 1]
+            unavailable(copies[0], "recovery_pending")
+            assert request("GET", "/readyz", actor=False) is not None
+            print(
+                f"held throwing copy: other proof completed, readiness stayed ready, third fault recorded in {elapsed:.3f}s",
+                flush=True,
+            )
+        finally:
+            control.write_text("io")
+            descriptor = os.open(release, os.O_WRONLY | os.O_NONBLOCK)
+            try:
+                os.write(descriptor, b"x")
+            finally:
+                os.close(descriptor)
+            second_key.chmod(0o600)
+        control.unlink()
+        recovered(copies[:2])
+        end()
+
     if selected in (None, "migration"):
         start()
         identity = request("POST", f"/v1/projects/{project}/databases", {"name": "migration-refused"})["id"]
@@ -457,7 +582,7 @@ def admission_cases():
         response = existing.query("SELECT 1;")
         assert response["C"] == "57P03" and "copy_faulted" in response["M"], response
         unavailable(marked, "copy_faulted")
-        assert hook("ledger", marked) == [1, 1]
+        assert hook("ledger", marked) == [1, 0]
         assert files(marked) == before, (before, files(marked))
     end()
     assert files(marked) == before, ("shutdown", before, files(marked))

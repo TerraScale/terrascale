@@ -416,6 +416,8 @@ internal sealed partial class TursoDatabaseStore
 
                     if (finalPass)
                     {
+                        ThrowIfUnavailable();
+                        cancellationToken.ThrowIfCancellationRequested();
                         using var measured = MeasureRewrite("source_checkpoint");
 
                         using var checkpoint = source.CreateCommand();

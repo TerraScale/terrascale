@@ -84,6 +84,15 @@ jobs:
           nice -n 19 bash .engine-crash-main/e2e/env/build.sh .engine-crash-main "$RUNNER_TEMP/crash-baseline" terrabase
           E2E_BUILD="$RUNNER_TEMP/services" nice -n 19 python3 e2e/env/engine-crash.py "$RUNNER_TEMP/crash-baseline/terrabase/terrabase.dll"
 
+  engine-result:
+    name: engine crash selection guard
+    if: always()
+    needs: engine-crash
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: test "${{ !inputs.engine || needs.engine-crash.result == 'success' }}" = true
+
   runners:
     name: runner ${{ matrix.sdk }}
     strategy:
