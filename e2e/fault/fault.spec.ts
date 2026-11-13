@@ -401,7 +401,7 @@ test('a regional writer role moves only with the target certificate and current 
     console.log('rewritten owner record refused; a deleted key brought journey-1 back as writer at epoch 1 with current primary files');
 
     const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');
-    expect(drained.status, drained.body).toBe(200);
+    expect(drained.status, drained.body).toBe(204);
     await writerIs('journey-3');
     await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the new writer\'s lease carries the adopted position' })
       .toMatchObject({ node: 'journey-3', adopted: adopted.adopted });
@@ -422,7 +422,7 @@ test('a regional writer role moves only with the target certificate and current 
     await writerIs('journey-3');
     await ledger.compare(cells, [[800, 'written-on-journey-3']]);
     const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
-    expect(back.status, back.body).toBe(200);
+    expect(back.status, back.body).toBe(204);
     await writerIs('journey-1');
     await ledger.write(cells, 'gru', [[801, 'after-proofs']]);
     await ledger.compare(cells);
