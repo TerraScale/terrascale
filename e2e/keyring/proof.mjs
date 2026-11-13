@@ -79,10 +79,14 @@ async function objects(bucket, prefix) {
 const files = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry =>
   entry.isDirectory() ? files(join(directory, entry.name)) : entry.name.endsWith('.key') ? [join(directory, entry.name)] : []);
 let sequence = 0;
-function node(binary, active, extra = {}) {
+function node(binary, active, extra = {}, arguments_ = []) {
   const ring = join(profile, 'ring-' + sequence + '.json');
   writeFileSync(ring, JSON.stringify({ active, keys: active === 'k0' ? { k0: master } : { k0: master, k1: next } }), { mode: 0o600 });
-  return startProcess('dotnet', [binary], `node-${++sequence}`, {
+  const command = binary === process.env.E2E_KEYRING_DRIVER
+    ? ['exec', '--depsfile', join(process.env.E2E_BUILD, 'terrabase/terrabase.deps.json'),
+      '--runtimeconfig', join(process.env.E2E_BUILD, 'terrabase/terrabase.runtimeconfig.json'), binary, ...arguments_]
+    : [binary, ...arguments_];
+  return startProcess('dotnet', command, `node-${++sequence}`, {
     ...clean, DOTNET_ROOT: process.env.DOTNET_ROOT, DOTNET_PROCESSOR_COUNT: '4', DOTNET_ENVIRONMENT: 'Development',
     TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
     ...(binary === baseline ? { TERRABASE_MASTER_KEY: master } : { TERRABASE_MASTER_KEYS_FILE: ring }),
@@ -93,6 +97,13 @@ function node(binary, active, extra = {}) {
     TERRABASE_SHAPES_ACCESS_KEY_ID: access, TERRABASE_SHAPES_SECRET_ACCESS_KEY: secret, TERRABASE_SHAPES_CDN_API_TOKEN: peer,
     ...extra,
   });
+}
+async function records(operation, active, output = join(profile, operation + '.json')) {
+  const child = node(process.env.E2E_KEYRING_DRIVER, active, {}, [operation, output]);
+  const [code] = await once(child, 'exit');
+  children.delete(child);
+  assert.equal(code, 0, operation + ' driver completed');
+  return operation === 'credentials' ? JSON.parse(readFileSync(output, 'utf8')) : undefined;
 }
 async function until(name, child, condition) {
   const deadline = Date.now() + 30_000;
@@ -123,6 +134,9 @@ try {
     accessKeyId: access, secretKey: secret, mode: 'both',
   });
   await stop(child);
+  await records('seed-rows', 'k0');
+  const originalCredentials = await records('credentials', 'k0', join(profile, 'original-credentials.json'));
+  assert.equal(originalCredentials.length, 2, 'both current and historical credential records opened');
   const keyFiles = new Map(files(data).map(path => [path, sha(readFileSync(path))]));
   const custody = new Map();
   for (const path of await objects('ts-terrabase-shapes-prod', 'v1/keys/')) {
@@ -153,7 +167,7 @@ try {
   assert.equal(createdBytes.toString('ascii').split('\n')[0], 'TERRABASE-DB-KEY-1');
   assert.equal(Buffer.from(createdBytes.toString('ascii').split('\n')[1], 'base64').length, 60);
   const sqlPath = projectPath + '/databases/' + created.id + '/sql/execute';
-  await internal(peer, 'http://127.0.0.1:18381', 'POST', sqlPath, { statements: [{ sql: 'CREATE TABLE compatibility(value INTEGER)' }, { sql: 'INSERT INTO compatibility VALUES(42)' }] }, false);
+  await internal(peer, 'http://127.0.0.1:18381', 'POST', sqlPath, { statements: [{ sql: 'CREATE TABLE compatibility(value INTEGER)' }, { sql: 'INSERT INTO compatibility VALUES(42)' }, { sql: 'CREATE TABLE keyring_startup(value INTEGER)' }, { sql: 'INSERT INTO keyring_startup VALUES(42)' }] }, false);
   await until('new custody wrapper', child, async () =>
     (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).some(path => path.includes('/' + created.id + '/')));
   const createdCustody = (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).filter(path => path.includes('/' + created.id + '/'));
@@ -206,7 +220,7 @@ try {
   });
   const current = await metrics();
   assert.equal(value(current, 'terrabase_keys_wrapped', 'status="unreadable"'), 0);
-  assert.ok(value(current, 'terrabase_keys_oldest_snapshot_age', 'key_id="k0"') > 0, 'embedded k0 snapshot still blocks retirement');
+  assert.ok(value(current, 'terrabase_keys_oldest_snapshot_age', 'key_id="k0"') > 0, 'embedded k0 snapshot still needs k0');
   assert.equal(existsSync(leftover), false);
   for (const path of files(data)) {
     const wrapped = readFileSync(path, 'ascii').trim().split('\n')[1];
@@ -227,8 +241,7 @@ try {
     cipher.setAuthTag(body.subarray(-16));
     assert.equal(Buffer.concat([cipher.update(body.subarray(12, -16)), cipher.final()]).length, 32);
   }
-  assert.ok(value(current, 'terrabase_keys_wrapped', 'key_id="k1"') >= keyFiles.size + custody.size + 2,
-    'current and historical credentials are included and verified');
+
   const databaseKey = join(data, scope.organization, scope.project, database.id + '.db.key');
   assert.equal(existsSync(databaseKey), true);
   writeFileSync(databaseKey + '.rewrapping', readFileSync(databaseKey), { mode: 0o600 });
@@ -245,6 +258,14 @@ try {
   console.log('two keys: local files, custody and current/historical credentials rewrapped and authenticated; retained k0 snapshot age>0');
   console.log('leftovers: next multi-key pass removed .rewrapping; database deletion removed only its own .rewrapping and .promote.db.key');
   await stop(child);
+  await records('rows', 'k1');
+  const rotatedCredentials = await records('credentials', 'k1', join(profile, 'rotated-credentials.json'));
+  assert.equal(rotatedCredentials.length, originalCredentials.length);
+  for (const original of originalCredentials) {
+    const rotated = rotatedCredentials.find(record => record.Id === original.Id);
+    assert.deepEqual(rotated, { ...original, KeyId: 'k1' }, 'reopened credential plaintext and ciphertext match for ' + original.Id);
+  }
+  console.log('startup read row=42 from every database; reopened both current and historical credentials, compared plaintext and unchanged ciphertext');
   const firstLog = await (await fetch('http://127.0.0.1:8028/log')).json();
   assert.deepEqual(firstLog.unexpected, [], 'first scenario had no unexpected object-store requests');
   await stop(standin);

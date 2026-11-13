@@ -282,7 +282,8 @@ internal sealed partial class RegionReplication
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
+            await StopFollowingAsync(key).ConfigureAwait(false);
+            _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -349,7 +350,7 @@ internal sealed partial class RegionReplication
                 && held.Version < entry.PlacementVersion && !held.Includes(options.Region)
                 && (entry.AllRegions || entry.HomeRegion == options.Region || entry.ReplicaRegions.Contains(options.Region)))
             {
-                await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
+                await StopFollowingAsync(Key(database)).ConfigureAwait(false);
             }
 
             if (!await catalog.RecordAsync(entry, cancellationToken, listed, lookups).ConfigureAwait(false))
@@ -373,7 +374,7 @@ internal sealed partial class RegionReplication
                 await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
+                    await StopFollowingAsync(Key(database)).ConfigureAwait(false);
                     if (await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false) is Unavailable error)
                     {
                         faults.Failed(database, home.Region, new InvalidOperationException(error.Message));
@@ -404,7 +405,7 @@ internal sealed partial class RegionReplication
         }
     }
 
-    private async Task StopFollowingAsync((string, string, string) key, TenantContext database, CancellationToken cancellationToken)
+    private async Task StopFollowingAsync((string, string, string) key)
     {
         Follower? follower;
         lock (_gate)
@@ -417,7 +418,6 @@ internal sealed partial class RegionReplication
             await follower.StopAsync().ConfigureAwait(false);
         }
 
-        _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
     }
 
 }

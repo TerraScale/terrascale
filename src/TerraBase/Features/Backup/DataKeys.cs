@@ -137,23 +137,24 @@ internal sealed class DataKeys : IDisposable
                 }
             }
 
-            byte[] key;
-            if (id is not null && Fresh(id))
+            byte[]? key = null;
+            var retained = false;
+            try
             {
-                key = await ReadKeyAsync(scope, id, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                if (_freshKey && await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
+                if (id is not null && Fresh(id))
                 {
-                    throw new DatabaseShreddedException(priorShred.ShreddedAt);
+                    key = await ReadKeyAsync(scope, id, cancellationToken).ConfigureAwait(false);
                 }
-
-                var (generated, wrapped) = await _master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
-                key = generated;
-                id = EntityIds.New(_time).ToString();
-                try
+                else
                 {
+                    if (_freshKey && await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
+                    {
+                        throw new DatabaseShreddedException(priorShred.ShreddedAt);
+                    }
+
+                    var (generated, wrapped) = await _master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
+                    key = generated;
+                    id = EntityIds.New(_time).ToString();
                     if (wrapped.Length is 0 or > MaxWrappedKeyBytes)
                     {
                         throw new InvalidDataException("wrapped backup key exceeds its byte limit");
@@ -162,27 +163,29 @@ internal sealed class DataKeys : IDisposable
                     using var content = new MemoryStream(Encoding.ASCII.GetBytes(wrapped));
                     await _store.PutAsync(BackupLayout.Key(scope, id), content, cancellationToken).ConfigureAwait(false);
                 }
-                catch
+
+                if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
+                {
+                    _ = await _store.DeleteAsync(BackupLayout.Key(scope, id), cancellationToken).ConfigureAwait(false);
+                    throw new DatabaseShreddedException(shredded.ShreddedAt);
+                }
+
+                lock (_cacheAdmission)
+                {
+                    CheckGeneration(generation);
+                    Cache(_keys, (scope, id), key);
+                    Cache(_current, scope, new CurrentKey(id, key, _time.GetUtcNow()));
+                }
+                retained = true;
+                return (id, key);
+            }
+            finally
+            {
+                if (!retained && key is not null)
                 {
                     CryptographicOperations.ZeroMemory(key);
-                    throw;
                 }
             }
-
-            if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
-            {
-                _ = await _store.DeleteAsync(BackupLayout.Key(scope, id), cancellationToken).ConfigureAwait(false);
-                CryptographicOperations.ZeroMemory(key);
-                throw new DatabaseShreddedException(shredded.ShreddedAt);
-            }
-
-            lock (_cacheAdmission)
-            {
-                CheckGeneration(generation);
-                Cache(_keys, (scope, id), key);
-                Cache(_current, scope, new CurrentKey(id, key, _time.GetUtcNow()));
-            }
-            return (id, key);
         }
         finally
         {

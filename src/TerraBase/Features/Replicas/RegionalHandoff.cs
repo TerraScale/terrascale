@@ -321,7 +321,6 @@ internal sealed partial class RegionalHandoff(
             logger.ZLogInformation($"Regional candidate applied proof: {request.Source:@Source} to {options.MachineId:@Target}, database {position.Database:@Database}, source {position.Revision:@SourceRevision}, target {actual.ToString():@TargetRevision}, epoch {request.Epoch:@Epoch}");
         }
 
-        var engine = services.GetRequiredService<IStorageEngine>();
         foreach (var position in request.Positions.Where(position => position.Home == options.Region))
         {
             var database = Database(position);
@@ -340,7 +339,6 @@ internal sealed partial class RegionalHandoff(
 
             try
             {
-                _ = await engine.DeleteDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
                 await services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
                 _prepared[position.Database] = position.Revision;
             }

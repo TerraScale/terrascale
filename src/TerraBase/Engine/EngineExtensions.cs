@@ -57,7 +57,14 @@ public static class EngineExtensions
         services.AddSingleton<IRecoverySnapshotReader>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IHealthyRewrite>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IDatabaseRevisions>(provider => provider.GetRequiredService<TursoStorageEngine>());
-        services.AddSingleton<TursoReplicas>();
+        services.AddSingleton(provider =>
+        {
+            var replicas = new TursoReplicas(provider.GetRequiredService<TerraBaseOptions>(),
+                provider.GetRequiredKeyedService<IKeyring>(DatabaseMasterKey), provider.GetRequiredService<IMemoryBudget>(),
+                provider.GetRequiredService<ILogger<TursoReplicas>>(), provider.GetRequiredService<IStorageEngine>(), provider.GetRequiredService<TimeProvider>());
+            replicas.RecoverDetached();
+            return replicas;
+        });
         services.AddSingleton<IDatabaseReplicas>(provider => provider.GetRequiredService<TursoReplicas>());
         services.AddSingleton<IWrappedKeyFiles>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IWrappedKeyFiles>(provider => provider.GetRequiredService<TursoReplicas>());

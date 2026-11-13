@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import { production, stateDir } from '../support/stack';
@@ -34,13 +34,14 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     child = undefined;
   }
 
-  async function start(active: string, keys: Record<string, string>, binary = candidate): Promise<void> {
+  async function start(active: string, keys: Record<string, string>, binary = candidate, operation?: string): Promise<void> {
     writeFileSync(ringFile, JSON.stringify({ active, keys }), { mode: 0o600 });
     log = join(directory, `node-${++run}.log`);
     const output = openSync(log, 'w', 0o600);
     const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
       !name.startsWith('TERRABASE_') && !name.startsWith('TS_') && !name.startsWith('AWS_') && name !== 'BUCKET_NAME'));
-    child = spawn('dotnet', [binary], {
+    child = spawn('dotnet', operation ? ['exec', '--depsfile', join(process.env.E2E_BUILD!, 'terrabase/terrabase.deps.json'),
+      '--runtimeconfig', join(process.env.E2E_BUILD!, 'terrabase/terrabase.runtimeconfig.json'), process.env.E2E_KEYRING_DRIVER!, operation] : [binary], {
       env: {
         ...environment,
         DOTNET_ROOT: process.env.DOTNET_ROOT,
@@ -71,6 +72,14 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
         return 0;
       }
     }).toBe(200);
+  }
+
+  async function rows(operation: 'seed-rows' | 'rows', active: 'k0' | 'k1'): Promise<void> {
+    expect(process.env.E2E_KEYRING_DRIVER, 'startup row driver is required').toBeTruthy();
+    await start(active, active === 'k0' ? { k0: k0.toString('base64') } : { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, operation);
+    await expect.poll(() => child?.exitCode).toBe(0);
+    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:startup rows=42 databases=' + files(data).length);
+    await stop();
   }
 
   function dataKey(path: string): Buffer {
@@ -131,7 +140,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
       await ready();
       await stop();
     } else {
-      await start('k0', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+      await start('k0', { k0: k0.toString('base64') });
       await ready();
       await stop();
     }
@@ -139,6 +148,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     expect(existsSync(catalogKey)).toBe(true);
     const paths = [catalogKey, ...files(data).filter(path => path !== catalogKey)];
     expect(paths.length).toBeGreaterThanOrEqual(3);
+    await rows('seed-rows', 'k0');
     const originalBytes = paths.map(path => readFileSync(path));
     await start('k0', { k0: k0.toString('base64') });
     await ready();
@@ -154,13 +164,14 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await rotated(paths.length);
     expect(existsSync(leftover)).toBe(false);
     await stop();
+    await rows('rows', 'k1');
     expect(createHash('sha256').update(legacy(paths[0])).digest('hex')).toBe(originalKeys[0]);
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await rotated(paths.length);
     await stop();
     const replicaDirectory = join(data, '.replicas', 'inventory');
     mkdirSync(replicaDirectory, { recursive: true });
-    const orphan = join(replicaDirectory, 'orphan.promote.db.key');
+    const orphan = join(replicaDirectory, 'orphan.promote.db.key.rewrapping');
     const malformed = join(replicaDirectory, 'aaa.key');
     const later = join(replicaDirectory, 'zzz.key');
     writeFileSync(orphan, 'interrupted promote', { mode: 0o600 });
@@ -179,13 +190,30 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await stop();
     rmSync(replicaDirectory, { recursive: true });
     await start('k1', { k1: k1.toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain("configured master key id 'k0' cannot be removed");
+    await stop();
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await ready();
     await stop();
-    legacy(paths[0]);
-    await start('k1', { k1: k1.toString('base64') });
-    await expect.poll(() => existsSync(log) && readFileSync(log, 'utf8').includes("unconfigured key id 'k0'")).toBe(true);
-    await refused();
+    const history = join(data, '.master-key-history');
+    const recorded = readFileSync(history);
+    writeFileSync(history, 'k0');
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain('master key history cannot be read');
     await stop();
+    writeFileSync(history, recorded);
+    renameSync(history, history + '.saved');
+    mkdirSync(history);
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain('master key history cannot be read');
+    await stop();
+    rmSync(history, { recursive: true });
+    renameSync(history + '.saved', history);
+    await rows('rows', 'k1');
+    legacy(paths[0]);
     const record = readFileSync(paths[0], 'ascii');
     writeFileSync(paths[0], record.replace('TERRABASE-DB-KEY-1\n', 'TERRABASE-DB-KEY-2\nv2.k1.'));
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
@@ -205,7 +233,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await start('absent', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await expect.poll(() => child?.exitCode).toBe(2);
     expect(readFileSync(log, 'utf8').includes('configured active key')).toBe(true);
-    console.log(`keyring: ${paths.length} existing encrypted databases opened; mixed k0/k1 sidecars resumed; k0=0 k1=${paths.length}; unchanged k0 upgrade; malformed item counted and later replica rotated; rewrapping and promote leftovers removed; k0 retired; missing, wrong and unknown ids refused; missing active key rejected`);
+    console.log(`keyring: ${paths.length} existing encrypted databases opened; mixed k0/k1 sidecars resumed; k0=0 k1=${paths.length}; unchanged k0 upgrade; malformed item counted and later replica rotated; rewrapping temporaries removed; key removal and unreadable history refused; key restored; missing, wrong and unknown ids refused; missing active key rejected`);
   } finally {
     await stop();
     k0.fill(0);

@@ -365,7 +365,7 @@ Never return to `k0` after rotating away from it.
 With exactly one configured key, the entire maintenance pass is skipped: there is no local,
 credential, custody or snapshot scan, and no inventory object-store request. Its wrapper count
 is -1 (unknown), unreadable is zero unless verification has failed, last-complete stays zero,
-and oldest-snapshot-age is -1 (unknown). These values are not retirement evidence.
+and oldest-snapshot-age is -1 (unknown). These values do not authorize removing a key.
 
 With multiple configured keys, the full maintenance pass runs at startup (after the catalog
 opens), on an active-id change
@@ -393,25 +393,23 @@ read with the wrapper, so deletion or another rotation cannot be overwritten. Pr
 an active-key wrapper unchanged; an old-key wrapper is verified before use. The destination
 file and directory are synced before the source key record is deleted. Promotion registers
 its detached database path under the key-record lock before releasing that lock. Maintenance
-and database deletion skip every active detached path, including its key and temporary sidecars.
-The registration remains until import and the caller's promotion work finish or definitively
-fail; cleanup removes the detached files before releasing the registration.
-Neither startup path resumes imports from detached filenames: home-move recovery settles
-markers, and regional preparation starts from replica records, not detached files. Thus after
-a crash there is no detached-file resume to race with the first inventory, which waits for
-the catalog to open. Unregistered `*.promote.db.key` files in the replica directory and
-`*.key.rewrapping` files are removed under the key-file lock at the next multi-key pass,
-even when their original file is absent. Database deletion removes only its own unregistered
-detached files and temporary wrappers; promotion also discards its own previous leftovers.
-Leftovers are not counted as live wrappers; cleanup failures are unreadable items.
-With one key, the next pass is skipped, so deletion or a later multi-key pass removes leftovers.
+and deletion skip a live import's detached source. Completion and startup recover from disk:
+an import intent records the destination key identity before publication. A matching published
+database and key, followed by a destination directory sync, prove the source redundant.
+Otherwise the database and all replica sidecars are put back and the replica directory is
+synced. An absent registration or catalog record never permits deletion. Interrupted moves and
+failed imports take the same put-back path. A conflicting or unreadable recovery record is
+preserved and startup fails rather than discarding data.
+The rewrap pass removes only its own .key.rewrapping temporaries. Detached keys remain
+readable and are rewrapped unless a live import holds their registration. Database deletion
+removes that database's own detached files under its durable deletion marker.
+
 
 `terrabase.keys.wrapped{key_id}` counts local database and replica sidecars, custody keys, and
 current and historical customer credentials after a complete inventory. Unreadable items are
 skipped, logged once per item during the process lifetime (up to 65536 distinct items), and
 counted separately as `terrabase.keys.wrapped{status="unreadable"}`. They never prevent later
-items from being processed. A complete pass may include unreadable items; retirement requires
-that count to be zero. An inventory that cannot finish publishes no wrapper counts.
+items from being processed. A complete pass may include unreadable items. An inventory that cannot finish publishes no wrapper counts.
 `terrabase.keys.last_complete` is the Unix timestamp of the last complete writer pass, initially zero;
 a stale timestamp exposes a writer whose passes keep failing. Require fresh complete inventories
 on catalog writers with the same active id, the old key at zero, and unreadable at zero.
@@ -424,24 +422,22 @@ original database key file, and a historical catalog also embeds its credential 
 `terrabase.keys.oldest_snapshot_age{key_id}` reports the age in seconds of the oldest retained
 platform snapshot bundle embedding that id. The inventory authenticates the first backup chunk,
 including snapshots visible only in retained bucket snapshots, without downloading whole databases.
-Zero means none remain; minus one or an absent sample means unknown and blocks retirement.
+Zero means none were found; minus one or an absent sample means unknown.
 A failed snapshot read also increments the unreadable count. Neither gauge inspects credential
 wrappers inside catalog snapshots, custody objects inside
 retained bucket snapshot views, customer-bucket snapshots, volume backups or restore leases.
-Each requires a separate operator inventory before retirement.
+This build cannot prove that these copies or stopped nodes no longer need an old key.
 
-Retirement is an operator action: no code blocks removal of an old key from configuration.
-The gauges provide incomplete evidence, not an enforced retirement gate.
+This build adds and activates keys; it does not retire them. Each node durably records every
+configured key id in its data directory. Startup refuses a configuration missing any recorded
+id and names that id. An unreadable or malformed history also refuses startup. There is no
+override. Removing a key arrives in a later change that can prove nothing needs it, including
+stopped nodes, retained catalog backups, bucket snapshots and restore leases.
 
-Start the retirement waiting period when the **last wrapper on the last node leaves the old key**,
-not when rotation begins. Retain the key for the longest retention any plan allows (currently
-30 days), plus the bucket snapshot window (currently 14 days), plus any restore lease that
-extends the lifetime of that material. Extend this bound for longer customer-bucket or volume
-backup retention. A 21-day wait is insufficient. The old key may be removed only after this
-whole period, fresh old-key and unreadable counts are zero on every catalog writer,
-local sidecars on every non-writer have been independently verified, the oldest-snapshot-age
-gauge for that key is zero on every catalog writer, no restore lease still needs it, and customer/volume
-backup inventories show no remaining dependency. A zero wrapper count alone never permits retirement.
+Before activating a new key, every region and every node must hold exactly the same key ids
+and key material. This is an operator requirement that this build cannot verify across the
+fleet. When a wrapper names an id absent from a node's configuration, that node refuses that
+item and names the missing id; it never tries other keys.
 
 ## Bucket layout (version 1)
 

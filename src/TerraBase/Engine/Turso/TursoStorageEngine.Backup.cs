@@ -123,8 +123,12 @@ internal sealed partial class TursoStorageEngine
                     TursoCopy.Write(source, targetConnection, cancellationToken);
                 }, cancellationToken).ConfigureAwait(false);
                 await TursoDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, Encryption, cancellationToken).ConfigureAwait(false);
+                TursoReplicas.PrepareImport(file, temporary);
             }).ConfigureAwait(false);
-            await Io.RunAsync(() => DeleteFiles(file), CancellationToken.None).ConfigureAwait(false);
+            if (!file.EndsWith(".promote.db", StringComparison.Ordinal))
+            {
+                await Io.RunAsync(() => DeleteFiles(file), CancellationToken.None).ConfigureAwait(false);
+            }
             _checkpoint("create.published", database);
             initialization = GetInitializationLocked(key, path, cancellationToken, out _);
         }

@@ -82,7 +82,7 @@ try
     };
     engine = new TursoStorageEngine(
         new StorageEngineOptions(options.DataDirectory, 1, 32, options.MemoryBudget, TimeSpan.FromSeconds(10)), meter,
-        NullLogger<TursoStorageEngine>.Instance, new Keyring(settings.Keyring),
+        NullLogger<TursoStorageEngine>.Instance, new Keyring(settings.Keyring, new KeyRewrapFaults(NullLogger<KeyRewrapFaults>.Instance)),
         nativeTemporaryStorage: new NativeTemporaryStorage(options));
     services.AddHttpClient(S3ObjectStore.HttpClientName)
         .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false })
@@ -94,7 +94,7 @@ try
     await readOnly.CheckWriteRejectionAsync().ConfigureAwait(false);
     proof.WriteRejectionSelfCheck = true;
 
-    using var keys = new DataKeys(readOnly, new Keyring(settings.Keyring), TimeProvider.System, settings);
+    using var keys = new DataKeys(readOnly, new Keyring(settings.Keyring, new KeyRewrapFaults(NullLogger<KeyRewrapFaults>.Instance)), TimeProvider.System, settings);
     var reader = new BackupReader(engine, readOnly, keys, options, engine.Disk);
     proof.Stage = "snapshot_selection";
     SnapshotKey? latest = null;

@@ -23,6 +23,11 @@ internal static class Lifecycle
             PreviousBuild.Open(file);
             return;
         }
+        if (args is ["rows"] or ["seed-rows"] or ["rows", _] or ["seed-rows", _])
+        {
+            Records.Rows(args[0]);
+            return;
+        }
         await RunAsync(args);
     }
 
@@ -55,10 +60,20 @@ internal static class Lifecycle
         await started.Task.WaitAsync(cancellationToken);
         try
         {
+            if (args[0] is "credentials" or "rows" or "seed-rows")
+            {
+                await Records.RunAsync(app.Services, args, cancellationToken);
+                return;
+            }
             using var request = JsonDocument.Parse(await File.ReadAllTextAsync(args[0], cancellationToken));
             var root = request.RootElement;
             var database = new TenantContext(root.GetProperty("organization").GetString()!, PlanTier.Pro,
                 root.GetProperty("project").GetString()!, root.GetProperty("database").GetString()!);
+            if (root.TryGetProperty("mode", out var mode) && mode.GetString() == "published")
+            {
+                await ReadPublishedAsync(app.Services, database, cancellationToken);
+                return;
+            }
             var replicas = app.Services.GetRequiredService<IDatabaseReplicas>();
             await app.Services.GetRequiredService<RegionReplication>().SuspendAsync(database);
             using var http = new HttpClient(new SocketsHttpHandler { EnableMultipleHttp2Connections = true });
@@ -68,6 +83,15 @@ internal static class Lifecycle
             var source = new Uri("http://127.0.0.1:18481/v1/sync/organizations/" + database.OrganizationId
                 + "/projects/" + database.ProjectId + "/databases/" + database.DatabaseId);
             await replicas.OpenAsync(database, source, http, cancellationToken);
+            await Console.Out.WriteLineAsync("keyring-driver:replica-ready");
+            Require(await Console.In.ReadLineAsync(cancellationToken) == "detach", "detach command missing");
+            await using (var writer = await replicas.BeginWriteAsync(database, cancellationToken)
+                ?? throw new InvalidOperationException("replica writer missing"))
+            {
+                await writer.ExecuteAsync(new SqlStatement("UPDATE keyring_rows SET value=42", [], new Dictionary<string, object?>(),
+                    10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
+                await writer.CommitAsync(cancellationToken);
+            }
             var detached = await replicas.DetachAsync(database, cancellationToken)
                 ?? throw new InvalidOperationException("replica was not detached");
             await Console.Out.WriteLineAsync("keyring-driver:detached");
@@ -81,21 +105,50 @@ internal static class Lifecycle
             await RunPassAsync(app.Services, ChangeRole(app.Services, owners, options), owners, cancellationToken, unknown: true);
             Require(owners.Writer, "role did not become writer during the pass");
             await Console.Out.WriteLineAsync("keyring-driver:nonwriter wrapped=-1 snapshot_age=-1 last_complete=0; became writer during local scan");
-            Require(await Console.In.ReadLineAsync(cancellationToken) == "import", "import command missing");
+            var command = await Console.In.ReadLineAsync(cancellationToken);
+            Require(command is "import" or "publish" or "fail", "import command missing");
             try
             {
-                await app.Services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken);
+                if (command == "fail")
+                {
+                    using var cancelled = new CancellationTokenSource();
+                    await cancelled.CancelAsync();
+                    try
+                    {
+                        await app.Services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancelled.Token);
+                        throw new InvalidOperationException("cancelled import succeeded");
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        await Console.Out.WriteLineAsync("keyring-driver:import-failed");
+                    }
+                }
+                else
+                {
+                    await app.Services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken);
+                    await Console.Out.WriteLineAsync("keyring-driver:published");
+                    if (command == "publish")
+                    {
+                        Require(await Console.In.ReadLineAsync(cancellationToken) == "complete", "completion command missing");
+                    }
+                }
             }
             finally
             {
                 replicas.CompleteDetach(detached);
             }
-            var store = await app.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
-                ?? throw new InvalidOperationException("promoted database missing");
-            await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken);
-            var result = await transaction.ExecuteStatementAsync(
-                new SqlStatement("SELECT value FROM keyring_rows", [], new Dictionary<string, object?>(), 10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
-            Require(result.Rows is [var row] && row is [long value] && value == 42, "promoted data did not survive");
+            if (command == "fail")
+            {
+                await replicas.OpenAsync(database, source, http, cancellationToken);
+                await using var reader = await replicas.BeginReadAsync(database, cancellationToken)
+                    ?? throw new InvalidOperationException("put-back replica missing");
+                var rows = await reader.ExecuteAsync(new SqlStatement("SELECT value FROM keyring_rows", [], new Dictionary<string, object?>(),
+                    10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
+                Require(rows.Rows is [var held] && held is [long number] && number == 42, "failed import lost its replica row");
+                await Console.Out.WriteLineAsync("keyring-driver:put-back row=42");
+                return;
+            }
+            await ReadPublishedAsync(app.Services, database, cancellationToken);
             Require(!File.Exists(detached) && !File.Exists(detached + ".key"), "completed promotion retained detached files");
             await Console.Out.WriteLineAsync("keyring-driver:imported row=42");
         }
@@ -104,6 +157,17 @@ internal static class Lifecycle
             app.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
             Require(await running.WaitAsync(cancellationToken) == 0, "service did not stop cleanly");
         }
+    }
+
+    private static async Task ReadPublishedAsync(IServiceProvider services, TenantContext database, CancellationToken cancellationToken)
+    {
+            var store = await services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
+                ?? throw new InvalidOperationException("promoted database missing");
+            await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken);
+            var result = await transaction.ExecuteStatementAsync(
+                new SqlStatement("SELECT value FROM keyring_rows", [], new Dictionary<string, object?>(), 10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
+            Require(result.Rows is [var row] && row is [long value] && value == 42, "promoted data did not survive");
+            await Console.Out.WriteLineAsync("keyring-driver:opened row=42".AsMemory(), cancellationToken);
     }
 
     private static IEnumerable<IWrappedKeyFiles> ChangeRole(IServiceProvider services, RegionalOwners owners, TerraBaseOptions options)

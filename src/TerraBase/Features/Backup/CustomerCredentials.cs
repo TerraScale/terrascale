@@ -17,9 +17,10 @@ internal static class CustomerCredentials
     public static async Task<SealedCredentials> SealAsync(IKeyring master, string accessKeyId, string secretKey, CancellationToken cancellationToken)
     {
         var (key, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
-        var plain = JsonSerializer.SerializeToUtf8Bytes(new CustomerKeyPair(accessKeyId, secretKey), BackupJsonContext.Default.CustomerKeyPair);
+        byte[]? plain = null;
         try
         {
+            plain = JsonSerializer.SerializeToUtf8Bytes(new CustomerKeyPair(accessKeyId, secretKey), BackupJsonContext.Default.CustomerKeyPair);
             var nonce = RandomNumberGenerator.GetBytes(NonceBytes);
             var sealedBytes = new byte[NonceBytes + plain.Length + TagBytes];
             nonce.CopyTo(sealedBytes, 0);
@@ -30,7 +31,10 @@ internal static class CustomerCredentials
         finally
         {
             CryptographicOperations.ZeroMemory(key);
-            CryptographicOperations.ZeroMemory(plain);
+            if (plain is not null)
+            {
+                CryptographicOperations.ZeroMemory(plain);
+            }
         }
     }
 

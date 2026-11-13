@@ -402,17 +402,11 @@ internal sealed class HomeMoves(
             if (!await leases.TakeAsync(database, fromRegion, placement.Version, failedHome, CancellationToken.None).ConfigureAwait(false))
             {
                 leaseGate.Unlease(database.DatabaseId!);
-                _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
                 return new Conflict("another region holds the database's home lease", "move_aborted");
             }
 
             if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None, name, identity).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
             {
-                if (!leases.Active)
-                {
-                    _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
-                }
-
                 logger.ZLogError($"A new home's catalog did not take its placement; it keeps the database file and its lease");
                 return new Unavailable("the catalog did not take the new placement");
             }

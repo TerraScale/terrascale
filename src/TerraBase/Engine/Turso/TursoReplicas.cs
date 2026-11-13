@@ -27,7 +27,7 @@ using TerraBase.Features.Sql;
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoReplicas(
-    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IKeyring master, IMemoryBudget memory, ILogger<TursoReplicas> logger, TimeProvider? time = null)
+    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IKeyring master, IMemoryBudget memory, ILogger<TursoReplicas> logger, IStorageEngine storage, TimeProvider? time = null)
     : IDatabaseReplicas, IAsyncDisposable
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
@@ -104,7 +104,23 @@ internal sealed partial class TursoReplicas(
             }
         }
 
-        return await Task.Run(() => DeleteFiles(PathOf(key)), cancellationToken).ConfigureAwait(false);
+        var system = await storage.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await system.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        var erased = await transaction.GetAsync(DatabaseErasure.Kind, key.Database, cancellationToken).ConfigureAwait(false) is not null;
+        return await Task.Run(() =>
+        {
+            lock (KeyRecords)
+            {
+                var path = PathOf(key);
+                var detached = path[..^3] + ".promote.db";
+                if (!erased && Directory.Exists(Path.GetDirectoryName(path))
+                    && Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(detached) + "*").Length != 0)
+                {
+                    return false;
+                }
+                return DeleteFiles(path, keepDetached: !erased);
+            }
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<string?> DetachAsync(TenantContext database, CancellationToken cancellationToken)
@@ -130,7 +146,6 @@ internal sealed partial class TursoReplicas(
         var path = PathOf(key);
         if (!pulled)
         {
-            _ = await Task.Run(() => DeleteFiles(path), CancellationToken.None).ConfigureAwait(false);
             return null;
         }
 
@@ -138,6 +153,8 @@ internal sealed partial class TursoReplicas(
         {
             lock (KeyRecords)
             {
+                var detached = path[..^3] + ".promote.db";
+                RecoverDetached(detached);
                 var wrapped = DataKeyRecord(path) ?? throw new InvalidDataException("the replica's data key record is missing");
                 if (master.NeedsRewrap(wrapped))
                 {
@@ -151,28 +168,30 @@ internal sealed partial class TursoReplicas(
                         CryptographicOperations.ZeroMemory(plain);
                     }
                 }
-                var detached = Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db");
-                if (ActiveDetached.Contains(detached))
+                try
                 {
-                    throw new IOException("a promotion already holds the detached replica");
+                    DatabaseKeys.RejectLink(path);
+                    using (var file = new FileStream(detached + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? DatabaseKeys.Header : DatabaseKeys.PreviousHeader) + wrapped + "\n"));
+                        file.Flush(flushToDisk: true);
+                    }
+                    DirectorySync.Sync(Path.GetDirectoryName(path)!);
+                    File.Move(path, detached);
+                    foreach (var file in Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + "-*"))
+                    {
+                        DatabaseKeys.RejectLink(file);
+                        File.Move(file, detached + file[path.Length..]);
+                    }
+                    DirectorySync.Sync(Path.GetDirectoryName(path)!);
+                    ActiveDetached.Add(detached);
+                    return detached;
                 }
-                DeleteDetached(detached);
-                DatabaseKeys.RejectLink(path);
-                File.Move(path, detached);
-                if (File.Exists(path + "-wal"))
+                catch
                 {
-                    File.Move(path + "-wal", detached + "-wal");
+                    RecoverDetached(detached);
+                    throw;
                 }
-
-                using (var file = new FileStream(detached + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                {
-                    file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? DatabaseKeys.Header : DatabaseKeys.PreviousHeader) + wrapped + "\n"));
-                    file.Flush(flushToDisk: true);
-                }
-                DirectorySync.Sync(Path.GetDirectoryName(detached)!);
-                _ = DeleteFiles(path, keepDetached: true);
-                ActiveDetached.Add(detached);
-                return detached;
             }
         }, cancellationToken).ConfigureAwait(false);
     }
@@ -192,25 +211,26 @@ internal sealed partial class TursoReplicas(
     {
         lock (KeyRecords)
         {
-            if (ActiveDetached.Contains(detached))
-            {
-                DeleteDetachedFiles(detached);
-                ActiveDetached.Remove(detached);
-            }
+            ActiveDetached.Remove(detached);
+            RecoverDetached(detached);
         }
     }
 
     private static void DeleteDetachedFiles(string detached)
     {
-        if (!Directory.Exists(Path.GetDirectoryName(detached)))
+        var directory = Path.GetDirectoryName(detached)!;
+        if (!Directory.Exists(directory))
         {
             return;
         }
-        foreach (var suffix in (string[])["", "-wal", "-shm", DatabaseKeys.Suffix, DatabaseKeys.Suffix + ".rewrapping"])
+        foreach (var file in Directory.GetFiles(directory, Path.GetFileName(detached) + "*").Where(file => file != detached + ".importing"))
         {
-            DatabaseKeys.RejectLink(detached + suffix);
-            File.Delete(detached + suffix);
+            DatabaseKeys.RejectLink(file);
+            File.Delete(file);
         }
+        DirectorySync.Sync(directory);
+        File.Delete(detached + ".importing");
+        DirectorySync.Sync(directory);
     }
 
     public bool Holds(TenantContext database) =>
@@ -305,6 +325,10 @@ internal sealed partial class TursoReplicas(
     private async Task<Replica> CreateAsync((string Organization, string Project, string Database) key, Uri source, HttpClient http)
     {
         var path = PathOf(key);
+        lock (KeyRecords)
+        {
+            RecoverDetached(path[..^3] + ".promote.db");
+        }
         var hexKey = await Task.Run(() => DataKeyRecord(path)).ConfigureAwait(false) switch
         {
             { } wrapped => await UnwrapAsync(wrapped).ConfigureAwait(false),
@@ -347,11 +371,15 @@ internal sealed partial class TursoReplicas(
             }
             catch (TursoException error)
             {
-                logger.ZLogWarning($"A replica could not be reopened and is started again: {error.GetType().Name:@Error}");
+                logger.ZLogWarning($"A replica could not be reopened; its files are preserved: {error.GetType().Name:@Error}");
+                throw;
             }
         }
 
-        _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
+        if (File.Exists(path) || hexKey is not null)
+        {
+            throw new InvalidDataException("an existing replica cannot be replaced without a published copy");
+        }
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
         var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: false);
         try
@@ -362,7 +390,6 @@ internal sealed partial class TursoReplicas(
         catch
         {
             await replica.DisposeAsync().ConfigureAwait(false);
-            _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
             throw;
         }
     }
@@ -468,7 +495,7 @@ internal sealed partial class TursoReplicas(
         }
     }
 
-    private static bool DeleteFiles(string path, bool keepDetached = false)
+    private static bool DeleteFiles(string path, bool keepDetached)
     {
         lock (KeyRecords)
         {

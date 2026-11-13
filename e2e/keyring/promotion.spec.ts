@@ -134,14 +134,16 @@ test('promotion preserves active wrappers and verifies old-key replacements befo
     const two = await request(home, 'POST', projectPath + '/databases', { name: 'two', homeRegion: 'gru', replicaRegions: ['fra'] });
     const active = await request(home, 'POST', projectPath + '/databases', { name: 'active', homeRegion: 'gru', replicaRegions: ['fra'] });
     const crash = await request(home, 'POST', projectPath + '/databases', { name: 'crash', homeRegion: 'gru', replicaRegions: ['fra'] });
+    const published = await request(home, 'POST', projectPath + '/databases', { name: 'published', homeRegion: 'gru', replicaRegions: ['fra'] });
+    const failed = await request(home, 'POST', projectPath + '/databases', { name: 'failed', homeRegion: 'gru', replicaRegions: ['fra'] });
     await stop(second);
     second = start('fra', 'k0');
     await ready(18490);
     const replicaKey = (id: unknown) => join(directory, 'fra', '.replicas', String(organization.id), String(project.id), String(id) + '.db.key');
     const promotedKey = (id: unknown) => join(directory, 'fra', String(organization.id), String(project.id), String(id) + '.db.key');
-    for (const database of [one, two, active, crash]) {
+    for (const database of [one, two, active, crash, published, failed]) {
       await request(home, 'POST', projectPath + '/databases/' + String(database.id) + '/sql/execute', {
-        statements: [{ sql: 'CREATE TABLE keyring_rows(value INTEGER)' }, { sql: 'INSERT INTO keyring_rows VALUES(42)' }],
+        statements: [{ sql: 'CREATE TABLE keyring_rows(value INTEGER)' }, { sql: 'INSERT INTO keyring_rows VALUES(' + ([one, two].includes(database) ? '42' : '0') + ')' }],
       }, false);
     }
     const sql = { statements: [{ sql: 'SELECT value FROM keyring_rows' }] };
@@ -224,8 +226,10 @@ test('promotion preserves active wrappers and verifies old-key replacements befo
       };
       writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: active.id }), { mode: 0o600 });
       second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER, driverRequest);
-      await checkpoint('keyring-driver:detached');
+      await checkpoint('keyring-driver:replica-ready');
       await stop(first);
+      second.stdin!.write('detach\n');
+      await checkpoint('keyring-driver:detached');
       expect(existsSync(detached(active.id))).toBe(true);
       expect(existsSync(detached(active.id) + '.key')).toBe(true);
       second.stdin!.write('pass\n');
@@ -238,21 +242,58 @@ test('promotion preserves active wrappers and verifies old-key replacements befo
       await stop(second);
       console.log('active promotion: paused after detach with former home stopped; whole multi-key pass preserved both files; import read row=42');
       console.log('writer transition: started non-writer, became writer during local scan; wrapped=-1 snapshot_age=-1 last_complete=0');
-      first = start('gru', 'k1');
-      await ready(18480);
-      writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: crash.id }), { mode: 0o600 });
-      second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER, driverRequest);
-      await checkpoint('keyring-driver:detached');
-      const exited = once(second, 'exit');
-      second.kill('SIGKILL');
-      await exited;
-      children.delete(second);
+      const launch = async (database: Record<string, unknown>) => {
+        writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: database.id }), { mode: 0o600 });
+        second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER!, driverRequest);
+        await checkpoint('keyring-driver:replica-ready');
+        second.stdin!.write('detach\n');
+        await checkpoint('keyring-driver:detached');
+      };
+      const maintenance = async () => {
+        second.stdin!.write('pass\n');
+        await checkpoint('keyring-driver:nonwriter');
+      };
+      const kill = async () => {
+        const exited = once(second, 'exit');
+        second.kill('SIGKILL');
+        await exited;
+        children.delete(second);
+      };
+      await launch(crash);
+      await kill();
       expect(existsSync(detached(crash.id))).toBe(true);
-      expect(existsSync(detached(crash.id) + '.key')).toBe(true);
-      second = start('fra', 'k1');
-      await ready(18490);
-      await expect.poll(() => existsSync(detached(crash.id)) || existsSync(detached(crash.id) + '.key')).toBe(false);
-      console.log('crash promotion: killed after detach; restart multi-key pass removed the unregistered database and key');
+      await launch(crash);
+      expect(existsSync(replicaKey(crash.id))).toBe(true);
+      await maintenance();
+      second.stdin!.write('import\n');
+      await checkpoint('keyring-driver:imported row=42');
+      await stop(second);
+      console.log('crash before publication: home stopped; replica-only row=42; restart put back database, sidecars and key; new promotion read 42');
+
+      await launch(published);
+      await maintenance();
+      second.stdin!.write('publish\n');
+      await checkpoint('keyring-driver:published');
+      expect(existsSync(promotedKey(published.id))).toBe(true);
+      expect(existsSync(detached(published.id))).toBe(true);
+      await kill();
+      writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: published.id, mode: 'published' }), { mode: 0o600 });
+      second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER, driverRequest);
+      await checkpoint('keyring-driver:opened row=42');
+      expect(existsSync(detached(published.id))).toBe(false);
+      expect(existsSync(detached(published.id) + '.key')).toBe(false);
+      await stop(second);
+      console.log('crash after publication: home stopped; destination opened once with row=42; restart removed only the redundant detached source');
+
+      await launch(failed);
+      await maintenance();
+      second.stdin!.write('fail\n');
+      await checkpoint('keyring-driver:put-back row=42');
+      expect(existsSync(replicaKey(failed.id))).toBe(true);
+      expect(existsSync(detached(failed.id))).toBe(false);
+      await stop(second);
+      console.log('failed import: home stopped; cancelled import put back a usable replica; direct replica read=42');
+
     }
   } finally {
     for (const observer of observers) observer.close();

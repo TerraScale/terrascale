@@ -169,8 +169,6 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
         if (new FileInfo(path).Length == 0)
         {
             connection.Dispose();
-            File.Delete(path);
-            File.Delete(path + "-wal");
             throw new SqliteException("unable to open database file: it does not exist", 14);
         }
     }

@@ -17,24 +17,22 @@ internal sealed partial class TursoReplicas : IWrappedKeyFiles
             {
                 try
                 {
-                    if (ActiveDetached.Contains(file[..^DatabaseKeys.Suffix.Length]))
+                    if (ActiveDetached.Contains(file[..^DatabaseKeys.Suffix.Length])
+                        || ActiveDetached.Contains(file[..^".db.key".Length] + ".promote.db"))
                     {
                         continue;
                     }
                     WrappedKeyFile.RemoveLeftover(file);
                     DatabaseKeys.RejectLink(file);
-                    if (file.EndsWith(".promote.db.key", StringComparison.Ordinal))
-                    {
-                        DeleteDetached(file[..^DatabaseKeys.Suffix.Length]);
-                        continue;
-                    }
                     if (!File.Exists(file))
                     {
                         continue;
                     }
-                    var wrapped = DataKeyRecord(file[..^DatabaseKeys.Suffix.Length])
-                        ?? throw new InvalidDataException("the replica wrapped key record is missing");
-                    var header = master.ActiveId == "k0" ? PreviousKeyHeader : KeyHeader;
+                    var detached = file.EndsWith(".promote.db.key", StringComparison.Ordinal);
+                    var wrapped = detached ? DatabaseKeys.ReadWrapped(file[..^DatabaseKeys.Suffix.Length])
+                        : DataKeyRecord(file[..^DatabaseKeys.Suffix.Length]) ?? throw new InvalidDataException("the replica wrapped key record is missing");
+                    var header = detached ? (master.ActiveId == "k0" ? DatabaseKeys.PreviousHeader : DatabaseKeys.Header)
+                        : master.ActiveId == "k0" ? PreviousKeyHeader : KeyHeader;
                     inventory.Count(WrappedKeyFile.Rewrap(file, header, wrapped, master, cancellationToken));
                 }
                 catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)

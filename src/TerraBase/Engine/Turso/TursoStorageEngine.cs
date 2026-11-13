@@ -332,6 +332,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _ownership = Own(configured.DataDirectory);
         try
         {
+            KeyringHistory.Record(_dataDirectory, masterKey.KeyIds);
             nativeTemporaryStorage?.Initialize();
             CheckIntentJournal();
             DeleteRewriteScratch();
@@ -611,13 +612,22 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
+                    var eraseDetached = _system is { } system && await Io.WithAdmissionAsync(async () =>
+                    {
+                        await using var transaction = await system.BeginTransactionAsync(write: false, CancellationToken.None).ConfigureAwait(false);
+                        return await transaction.GetAsync(DatabaseErasure.Kind, key.Database, CancellationToken.None).ConfigureAwait(false) is not null;
+                    }).ConfigureAwait(false);
                     await Io.RunAsync(() =>
                     {
                         RejectLink(path);
                         DeleteFileIfPresent(path);
                         _checkpoint("delete.main_file", database);
                         DeleteSidecars(path);
-                        TursoReplicas.DeleteDetached(Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db"));
+                        if (eraseDetached)
+                        {
+                            TursoReplicas.DeleteDetached(Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db"));
+                            TursoReplicas.DeleteDetached(Path.Combine(_dataDirectory, TursoReplicas.DirectoryName, key.Organization, key.Project, key.Database + ".promote.db"));
+                        }
                         var directory = Path.GetDirectoryName(path)!;
                         if (Directory.Exists(directory))
                         {
@@ -1295,6 +1305,16 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             {
                 File.Move(path + DatabaseKeys.Suffix, temporary + DatabaseKeys.Suffix, overwrite: false);
                 throw;
+            }
+            var directory = Path.GetDirectoryName(path)!;
+            while (true)
+            {
+                DirectorySync(directory);
+                if (directory == _dataDirectory)
+                {
+                    break;
+                }
+                directory = Path.GetDirectoryName(directory) ?? throw new InvalidDataException("publication escaped the data directory");
             }
             published = true;
         }

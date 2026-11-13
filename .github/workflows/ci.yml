@@ -791,6 +791,8 @@ jobs:
       || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
       || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
     uses: ./.github/workflows/journey.yml
+    with:
+      keyring: ${{ contains(fromJSON(needs.changes.outputs.dotnet), 'terrabase') || github.event_name != 'pull_request' }}
 
   all-green:
     name: all-green
