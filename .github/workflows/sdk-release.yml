@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: sdk-release-${{ github.event_name == 'workflow_run' && github.run_id || inputs.tag || github.ref }}
@@ -73,6 +74,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write
+      actions: read
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       revision: ${{ steps.tag.outputs.revision }}
@@ -83,6 +85,12 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - *go-release-due
+      - id: source
+        name: Record the checked-out source revision
+        run: echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/qualified-main
+        with:
+          revision: ${{ steps.source.outputs.revision }}
       - name: Validate the versioned main tag
         if: github.event_name != 'workflow_run'
         env:
@@ -162,6 +170,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read
     outputs:
       sdk: ${{ steps.tag.outputs.sdk }}
       version: ${{ steps.qualified.outputs.version }}
@@ -171,6 +180,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - id: source
+        name: Record the checked-out source revision
+        run: echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/qualified-main
+        with:
+          revision: ${{ steps.source.outputs.revision }}
       - name: Validate the versioned main tag
         id: tag
         run: |

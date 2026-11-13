@@ -1,5 +1,6 @@
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Backup;
 
@@ -7,6 +8,7 @@ public sealed class BackupStatusEndpoint(IContinuousBackup backup) : EndpointWit
 {
     public override void Configure()
     {
+        Metadata(new Requires("catalog.read"));
         Get("/v1/backup");
         Name("backupStatus");
         Summary("Continuous backup status of this node");

@@ -12,16 +12,22 @@ The served `/openapi/v1.json` and `/scalar` describe current HTTP operations. Pu
 - [Platform ownership and permissions](platform-contract.md).
 - [Consumer integration](consumer-integration.md).
 - [Hosted continuations](hosted-continuations.md).
+- [User profiles and imports](user-profiles.md).
 - [Project tenant management](project-tenant-management.md).
 - [Organization picker at dashboard sign-in](organization-picker.md).
 - [Project MFA and session policies](mfa-sessions.md).
 - [Project sign-in attack protection](attack-protection.md).
+- [Machine tokens and user-owned API keys](machine-tokens-and-user-api-keys.md).
 - [Scoped end-user tokens](scoped-end-user-tokens.md) for authorized SQL shapes.
 - [Project social sign-in](project-social-sign-in.md).
+- [Extended social providers](social-providers/README.md).
+- [Magic links and usernames](project-sign-in-methods.md).
 - [End-user lifecycle webhooks](webhooks.md).
 - [API-key lifecycle](regional/api-key-lifecycle.md).
 - [Signing keys](signing-keys.md), [MFA](mfa.md), [MFA sign-in](mfa-sign-in.md) and [Passkeys](passkeys.md).
 - [Step-up proof](step-up-proof.md) and [email change](email-change.md).
+
+- [User impersonation](impersonation.md).
 
 ## Storage and security
 
@@ -43,3 +49,5 @@ Account deletion spans independent products. Auth records only its verified resu
 Use `make auth-build` and `make auth-check` from the monorepo root. CI builds and checks ts-auth on every PR that changes it and runs the journey against it ([`e2e/AGENTS.md`](../../e2e/AGENTS.md)).
 
 Deploy only green main. SDK publishing, legal terms and secret rotation for launch remain [deferred](../decisions/go-live.md).
+
+- [Project organizations](project-organizations.md)

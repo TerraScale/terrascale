@@ -3,6 +3,7 @@ using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -12,6 +13,7 @@ internal sealed class GetDashboardProjectAnalyticsEndpoint(IProjectCatalog catal
 
     public override void Configure()
     {
+        Metadata(new Requires("usage.read"));
         Get("/v1/usage/projects/{project}/analytics");
         Name("getDashboardProjectAnalytics");
         Summary("Reads a project's analytics for the dashboard");

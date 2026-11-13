@@ -20,12 +20,15 @@ import (
 // Formatting the model never reveals that secret; copy it explicitly to secure
 // storage before discarding the creation result.
 type ProjectOAuthClient struct {
-	ClientID     string    `json:"client_id" ulid:"required"`
-	Name         string    `json:"name"`
-	Type         string    `json:"type"`
-	RedirectURIs []string  `json:"redirect_uris"`
-	CreatedAt    time.Time `json:"created_at"`
-	ClientSecret string    `json:"client_secret,omitempty"`
+	ClientID             string    `json:"client_id" ulid:"required"`
+	Name                 string    `json:"name"`
+	Type                 string    `json:"type"`
+	RedirectURIs         []string  `json:"redirect_uris"`
+	CreatedAt            time.Time `json:"created_at"`
+	ClientSecret         string    `json:"client_secret,omitempty"`
+	AllowedScopes        []string  `json:"allowed_scopes,omitempty"`
+	AllowedAudiences     []string  `json:"allowed_audiences,omitempty"`
+	TokenLifetimeMinutes *int      `json:"token_lifetime_minutes,omitempty"`
 }
 
 func (*ProjectOAuthClient) requiredAuthMembers() string {
@@ -41,16 +44,22 @@ func (c ProjectOAuthClient) GoString() string { return c.String() }
 // ProjectOAuthClientRequest registers exact redirect URIs. Type is public or
 // confidential; redirects must also satisfy the project's server-side allowlist.
 type ProjectOAuthClientRequest struct {
-	Name         string   `json:"name"`
-	Type         string   `json:"type"`
-	RedirectURIs []string `json:"redirect_uris"`
+	Name                 string   `json:"name"`
+	Type                 string   `json:"type"`
+	RedirectURIs         []string `json:"redirect_uris"`
+	AllowedScopes        []string `json:"allowed_scopes,omitempty"`
+	AllowedAudiences     []string `json:"allowed_audiences,omitempty"`
+	TokenLifetimeMinutes *int     `json:"token_lifetime_minutes,omitempty"`
 }
 
 // ProjectClientUpdate renames a client and replaces its exact redirect URIs
 // with the same rules as registration.
 type ProjectClientUpdate struct {
-	Name         string   `json:"name"`
-	RedirectURIs []string `json:"redirect_uris"`
+	Name                 string   `json:"name"`
+	RedirectURIs         []string `json:"redirect_uris"`
+	AllowedScopes        []string `json:"allowed_scopes,omitempty"`
+	AllowedAudiences     []string `json:"allowed_audiences,omitempty"`
+	TokenLifetimeMinutes *int     `json:"token_lifetime_minutes,omitempty"`
 }
 
 // ProjectClientRotation requests a new secret; a nil GraceSeconds uses the
@@ -100,10 +109,10 @@ func (u *User) CreateProjectOAuthClient(ctx context.Context, project string, req
 	if len(utf16.Encode([]rune(name))) > 128 || !strings.ContainsFunc(name, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) || strings.ContainsFunc(name, unicode.IsControl) {
 		return nil, errors.New("tsauth: client name must contain a letter or digit, no controls, and at most 128 UTF-16 code units")
 	}
-	if request.Type != "public" && request.Type != "confidential" {
-		return nil, errors.New("tsauth: client type must be public or confidential")
+	if request.Type != "public" && request.Type != "confidential" && request.Type != "machine" {
+		return nil, errors.New("tsauth: client type must be public, confidential or machine")
 	}
-	if err := validClientRedirects(request.RedirectURIs); err != nil {
+	if err := validClientRedirects(request.RedirectURIs); err != nil && request.Type != "machine" {
 		return nil, err
 	}
 	data, err := json.Marshal(request)
@@ -141,7 +150,7 @@ func (u *User) UpdateProjectOAuthClient(ctx context.Context, project, clientID s
 	if len(utf16.Encode([]rune(name))) > 128 || !strings.ContainsFunc(name, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) || strings.ContainsFunc(name, unicode.IsControl) {
 		return nil, errors.New("tsauth: client name must contain a letter or digit, no controls, and at most 128 UTF-16 code units")
 	}
-	if err := validClientRedirects(update.RedirectURIs); err != nil {
+	if err := validClientRedirects(update.RedirectURIs); err != nil && len(update.RedirectURIs) != 0 {
 		return nil, err
 	}
 	data, err := json.Marshal(update)

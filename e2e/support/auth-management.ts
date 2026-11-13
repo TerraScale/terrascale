@@ -1,12 +1,19 @@
+import { createHash, createPublicKey, randomBytes, verify as verifySignature } from 'node:crypto';
+import { once } from 'node:events';
+import { connect } from 'node:http2';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { expect, request } from '@playwright/test';
 import { newAddress, nextMail } from './inbox';
-import { auth, dash } from './stack';
+import { auth, dash, onLocalStack, stateDir } from './stack';
 import { journey, saveCookies, saveSecret } from './state';
+
+export type AuthOwner = { runId: string; password: string; organizationId: string; projectId: string };
 
 export type AuthManagement = { user: string; readKey: string; writeKey: string; csrf: string; ownerToken: string };
 
-async function signInToken(context: APIRequestContext, label: string): Promise<string> {
+export async function signInToken(context: APIRequestContext, label: string): Promise<string> {
   const client = '00000000000000000000000007';
   const started = await context.post(auth + '/terrascale/oauth/device', { form: { client_id: client, scope: 'openid email' } });
   expect(started.status()).toBe(200);
@@ -25,7 +32,7 @@ async function signInToken(context: APIRequestContext, label: string): Promise<s
   return token;
 }
 
-async function stepUp(context: APIRequestContext, token: string, purpose: string): Promise<string> {
+export async function stepUp(context: APIRequestContext, token: string, purpose: string, password = journey().password): Promise<string> {
   const started = await context.post(auth + '/v1/terrascale/step-up', {
     headers: { Authorization: 'Bearer ' + token },
     data: { purpose, audience: 'ts-auth', return_uri: dash + '/auth/step-up/callback' },
@@ -34,7 +41,7 @@ async function stepUp(context: APIRequestContext, token: string, purpose: string
   const proof = await started.json();
   saveSecret('member-' + purpose + '-proof', proof.proof);
   const approved = await context.post(proof.step_up_url, {
-    headers: { Origin: auth }, form: { password: journey().password },
+    headers: { Origin: auth }, form: { password },
   });
   expect(approved.status()).toBe(200);
   return proof.proof;
@@ -109,8 +116,78 @@ async function checkMemberAuthority(page: Page, adminKey: string, ownerToken: st
   }
 }
 
-export async function prepareAuthManagement(page: Page, sdk: string): Promise<AuthManagement> {
+async function checkSignupManagement(page: Page, management: AuthManagement): Promise<void> {
   const current = journey();
+  const root = auth + '/v1/' + current.projectId;
+  const read = { Authorization: 'Bearer ' + management.readKey };
+  const write = { Authorization: 'Bearer ' + management.writeKey };
+  const settings = await page.request.get(root + '/settings', { headers: read });
+  expect(settings.status()).toBe(200);
+  const originalMode = (await settings.json()).methods.sign_up_mode as string;
+  for (const path of ['/invitations', '/waitlist', '/settings']) {
+    expect((await page.request.get(root + path, { headers: read })).status()).toBe(200);
+    const refused = await page.request.get(root + path, { headers: write });
+    expect(refused.status()).toBe(403);
+    expect((await refused.json()).error.code).toBe('insufficient_scope');
+  }
+  const invitedEmail = await newAddress('key-invitation-' + current.runId);
+  const refused = await page.request.post(root + '/invitations', { headers: read, data: { email: invitedEmail } });
+  expect(refused.status()).toBe(403);
+  expect((await refused.json()).error.code).toBe('insufficient_scope');
+  const invitation = await page.request.post(root + '/invitations', { headers: write, data: { email: invitedEmail } });
+  expect(invitation.status()).toBe(201);
+  const created = await invitation.json();
+  expect(created).toMatchObject({ email: invitedEmail, status: 'pending' });
+  expect(created).not.toHaveProperty('token');
+  const listed = await page.request.get(root + '/invitations', { headers: read });
+  expect((await listed.json()).items).toContainEqual(created);
+  const revoke = root + '/invitations/' + created.id;
+  expect((await page.request.delete(revoke, { headers: read })).status()).toBe(403);
+  expect((await page.request.delete(revoke, { headers: write })).status()).toBe(204);
+  expect((await page.request.put(root + '/settings', {
+    headers: read, data: { methods: { sign_up_mode: 'waitlist' } },
+  })).status()).toBe(403);
+  try {
+    expect((await page.request.put(root + '/settings', {
+      headers: write, data: { methods: { sign_up_mode: 'waitlist' } },
+    })).status()).toBe(200);
+    for (const [action, status] of [['approve', 'approved'], ['reject', 'rejected']] as const) {
+      const email = await newAddress('key-waitlist-' + action + '-' + current.runId);
+      expect((await page.request.post(auth + '/ui/' + current.projectId + '/waitlist', {
+        headers: { Origin: auth }, form: { email },
+      })).status()).toBe(200);
+      const waitlist = await page.request.get(root + '/waitlist', { headers: read });
+      expect(waitlist.status()).toBe(200);
+      const entry = (await waitlist.json()).items.find((item: { email: string }) => item.email === email);
+      expect(entry).toMatchObject({ email, status: 'pending' });
+      const url = root + '/waitlist/' + entry.id + '/' + action;
+      const denied = await page.request.post(url, { headers: read });
+      expect(denied.status()).toBe(403);
+      expect((await denied.json()).error.code).toBe('insufficient_scope');
+      expect((await page.request.post(url, { headers: write })).status()).toBe(204);
+      const decided = await page.request.get(root + '/waitlist', { headers: read });
+      expect((await decided.json()).items).toContainEqual({ ...entry, status });
+    }
+    const audit = await page.request.get(auth + '/v1/terrascale/organizations/' + current.organizationId + '/audit-events', {
+      headers: { Authorization: 'Bearer ' + management.ownerToken }, params: { limit: 100 },
+    });
+    expect(audit.status()).toBe(200);
+    const events = (await audit.json()).items as { actor: string; action: string; detail: string }[];
+    for (const operation of ['create_project_invitation', 'revoke_project_invitation', 'approve_project_waitlist',
+      'reject_project_waitlist', 'update_project_settings']) {
+      expect(events.some(event => event.actor === management.writeKey.slice(0, 26)
+        && event.action === operation + '.succeeded')).toBe(true);
+      expect(events.some(event => event.actor === management.readKey.slice(0, 26)
+        && event.action === operation + '.failed' && event.detail.includes('status=403'))).toBe(true);
+    }
+  } finally {
+    expect((await page.request.put(root + '/settings', {
+      headers: write, data: { methods: { sign_up_mode: originalMode } },
+    })).status()).toBe(200);
+  }
+}
+
+export async function prepareAuthManagement(page: Page, sdk: string, current: AuthOwner = journey()): Promise<AuthManagement> {
   const root = `${auth}/v1/${current.projectId}`;
   await page.goto('/api-keys?create=key');
   const csrf = await page.locator('#create-key input[name="_csrf"]').inputValue();
@@ -174,6 +251,88 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
     expect(response.status()).toBe(403);
     expect((await response.json()).error).toMatchObject({ code: 'person_required' });
   }
+  const missing = await page.request.post(root + '/users/' + current.projectId + '/disable', {
+    headers: { Authorization: 'Bearer ' + writeKey },
+  });
+  expect(missing.status()).toBe(404);
+  const invalid = await page.request.put(root + '/settings', {
+    headers: { Authorization: 'Bearer ' + writeKey }, data: { methods: { passcode: false, password: false } },
+  });
+  expect(invalid.status()).toBe(400);
+  const policy = await page.request.put(root + '/user-api-key-policy', {
+    headers: { Authorization: 'Bearer ' + writeKey }, data: { allowed_scopes: ['invoices:read'] },
+  });
+  expect(policy.status()).toBe(200);
+  const outsideKeyVerify = await page.request.post(auth + '/v1/' + user + '/api-keys/verify', {
+    headers: { Authorization: 'Bearer ' + readKey }, data: { key: 'tsk_invalid' },
+  });
+  expect(outsideKeyVerify.status()).toBe(404);
+  const forbiddenScopes = await page.request.post(root + '/users/' + user + '/api-keys', {
+    headers: { Authorization: 'Bearer ' + writeKey }, data: { name: 'forbidden', scopes: ['invoices:write'] },
+  });
+  expect(forbiddenScopes.status()).toBe(400);
+  const own = await page.request.post(root + '/me/api-keys', {
+    headers: { Origin: auth }, data: { name: 'self-service', scopes: ['invoices:read'] },
+  });
+  expect(own.status()).toBe(201);
+  const ownKey = await own.json();
+  saveSecret('self-user-key-' + sdk, ownKey.key);
+  expect(new Date(ownKey.expires_at).getTime() - new Date(ownKey.created_at).getTime()).toBeGreaterThan(89 * 86400_000);
+  expect(new Date(ownKey.expires_at).getTime() - new Date(ownKey.created_at).getTime()).toBeLessThanOrEqual(90 * 86400_000);
+  const tooLong = await page.request.post(root + '/me/api-keys', {
+    headers: { Origin: auth }, data: { name: 'too long', scopes: ['invoices:read'], expires_at: new Date(Date.now() + 366 * 86400_000).toISOString() },
+  });
+  expect(tooLong.status()).toBe(400);
+  const ownList = await page.request.get(root + '/me/api-keys');
+  expect((await ownList.json()).items.some((item: { id: string }) => item.id === ownKey.id)).toBe(true);
+  const csrfRefused = await page.request.delete(root + '/me/api-keys/' + ownKey.id, { headers: { Origin: dash } });
+  expect(csrfRefused.status()).toBe(403);
+  if (sdk === 'dotnet') {
+    const keysPage = '/auth/users?user=' + user;
+    await page.goto(keysPage);
+    const row = page.locator('#auth-user-api-keys tbody tr').filter({ hasText: ownKey.prefix });
+    await expect(row).toContainText('self-service');
+    await expect(row).toContainText('invoices:read');
+    const uiCreated = await page.request.post(root + '/users/' + user + '/api-keys', {
+      headers: { Authorization: 'Bearer ' + writeKey }, data: { name: 'dashboard revoke', scopes: ['invoices:read'] },
+    });
+    expect(uiCreated.status()).toBe(201);
+    const uiKey = await uiCreated.json();
+    saveSecret('dashboard-user-key', uiKey.key);
+    await page.goto(keysPage);
+    await page.locator('#auth-user-api-keys tbody tr').filter({ hasText: uiKey.prefix }).getByRole('button', { name: 'Revoke', exact: true }).click();
+    await expect(page.locator('#auth-user-api-keys')).not.toContainText(uiKey.prefix);
+    const uiVerify = await page.request.post(root + '/api-keys/verify', {
+      headers: { Authorization: 'Bearer ' + readKey }, data: { key: uiKey.key },
+    });
+    expect((await uiVerify.json()).valid).toBe(false);
+    const otherProject = await page.request.post(auth + '/v1/terrascale/organizations/' + current.organizationId + '/projects', {
+      headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: 'Key isolation ' + current.runId },
+    });
+    expect(otherProject.status()).toBe(201);
+    const otherId = (await otherProject.json()).id as string;
+    const otherKeys = auth + '/v1/terrascale/organizations/' + current.organizationId + '/projects/' + otherId + '/api-keys';
+    const otherCreated = await page.request.post(otherKeys, {
+      headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: 'isolation verifier', scopes: ['auth:read'] },
+    });
+    expect(otherCreated.status()).toBe(201);
+    const otherKey = (await otherCreated.json()).key as string;
+    saveSecret('isolation-project-key', otherKey);
+    const crossVerify = await page.request.post(auth + '/v1/' + otherId + '/api-keys/verify', {
+      headers: { Authorization: 'Bearer ' + otherKey }, data: { key: ownKey.key },
+    });
+    expect(crossVerify.status()).toBe(200);
+    expect((await crossVerify.json()).valid).toBe(false);
+    const otherRevoked = await page.request.delete(otherKeys + '/' + otherKey.slice(0, 26), {
+      headers: { Authorization: 'Bearer ' + ownerToken },
+    });
+    expect(otherRevoked.status()).toBe(204);
+  }
+  const ownRevoke = await page.request.delete(root + '/me/api-keys/' + ownKey.id, { headers: { Origin: auth } });
+  expect(ownRevoke.status()).toBe(204);
+  if (sdk === 'dotnet') {
+    await checkUserKeyLifecycle(page.request, root, user, readKey, writeKey);
+  }
   for (const [key, status] of [[readKey, 403], [writeKey, 204]] as const) {
     const signedOut = await page.request.post(`${root}/users/${user}/sign-out`, {
       headers: { Authorization: `Bearer ${key}` },
@@ -187,19 +346,18 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
     headers: { Authorization: `Bearer ${writeKey}` }, data: { client_id: current.projectId, password: current.password },
   });
   expect(stepUp.status()).toBe(401);
-  const missing = await page.request.post(root + '/users/' + current.projectId + '/disable', {
-    headers: { Authorization: 'Bearer ' + writeKey },
+  const signedIn = await page.request.post(auth + '/ui/' + current.projectId + '/sign-in/password', {
+    headers: { Origin: auth }, form: { email, password: current.password },
   });
-  expect(missing.status()).toBe(404);
-  const invalid = await page.request.put(root + '/settings', {
-    headers: { Authorization: 'Bearer ' + writeKey }, data: { methods: { passcode: false, password: false } },
-  });
-  expect(invalid.status()).toBe(400);
-  return { user, readKey, writeKey, csrf, ownerToken };
+  expect(signedIn.status()).toBe(200);
+  const activeSessions = await page.request.get(root + '/sessions', { headers: { Authorization: 'Bearer ' + readKey } });
+  expect((await activeSessions.json()).items.some((session: { user_id: string }) => session.user_id === user)).toBe(true);
+  const management = { user, readKey, writeKey, csrf, ownerToken };
+  if (sdk === 'dotnet') await checkSignupManagement(page, management);
+  return management;
 }
 
-export async function closeAuthManagement(page: Page, management: AuthManagement): Promise<void> {
-  const current = journey();
+export async function closeAuthManagement(page: Page, management: AuthManagement, current: AuthOwner = journey()): Promise<void> {
   const root = `${auth}/v1/${current.projectId}`;
   for (const action of ['disable_project_user.succeeded', 'enable_project_user.succeeded', 'sign_out_project_user.succeeded']) {
     const audit = await page.request.get('/api/v1/dashboard/audit-events', { params: { action, range: '7d' } });
@@ -208,11 +366,37 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
     expect(events.some(event => event.actor === management.writeKey.slice(0, 26)
       && event.action === action && event.source === 'ts-auth')).toBe(true);
   }
-  const audit = await page.request.get(auth + '/v1/terrascale/organizations/' + current.organizationId + '/audit-events', {
-    headers: { Authorization: 'Bearer ' + management.ownerToken }, params: { limit: 100 },
-  });
-  expect(audit.status()).toBe(200);
-  const events = (await audit.json()).items as { actor: string; action: string; detail: string }[];
+  const events: { actor: string; action: string; detail: string }[] = [];
+  let after: string | undefined;
+  do {
+    const audit = await page.request.get(auth + '/v1/terrascale/organizations/' + current.organizationId + '/audit-events', {
+      headers: { Authorization: 'Bearer ' + management.ownerToken }, params: { limit: 100, ...(after ? { after } : {}) },
+    });
+    expect(audit.status()).toBe(200);
+    const result = await audit.json();
+    events.push(...result.items);
+    after = result.next ?? undefined;
+  } while (after);
+  for (const action of ['apiKey.created', 'apiKey.revoked']) {
+    expect(events.some(event => event.action === action)).toBe(true);
+  }
+  await expect.poll(async () => {
+    const types = new Set<string>();
+    let cursor = '';
+    do {
+      const response = await page.request.get(root + '/events', {
+        headers: { Authorization: 'Bearer ' + management.ownerToken }, params: { limit: 100, after: cursor },
+      });
+      expect(response.status()).toBe(200);
+      const body = await response.json();
+      for (const event of body.items as { type: string; data: { user_id: string } }[]) {
+        if (event.data.user_id === management.user) types.add(event.type);
+      }
+      cursor = body.next ?? '';
+    } while (cursor);
+    return ['apiKey.created', 'apiKey.revoked'].filter(type => types.has(type));
+  }).toEqual(['apiKey.created', 'apiKey.revoked']);
+
   for (const [action, key, status] of [
     ['disable_project_user.failed', management.readKey, 403],
     ['sign_out_project_user.failed', management.readKey, 403],
@@ -236,4 +420,168 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
     const users = await page.request.get(root + '/users', { headers: { Authorization: `Bearer ${key}` } });
     expect(users.status()).toBe(401);
   }
+}
+
+
+async function authStorage(sql: string, args: unknown[]): Promise<void> {
+  const peer = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
+  const session = connect('http://127.0.0.1:8081');
+  const stream = session.request({ ':method': 'POST', ':path': '/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute',
+    'content-type': 'application/json', 'x-terrabase-peer-credential': peer });
+  session.on('error', error => stream.destroy(error));
+  try {
+    const response = once(stream, 'response');
+    stream.end(JSON.stringify({ statements: [{ sql, args }] }));
+    const [headers] = await response;
+    let body = '';
+    stream.setEncoding('utf8');
+    for await (const chunk of stream) body += chunk;
+    expect(Number(headers[':status']), body).toBe(200);
+    expect(JSON.parse(body).results[0].rows_affected).toBeGreaterThan(0);
+  } finally {
+    session.close();
+  }
+}
+
+async function checkUserKeyLifecycle(context: APIRequestContext, root: string, user: string, readKey: string, writeKey: string): Promise<void> {
+  const created: { id: string; key: string }[] = [];
+  for (let index = 0; index < 25; index++) {
+    const answer = await context.post(root + '/users/' + user + '/api-keys', {
+      headers: { Authorization: 'Bearer ' + writeKey }, data: { name: 'cap-' + index, scopes: ['invoices:read'] },
+    });
+    expect(answer.status()).toBe(201);
+    const key = await answer.json();
+    saveSecret('capped-user-key-' + index, key.key);
+    created.push(key);
+  }
+  const capped = await context.post(root + '/users/' + user + '/api-keys', {
+    headers: { Authorization: 'Bearer ' + writeKey }, data: { name: '26th', scopes: ['invoices:read'] },
+  });
+  expect(capped.status()).toBe(409);
+  expect((await capped.json()).error).toMatchObject({ code: 'user_key_limit' });
+  const cappedSelf = await context.post(root + '/me/api-keys', {
+    headers: { Origin: auth }, data: { name: '26th self', scopes: ['invoices:read'] },
+  });
+  expect(cappedSelf.status()).toBe(409);
+  for (const key of created.slice(1)) {
+    const removed = await context.delete(root + '/users/' + user + '/api-keys/' + key.id, {
+      headers: { Authorization: 'Bearer ' + writeKey },
+    });
+    expect(removed.status()).toBe(204);
+  }
+  const own = await context.post(root + '/me/api-keys', {
+    headers: { Origin: auth }, data: { name: 'self epoch', scopes: ['invoices:read'] },
+  });
+  expect(own.status()).toBe(201);
+  const ownKey = await own.json();
+  saveSecret('self-epoch-key', ownKey.key);
+  const verify = async (key: string, valid: boolean) => {
+    const answer = await context.post(root + '/api-keys/verify', {
+      headers: { Authorization: 'Bearer ' + readKey }, data: { key },
+    });
+    expect(answer.status()).toBe(200);
+    expect((await answer.json()).valid).toBe(valid);
+  };
+  await verify(created[0].key, true);
+  await verify(ownKey.key, true);
+  await onLocalStack(async () => {
+    await authStorage('UPDATE sessions SET created_at = ? WHERE user_id = ?', [new Date(Date.now() - 11 * 60_000).toISOString(), user]);
+    const old = await context.post(root + '/me/api-keys', {
+      headers: { Origin: auth }, data: { name: 'old session', scopes: ['invoices:read'] },
+    });
+    expect(old.status()).toBe(403);
+    expect((await old.json()).error).toMatchObject({ code: 'reauthentication_required', message: expect.stringMatching(/sign in again/i) });
+  });
+  const signedOut = await context.post(root + '/users/' + user + '/sign-out', { headers: { Authorization: 'Bearer ' + writeKey } });
+  expect(signedOut.status()).toBe(204);
+  await verify(created[0].key, false);
+  await verify(ownKey.key, false);
+  const ended = await context.get(root + '/me/api-keys');
+  expect(ended.status()).toBe(401);
+}
+
+export async function checkMachineClient(page: Page, ownerToken: string, project: string, password: string): Promise<void> {
+  const context = page.request;
+  const proof = await stepUp(context, ownerToken, 'create_oauth_client', password);
+  const clients = auth + '/v1/' + project + '/clients';
+  const created = await context.post(clients, {
+    headers: { Authorization: 'Bearer ' + ownerToken, 'X-TerraScale-Step-Up-Proof': proof },
+    data: { name: 'journey machine', type: 'machine', redirect_uris: [], allowed_scopes: ['invoices:read'],
+      allowed_audiences: ['https://invoices.example'], token_lifetime_minutes: 15 },
+  });
+  expect(created.status()).toBe(201);
+  const client = await created.json();
+  saveSecret('machine-client-secret', client.client_secret);
+  expect(client.type).toBe('machine');
+  await page.goto('/auth/clients');
+  const clientRow = page.getByRole('row').filter({ hasText: client.client_id });
+  await expect(clientRow).toContainText('machine');
+  await expect(clientRow).toContainText('invoices:read');
+  await clientRow.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.locator('dialog[open] [name="allowed_scopes"]')).toHaveValue('invoices:read');
+  await page.locator('dialog[open]').getByRole('button', { name: 'Close', exact: true }).click();
+  const form = { grant_type: 'client_credentials', client_id: client.client_id, client_secret: client.client_secret,
+    scope: 'invoices:read', resource: 'https://invoices.example' };
+  const endpoint = auth + '/' + project + '/oauth/token';
+  const granted = await context.post(endpoint, { form });
+  const grantBody = await granted.json();
+  expect(granted.status(), 'machine grant: ' + (grantBody.error ?? 'ok') + ' ' + (grantBody.error_description ?? '')).toBe(200);
+  const token = grantBody.access_token as string;
+  saveSecret('machine-access-token', token);
+  const [header, payload, signature] = token.split('.');
+  const decodedHeader = JSON.parse(Buffer.from(header, 'base64url').toString());
+  const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString());
+  expect(decodedHeader.alg).toBe('ES256');
+  expect(decoded).toMatchObject({ iss: auth + '/' + project, sub: client.client_id, scope: 'invoices:read', aud: 'https://invoices.example', token_use: 'machine' });
+  expect(decoded.exp - decoded.iat).toBe(900);
+  const jwks = await context.get(auth + '/' + project + '/.well-known/jwks.json');
+  expect(jwks.status()).toBe(200);
+  const key = (await jwks.json()).keys.find((item: { kid: string }) => item.kid === decodedHeader.kid);
+  expect(verifySignature('sha256', Buffer.from(header + '.' + payload),
+    { key: createPublicKey({ key, format: 'jwk' }), dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url'))).toBe(true);
+  const expanded = await context.post(endpoint, { form: { ...form, scope: 'invoices:write' } });
+  expect(expanded.status()).toBe(400);
+  const wrongAudience = await context.post(endpoint, { form: { ...form, resource: 'https://other.example' } });
+  expect(wrongAudience.status()).toBe(400);
+  const crossProject = await context.post(auth + '/00000000000000000000000001/oauth/token', { form });
+  expect(crossProject.status()).not.toBe(200);
+  const interactiveProof = await stepUp(context, ownerToken, 'create_oauth_client', password);
+  const interactive = await context.post(clients, {
+    headers: { Authorization: 'Bearer ' + ownerToken, 'X-TerraScale-Step-Up-Proof': interactiveProof },
+    data: { name: 'journey interactive', type: 'confidential', redirect_uris: ['https://app.example/callback'] },
+  });
+  expect(interactive.status()).toBe(201);
+  const userClient = await interactive.json();
+  saveSecret('interactive-client-secret', userClient.client_secret);
+  const refusedUserClient = await context.post(endpoint, { form: { grant_type: 'client_credentials',
+    client_id: userClient.client_id, client_secret: userClient.client_secret, scope: 'invoices:read' } });
+  expect(refusedUserClient.status()).toBe(400);
+  const verifier = randomBytes(32).toString('base64url');
+  saveSecret('project-user-pkce', verifier);
+  const authorization = await context.get(auth + '/' + project + '/oauth/authorize', {
+    params: { response_type: 'code', client_id: userClient.client_id, redirect_uri: 'https://app.example/callback',
+      scope: 'openid email', code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' },
+    maxRedirects: 0,
+  });
+  expect(authorization.status()).toBe(302);
+  const code = new URL(authorization.headers().location).searchParams.get('code');
+  expect(code).toBeTruthy();
+  saveSecret('project-user-code', code!);
+  const userGrant = await context.post(endpoint, { form: { grant_type: 'authorization_code', client_id: userClient.client_id,
+    client_secret: userClient.client_secret, redirect_uri: 'https://app.example/callback', code: code!, code_verifier: verifier } });
+  expect(userGrant.status()).toBe(200);
+  const userToken = (await userGrant.json()).access_token as string;
+  saveSecret('project-user-access-token', userToken);
+  expect(JSON.parse(Buffer.from(userToken.split('.')[1], 'base64url').toString()).token_use).toBe('user');
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const badSecret = await context.post(endpoint, { form: { ...form, client_secret: 'incorrect-secret' } });
+    expect(badSecret.status()).toBe(401);
+  }
+  const locked = await context.post(endpoint, { form });
+  expect(locked.status()).toBe(401);
+  const removedUserClient = await context.delete(clients + '/' + userClient.client_id,
+    { headers: { Authorization: 'Bearer ' + ownerToken } });
+  expect(removedUserClient.status()).toBe(204);
+  const deleted = await context.delete(clients + '/' + client.client_id, { headers: { Authorization: 'Bearer ' + ownerToken } });
+  expect(deleted.status()).toBe(204);
 }

@@ -153,6 +153,13 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
                 .Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
+    internal async Task<bool> CanStartSignInAsync(UserRecord user, CancellationToken cancellationToken) =>
+        !user.Disabled
+        && await users.GetAsync(user.InstanceId, user.Id, cancellationToken).ConfigureAwait(false) is { Disabled: false } current
+        && current.AuthEpoch == user.AuthEpoch && current.AuthStamp == user.AuthStamp
+        && await credentials.RequireAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken).ConfigureAwait(false) is not null
+        && !await this.ClosingAsync(user, cancellationToken).ConfigureAwait(false);
+
     private async Task<IssuedSession?> IssueAsync(UserRecord user, DateTimeOffset createdAt, DateTimeOffset expiresAt, CancellationToken cancellationToken, Change? extra = null, bool singleSession = false)
     {
         if (user.Disabled || await credentials.RequireAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken).ConfigureAwait(false) is not { } lineage

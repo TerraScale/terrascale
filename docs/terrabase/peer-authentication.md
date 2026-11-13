@@ -4,11 +4,12 @@ TerraBase sends `X-TerraBase-Peer-Credential` from `TERRABASE_PEER_SECRET` on
 replication Push streams, Digest and ReadBucket repair calls, and catalog trust
 probes. Both ts-auth storage transports and operator scripts send it too.
 
-Every request on the internal listener (8081) verifies exactly one header against
-the secret before endpoint execution. Verification outcomes are recorded in
-`terrabase_peer_authentication_requests_total{credential="matched|unmatched"}`.
-Labels contain only those two outcomes, never credentials or request identities.
-Public and metrics listeners do not record peer verification outcomes.
+Internal listener (8081) admission accepts the peer credential and
+[signed caller assertions](caller-authentication.md) before endpoint execution.
+Verification outcomes are recorded in
+`terrabase_internal_authentication_requests_total{credential,caller}`.
+The outcomes are `peer`, `caller`, `legacy`, `caller_rejected`, and `unmatched`.
+Public and metrics listeners do not record internal verification outcomes.
 
 Unmatched internal requests are refused with HTTP 401 before endpoint execution;
 gRPC clients observe `Unauthenticated`. This enforcement release follows the

@@ -1,4 +1,3 @@
-using System.Diagnostics.Metrics;
 using System.Net;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Connections.Features;
@@ -11,6 +10,7 @@ using TerraBase.Features.Postgres;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.UserAuth;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Hosting;
 
@@ -223,6 +223,10 @@ public static class Listeners
                 && context.Request.Headers.TryGetValue(HomeForwarding.ForwardedForHeader, out var forwardedFor)
                 && context.RequestServices.GetRequiredService<InternalCredential>().Matches(context))
             {
+                if (!await context.RequestServices.GetRequiredService<CallerAdmission>().AdmitAsync(context, forwarded: true).ConfigureAwait(false))
+                {
+                    return;
+                }
                 if (forwardedFor is not [{ } address] || !IPAddress.TryParse(address, out var client))
                 {
                     context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -242,18 +246,13 @@ public static class Listeners
     public static WebApplication UseTerraBaseListeners(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var internalRequests = app.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName)
-            .CreateCounter<long>("terrabase.internal.authentication.requests", description: "Internal requests by credential verification outcome.");
         app.Use(async (context, next) =>
         {
             var arrivedOn = ArrivedOn(context);
             if (arrivedOn == TerraBaseListener.Internal)
             {
-                var matched = context.RequestServices.GetRequiredService<InternalCredential>().Matches(context);
-                internalRequests.Add(1, new KeyValuePair<string, object?>("credential", matched ? "matched" : "unmatched"));
-                if (!matched)
+                if (!await context.RequestServices.GetRequiredService<CallerAdmission>().AdmitAsync(context).ConfigureAwait(false))
                 {
-                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                     return;
                 }
             }

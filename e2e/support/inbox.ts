@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
 import { cloudflareSink, mailpit, mailWait, production, stateDir } from './stack';
 import { saveSecret } from './state';
 
-export type Mail = { from: string; subject: string; text: string };
+export type Mail = { from: string; fromName?: string; subject: string; text: string };
 
 type Inbox = { address: (name: string) => Promise<string>; next: (address: string, seen: number) => Promise<Mail> };
 
@@ -27,8 +27,8 @@ const mailpitInbox: Inbox = {
       .toBeGreaterThan(seen);
     const response = await fetch(`${mailpit}/api/v1/message/${messages[0].ID}`);
     expect(response.status).toBe(200);
-    const message = (await response.json()) as { From: { Address: string }; Subject: string; Text: string };
-    return { from: message.From.Address, subject: message.Subject, text: message.Text };
+    const message = (await response.json()) as { From: { Address: string; Name: string }; Subject: string; Text: string };
+    return { from: message.From.Address, fromName: message.From.Name, subject: message.Subject, text: message.Text };
   },
 };
 

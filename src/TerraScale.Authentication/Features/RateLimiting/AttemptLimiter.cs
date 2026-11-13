@@ -209,8 +209,80 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         throw ApiException.Unavailable();
     }
 
-    private Task<AttemptRejection?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken) =>
-        this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, cooldown, cancellationToken), purpose, cancellationToken);
+    public async Task<AttemptRejection?> CheckAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
+        (await this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, false, false, cancellationToken), purpose, cancellationToken)).Rejection;
+
+    public async Task<(Reservation? Reservation, AttemptRejection? Rejection)> ReserveAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken)
+    {
+        var (admission, source) = await this.WithFallbackAsync(async source =>
+            (await this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, false, true, cancellationToken), source), purpose, cancellationToken);
+        return admission.Rejection is { } rejection ? (null, rejection) : (new Reservation(this, source, instanceId, purpose, admission), null);
+    }
+
+    public sealed class Reservation
+    {
+        private AttemptLimiter? owner;
+        private readonly IAttemptStore source;
+        private readonly string instanceId;
+        private readonly string purpose;
+        private readonly Admission admission;
+
+        internal Reservation(AttemptLimiter owner, IAttemptStore source, string instanceId, string purpose, Admission admission)
+        {
+            this.owner = owner;
+            this.source = source;
+            this.instanceId = instanceId;
+            this.purpose = purpose;
+            this.admission = admission;
+        }
+
+        public async Task ReturnAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Exchange(ref this.owner, null) is not { } limiter || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            try
+            {
+                await AttemptLimiter.ReturnAsync(this.source, this.instanceId, this.admission, cancellationToken);
+            }
+            catch (Exception error)
+            {
+                limiter.LogReturnFailure(error, this.purpose);
+            }
+        }
+    }
+
+    private void LogReturnFailure(Exception error, string purpose) =>
+        logger?.ZLogWarning(error, $"Could not return a successful primary authentication reservation for {purpose:@Purpose}; its charge is retained");
+
+    private static async Task ReturnAsync(IAttemptStore source, string instanceId, Admission admission, CancellationToken cancellationToken)
+    {
+        for (var round = 0; round < MaxRounds; round++)
+        {
+            var current = (await source.GetManyAsync(instanceId, [admission.Key], cancellationToken))[0];
+            if (current is null || current.Value.Window != admission.Window)
+            {
+                return;
+            }
+
+            if (current.Value.Used <= 0)
+            {
+                throw ApiException.Unavailable(new InvalidDataException("A reserved attempt has no stored charge."));
+            }
+
+            if (await source.TryReplaceAsync(instanceId, admission.Key, current.Value with { Used = current.Value.Used - 1 }, current.Version, cancellationToken))
+            {
+                return;
+            }
+        }
+
+        throw ApiException.Unavailable();
+    }
+
+    private async Task<AttemptRejection?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken) =>
+        (await this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, cooldown, true, cancellationToken), purpose, cancellationToken)).Rejection;
 
     // Runs a check on TerraBase; when that storage fails (not when the caller gave up), runs it on this replica's memory.
     private async Task<T> WithFallbackAsync<T>(Func<IAttemptStore, Task<T>> check, string purpose, CancellationToken cancellationToken)
@@ -246,7 +318,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         _ => false,
     };
 
-    private async Task<AttemptRejection?> AcquireAsync(IAttemptStore source, string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
+    private async Task<Admission> AcquireAsync(IAttemptStore source, string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, bool charge, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentException.ThrowIfNullOrEmpty(purpose);
@@ -296,7 +368,12 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
                 var end = cooldown
                     ? DateTimeOffset.FromUnixTimeMilliseconds(effective) + window
                     : DateTimeOffset.FromUnixTimeSeconds((effective + 1) * windowSeconds);
-                return new AttemptRejection(end, TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((end - clock.GetUtcNow()).TotalSeconds))));
+                return new Admission(key, effective, new AttemptRejection(end, TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((end - clock.GetUtcNow()).TotalSeconds)))));
+            }
+
+            if (!charge)
+            {
+                return new Admission(key, effective, null);
             }
 
             var current = components[this.regionIndex];
@@ -307,12 +384,14 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
                     ? await source.TryReplaceAsync(instanceId, key, new AttemptBucket(effective, checked(own + 1)), current.Version, cancellationToken)
                     : await source.TryChargeAsync(instanceId, key, others, effective, maximum, cancellationToken))
             {
-                return null;
+                return new Admission(key, effective, null);
             }
         }
 
         throw ApiException.Unavailable();
     }
+
+    internal readonly record struct Admission(string Key, long Window, AttemptRejection? Rejection);
 
     private string BucketKey(string purpose, string subject) =>
         Convert.ToHexStringLower(HMACSHA256.HashData(this.idKey, Encoding.UTF8.GetBytes($"{purpose}:{subject}")));

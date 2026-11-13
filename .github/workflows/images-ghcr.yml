@@ -1,44 +1,6 @@
-# ts-orch permits this exact workflow path to release only ts-dashboard.
 name: Images (GHCR)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/TerraScale.Dashboard*/**'
-      # The dashboard calls TerraBase through these MagicOnion contracts.
-      - 'src/TerraScale.TerraBase.Contracts/**'
-      # The dashboard's endpoints and their source generator.
-      - 'src/TerraScale.Endpoints/**'
-      - 'src/TerraScale.Endpoints.Generators/**'
-      - 'scripts/dashboard/Makefile'
-      - 'scripts/dashboard/TerraScale.Dashboard.slnx'
-      - 'scripts/dashboard/check-simple-ui.py'
-      - 'scripts/dashboard/check-stripe-dependency.py'
-      - 'scripts/dashboard/verify-sdk.py'
-      - 'scripts/dashboard/ci/format.sh'
-      - 'scripts/efcore/check-design-host.py'
-      - 'scripts/ci/release-only.sh'
-      - 'sdk/dotnet/Directory.*'
-      - 'sdk/dotnet/NuGet.config'
-      - 'sdk/dotnet/BannedSymbols.txt'
-      - 'sdk/dotnet/contracts/auth/error-codes.json'
-      - 'sdk/dotnet/src/**'
-      - 'Directory.*'
-      - '.editorconfig'
-      - 'BannedSymbols.txt'
-      - 'global.json'
-      - 'NuGet.config'
-      - 'Makefile'
-      - '.github/workflows/dashboard-ci.yml'
-      - 'scripts/dashboard/ci/Dockerfile.runtime'
-      - '.github/workflows/images-ghcr.yml'
-      - '!**/AGENTS.md'
-      - '!**/CLAUDE.md'
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -46,121 +8,72 @@ permissions:
   actions: read
 
 jobs:
-  ready:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      # The CI completion heal reruns Images or dispatches a missing main-head run.
-      actions: write
-      contents: read
-    outputs:
-      deploy: ${{ steps.gate.outputs.deploy }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-      - id: gate
-        name: Release only the newest qualified green main commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          # The regions' verifier accepts only push and dispatch tokens; after CI
-          # completes, heal recovers a qualified push/dispatch run, creating a
-          # main-head dispatch when GitHub never emitted the push event.
-          if [ "$EVENT_NAME" = workflow_run ]; then
-            python3 scripts/dashboard/ci/release-gate.py heal
-            echo deploy=false >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          deploy=$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")
-          if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$deploy" != true ]; then
-            echo 'Dispatch deployment only for the newest unreleased dashboard commit on green main' >&2
-            exit 1
-          fi
-          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
-  test:
-    if: github.event_name != 'workflow_run'
-    uses: ./.github/workflows/dashboard-ci.yml
-
   image:
-    needs: [ready, test]
     name: Publish and release
-    # One release at a time; a newer pending run replaces an older one.
+    if: github.ref == 'refs/heads/main'
     concurrency:
       group: dashboard-release
       cancel-in-progress: false
-    if: >-
-      needs.ready.outputs.deploy == 'true' && github.ref == 'refs/heads/main'
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: read
       actions: read
+      issues: write
       packages: write
       id-token: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - name: Download the application the lint job checked and published
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+          fetch-depth: 0
+          ref: main
+      - id: live
+        name: Reconcile qualified main with the live dashboard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/site-deploy-gate.mjs dashboard
+      - name: Prepare the qualified target
+        if: steps.live.outputs.deploy == 'true'
+        run: |
+          cp scripts/ci/site-deploy-gate.mjs "$RUNNER_TEMP/reconcile.mjs"
+          cp scripts/ci/reconcile-image.sh "$RUNNER_TEMP/reconcile-image.sh"
+          cp scripts/ci/release-app.sh "$RUNNER_TEMP/release-app.sh"
+          cp scripts/ci/fetch-ts-orch.sh "$RUNNER_TEMP/fetch-ts-orch.sh"
+          git checkout --detach "$REVISION"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        if: steps.live.outputs.deploy == 'true'
         with:
-          name: dashboard-publish
-          path: ${{ runner.temp }}/dashboard-publish
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+          global-json-file: global.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        if: steps.live.outputs.deploy == 'true'
+        with:
+          node-version: '24.21.0'
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        if: steps.live.outputs.deploy == 'true'
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        if: steps.live.outputs.deploy == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        id: push
-        with:
-          context: ${{ runner.temp }}/dashboard-publish
-          file: scripts/dashboard/ci/Dockerfile.runtime
-          # Production runs linux/arm64 only; ts-orch pins its child digest.
-          platforms: linux/arm64
-          tags: |
-            ghcr.io/terrascale/terrascale-dashboard:${{ github.sha }}
-            ghcr.io/terrascale/terrascale-dashboard:main
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=dashboard-runtime
-          cache-to: type=gha,mode=max,scope=dashboard-runtime
-          push: true
-      - id: digest
-        name: Verify the published linux/arm64 child
-        env:
-          IMAGE: ghcr.io/terrascale/terrascale-dashboard
-          INDEX: ${{ steps.push.outputs.digest }}
-        run: |
-          set -euo pipefail
-          { echo '```'; docker buildx imagetools inspect "${IMAGE}@${INDEX}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-          arm64=$(docker buildx imagetools inspect "${IMAGE}@${INDEX}" --format '{{json .Manifest}}' |
-            jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
-          test -n "$arm64"
-          docker buildx imagetools inspect "${IMAGE}@${arm64}" --format '{{json .Image}}' |
-            jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
+      - name: Build or reuse the target image and publish its main tag
+        if: steps.live.outputs.deploy == 'true'
+        run: bash "$RUNNER_TEMP/reconcile-image.sh" dashboard
       - name: Release to every region
-        id: release
+        if: steps.live.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE: ghcr.io/terrascale/terrascale-dashboard@${{ steps.digest.outputs.arm64 }}
-        run: |
-          set -euo pipefail
-          deploy=$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")
-          if [ "$deploy" != true ]; then
-            echo "Not released: a newer qualified main commit releases the dashboard" | tee -a "$GITHUB_STEP_SUMMARY"
-            echo released=false >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          bash scripts/ci/release-app.sh ts-dashboard "$IMAGE"
-          echo released=true >> "$GITHUB_OUTPUT"
-      - name: Verify live readiness and deployed source revision
-        if: steps.release.outputs.released == 'true'
-        run: python3 scripts/dashboard/verify-live.py "$GITHUB_SHA"
+        run: bash "$RUNNER_TEMP/release-app.sh" ts-dashboard "$IMAGE"
+      - name: Prove the live revision
+        if: steps.live.outputs.deploy == 'true'
+        run: node "$RUNNER_TEMP/reconcile.mjs" dashboard --prove
+      - name: Record the released source for the production journey
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deploy-revision
+          overwrite: true
+          path: ${{ runner.temp }}/deploy-revision
+          if-no-files-found: error
+          retention-days: 1

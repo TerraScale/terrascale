@@ -5,6 +5,11 @@ ts-auth keeps all of its state in relational tables of its TerraBase database (`
 ([`TerraScale.EntityFrameworkCore`](../../sdk/dotnet/docs/entity-framework-core.md)) over TerraBase's internal
 listener, with the peer credential that `TerraBaseTransport` adds to every request on the injected `HttpClient`.
 
+When `TS_AUTH_TERRABASE_KEY_FILE` names a private P-256 JWK containing `kid`, the transport also sends
+`X-TerraScale-Caller` on every TerraBase request. Assertions identify `ts-auth`, expire after five minutes and are
+replaced every minute. Without that file setting, the transport sends the existing headers. Request correlation
+uses `TERRASCALE_REQUEST_PROOF_KEY` or its `_FILE` companion when supplied, otherwise the peer credential.
+
 ## Model
 
 - One `DbContext`, `AuthDbContext` (`src/TerraScale.Authentication/Storage`), registered with
@@ -113,3 +118,14 @@ Session pruning deletes revoked rows first through a partial `expires_at WHERE r
 the `expires_at` index. Challenge pruning uses its existing `expires_at` index. The mail outbox worker deletes rows
 past retention through its existing `created_at` index in the same 500-row batches, repeating until a short batch.
 EF Core's `Microsoft.EntityFrameworkCore` meter is exported with ts-auth's metrics.
+
+## Project signup admission
+
+Project auth settings persist the signup mode and restriction lists. Project invitations
+and project waitlist entries have project foreign keys and version concurrency tokens.
+Waitlist emails are unique per project. Invitation token hashes are globally unique.
+
+Signup account creation asserts the settings version and consumes a pending invitation
+in the same save as the user and passcode redemption. A mode change, invitation revoke
+or simultaneous redemption makes the losing save fail. Social account creation uses
+the same admission changes. Invitation expiry is checked at issuance and redemption.

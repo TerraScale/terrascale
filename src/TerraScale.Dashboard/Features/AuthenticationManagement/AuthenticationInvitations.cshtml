@@ -1,0 +1,27 @@
+@using TerraScale.Dashboard.Features.AuthenticationManagement
+@using System.Globalization
+@inherits RazorSlice<AuthenticationPage>
+<header class="ts-card-head"><h2 class="ts-card-title" id="auth-invitations-title">Invitations</h2></header>
+<div class="ts-card-body">
+@if (Model.Context.CanManageProject)
+{
+<form class="ts-form" method="post" action="/api/v1/auth-management/invitations">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<div class="ts-field"><label class="ts-label" for="invitation-email">Email</label><input class="ts-input" id="invitation-email" type="email" name="email" required maxlength="254" /></div>
+<button class="ts-btn ts-btn-primary" type="submit">Invite user</button>
+</form>
+}
+@if (Model.Invitations is not { Count: > 0 } invitations)
+{
+<p class="ts-empty">No invitations yet.</p>
+}
+else
+{
+<ul class="ts-list">@foreach (var invitation in invitations) {
+<li class="ts-list-item"><div class="ts-list-main"><span class="ts-strong">@invitation.Email</span><span class="ts-badge">@invitation.Status</span><time datetime="@invitation.ExpiresAt.ToString("O", CultureInfo.InvariantCulture)">@invitation.ExpiresAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)</time></div>
+@if (Model.Context.CanManageProject && invitation.Status == "pending") {
+<form method="post" action="@($"/api/v1/auth-management/invitations/{invitation.Id}/revoke")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Revoke</button></form>
+}</li> }</ul>
+}
+@if (Model.Next is { } next) { <a class="ts-btn ts-btn-secondary" href="@("/auth/invitations?after=" + Uri.EscapeDataString(next))">Next page</a> }
+</div>

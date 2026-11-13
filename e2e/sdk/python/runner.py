@@ -12,7 +12,9 @@ from urllib.parse import urlsplit
 
 import httpx
 from terrascale import AsyncTerraScale, Statement, TerraScale, is_valid_id, new_id
+from terrascale.auth_organizations import OrganizationInvitationRequest, OrganizationRequest
 from terrascale.errors import ServiceUnavailableError
+from terrascale.models import CreateProjectUser, ImportProjectUser, UpdateProjectUser
 
 spec = json.loads(Path(os.environ["E2E_OPERATIONS"]).read_text(encoding="utf-8"))
 run = os.environ["E2E_RUN_ID"]
@@ -65,6 +67,18 @@ def auth_manage_user(op):
     with TerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:
         same(write.disable_user(user).disabled, True, "write key disables")
         same(write.enable_user(user).disabled, False, "write key enables")
+        key = write.create_user_api_key(user, "journey", ["invoices:read"])
+        secret = Path(os.environ["E2E_SECRETS"], "user-api-key-python")
+        secret.touch(mode=0o600)
+        secret.write_text(key.key, encoding="utf-8")
+        with TerraScale(api_key=os.environ["E2E_AUTH_READ_KEY"], project=project) as read:
+            same(any(item.id == key.id for item in read.list_user_api_keys(user).items), True, "list user key")
+            verified = read.verify_user_api_key(key.key)
+            same(verified.valid and verified.user_id == user, True, "verify user key")
+            same(verified.scopes, ["invoices:read"], "user key scopes")
+            write.revoke_user_api_key(user, key.id)
+            same(read.verify_user_api_key(key.key).valid, False, "revoked user key invalid immediately")
+
 
     async def asynchronous():
         async with AsyncTerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:
@@ -72,6 +86,41 @@ def auth_manage_user(op):
             same((await write.enable_user(user)).disabled, False, "async write key enables")
 
     asyncio.run(asynchronous())
+
+
+def auth_user_profiles(op):
+    with TerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:
+        created = write.create_user(CreateProjectUser(email=f"profile-python-{run}@example.com", first_name="SDK",
+                                                      public_metadata={"keep": 1, "remove": True}))
+        same(created.first_name, "SDK", "created profile")
+        changed = write.update_user(created.id, UpdateProjectUser(public_metadata={"remove": None, "added": "yes"},
+                                                                 private_metadata={"backend": True}))
+        same(changed.public_metadata, {"keep": 1, "added": "yes"}, "metadata merge")
+        imported = write.import_users([ImportProjectUser(email=f"import-python-{run}@example.com", email_verified=True,
+                                                        password_hash=op["password_hash"]),
+                                       ImportProjectUser(email=f"invalid-python-{run}@example.com", password_hash="malformed")])
+        same(len(imported.items), 1, "import valid row")
+        same(imported.errors[0].index, 1, "refuse malformed row")
+        write.delete_user(imported.items[0].user.id)
+        write.delete_user(created.id)
+
+def auth_organizations(op):
+    user = os.environ["E2E_AUTH_USER"]
+    with TerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:
+        created = write.create_organization(
+            project, OrganizationRequest("SDK organization", table.replace("_", "-"), user, None, {}, {}, None, "off")
+        )
+        try:
+            with TerraScale(api_key=os.environ["E2E_AUTH_READ_KEY"], project=project) as read:
+                same(read.get_organization(project, created.id).id, created.id, "organization read")
+                same(any(item.id == created.id for item in read.list_organizations(project).items), True, "organization listed")
+                same(read.list_organization_members(project, created.id).items[0].role, "admin", "initial admin")
+                write.create_organization_invitation(
+                    project, created.id, OrganizationInvitationRequest("org-" + run + "@example.com", "member")
+                )
+                same(read.list_organization_invitations(project, created.id).items[0].status, "pending", "invitation listed")
+        finally:
+            write.delete_organization(project, created.id)
 
 
 def execute_positional(op):
@@ -269,8 +318,9 @@ def auth_origin(raw):
 
     with httpx.Client(transport=httpx.MockTransport(record)) as http:
         try:
-            scoped = TerraScale(api_key=KEY, project=project, issuer=raw.removesuffix("/") + "/terrascale", http_client=http,
-                                max_attempts=1)
+            scoped = TerraScale(
+                api_key=KEY, project=project, issuer=raw.removesuffix("/") + "/terrascale", http_client=http, max_attempts=1
+            )
         except ValueError:
             return None
         refused(lambda: scoped.create_scoped_key(new_id(), "read"))
@@ -409,6 +459,9 @@ def placement_set(op):
 
 operations = {
     "auth.manage_user": auth_manage_user,
+    "auth.user_profiles": auth_user_profiles,
+
+    "auth.organizations": auth_organizations,
     "sql.execute.positional": execute_positional,
     "sql.execute.named": execute_named,
     "sql.execute.statement": execute_statement,
@@ -440,7 +493,8 @@ operations = {
 }
 
 group = [
-    op for op in spec["operations"]
+    op
+    for op in spec["operations"]
     if op["group"] == os.environ["E2E_GROUP"]
     and ("needs" not in op or os.environ.get("E2E_REGIONS") == "2" and op["id"].startswith("placement."))
 ]

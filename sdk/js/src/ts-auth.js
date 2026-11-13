@@ -133,6 +133,10 @@ import { requireId } from "./ids.js";
  *   readonly email?: string | undefined;
  *   readonly email_verified?: boolean | undefined;
  *   readonly name?: string | undefined;
+ *   readonly given_name?: string | undefined;
+ *   readonly family_name?: string | undefined;
+ *   readonly picture?: string | undefined;
+ *   readonly public_metadata?: Record<string, unknown> | undefined;
  * }} TsAuthOidcUserInfo
  */
 

@@ -1,0 +1,21 @@
+@using TerraScale.Dashboard.Features.AuthenticationManagement
+@using System.Globalization
+@inherits RazorSlice<AuthenticationPage>
+<header class="ts-card-head"><h2 class="ts-card-title" id="auth-waitlist-title">Waitlist</h2></header>
+<div class="ts-card-body">
+@if (Model.Waitlist is not { Count: > 0 } waitlist)
+{
+<p class="ts-empty">The waitlist is empty.</p>
+}
+else
+{
+<ul class="ts-list">@foreach (var entry in waitlist) {
+<li class="ts-list-item"><div class="ts-list-main"><span class="ts-strong">@entry.Email</span><span class="ts-badge">@entry.Status</span><time datetime="@entry.CreatedAt.ToString("O", CultureInfo.InvariantCulture)">@entry.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)</time></div>
+@if (Model.Context.CanManageProject && entry.Status == "pending") {
+@foreach (var action in new[] { "approve", "reject" }) {
+<form method="post" action="@($"/api/v1/auth-management/waitlist/{entry.Id}/{action}")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">@(action == "approve" ? "Approve" : "Reject")</button></form>
+}
+}</li> }</ul>
+}
+@if (Model.Next is { } next) { <a class="ts-btn ts-btn-secondary" href="@("/auth/waitlist?after=" + Uri.EscapeDataString(next))">Next page</a> }
+</div>

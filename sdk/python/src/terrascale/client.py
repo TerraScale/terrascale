@@ -11,6 +11,7 @@ from typing import Any, TypeVar, overload
 import httpx
 
 from . import _spec, models
+from . import auth_organizations as _organizations
 from . import backups as _backups
 from . import sql as _sql
 from ._spec import Call
@@ -18,8 +19,12 @@ from ._version import __version__
 from .auth import (
     APIKeyTokenSource,
     _scoped_key_call,
+    approve_project_waitlist_call,
     create_api_key_call,
     create_project_client_call,
+    create_project_invitation_call,
+    create_user_api_key_call,
+    create_user_call,
     delete_project_client_call,
     delete_provider_call,
     delete_user_call,
@@ -28,18 +33,28 @@ from .auth import (
     export_users_call,
     get_settings_call,
     get_user_call,
+    import_users_call,
     list_api_keys_call,
     list_project_clients_call,
+    list_project_invitations_call,
+    list_project_waitlist_call,
     list_sessions_call,
+    list_user_api_keys_call,
     list_users_call,
+    reject_project_waitlist_call,
     revoke_api_key_call,
+    revoke_project_invitation_call,
     revoke_session_call,
+    revoke_user_api_key_call,
     rotate_api_key_call,
     rotate_project_client_secret_call,
     set_provider_call,
+    set_user_api_key_policy_call,
     sign_out_user_call,
     update_project_client_call,
     update_settings_call,
+    update_user_call,
+    verify_user_api_key_call,
 )
 from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
 from .ids import is_valid_id, validate_id
@@ -347,14 +362,35 @@ class TerraScale:
         return self._send(rotate_api_key_call(
             self._issuer, organization, project, key, grace_seconds, step_up_proof))
 
+
+    def set_user_api_key_policy(self, scopes: Sequence[str], *, project: str | None = None) -> models.UserApiKeyPolicy:
+        return self._send(set_user_api_key_policy_call(
+            self._issuer, project if project is not None else self.project, scopes))
+
+    def create_user_api_key(self, user: str, name: str, scopes: Sequence[str], *,
+                              expires_at: str | None = None, project: str | None = None) -> models.UserApiKey:
+        return self._send(create_user_api_key_call(self._issuer, project if project is not None else self.project,
+                                                   user, name, scopes, expires_at))
+
+    def list_user_api_keys(self, user: str, *, project: str | None = None) -> models.UserApiKeyPage:
+        return self._send(list_user_api_keys_call(self._issuer, project if project is not None else self.project, user))
+
+    def revoke_user_api_key(self, user: str, key: str, *, project: str | None = None) -> None:
+        return self._send(revoke_user_api_key_call(
+            self._issuer, project if project is not None else self.project, user, key))
+
+    def verify_user_api_key(self, key: str, *, project: str | None = None) -> models.UserApiKeyVerification:
+        return self._send(verify_user_api_key_call(self._issuer, project if project is not None else self.project, key))
+
     def create_project_client(
         self, name: str, client_type: str, redirect_uris: Sequence[str], *, step_up_proof: str,
-        project: str | None = None,
+        project: str | None = None, allowed_scopes: Sequence[str] | None = None,
+        allowed_audiences: Sequence[str] | None = None, token_lifetime_minutes: int | None = None,
     ) -> models.ProjectClient:
         """Register a public or confidential OAuth client; a confidential secret is answered once."""
         return self._send(create_project_client_call(
             self._issuer, project if project is not None else self.project, name, client_type, redirect_uris,
-            step_up_proof))
+            step_up_proof, allowed_scopes, allowed_audiences, token_lifetime_minutes))
 
     def list_project_clients(self, *, project: str | None = None) -> models.ProjectClientPage:
         """List every registered client of the project in one page, without secrets."""
@@ -362,12 +398,13 @@ class TerraScale:
 
     def update_project_client(
         self, client_id: str, name: str, redirect_uris: Sequence[str], *, step_up_proof: str,
-        project: str | None = None,
+        project: str | None = None, allowed_scopes: Sequence[str] | None = None,
+        allowed_audiences: Sequence[str] | None = None, token_lifetime_minutes: int | None = None,
     ) -> models.ProjectClient:
         """Rename a client and replace its redirect URIs; the id, type and secret stay unchanged."""
         return self._send(update_project_client_call(
             self._issuer, project if project is not None else self.project, client_id, name, redirect_uris,
-            step_up_proof))
+            step_up_proof, allowed_scopes, allowed_audiences, token_lifetime_minutes))
 
     def rotate_project_client_secret(
         self, client_id: str, *, step_up_proof: str, grace_seconds: int | None = None, project: str | None = None,
@@ -380,6 +417,114 @@ class TerraScale:
         """Delete a registered client."""
         self._send(delete_project_client_call(self._issuer, project if project is not None else self.project,
                                               client_id))
+
+
+    def create_project_invitation(self, email: str, *, redirect_url: str | None = None,
+                                        project: str | None = None) -> models.ProjectInvitation:
+        return self._send(create_project_invitation_call(
+            self._issuer, project if project is not None else self.project, email, redirect_url))
+
+    def list_project_invitations(self, *, limit: int | None = None, after: str | None = None,
+                                 project: str | None = None) -> models.ProjectInvitationPage:
+        return self._send(list_project_invitations_call(
+            self._issuer, project if project is not None else self.project, limit, after))
+
+    def revoke_project_invitation(self, invitation: str, *, project: str | None = None) -> None:
+        self._send(revoke_project_invitation_call(
+            self._issuer, project if project is not None else self.project, invitation))
+
+    def list_project_waitlist(self, *, limit: int | None = None, after: str | None = None,
+                                 project: str | None = None) -> models.ProjectWaitlistPage:
+        return self._send(list_project_waitlist_call(
+            self._issuer, project if project is not None else self.project, limit, after))
+
+    def approve_project_waitlist(self, entry: str, *, project: str | None = None) -> None:
+        self._send(approve_project_waitlist_call(
+            self._issuer, project if project is not None else self.project, entry))
+
+    def reject_project_waitlist(self, entry: str, *, project: str | None = None) -> None:
+        self._send(reject_project_waitlist_call(
+            self._issuer, project if project is not None else self.project, entry))
+
+    def create_organization(self, project: str, request: _organizations.OrganizationRequest) -> _organizations.Organization:
+        """POST /v1/{project}/organizations."""
+        return self._send(_organizations.create_organization_call(self._issuer, project, request))
+
+    def list_organizations(
+        self, project: str, limit: int | None = None, after: str | None = None
+    ) -> _organizations.OrganizationPage:
+        """GET /v1/{project}/organizations."""
+        return self._send(_organizations.list_organizations_call(self._issuer, project, limit, after))
+
+    def get_organization(self, project: str, org: str) -> _organizations.Organization:
+        """GET /v1/{project}/organizations/{org}."""
+        return self._send(_organizations.get_organization_call(self._issuer, project, org))
+
+    def update_organization(
+        self, project: str, org: str, request: _organizations.OrganizationRequest
+    ) -> _organizations.Organization:
+        """PUT /v1/{project}/organizations/{org}."""
+        return self._send(_organizations.update_organization_call(self._issuer, project, org, request))
+
+    def delete_organization(self, project: str, org: str) -> None:
+        """DELETE /v1/{project}/organizations/{org}."""
+        self._send(_organizations.delete_organization_call(self._issuer, project, org))
+
+    def add_organization_member(
+        self, project: str, org: str, request: _organizations.OrganizationMembershipRequest
+    ) -> _organizations.OrganizationMembership:
+        """POST /v1/{project}/organizations/{org}/memberships."""
+        return self._send(_organizations.add_organization_member_call(self._issuer, project, org, request))
+
+    def list_organization_members(
+        self, project: str, org: str, limit: int | None = None, after: str | None = None
+    ) -> _organizations.OrganizationMembershipPage:
+        """GET /v1/{project}/organizations/{org}/memberships."""
+        return self._send(_organizations.list_organization_members_call(self._issuer, project, org, limit, after))
+
+    def update_organization_member(
+        self, project: str, org: str, user: str, request: _organizations.OrganizationMembershipRequest
+    ) -> _organizations.OrganizationMembership:
+        """PUT /v1/{project}/organizations/{org}/memberships/{user}."""
+        return self._send(_organizations.update_organization_member_call(self._issuer, project, org, user, request))
+
+    def delete_organization_member(self, project: str, org: str, user: str) -> None:
+        """DELETE /v1/{project}/organizations/{org}/memberships/{user}."""
+        self._send(_organizations.delete_organization_member_call(self._issuer, project, org, user))
+
+    def create_organization_invitation(
+        self, project: str, org: str, request: _organizations.OrganizationInvitationRequest
+    ) -> _organizations.OrganizationInvitation:
+        """POST /v1/{project}/organizations/{org}/invitations."""
+        return self._send(_organizations.create_organization_invitation_call(self._issuer, project, org, request))
+
+    def list_organization_invitations(
+        self, project: str, org: str, limit: int | None = None, after: str | None = None
+    ) -> _organizations.OrganizationInvitationPage:
+        """GET /v1/{project}/organizations/{org}/invitations."""
+        return self._send(_organizations.list_organization_invitations_call(self._issuer, project, org, limit, after))
+
+    def revoke_organization_invitation(self, project: str, org: str, invitation: str) -> None:
+        """DELETE /v1/{project}/organizations/{org}/invitations/{invitation}."""
+        self._send(_organizations.revoke_organization_invitation_call(self._issuer, project, org, invitation))
+
+    def add_organization_domain(
+        self, project: str, org: str, request: _organizations.OrganizationDomainRequest
+    ) -> _organizations.OrganizationDomain:
+        """POST /v1/{project}/organizations/{org}/domains."""
+        return self._send(_organizations.add_organization_domain_call(self._issuer, project, org, request))
+
+    def list_organization_domains(self, project: str, org: str) -> _organizations.OrganizationDomainPage:
+        """GET /v1/{project}/organizations/{org}/domains."""
+        return self._send(_organizations.list_organization_domains_call(self._issuer, project, org))
+
+    def verify_organization_domain(self, project: str, org: str, domain: str) -> _organizations.OrganizationDomain:
+        """POST /v1/{project}/organizations/{org}/domains/{domain}/verify."""
+        return self._send(_organizations.verify_organization_domain_call(self._issuer, project, org, domain))
+
+    def delete_organization_domain(self, project: str, org: str, domain: str) -> None:
+        """DELETE /v1/{project}/organizations/{org}/domains/{domain}."""
+        self._send(_organizations.delete_organization_domain_call(self._issuer, project, org, domain))
 
     def get_settings(self, *, project: str | None = None) -> models.ProjectSettings:
         """Read the project's end-user sign-in settings; viewer access with the caller's sign-in token."""
@@ -395,6 +540,17 @@ class TerraScale:
         """List the project's end users in creation order; ``search`` matches an email substring."""
         return self._send(list_users_call(self._issuer, project if project is not None else self.project, search,
                                           limit, after))
+
+    def create_user(self, request: models.CreateProjectUser, *, project: str | None = None) -> models.ProjectUser:
+        return self._send(create_user_call(self._issuer, project if project is not None else self.project, request))
+
+    def update_user(self, user_id: str, request: models.UpdateProjectUser, *, project: str | None = None) -> models.ProjectUser:
+        return self._send(update_user_call(self._issuer, project if project is not None else self.project, user_id, request))
+
+    def import_users(
+        self, users: list[models.ImportProjectUser], *, project: str | None = None
+    ) -> models.ImportProjectUsersResult:
+        return self._send(import_users_call(self._issuer, project if project is not None else self.project, users))
 
     def get_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
         """Read one end user by id."""
@@ -420,7 +576,7 @@ class TerraScale:
 
     def set_provider(self, provider: str, update: models.ProjectProviderUpdate, *,
                      project: str | None = None) -> models.ProjectSettings:
-        """Configure a federated sign-in provider (google, github, apple or oidc); an omitted secret is kept."""
+        """Configure a supported federated sign-in provider; an omitted secret is kept."""
         return self._send(set_provider_call(self._issuer, project if project is not None else self.project, provider,
                                             update))
 

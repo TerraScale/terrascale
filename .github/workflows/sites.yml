@@ -1,86 +1,144 @@
 name: Sites
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI, 'Images (GHCR)']
+    types: [completed]
     branches: [main]
-    paths:
-      - 'docs-site/**'
-      - 'Makefile'
-      - 'landing-site/**'
-      - 'status-site/**'
-      - 'scripts/ci/prove-worker-deploy.mjs'
-      - '.github/workflows/sites.yml'
-      - '!**/AGENTS.md'
-      - '!**/CLAUDE.md'
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
+    inputs:
+      reset_thing:
+        description: Reset one thing's deployment attempts without deploying
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  changes:
-    if: github.ref == 'refs/heads/main'
+  reset-check:
+    if: github.ref == 'refs/heads/main' && inputs.reset_thing != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 2
+    permissions: {}
     outputs:
-      docs: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.docs == 'true' }}
-      landing: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.landing == 'true' }}
-      status: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.status == 'true' }}
+      thing: ${{ steps.check.outputs.thing }}
+      group: ${{ steps.check.outputs.group }}
     steps:
-      - if: github.event_name == 'push'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-      - id: filter
-        if: github.event_name == 'push'
-        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
-        with:
-          base: ${{ github.event.before }}
-          ref: ${{ github.sha }}
-          filters: |
-            docs:
-              - docs-site/**/!(AGENTS.md|CLAUDE.md)
-              - Makefile
-              - scripts/ci/prove-worker-deploy.mjs
-              - .github/workflows/sites.yml
-            landing:
-              - landing-site/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/ci/prove-worker-deploy.mjs
-              - .github/workflows/sites.yml
-            status:
-              - status-site/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/ci/prove-worker-deploy.mjs
-              - .github/workflows/sites.yml
+      - id: check
+        name: Accept only an exact known thing
+        env:
+          RESET_THING: ${{ inputs.reset_thing }}
+        run: |
+          case "$RESET_THING" in
+            auth) group=production-auth ;;
+            dashboard) group=dashboard-release ;;
+            ts-docs) group=docs-deploy ;;
+            ts-landing) group=landing-deploy ;;
+            ts-status|ts-status-vantage-sfo|ts-status-vantage-gru) group="status-deploy-$RESET_THING" ;;
+            *) echo "::error::reset_thing is not a known thing"; exit 1 ;;
+          esac
+          printf 'thing=%s\ngroup=%s\n' "$RESET_THING" "$group" >> "$GITHUB_OUTPUT"
 
-  deploy-docs:
-    needs: changes
-    if: needs.changes.outputs.docs == 'true'
+  reset:
+    needs: reset-check
+    if: github.ref == 'refs/heads/main' && inputs.reset_thing != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
+      issues: write
+    concurrency:
+      group: ${{ needs.reset-check.outputs.group }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          ref: main
+      - name: Reset the validated state under the deployment lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESET_THING: ${{ needs.reset-check.outputs.thing }}
+        run: node scripts/ci/site-deploy-gate.mjs all --reset
+
+  decide:
+    if: github.ref == 'refs/heads/main' && !inputs.reset_thing && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+      issues: read
+    concurrency:
+      group: deploy-reconcile
+      cancel-in-progress: false
+    outputs:
+      docs: ${{ steps.live.outputs.docs }}
+      landing: ${{ steps.live.outputs.landing }}
+      status: ${{ steps.live.outputs.status }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: main
+      - id: live
+        name: Decide all deployments once
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/site-deploy-gate.mjs all
+
+  deploy-docs:
+    needs: decide
+    if: ${{ !cancelled() && needs.decide.outputs.docs == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
     concurrency:
       group: docs-deploy
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
+          fetch-depth: 0
           ref: main
-      - name: Record the checked-out revision
-        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - id: live
+        name: Reconcile qualified main with the live Worker revision
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/site-deploy-gate.mjs docs ts-docs
+      - name: Check out the target
+        if: steps.live.outputs.deploy == 'true'
+        run: |
+          cp scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/prove-worker-deploy.mjs"
+          git checkout --detach "$REVISION"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        if: steps.live.outputs.deploy == 'true'
         with:
           node-version-file: docs-site/.node-version
           package-manager-cache: false
       - name: Install dependencies
+        if: steps.live.outputs.deploy == 'true'
         working-directory: docs-site
         run: npm ci --no-audit --no-fund
       - name: Build the checked-out revision
+        if: steps.live.outputs.deploy == 'true'
         working-directory: docs-site
         run: npm run build
       - name: Deploy the site to Workers
+        if: steps.live.outputs.deploy == 'true'
         working-directory: docs-site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -88,40 +146,58 @@ jobs:
           WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
         run: npm run deploy:site -- --message "$REVISION"
       - name: Prove the deployed revision
+        if: steps.live.outputs.deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-docs
+        run: node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" ts-docs
 
   deploy-landing:
-    needs: changes
-    if: needs.changes.outputs.landing == 'true'
+    needs: decide
+    if: ${{ !cancelled() && needs.decide.outputs.landing == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
+      actions: read
+      issues: write
     concurrency:
       group: landing-deploy
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
+          fetch-depth: 0
           ref: main
-      - name: Record the checked-out revision
-        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - id: live
+        name: Reconcile qualified main with the live Worker revision
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/site-deploy-gate.mjs landing ts-landing
+      - name: Check out the target
+        if: steps.live.outputs.deploy == 'true'
+        run: |
+          cp scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/prove-worker-deploy.mjs"
+          git checkout --detach "$REVISION"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        if: steps.live.outputs.deploy == 'true'
         with:
           node-version-file: landing-site/.node-version
           cache: npm
           cache-dependency-path: landing-site/package-lock.json
       - name: Install dependencies
+        if: steps.live.outputs.deploy == 'true'
         working-directory: landing-site
         run: npm ci --no-audit --no-fund
       - name: Validate the static build
+        if: steps.live.outputs.deploy == 'true'
         working-directory: landing-site
         run: npm run build
       - name: Deploy static assets
+        if: steps.live.outputs.deploy == 'true'
         working-directory: landing-site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -129,48 +205,74 @@ jobs:
           WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
         run: npx wrangler deploy --message "$REVISION"
       - name: Prove the deployed revision
+        if: steps.live.outputs.deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-landing
+        run: node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" ts-landing
 
   deploy-status:
-    needs: changes
-    if: needs.changes.outputs.status == 'true'
+    needs: decide
+    if: ${{ !cancelled() && startsWith(needs.decide.outputs.status, '["') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: ${{ fromJSON(needs.decide.outputs.status) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
+      actions: read
+      issues: write
     concurrency:
-      group: status-deploy
+      group: status-deploy-${{ matrix.worker }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
+          fetch-depth: 0
           ref: main
-      - name: Record the checked-out revision
-        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - id: live
+        name: Reconcile qualified main with the live Worker revision
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          WORKER: ${{ matrix.worker }}
+        run: node scripts/ci/site-deploy-gate.mjs status "$WORKER"
+      - name: Check out the target
+        if: steps.live.outputs.deploy == 'true'
+        run: |
+          cp scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/prove-worker-deploy.mjs"
+          git checkout --detach "$REVISION"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        if: steps.live.outputs.deploy == 'true'
         with:
           node-version-file: status-site/.node-version
           cache: npm
           cache-dependency-path: status-site/package-lock.json
       - name: Install dependencies
+        if: steps.live.outputs.deploy == 'true'
         working-directory: status-site
         run: npm ci --no-audit --no-fund
       - name: Build the checked-out revision
+        if: steps.live.outputs.deploy == 'true'
         working-directory: status-site
         run: npm run build
       - name: Deploy the status Workers
+        if: steps.live.outputs.deploy == 'true'
         working-directory: status-site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
-        run: npm run deploy:prebuilt
+          WORKER: ${{ matrix.worker }}
+        run: npx wrangler deploy -c "dist/${WORKER//-/_}/wrangler.json" --experimental-provision=false --experimental-auto-create=false --message "$REVISION"
       - name: Prove the deployed revision
+        if: steps.live.outputs.deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-status-vantage-sfo ts-status-vantage-gru ts-status
+          WORKER: ${{ matrix.worker }}
+        run: node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" "$WORKER"

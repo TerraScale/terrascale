@@ -3,6 +3,7 @@ using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Management;
 
@@ -10,6 +11,7 @@ internal sealed class AdminListProjectDatabasesEndpoint(IManagementService manag
 {
     public override void Configure()
     {
+        Metadata(new Requires("catalog.read"));
         Get("/admin/projects/{project}/databases");
         Name("adminListProjectDatabases");
         Summary("Lists a project's local databases for a peer region");

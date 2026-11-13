@@ -1,0 +1,26 @@
+@using TerraScale.Dashboard.Features.AuthenticationManagement
+@inherits RazorSlice<AuthenticationPage>
+@{
+    var settings = Model.Settings;
+    var restrictions = settings?.Restrictions;
+    var manage = Model.Context.CanManageProject;
+}
+<header class="ts-card-head"><h2 class="ts-card-title" id="auth-restrictions-title">Restrictions</h2></header>
+<div class="ts-card-body">
+@if (settings is null)
+{
+<p class="ts-empty">Restrictions are unavailable.</p>
+}
+else
+{
+<form class="ts-form" method="post" action="/api/v1/auth-management/restrictions">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<div class="ts-field"><label class="ts-label" for="signup-mode">Sign-up mode</label><select class="ts-input" id="signup-mode" name="sign_up_mode" disabled="@(!manage)">@foreach (var mode in new[] { "public", "restricted", "waitlist" }) { <option value="@mode" selected="@(settings.Methods.SignUpMode == mode)">@mode</option> }</select></div>
+<div class="ts-field"><label class="ts-label" for="signup-allowlist">Allowlist</label><textarea class="ts-input ts-mono" id="signup-allowlist" name="allowlist" rows="5" placeholder="person@example.com&#10;example.com" disabled="@(!manage)">@string.Join(Environment.NewLine, restrictions?.Allowlist ?? [])</textarea></div>
+<div class="ts-field"><label class="ts-label" for="signup-blocklist">Blocklist</label><textarea class="ts-input ts-mono" id="signup-blocklist" name="blocklist" rows="5" placeholder="person@example.com&#10;example.com" disabled="@(!manage)">@string.Join(Environment.NewLine, restrictions?.Blocklist ?? [])</textarea></div>
+<label class="ts-check"><input type="checkbox" name="block_disposable_emails" checked="@(restrictions?.BlockDisposableEmails == true)" disabled="@(!manage)" /><span>Block disposable email domains</span></label>
+<label class="ts-check"><input type="checkbox" name="block_email_aliases" checked="@(restrictions?.BlockEmailAliases == true)" disabled="@(!manage)" /><span>Block + aliases</span></label>
+@if (manage) { <button class="ts-btn ts-btn-primary" type="submit">Save restrictions</button> }
+</form>
+}
+</div>

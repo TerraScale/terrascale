@@ -8,6 +8,7 @@
   </PropertyGroup>
   <!-- Banned APIs (BannedSymbols.txt) for the TerraBase area: referenced by Directory.Build.targets. -->
   <ItemGroup Label="Analyzers">
+    <PackageVersion Include="BCrypt.Net-Next" Version="4.2.1" />
     <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.0.0" />
   </ItemGroup>
   <ItemGroup Label="Analyzer authoring">

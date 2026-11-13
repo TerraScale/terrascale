@@ -131,8 +131,9 @@ public sealed partial record AuthOptions
         foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
         {
             if (entry.Key is string key && key.EndsWith("_FILE", StringComparison.Ordinal) && entry.Value is string { Length: > 0 } path
+                && key != "TS_AUTH_TERRABASE_KEY_FILE"
                 && key[..^"_FILE".Length] is var name
-                && (name.StartsWith("TS_AUTH_", StringComparison.Ordinal) || name.StartsWith("CLOUDFLARE_", StringComparison.Ordinal) || name == "TERRABASE_PEER_SECRET"))
+                && (name.StartsWith("TS_AUTH_", StringComparison.Ordinal) || name.StartsWith("CLOUDFLARE_", StringComparison.Ordinal) || name is "TERRABASE_PEER_SECRET" or "TERRASCALE_REQUEST_PROOF_KEY"))
             {
                 try
                 {

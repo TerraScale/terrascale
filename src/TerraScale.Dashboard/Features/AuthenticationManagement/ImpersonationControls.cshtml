@@ -1,0 +1,34 @@
+@using TerraScale.Dashboard.Features.AuthenticationManagement
+@inherits RazorSlice<AuthenticationPage>
+@if (Model.ImpersonationTicket is { } ticket)
+{
+<div class="ts-card-body" role="status"><h3 class="ts-card-title">Impersonation ticket</h3>
+<p>Shown once. Redeem in the selected application before @ticket.ExpiresAt.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) UTC.</p>
+<label class="ts-label" for="impersonation-ticket">Ticket</label><input class="ts-input ts-mono" id="impersonation-ticket" value="@ticket.Ticket" readonly autocomplete="off" />
+</div>
+}
+@foreach (var user in Model.Users ?? [])
+{
+if (user.Disabled) { continue; }
+var dialog = "impersonate-" + user.Id;
+<dialog class="ts-dialog" id="@dialog" closedby="any" aria-labelledby="@(dialog + "-title")"><div class="ts-dialog-content"><h2 class="ts-dialog-title" id="@(dialog + "-title")">Impersonate @user.Email</h2>
+<form class="ts-form" method="post" action="@("/api/v1/auth-management/users/" + user.Id + "/impersonate")">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<div class="ts-field"><label class="ts-label" for="@(dialog + "-reason")">Reason</label><input class="ts-input" id="@(dialog + "-reason")" name="reason" required maxlength="500" autocomplete="off" /></div>
+<div class="ts-field"><label class="ts-label" for="@(dialog + "-client")">Application</label><select class="ts-select" id="@(dialog + "-client")" name="client_id" required>
+@foreach (var client in Model.Clients ?? []) { <option value="@client.ClientId">@client.Name</option> }
+</select></div>
+<div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="@dialog">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Impersonate</button></div>
+</form></div></dialog>
+}
+@if (Model.Impersonations.Count > 0)
+{
+<div class="ts-card-body"><h3 class="ts-card-title">Active impersonations</h3>
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Active impersonations"><table class="ts-table ts-table-stacked">
+<thead><tr><th scope="col">User</th><th scope="col">Admin</th><th scope="col">Reason</th><th scope="col">Expires</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead>
+<tbody>@foreach (var item in Model.Impersonations) {
+<tr><td class="ts-mono ts-break" data-label="User">@item.UserId</td><td data-label="Admin">@item.ActorEmail</td><td data-label="Reason">@item.Reason</td><td data-label="Expires">@item.ExpiresAt.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) UTC</td><td>
+<form method="post" action="@("/api/v1/auth-management/users/impersonations/" + item.Id + "/end")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">End</button></form>
+</td></tr>
+}</tbody></table></div></div>
+}

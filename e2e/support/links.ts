@@ -8,6 +8,9 @@ const chartWindows = new Set(['range', 'reads', 'writes', 'storage', 'latency'])
 
 const journeyPages: readonly PagePattern[] = [
   { path: /^\/auth\/mfa-sessions$/, query: { saved: /^1$/ } },
+  { path: /^\/auth\/(restrictions|invitations|waitlist)$/, query: { saved: /^1$/ } },
+  { path: /^\/auth\/sessions$/, query: { user: /^[0-9A-HJKMNP-TV-Z]{26}$/ } },
+  { path: /^\/auth\/users$/, query: { user: /^[0-9A-HJKMNP-TV-Z]{26}$/, saved: /^(1)?$/ } },
   { path: /^\/databases\/[0-9A-HJKMNP-TV-Z]{26}\/settings$/, query: { renamed: /^1$/ } },
   { path: /^\/organization$/, query: { newOrganization: /^(payment|project)$/, payment: /^(success|canceled)$/, draft_id: /^([0-9A-HJKMNP-TV-Z]{26})?$/ } },
   { path: /^\/onboarding$/ },
@@ -21,7 +24,9 @@ const journeyPages: readonly PagePattern[] = [
 ];
 
 const hostedPages: readonly RegExp[] = [
-  /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(sign-in|sign-up|reset|security)$/,
+  /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(sign-in|sign-up|reset|waitlist|security|security\/username|sign-in\/magic)$/,
+  /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/invitations\/[0-9A-HJKMNP-TV-Z]{26}$/,
+  /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/social\/(microsoft|gitlab|linkedin|slack|discord|facebook|x|oauth2)$/,
   /^\/ui\/terrascale\/device$/,
   /^\/ui\/terrascale\/sign-up$/,
   /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(sign-up|sign-in|reset)$/,

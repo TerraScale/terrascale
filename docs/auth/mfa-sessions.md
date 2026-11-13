@@ -87,7 +87,7 @@ until their normal expiry; immediate backend revocation requires a live state ch
 
 ## Project step-up
 
-[OpenAPI contract](mfa-sessions.openapi.json).
+[canonical served OpenAPI contract](https://auth.terrascale.tech/openapi/v1.json).
 
 `POST /v1/{project}/step-up` accepts a live project sign-in access token and
 `{"client_id":"<client ULID>","password":"<password>"}` or a `code` instead of

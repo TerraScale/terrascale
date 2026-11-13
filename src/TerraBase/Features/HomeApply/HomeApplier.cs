@@ -50,7 +50,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         {
             applying = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
         }
-        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted)
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
         {
             throw new StorageBusyException();
         }
@@ -100,7 +100,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
                 {
                     rejection = rejected.Rejection;
                 }
-                catch (SqlStatementException error) when (error.Failure is Busy or Interrupted)
+                catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
                 {
                     throw new StorageBusyException();
                 }
@@ -115,7 +115,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         {
             return await RevertAsync(database, transaction, rejection, cancellationToken).ConfigureAwait(false);
         }
-        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted)
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
         {
             throw new StorageBusyException();
         }
@@ -418,8 +418,8 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         NotNull => "not_null",
         Check => "check",
         ForeignKeyFailure => "foreign_key",
-        Constraint or Error or TooBig => "constraint",
-        NoSuchTable or NoSuchColumn or Syntax => "schema",
-        AlreadyExists or Busy or Interrupted or ReadOnly or StaleRow => null,
+        Constraint => "constraint",
+        KnownError or TooBig => "constraint",
+        NoSuchTable or NoSuchColumn or Syntax or AlreadyExists or Busy or Interrupted or ReadOnly or StaleRow or Error or StorageFailure => null,
     };
 }

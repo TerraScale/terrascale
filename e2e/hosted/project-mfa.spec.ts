@@ -1,6 +1,6 @@
 import { createHash, createHmac, createPublicKey, randomBytes, verify as verifySignature } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import type { BrowserContext, Page } from '@playwright/test';
@@ -74,6 +74,11 @@ test.describe('project MFA and session policy', () => {
     await expect(admin.locator('input[name=require_mfa]')).toBeChecked();
     await expect(admin.locator('#auth-inactivity')).toHaveValue('15');
     await adminAudit.check('required TOTP and session policy saved');
+    await admin.goto(dash + '/auth/attack-protection');
+    await admin.locator('input[name=account_lockout]').uncheck();
+    await admin.getByRole('button', { name: 'Save attack protection', exact: true }).click();
+    await expect(admin.locator('input[name=account_lockout]')).not.toBeChecked();
+    await adminAudit.check('MFA password handoffs use the per-email budget');
   });
 
   test.afterAll(async () => {
@@ -139,9 +144,10 @@ test.describe('project MFA and session policy', () => {
       const pid = readFileSync(join(stateDir, 'pids', 'ts-auth.pid'), 'utf8').trim();
       const environment = Object.fromEntries(readFileSync('/proc/' + pid + '/environ', 'utf8').split('\0')
         .filter(Boolean).map((entry) => [entry.slice(0, entry.indexOf('=')), entry.slice(entry.indexOf('=') + 1)]));
+      const legacyLog = openSync(join(stateDir, 'logs', 'ts-auth-upgrade.log'), 'a');
       const legacy = spawn(join(process.env.DOTNET_ROOT!, 'dotnet'), [join(process.env.E2E_BUILD!, 'ts-auth-upgrade', 'ts-auth.dll')], {
         env: { ...environment, TS_AUTH_LISTEN: 'http://127.0.0.1:8091', TS_AUTH_METRICS_LISTEN: 'http://127.0.0.1:9093' },
-        stdio: ['ignore', 'ignore', 'ignore'],
+        stdio: ['ignore', legacyLog, legacyLog],
       });
       try {
         await expect.poll(async () => {
@@ -172,6 +178,7 @@ test.describe('project MFA and session policy', () => {
           legacy.kill('SIGTERM');
           await exited;
         }
+        closeSync(legacyLog);
       }
     });
     const original = await tokens(first);
@@ -346,10 +353,44 @@ test.describe('project MFA and session policy', () => {
       await saveCookies(passkeyContext);
       await passkeyContext.close();
     }
+    await onLocalStack(async () => {
+      const probe = await auditedContext(browser, { storageState: { cookies: [], origins: [] } });
+      const statuses: number[] = [];
+      try {
+        for (let index = 0; index < 11; index++) {
+          const primary = await probe.request.post(`${auth}/ui/${project}/sign-in/password`, {
+            headers: { Origin: auth }, form: { email: endUser, password },
+          });
+          expect(primary.status(), `password handoff ${index + 1}`).toBe(200);
+          const field = /<input[^>]*name="challenge"[^>]*>/.exec(await primary.text())?.[0];
+          expect(field).toBeTruthy();
+          const challenge = await page.evaluate(html =>
+            new DOMParser().parseFromString(html, 'text/html').querySelector<HTMLInputElement>('input[name=challenge]')?.value, field!);
+          expect(challenge).toBeTruthy();
+          saveSecret('mfa-budget-challenge-' + index, challenge!);
+          if (index < 10) {
+            const wrong = await probe.request.post(`${auth}/ui/${project}/sign-in/mfa`, {
+              headers: { Origin: auth }, form: { challenge: challenge!, code: 'invalid-recovery-code' },
+            });
+            statuses.push(wrong.status());
+            expect([401, 429], `MFA proof attempt ${index + 1}`).toContain(wrong.status());
+            if (wrong.status() === 401) expect(await wrong.text()).toContain('That code is wrong or already used');
+          }
+        }
+        expect(statuses[0], 'a wrong second factor reaches proof verification').toBe(401);
+        expect(statuses[9], 'wrong proofs exhaust the remaining MFA budget within ten attempts').toBe(429);
+        expect(statuses.slice(statuses.indexOf(429)).every(status => status === 429), 'an exhausted proof budget stays exhausted').toBe(true);
+      } finally {
+        await saveCookies(probe);
+        await probe.close();
+      }
+    });
     await audit.finish();
     await otherAudit.finish();
     await adminAudit.finish();
   });
+
+
 });
 
 test.describe('password-only MFA enrollment', () => {

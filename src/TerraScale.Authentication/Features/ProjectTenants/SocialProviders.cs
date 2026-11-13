@@ -17,7 +17,9 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 /// <param name="Issuer">The generic OIDC provider's https issuer; null otherwise.</param>
 /// <param name="TeamId">Apple's team id; null otherwise.</param>
 /// <param name="KeyId">Apple's key id; null otherwise.</param>
-public sealed record SocialProviderRecord(string Provider, string ClientId, string SecretBox, string? Issuer = null, string? TeamId = null, string? KeyId = null);
+public sealed record SocialProviderRecord(string Provider, string ClientId, string SecretBox, string? Issuer = null, string? TeamId = null, string? KeyId = null, string? Tenant = null, OAuth2Configuration? OAuth2 = null);
+
+public sealed record OAuth2Configuration(string AuthorizeUrl, string TokenUrl, string UserinfoUrl, string Scopes, string IdClaim = "id", string EmailClaim = "email", string EmailVerifiedClaim = "email_verified");
 
 /// <summary>The supported providers and the checks and sealing of their configuration.</summary>
 public static partial class SocialProviders
@@ -34,8 +36,16 @@ public static partial class SocialProviders
     /// <summary>Any OpenID Connect provider, by its issuer.</summary>
     public const string Oidc = "oidc";
 
-    /// <summary>Every provider, in the order pages and the API list them.</summary>
-    public static IReadOnlyList<string> Names { get; } = [Google, GitHub, Apple, Oidc];
+    public const string Microsoft = "microsoft";
+    public const string GitLab = "gitlab";
+    public const string LinkedIn = "linkedin";
+    public const string Slack = "slack";
+    public const string Discord = "discord";
+    public const string Facebook = "facebook";
+    public const string X = "x";
+    public const string OAuth2 = "oauth2";
+
+    public static IReadOnlyList<string> Names { get; } = [Google, GitHub, Apple, Microsoft, GitLab, LinkedIn, Slack, Discord, Facebook, X, Oidc, OAuth2];
 
     /// <summary>The label the hosted button shows.</summary>
     public static string Label(string provider) => provider switch
@@ -43,6 +53,14 @@ public static partial class SocialProviders
         Google => "Google",
         GitHub => "GitHub",
         Apple => "Apple",
+        Microsoft => "Microsoft",
+        GitLab => "GitLab",
+        LinkedIn => "LinkedIn",
+        Slack => "Slack",
+        Discord => "Discord",
+        Facebook => "Facebook",
+        X => "X",
+        OAuth2 => "Custom OAuth2",
         _ => "single sign-on",
     };
 
@@ -58,9 +76,24 @@ public static partial class SocialProviders
     /// only an existing configuration of the same provider has. Throws 400 <c>invalid_request</c>.
     /// </summary>
     public static SocialProviderRecord Seal(AuthOptions options, string projectId, string provider, SocialProviderRecord? current,
-        string? clientId, string? secret, string? issuer, string? teamId, string? keyId)
+        string? clientId, string? secret, string? issuer, string? teamId, string? keyId, string? tenant = null, OAuth2Configuration? oauth2 = null)
     {
         ArgumentNullException.ThrowIfNull(options);
+        if (!Names.Contains(provider))
+        {
+            throw Invalid("Unknown social provider.");
+        }
+
+        if (provider == Microsoft ? tenant is not (null or "common" or "organizations" or "consumers") : tenant is not null)
+        {
+            throw Invalid("tenant is common, organizations or consumers, and only for microsoft.");
+        }
+
+        if (provider == OAuth2 ? !ValidOAuth2(oauth2) : oauth2 is not null)
+        {
+            throw Invalid("oauth2 requires HTTPS authorize, token and userinfo URLs, scopes and id, email and email_verified claim names, and only for oauth2.");
+        }
+
         if (clientId is not { Length: > 0 and <= 256 } || clientId.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
         {
             throw Invalid("client_id must be 1 to 256 characters without spaces.");
@@ -92,7 +125,7 @@ public static partial class SocialProviders
         }
 
         var box = secret is null ? current!.SecretBox : SecretBox.Seal(options.MasterKey, Encoding.UTF8.GetBytes(secret), Context(projectId, provider));
-        return new(provider, clientId, box, issuer?.TrimEnd('/'), teamId, keyId);
+        return new(provider, clientId, box, issuer?.TrimEnd('/'), teamId, keyId, provider == Microsoft ? tenant ?? "common" : null, oauth2);
     }
 
     /// <summary>The stored secret in clear, for the token request only; never logged or answered.</summary>
@@ -107,6 +140,15 @@ public static partial class SocialProviders
 
     private static bool Issuer(string? issuer) => issuer is { Length: <= 512 } && Uri.TryCreate(issuer, UriKind.Absolute, out var uri)
         && uri.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment);
+
+    private static bool Endpoint(string? value) => value is { Length: <= 2048 } && Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && uri.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Fragment);
+
+    private static bool ValidOAuth2(OAuth2Configuration? configuration) => configuration is not null
+        && Endpoint(configuration.AuthorizeUrl) && Endpoint(configuration.TokenUrl) && Endpoint(configuration.UserinfoUrl)
+        && !string.IsNullOrWhiteSpace(configuration.Scopes) && configuration.Scopes is { Length: <= 512 } && !configuration.Scopes.Any(char.IsControl)
+        && new[] { configuration.IdClaim, configuration.EmailClaim, configuration.EmailVerifiedClaim }
+            .All(claim => claim is { Length: > 0 and <= 128 } && claim.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '.' or '-'));
 
     private static bool AppleKey(string pem)
     {

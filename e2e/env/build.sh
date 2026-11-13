@@ -20,6 +20,8 @@ case $service in
     rm -rf "$out/ts-auth"
     cp -a src/TerraScale.Authentication/bin/Release/net11.0 "$out/ts-auth"
     bash e2e/env/upgrade-auth.sh "$root" "$out/ts-auth-upgrade"
+    dotnet restore e2e/social/Journey.Social.csproj --locked-mode
+    dotnet build e2e/social/Journey.Social.csproj --configuration Release --no-restore --output "$out/social" -p:SourceRevisionId="$revision"
     ;;
   dashboard)
     dotnet restore src/TerraScale.Dashboard/TerraScale.Dashboard.csproj --locked-mode

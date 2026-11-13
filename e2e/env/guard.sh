@@ -7,6 +7,9 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
   echo "pinned https://fra.api.terrascale.tech/ answered $pinned"
   test "${pinned##* from }" = "127.0.0.1"
 fi
+pinned=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code} from %{remote_ip}' https://identity.journey.terrascale.tech/readyz)
+echo "pinned OAuth2 stand-in answered $pinned"
+test "$pinned" = "200 from 93.184.215.14"
 for target in https://sjc.api.terrascale.tech/ https://1.1.1.1/; do
   if curl -sS --max-time 5 -o /dev/null "$target"; then
     echo "unpinned $target answered from inside the namespace" >&2

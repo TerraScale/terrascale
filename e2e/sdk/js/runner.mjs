@@ -78,6 +78,59 @@ const operations = {
     check(disabled.ok && disabled.value.disabled, 'write key disables');
     const enabled = await auth.enableUser(write, project, user);
     check(enabled.ok && !enabled.value.disabled, 'write key enables');
+    const created = await auth.createUserApiKey(write, project, user, { name: 'journey', scopes: ['invoices:read'] });
+    check(created.ok && created.value.key, 'create user key');
+    const key = created.value;
+    writeFileSync(join(process.env.E2E_SECRETS, 'user-api-key-js'), key.key, { mode: 0o600 });
+    const keys = await auth.listUserApiKeys(read, project, user);
+    check(keys.ok && keys.value.items.some(item => item.id === key.id), 'list user key');
+    const verified = await auth.verifyUserApiKey(read, project, { key: key.key });
+    check(verified.ok && verified.value.valid && verified.value.user_id === user, 'verify user key');
+    same(verified.value.scopes, ['invoices:read'], 'user key scopes');
+    const revoked = await auth.revokeUserApiKey(write, project, user, key.id);
+    check(revoked.ok, 'revoke user key');
+    const invalid = await auth.verifyUserApiKey(read, project, { key: key.key });
+    check(invalid.ok && !invalid.value.valid, 'revoked key invalid immediately');
+
+  },
+  async 'auth.user_profiles'(op) {
+    const auth = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: 'terrascale' }).projects;
+    const write = process.env.E2E_AUTH_WRITE_KEY;
+    const created = await auth.createUser(write, project, { email: `profile-js-${run}@example.com`, first_name: 'SDK', public_metadata: { keep: 1, remove: true } });
+    check(created.ok && created.value.first_name === 'SDK', 'created profile');
+    if (!created.ok) throw new Error('create failed');
+    const changed = await auth.updateUser(write, project, created.value.id, { public_metadata: { remove: null, added: 'yes' }, private_metadata: { backend: true } });
+    check(changed.ok && changed.value.public_metadata.keep === 1 && changed.value.public_metadata.added === 'yes' && !('remove' in changed.value.public_metadata), 'metadata merge');
+    const imported = await auth.importUsers(write, project, { users: [
+      { email: `import-js-${run}@example.com`, email_verified: true, password_hash: op.password_hash },
+      { email: `invalid-js-${run}@example.com`, password_hash: 'malformed' },
+    ] });
+    check(imported.ok && imported.value.items.length === 1 && imported.value.errors[0]?.index === 1, 'partial import');
+    if (imported.ok) for (const row of imported.value.items) check((await auth.deleteUser(write, project, row.user.id)).ok, 'delete imported');
+    check((await auth.deleteUser(write, project, created.value.id)).ok, 'delete created');
+  },
+  async 'auth.organizations'() {
+    const auth = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: 'terrascale' }).projects.organizations;
+    const write = process.env.E2E_AUTH_WRITE_KEY;
+    const read = process.env.E2E_AUTH_READ_KEY;
+    const user = process.env.E2E_AUTH_USER;
+    const created = await auth.createOrganization(write, project, { name: 'SDK organization', slug: table.replaceAll('_', '-'),
+      admin_user_id: user, image_url: null, public_metadata: {}, private_metadata: {}, max_members: null, domain_join: 'off' });
+    check(created.ok, 'organization created');
+    if (!created.ok) return;
+    const id = created.value.id;
+    try {
+      const found = await auth.getOrganization(read, project, id);
+      check(found.ok && found.value.id === id, 'organization read');
+      const listed = await auth.listOrganizations(read, project);
+      check(listed.ok && listed.value.items.some(item => item.id === id), 'organization listed');
+      const members = await auth.listOrganizationMembers(read, project, id);
+      check(members.ok && members.value.items.some(item => item.user_id === user && item.role === 'admin'), 'initial admin');
+      const invite = await auth.createOrganizationInvitation(write, project, id, { email: 'org-' + run + '@example.com', role: 'member' });
+      check(invite.ok, 'organization invitation created');
+      const invites = await auth.listOrganizationInvitations(read, project, id);
+      check(invites.ok && invites.value.items.some(item => item.status === 'pending'), 'organization invitation listed');
+    } finally { check((await auth.deleteOrganization(write, project, id)).ok, 'organization deleted'); }
   },
   async 'placement.create'() {
     const created = await client.createDatabase(project, `e2e-js-${run}-placed`, { regions: ['gru', 'fra'] });

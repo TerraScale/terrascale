@@ -3,6 +3,7 @@ using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Management;
 
@@ -10,6 +11,7 @@ internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<P
 {
     public override void Configure()
     {
+        Metadata(new Requires("closure"));
         Put(ClosureFanout.Route);
         Name("closeProject");
         Summary("Fences a ts-auth project for closure");

@@ -1,5 +1,6 @@
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Pressure;
 
@@ -7,6 +8,7 @@ public sealed class PressureEndpoint(IPressureSignals pressure) : EndpointWithou
 {
     public override void Configure()
     {
+        Metadata(new Requires("catalog.read"));
         Get("/v1/admin/node/pressure");
         Name("nodePressure");
         Summary("Cached node pressure signals");

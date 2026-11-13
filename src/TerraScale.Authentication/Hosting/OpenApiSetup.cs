@@ -1,10 +1,13 @@
+using TerraScale.Authentication.Features.UserApiKeys;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.ProjectOrganizations;
 
 namespace TerraScale.Authentication.Hosting;
 
@@ -39,6 +42,7 @@ public static class SecuritySchemes
     public const string ProjectApiKey = "projectApiKey";
     public const string ApiKeyToken = "apiKeyToken";
     public const string ProjectManagement = "projectManagement";
+    public const string UserKeyVerifier = "userKeyVerifier";
 
     /// <summary>Status-only account deletion capability, independent of sign-in credentials.</summary>
     public const string AccountDeletionReceipt = "accountDeletionReceipt";
@@ -95,10 +99,11 @@ public static partial class OpenApiSetup
                     }
                 }
 
-                if (context.Description.RelativePath?.StartsWith("v1/{project}/", StringComparison.Ordinal) == true)
+                if (operation.OperationId != "update_self_profile" && context.Description.RelativePath?.StartsWith("v1/{project}/", StringComparison.Ordinal) == true
+                    && !context.Description.RelativePath.StartsWith("v1/{project}/me/", StringComparison.Ordinal))
                 {
                     var personOnly = operation.OperationId is "create_project_client" or "update_project_client"
-                        or "rotate_project_client_secret" or "create_webhook_endpoint" or "rotate_webhook_secret";
+                        or "rotate_project_client_secret" or "create_webhook_endpoint" or "rotate_webhook_secret" or "start_impersonation" or "list_impersonations" or "end_impersonation";
                     if (!personOnly)
                     {
                         operation.Security = [Requirement(SecuritySchemes.ProjectManagement, context.Document)];
@@ -106,7 +111,12 @@ public static partial class OpenApiSetup
 
                     operation.Description += personOnly
                         ? " Person-only step-up operation; project API keys answer 403 person_required."
-                        : $" Also accepts an unrestricted project secret API key with {(context.Description.HttpMethod == "GET" ? "auth:read" : "auth:write")}.";
+                        : $" Also accepts an unrestricted project secret API key with {(context.Description.HttpMethod == "GET" || operation.OperationId == "verify_user_api_key" ? "auth:read" : "auth:write")}.";
+                }
+
+                if (operation.OperationId == "verify_user_api_key")
+                {
+                    operation.Security = [Requirement(SecuritySchemes.UserKeyVerifier, context.Document)];
                 }
 
                 if (operation.OperationId == "unlock_project_account")
@@ -149,7 +159,7 @@ public static partial class OpenApiSetup
                     };
                 }
 
-                if (operation.OperationId is "delete_account" or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client")
+                if (operation.OperationId is "delete_account" or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client" or "start_impersonation")
                 {
                     (operation.Parameters ??= []).Add(new OpenApiParameter
                     {
@@ -266,7 +276,7 @@ public static partial class OpenApiSetup
     // so renaming a parent property first would hide its entire subtree from that traversal.
     private static void MatchProjectWireSchema(IOpenApiSchema input, JsonTypeInfo type)
     {
-        var wire = ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type);
+        var wire = ProjectOrganizationsJson.Default.GetTypeInfo(type.Type) ?? ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? UserProfileJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type) ?? ImpersonationJson.Default.GetTypeInfo(type.Type) ?? UserApiKeyJson.Default.GetTypeInfo(type.Type);
         if (wire is null || (input is OpenApiSchemaReference reference ? reference.Target : input) is not OpenApiSchema schema)
         {
             return;
@@ -311,6 +321,7 @@ public static partial class OpenApiSetup
     // Descriptions for every tag the API uses; add an entry with each new feature tag.
     private static readonly Dictionary<string, string> TagDescriptions = new(StringComparer.Ordinal)
     {
+        ["Impersonation"] = "Project-admin support sessions, single-use client-bound tickets and hosted session termination.",
         ["Observability"] = "Liveness and readiness probes.",
         ["Admin"] = "Hosted administrator portal and its bundled assets.",
         ["OAuth"] = "OpenID Connect provider for the issuer {public origin}/{slug} (authorization code with S256 PKCE, rotating refresh tokens).",
@@ -322,6 +333,7 @@ public static partial class OpenApiSetup
         ["Members"] = "Organization members and their organization roles (viewer, member, admin, owner).",
         ["Projects"] = "Projects of an organization. Each project is also the tenant of its end users.",
         ["Project members"] = "Explicit project roles (viewer, member, admin), for organization members and collaborators.",
+        ["User API keys"] = "End-user-owned opaque credentials, project scope policies and backend verification.",
         ["API keys"] = "Client credentials owned by an organization or project, exchanged at the token endpoint for short-lived tokens.",
         ["Invitations"] = "Email invitations to an organization role or to one project's role.",
         ["Ownership transfer"] = "Handing an organization's ownership to another member, confirmed by the nominee.",
@@ -346,6 +358,7 @@ public static partial class OpenApiSetup
             Scheme = "bearer",
             Description = "Whole project API key, with no database restriction and both sql:read and sql:write. Backend use only; never expose this key to a browser. Organization keys and JWTs are refused.",
         },
+        [SecuritySchemes.UserKeyVerifier] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer", Description = "Unrestricted project secret API key with auth:read; backend user-key verification only." },
         [SecuritySchemes.ProjectManagement] = () => new()
         {
             Type = SecuritySchemeType.Http,

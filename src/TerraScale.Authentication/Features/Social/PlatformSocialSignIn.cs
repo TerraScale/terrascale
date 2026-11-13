@@ -111,7 +111,7 @@ public sealed class PlatformSocialSignIn(AuthOptions options, Challenges challen
         // The authority comes from these fixed, trusted backchannels, never from user-supplied claims.
         var providerIdentity = new LinkedProvider(provider, provider == SocialProviders.Google ? "https://accounts.google.com" : "https://github.com", credential.ClientId, verified.Subject);
         // Only a bound subject or a new account resolves; an email collision refuses without touching that account.
-        if (await users.FromProviderAsync(tenant, providerIdentity, email, allowCreation: true, cancellationToken) is not { } resolved)
+        if (await users.FromProviderAsync(tenant, providerIdentity, email, cancellationToken) is not { } resolved)
         {
             return Refused(context, tenant);
         }

@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Features.ProjectTenants;
 using System.Globalization;
 using TerraScale.Authentication.Features.AttackProtection;
 using System.Net;
@@ -7,6 +6,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
@@ -22,7 +22,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// password and code attempts are also limited per email, which is what stops guessing against one account. Limits are shared by every replica and apply alike to addresses with and without an
 /// account, and every failure answers the same whatever the account state, so nothing tells an account from a stranger.
 /// </summary>
-public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, IHttpContextAccessor http, ILogger<HostedAuth> logger)
+public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, IHttpContextAccessor http, ILogger<HostedAuth> logger)
 {
     /// <summary>Calls an end-user IP may burst; one more is regained every <see cref="IpInterval"/>.</summary>
     public const int PerIp = 120;
@@ -71,7 +71,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// must accompany a sign-up code's redemption; or how long to wait. The token is random either way, so it reveals
     /// nothing, and only its hash is stored.
     /// </summary>
-    public async Task<(string? PendingToken, MailRefusal? Refusal)> SignUpAsync(string email, string password, string ip, string locale, CancellationToken cancellationToken)
+    public async Task<(string? PendingToken, MailRefusal? Refusal)> SignUpAsync(string email, string password, string ip, string locale, string? username, CancellationToken cancellationToken)
     {
         // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
         using var reservation = mail.Reserve();
@@ -87,11 +87,11 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         }
 
         // Hashed whether or not the address has an account, so both take the same time.
-        var hash = await passwords.HashAsync(password, cancellationToken);
+        var hash = await passwords.HashAsync(this.Tenant, password, cancellationToken);
         var pending = Tokens.RandomToken(43);
         var tenant = this.Tenant;
         cancellationToken.ThrowIfCancellationRequested();
-        await reservation.EnqueueSignUpAsync(tenant, email, hash, pending, locale);
+        await reservation.EnqueueSignUpAsync(tenant, email, hash, pending, locale, username);
         return (pending, null);
     }
 
@@ -130,7 +130,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         }
 
         // Hashed before the code is consumed, so a busy replica never burns the user's code.
-        var hash = await passwords.HashAsync(password, cancellationToken);
+        var hash = await passwords.HashAsync(this.Tenant, password, cancellationToken);
         if (await passcodes.ResetPasswordAsync(this.Tenant, email, code, hash, cancellationToken) is not { } user)
         {
             logger.ZLogInformation($"Audit: hosted {method:@Method} refused");
@@ -164,29 +164,52 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     public static IResult TooMany(TimeSpan wait) => new RetryAfterResult(wait,
         Results.Json(new OAuthErrorBody("rate_limited", "Too many attempts; retry later."), statusCode: StatusCodes.Status429TooManyRequests));
 
-    /// <summary>
-    /// Charges the email's password budget, then checks <paramref name="password"/>. The account, null for any wrong
-    /// email or password alike, or how long to wait. Callers charge the IP budget first and check MFA after.
-    /// </summary>
-    public async Task<(UserRecord? User, TimeSpan? Wait)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken, string locale = AuthEmails.English)
+    public async Task<(UserRecord? User, TimeSpan? Wait, AttemptLimiter.Reservation? Reservation)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
-        var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
-        if ((!Tenancy.IsProject(this.Tenant) || !(await context.RequestServices.GetRequiredService<ProjectAuthSettings>()
-            .GetAsync(this.Tenant, cancellationToken)).AttackProtection.AccountLockout) && await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken, locale) is { } wait)
+        if (Users.NormalizeEmail(email) is null && HostedTheme.Of(http.HttpContext ?? throw new InvalidOperationException("Hosted authentication requires an HTTP context.")).Username
+            && await users.FindByUsernameAsync(this.Tenant, email, cancellationToken) is { } named)
         {
-            return (null, wait);
+            email = named.Email;
         }
 
-        return (Users.NormalizeEmail(email) is { } normalized ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null, null);
+        var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
+        var normalized = Users.NormalizeEmail(email);
+        AttemptLimiter.Reservation? reservation = null;
+        if (normalized is not null && (!Tenancy.IsProject(this.Tenant) || !(await context.RequestServices.GetRequiredService<ProjectAuthSettings>()
+            .GetAsync(this.Tenant, cancellationToken)).AttackProtection.AccountLockout))
+        {
+            var admission = await limiter.ReserveAsync(this.Tenant, "headless-password-email", limiter.Fold(normalized), PasswordPerEmail, PasswordWindow, cancellationToken);
+            if (admission.Rejection is { } rejection)
+            {
+                return (null, this.Refused(normalized, "headless-password-email", rejection, notify: true, locale), null);
+            }
+
+            reservation = admission.Reservation;
+        }
+
+        var started = passwords.StartPasswordCheck();
+        var user = normalized is not null ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null;
+        if (user is null)
+        {
+            await passwords.PadFailureAsync(started, cancellationToken);
+        }
+
+        return (user, null, user is null ? null : reservation);
     }
 
     private async Task<UserRecord?> VerifyPasswordAsync(string email, string password, CancellationToken cancellationToken)
     {
         var user = await users.FindByEmailAsync(this.Tenant, email, cancellationToken);
-        var valid = PasswordPolicy.Verifiable(password) && await passwords.VerifyAsync(password, user?.PasswordHash, cancellationToken);
+        var valid = PasswordPolicy.Verifiable(password) && await passwords.VerifyAsync(this.Tenant, password, user?.PasswordHash, cancellationToken);
         var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
-        return await context.RequestServices.GetRequiredService<AccountProtection>()
-            .PasswordAttemptAsync(this.Tenant, email, user, valid, AuthEmails.Locale(context.Request), cancellationToken) ? user : null;
+        if (!await context.RequestServices.GetRequiredService<AccountProtection>()
+            .PasswordAttemptAsync(this.Tenant, email, user, valid, AuthEmails.Locale(context.Request), cancellationToken) || user is null)
+        {
+            return null;
+        }
+
+        return user.PasswordHash is { } hash && ImportedPasswords.NeedsUpgrade(hash)
+            ? await profiles.UpgradePasswordAsync(user, password, cancellationToken) : user;
     }
 
     // The first bytes of an IPv6 address, the rest zeroed.
@@ -197,7 +220,10 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         return new IPAddress(raw).ToString();
     }
 
-    /// <summary>Charges the shared IP, per-email cooldown and hourly budgets before any hosted code mail is issued.</summary>
+    internal async Task<MailRefusal?> LimitSocialSignUpAsync(string ip, CancellationToken cancellationToken) =>
+        await limiter.AcquireWithDeadlineAsync(this.Tenant, "hosted-signup-ip", limiter.Fold(ip), SignUpsPerIp, SignUpWindow, cancellationToken) is { } limit
+            ? new MailRefusal(limit.RetryAfter, BudgetExhausted: false) : null;
+
     public async Task<MailRefusal?> LimitMailAsync(string email, string ip, CancellationToken cancellationToken)
     {
         if (await this.LimitIpAsync(ip, mails: true, cancellationToken) is { } wait)
@@ -281,10 +307,14 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
             return null;
         }
 
+        return this.Refused(normalized, purpose, rejection, notify, locale);
+    }
+
+    private TimeSpan Refused(string normalized, string purpose, AttemptRejection rejection, bool notify, string locale)
+    {
         logger.ZLogWarning($"Audit: hosted request rate-limited by the {purpose:@Purpose} budget");
         if (notify)
         {
-            // Both known and unknown addresses enqueue the same work; only the worker looks up the account.
             var tenant = this.Tenant;
             mail.EnqueueLockout(async () => await users.FindByEmailAsync(tenant, normalized, CancellationToken.None) is { } user
                 && await limiter.ClaimLockoutNoticeAsync(tenant, purpose, user.Id, rejection.Until, CancellationToken.None)

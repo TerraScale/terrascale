@@ -34,7 +34,7 @@ const stepUpRoutes = new Set([
   "tsauth.projects.update_client",
   "tsauth.projects.rotate_client_secret",
 ]);
-const maximumResponseBytes = 4 * 1024 * 1024;
+const maximumResponseBytes = 16 * 1024 * 1024;
 
 /** Private transport for the named hosted identity and OIDC operations. */
 export class TsAuthHttp {

@@ -8,6 +8,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     public sealed partial class TsAuthClient
     {
         private const int MaxOperationBytes = 1_048_576;
+        private const int MaxResponseBytes = 16 * 1024 * 1024;
         private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
 
         // Immutable header values shared by every request: one allocation, not one per call.
@@ -268,9 +269,9 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             }
 
             // Bound successful bodies before deserialization, including unknown-length responses.
-            using var destination = new BoundedHttpBodyStream(MaxOperationBytes,
+            using var destination = new BoundedHttpBodyStream(MaxResponseBytes,
                 () => new TsAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TsAuthErrors.ResolveRetryAfter(response), response), cancellationToken);
-            if (response.Content.Headers.ContentLength > MaxOperationBytes)
+            if (response.Content.Headers.ContentLength > MaxResponseBytes)
             {
                 throw new TsAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TsAuthErrors.ResolveRetryAfter(response), response);
             }

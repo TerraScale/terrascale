@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
 
-pub const MAX_JSON_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_JSON_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Default)]
 struct BoundedJson {

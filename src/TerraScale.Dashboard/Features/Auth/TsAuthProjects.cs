@@ -4,14 +4,22 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     // A project's own end-user tenant at ts-auth: settings, users, sessions and OAuth clients.
     // Every call carries the signed-in user's own token; ts-auth checks the project role each time.
-    public interface ITsAuthProjects
+    public partial interface ITsAuthProjects
     {
+        Task<TsAuthProjectInvitation> CreateInvitationAsync(SessionRecord session, string projectId, TsAuthCreateProjectInvitation request, CancellationToken cancellationToken);
+        Task<TsAuthPlatformPage<TsAuthProjectInvitation>> ListInvitationsAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken);
+        Task RevokeProjectInvitationAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken);
+        Task<TsAuthPlatformPage<TsAuthWaitlistEntry>> ListWaitlistAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken);
+        Task ApproveWaitlistAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken);
+        Task RejectWaitlistAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken);
         Task<TsAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
         Task<TsAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TsAuthProjectSettingsUpdate update, CancellationToken cancellationToken);
         // The update carries the provider's client secret; never log or store it.
         Task<TsAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TsAuthProjectProviderUpdate update, CancellationToken cancellationToken);
         Task<TsAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken);
         Task<TsAuthPlatformPage<TsAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken);
+        Task<TsAuthProjectUser> GetUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken);
+        Task<TsAuthProjectUser> UpdateUserAsync(SessionRecord session, string projectId, string userId, TsAuthUserProfilePatch patch, CancellationToken cancellationToken);
         Task<TsAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken);
         Task<TsAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken);
         Task DeleteUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken);
@@ -37,6 +45,38 @@ namespace TerraScale.Dashboard.Features.Auth
     public sealed partial class TsAuthGateway : ITsAuthProjects
     {
         public const int ProjectPageSize = 25;
+
+        public Task<TsAuthProjectInvitation> CreateInvitationAsync(SessionRecord session, string projectId, TsAuthCreateProjectInvitation request, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(() => Client().Projects.CreateInvitationAsync(Bearer(session), Id(projectId), request, cancellationToken));
+        }
+
+        public Task<TsAuthPlatformPage<TsAuthProjectInvitation>> ListInvitationsAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(() => Client().Projects.ListInvitationsAsync(Bearer(session), Id(projectId), ProjectPageSize, Blank(after), cancellationToken));
+        }
+
+        public Task RevokeProjectInvitationAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(async () => { await Client().Projects.RevokeInvitationAsync(Bearer(session), Id(projectId), Id(id), cancellationToken); return true; });
+        }
+
+        public Task<TsAuthPlatformPage<TsAuthWaitlistEntry>> ListWaitlistAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(() => Client().Projects.ListWaitlistAsync(Bearer(session), Id(projectId), ProjectPageSize, Blank(after), cancellationToken));
+        }
+
+        public Task ApproveWaitlistAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(async () => { await Client().Projects.ApproveWaitlistAsync(Bearer(session), Id(projectId), Id(id), cancellationToken); return true; });
+        }
+
+        public Task RejectWaitlistAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(async () => { await Client().Projects.RejectWaitlistAsync(Bearer(session), Id(projectId), Id(id), cancellationToken); return true; });
+        }
+
+
 
         public Task<TsAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
         {
@@ -69,6 +109,12 @@ namespace TerraScale.Dashboard.Features.Auth
                 ? Client().Projects.DisableUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken)
                 : Client().Projects.EnableUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken));
         }
+
+        public Task<TsAuthProjectUser> GetUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken) =>
+            ProjectAsync(() => Client().Projects.GetUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken));
+
+        public Task<TsAuthProjectUser> UpdateUserAsync(SessionRecord session, string projectId, string userId, TsAuthUserProfilePatch patch, CancellationToken cancellationToken) =>
+            ProjectAsync(() => Client().Projects.UpdateUserAsync(Bearer(session), Id(projectId), Id(userId), patch, cancellationToken));
 
         public Task<TsAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken)
         {
