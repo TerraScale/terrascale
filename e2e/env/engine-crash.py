@@ -1286,7 +1286,11 @@ try:
         assert pathlib.Path(str(file)[:-4]).exists()
     for file in (state / "data" / organization / project).glob("*.db"):
         assert pathlib.Path(str(file) + ".key").exists()
-    print("publish restart: no half pairs or creation scratch remain; the unpublished key is retained; catalog=" + json.dumps(records), flush=True)
+    print(
+        "publish restart: no half pairs or creation scratch remain; the unpublished key is retained; catalog="
+        + json.dumps(records),
+        flush=True,
+    )
     end()
     start()
     request_database = request("POST", f"/v1/projects/{project}/databases", {"name": "healthy"})["id"]
