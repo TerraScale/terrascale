@@ -544,6 +544,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      issues: write
       # Reads the private TerraBase image to check its revision label.
       packages: read
       # ts-orch accepts this job's OIDC token to release the pinned digest.
@@ -558,6 +559,11 @@ jobs:
       - uses: ./.github/actions/qualified-main
         with:
           revision: ${{ github.sha }}
+      - id: alert
+        name: Check the manual deployment attempt bound
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/deploy-alert.mjs terrabase guard "$GITHUB_SHA"
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -565,6 +571,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - name: Release the pinned arm64 digest to each region
+        if: steps.alert.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ inputs.terrabase_arm64 }}
@@ -588,6 +595,13 @@ jobs:
           done
           exit "$status"
 
+      - name: Record deployment outcome
+        if: always() && steps.alert.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        run: node scripts/ci/deploy-alert.mjs terrabase "$RESULT" "$GITHUB_SHA"
+
   main-auth:
     if: github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && github.ref == 'refs/heads/main'
     concurrency:
@@ -598,6 +612,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      issues: write
       packages: write
       id-token: write
     steps:
@@ -614,6 +629,7 @@ jobs:
       - name: Prepare the qualified target
         if: steps.live.outputs.deploy == 'true'
         run: |
+          cp scripts/ci/deploy-alert.mjs "$RUNNER_TEMP/deploy-alert.mjs"
           cp scripts/ci/site-deploy-gate.mjs "$RUNNER_TEMP/reconcile.mjs"
           cp scripts/ci/reconcile-image.sh "$RUNNER_TEMP/reconcile-image.sh"
           cp scripts/ci/release-app.sh "$RUNNER_TEMP/release-app.sh"
@@ -651,6 +667,12 @@ jobs:
           path: ${{ runner.temp }}/deploy-revision
           if-no-files-found: error
           retention-days: 1
+      - name: Record deployment outcome
+        if: always() && steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        run: node "$RUNNER_TEMP/deploy-alert.mjs" auth "$RESULT" "$REVISION"
 
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}

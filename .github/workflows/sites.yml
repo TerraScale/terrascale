@@ -14,13 +14,44 @@ permissions:
   actions: read
 
 jobs:
-  deploy-docs:
+  decide:
     if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: write
+      issues: write
+    concurrency:
+      group: deploy-reconcile
+      cancel-in-progress: false
+    outputs:
+      docs: ${{ steps.live.outputs.docs }}
+      landing: ${{ steps.live.outputs.landing }}
+      status: ${{ steps.live.outputs.status }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: main
+      - id: live
+        name: Decide all deployments once
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/site-deploy-gate.mjs all
+
+  deploy-docs:
+    needs: decide
+    if: needs.decide.outputs.docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
       actions: read
+      issues: write
     concurrency:
       group: docs-deploy
       cancel-in-progress: false
@@ -40,6 +71,7 @@ jobs:
       - name: Check out the target
         if: steps.live.outputs.deploy == 'true'
         run: |
+          cp scripts/ci/deploy-alert.mjs "$RUNNER_TEMP/deploy-alert.mjs"
           cp scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/prove-worker-deploy.mjs"
           git checkout --detach "$REVISION"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
@@ -69,14 +101,23 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" ts-docs
+      - name: Record deployment outcome
+        if: always() && steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          THING: ts-docs
+          RESULT: ${{ job.status }}
+        run: node "$RUNNER_TEMP/deploy-alert.mjs" "$THING" "$RESULT" "$REVISION"
 
   deploy-landing:
-    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
+    needs: decide
+    if: needs.decide.outputs.landing == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
       actions: read
+      issues: write
     concurrency:
       group: landing-deploy
       cancel-in-progress: false
@@ -96,6 +137,7 @@ jobs:
       - name: Check out the target
         if: steps.live.outputs.deploy == 'true'
         run: |
+          cp scripts/ci/deploy-alert.mjs "$RUNNER_TEMP/deploy-alert.mjs"
           cp scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/prove-worker-deploy.mjs"
           git checkout --detach "$REVISION"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
@@ -126,14 +168,27 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" ts-landing
+      - name: Record deployment outcome
+        if: always() && steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          THING: ts-landing
+          RESULT: ${{ job.status }}
+        run: node "$RUNNER_TEMP/deploy-alert.mjs" "$THING" "$RESULT" "$REVISION"
 
   deploy-status:
-    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
+    needs: decide
+    if: needs.decide.outputs.status != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: ${{ fromJSON(needs.decide.outputs.status) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
       actions: read
+      issues: write
     concurrency:
       group: status-deploy
       cancel-in-progress: false
@@ -149,10 +204,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/ci/site-deploy-gate.mjs status ts-status-vantage-sfo ts-status-vantage-gru ts-status
+          WORKER: ${{ matrix.worker }}
+        run: node scripts/ci/site-deploy-gate.mjs status "$WORKER"
       - name: Check out the target
         if: steps.live.outputs.deploy == 'true'
         run: |
+          cp scripts/ci/deploy-alert.mjs "$RUNNER_TEMP/deploy-alert.mjs"
           cp scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/prove-worker-deploy.mjs"
           git checkout --detach "$REVISION"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
@@ -176,54 +233,20 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/deploys.ndjson
-          WORKERS: ${{ steps.live.outputs.workers }}
-        run: |
-          for worker in $WORKERS; do
-            npx wrangler deploy -c "dist/${worker//-/_}/wrangler.json" --experimental-provision=false --experimental-auto-create=false --message "$REVISION"
-          done
+          WORKER: ${{ matrix.worker }}
+        run: npx wrangler deploy -c "dist/${WORKER//-/_}/wrangler.json" --experimental-provision=false --experimental-auto-create=false --message "$REVISION"
       - name: Prove the deployed revision
         if: steps.live.outputs.deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          WORKERS: ${{ steps.live.outputs.workers }}
-        run: |
-          read -ra workers <<< "$WORKERS"
-          node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" "${workers[@]}"
+          WORKER: ${{ matrix.worker }}
+        run: node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" "$WORKER"
 
-  reconcile-services:
-    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
-    strategy:
-      matrix:
-        thing: [auth, dashboard]
-    concurrency:
-      group: reconcile-request-${{ matrix.thing }}
-      cancel-in-progress: false
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-          ref: main
-      - id: live
-        name: Reconcile the current service and qualified main
+      - name: Record deployment outcome
+        if: always() && steps.live.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          THING: ${{ matrix.thing }}
-        run: node scripts/ci/site-deploy-gate.mjs "$THING"
-      - name: Request a release reconcile with a main dispatch identity
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          THING: ${{ matrix.thing }}
-        run: |
-          if [ "$THING" = auth ]; then
-            gh workflow run ci.yml --ref main -f reconcile_auth=true
-          else
-            gh workflow run images-ghcr.yml --ref main
-          fi
+          THING: ${{ matrix.worker }}
+          RESULT: ${{ job.status }}
+        run: node "$RUNNER_TEMP/deploy-alert.mjs" "$THING" "$RESULT" "$REVISION"

@@ -54,6 +54,13 @@ jobs:
             echo "::error::Release jobs have no recognized release step: $unknown"
             exit 1
           fi
+          failed=$(jq -c --argjson names "$names" '[.jobs[]
+            | select(.name | IN($names[])) | select(.conclusion == "failure" or .conclusion == "cancelled")]' <<< "$jobs")
+          if [ "$(jq length <<< "$failed")" -gt 0 ]; then
+            jq -e 'all(.[]; any(.steps[]; .name == "Record deployment outcome" and .conclusion == "success"))' <<< "$failed" > /dev/null
+            echo "Run $RUN_ID recorded its deployment failure in the deployment alert; no proved release to journey"
+            exit 0
+          fi
           released=$(jq -r --argjson steps "$RELEASE_STEPS" '[.jobs[] | .steps[]?
             | select(.name | IN($steps[])) | select(.conclusion == "success")] | length' <<< "$jobs")
           if [ "$released" -eq 0 ]; then

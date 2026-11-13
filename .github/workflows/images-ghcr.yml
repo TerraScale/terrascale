@@ -19,6 +19,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      issues: write
       packages: write
       id-token: write
     steps:
@@ -35,6 +36,7 @@ jobs:
       - name: Prepare the qualified target
         if: steps.live.outputs.deploy == 'true'
         run: |
+          cp scripts/ci/deploy-alert.mjs "$RUNNER_TEMP/deploy-alert.mjs"
           cp scripts/ci/site-deploy-gate.mjs "$RUNNER_TEMP/reconcile.mjs"
           cp scripts/ci/reconcile-image.sh "$RUNNER_TEMP/reconcile-image.sh"
           cp scripts/ci/release-app.sh "$RUNNER_TEMP/release-app.sh"
@@ -76,3 +78,9 @@ jobs:
           path: ${{ runner.temp }}/deploy-revision
           if-no-files-found: error
           retention-days: 1
+      - name: Record deployment outcome
+        if: always() && steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        run: node "$RUNNER_TEMP/deploy-alert.mjs" dashboard "$RESULT" "$REVISION"
