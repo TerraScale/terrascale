@@ -11,6 +11,7 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService
 {
     private string? _deletedAfter;
+    private long _nonwriterRetentionPasses;
     private async ValueTask<T> WriteRetentionAsync<T>(string database,
         Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken token)
     {
@@ -258,6 +259,7 @@ internal sealed partial class EngineManagementService
     {
         if (!retention.Writer)
         {
+            Interlocked.Increment(ref _nonwriterRetentionPasses);
             return;
         }
         var page = await ReadAsync<ManagementPage<DeletedDatabaseRecord>?>(async transaction => await SystemCatalog.ListAsync(

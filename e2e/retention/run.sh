@@ -32,5 +32,5 @@ bash e2e/env/local.sh start
 bash e2e/env/local.sh exec bash e2e/env/up.sh
 cd e2e
 export E2E_PLACEMENT_SELECTED=1
-bash env/local.sh exec npx playwright test --project placement-setup --no-deps
+bash env/local.sh exec npx playwright test --project placement-setup --no-deps --output "$E2E_STATE/test-results"
 bash env/local.sh exec env LD_PRELOAD="$E2E_RETENTION_CLOCK" node retention/handoff.mjs

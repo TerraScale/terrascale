@@ -136,9 +136,39 @@ function displace(root, id, target) {
 }
 
 try {
+  const receiverBuild = process.env.E2E_RETENTION_RECEIVER_BUILD;
+  assert(receiverBuild && existsSync(join(receiverBuild, 'terrabase.dll')), 'the preparation build is required for mixed-version proof');
+  const receiverPid = Number(readFileSync(join(state, 'pids', 'terrabase-fra.pid'), 'utf8'));
+  const receiverEnvironment = Object.fromEntries(readFileSync('/proc/' + receiverPid + '/environ', 'utf8')
+    .split('\0').filter(Boolean).map(value => { const at = value.indexOf('='); return [value.slice(0, at), value.slice(at + 1)]; }));
+  process.kill(receiverPid, 'SIGTERM');
+  await expect.poll(() => existsSync('/proc/' + receiverPid) && !readFileSync('/proc/' + receiverPid + '/stat', 'utf8').split(')')[1].trim().startsWith('Z'), { timeout: 45_000 }).toBe(false);
+  start('receiver-preparation', 'dotnet', [join(receiverBuild, 'terrabase.dll')], receiverEnvironment);
+  await expect.poll(async () => {
+    try { return (await request(2, '/v1/rollout/status')).json().ready; } catch { return false; }
+  }, { timeout: 45_000 }).toBe(true);
+  const oldSeed = await request(1, database(owner.databaseId));
+  if (oldSeed.status === 200) await checked(1, database(owner.databaseId), 'DELETE', undefined, 204);
+  const mixed = (await checked(1, project + '/databases', 'POST', { name: 'retained-mixed-version', regions: ['gru', 'fra'] }, 201)).json();
+  await checked(1, database(mixed.id) + '/sql/execute', 'POST', { statements: [{ sql: 'CREATE TABLE proof (value INTEGER)' }, { sql: 'INSERT INTO proof VALUES (73)' }] });
+  await expect.poll(async () => {
+    const answer = await request(2, database(mixed.id));
+    return answer.status;
+  }, { timeout: 45_000 }).toBe(200);
+  await checked(1, database(mixed.id), 'DELETE', undefined, 204);
+  await expect.poll(() => files(roots[1], mixed.id).filter(file => file.endsWith('.db')), { timeout: 45_000 }).toEqual([]);
+  await checked(1, deleted(mixed.id) + '/restore', 'POST');
+  await expect.poll(async () => (await request(2, database(mixed.id))).status, { timeout: 45_000 }).toBe(200);
+  const adopted = (await checked(2, database(mixed.id) + '/sql/execute', 'POST', { statements: [{ sql: 'SELECT value FROM proof' }] })).json().results[0].rows;
+  assert.deepEqual(adopted, [[73]]);
+  await checked(1, database(mixed.id), 'DELETE', undefined, 204);
+  const preparedReceiver = nodes.find(node => node.name === 'receiver-preparation');
+  preparedReceiver.process.kill('SIGTERM');
+  await preparedReceiver.stopped;
+  console.log('mixed version: candidate home soft-delete, C54 receiver forgets without retiring id, restore re-adopts row [73]');
   for (const name of ['terrabase', 'terrabase-fra']) {
     const pid = Number(readFileSync(join(state, 'pids', name + '.pid'), 'utf8'));
-    process.kill(pid, 'SIGTERM');
+    if (existsSync('/proc/' + pid)) process.kill(pid, 'SIGTERM');
     await expect.poll(() => existsSync('/proc/' + pid) && !readFileSync('/proc/' + pid + '/stat', 'utf8').split(')')[1].trim().startsWith('Z'), { message: name + ' stopped', timeout: 45_000 }).toBe(false);
   }
   start('nats', 'nats-server', ['-c', natsConfig], environment);
@@ -248,9 +278,10 @@ try {
   console.log('300 retained databases crossed handoff in bounded pages; verified manifest; elapsed ms=' + Math.round(performance.now() - handoffStarted));
 
   const eightDays = 8 * 24 * 60 * 60;
+  const skipped = async () => Number((await (await fetch('http://127.0.0.1:9091/metrics')).text()).match(/terrabase_retention_nonwriter_maintenance_passes (\d+)/)?.[1]);
+  const beforeSkipped = await skipped();
   setClock(eightDays, 1);
-  await expect.poll(async () => (await fetch('http://127.0.0.1:9091/metrics')).text(),
-    { message: 'outgoing maintenance runs after the old retention deadline', timeout: 45_000 }).toContain('terrabase_purge_pending');
+  await expect.poll(skipped, { message: 'outgoing maintenance runs after the old retention deadline', timeout: 45_000 }).toBeGreaterThan(beforeSkipped);
   const stillLive = (await checked(2, database(restoreId) + '/sql/execute', 'POST', { statements: [{ sql: 'SELECT value FROM kept ORDER BY value' }] })).json().results[0].rows;
   assert.deepEqual(stillLive, [[11], [22], [33]]);
   assert((await keys(restoreId)).some(key => !key.endsWith('/shredded')));
