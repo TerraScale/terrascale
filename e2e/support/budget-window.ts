@@ -9,11 +9,11 @@ export function budgetWindow(response: APIResponse, window: number): number {
 }
 
 export async function waitForBudgetWindow(request: APIRequestContext, window: number): Promise<void> {
-  await expect.poll(async () => {
+  while (true) {
     const ready = await request.get(auth + '/readyz');
     expect(ready.status()).toBe(200);
     const date = Date.parse(ready.headers().date);
     expect(Number.isFinite(date), 'budget readiness has a server Date').toBe(true);
-    return date % window;
-  }, { message: 'budget probe starts with at least fifteen seconds left in its fixed window' }).toBeLessThan(window - 15_000);
+    if (date % window < window - 30_000) return;
+  }
 }
