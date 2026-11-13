@@ -1,0 +1,30 @@
+name: Require the journey on the released main commit
+description: Reject a revision without a successful main push CI run and both journey shards.
+inputs:
+  revision:
+    description: Exact source revision being published or deployed.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Require successful CI and journey for the exact revision
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REVISION: ${{ inputs.revision }}
+      run: |
+        set -euo pipefail
+        [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+        run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$REVISION&branch=main&event=push&per_page=100" \
+          --jq '.workflow_runs | max_by(.id) // empty')
+        jq -e --arg sha "$REVISION" --arg repo "$GITHUB_REPOSITORY" '
+          .head_sha == $sha and .head_branch == "main" and .event == "push"
+          and .head_repository.full_name == $repo and .status == "completed" and .conclusion == "success"
+        ' <<< "$run" > /dev/null
+        id=$(jq -r .id <<< "$run")
+        gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" | \
+          jq -e '[.[].jobs[]] as $jobs
+            | [$jobs[] | select(.name | startswith("journey / journey "))] as $journey
+            | ($journey | length) >= 2 and all($journey[]; .conclusion == "success")
+              and any($jobs[]; .name == "all-green" and .conclusion == "success")' > /dev/null
+        echo "Qualified $REVISION with main CI run $id and its successful journey" >> "$GITHUB_STEP_SUMMARY"

@@ -9,6 +9,7 @@ permissions:
   issues: write
 jobs:
   ci-time:
+    if: github.event.workflow_run.name != 'Sites' || github.event.workflow_run.event != 'schedule'
     uses: TerraScale/.github/.github/workflows/ci-time.yml@b2244dc7f9f527ca7a24e86854741ba7671ad265
     with:
       scan-limit: 15

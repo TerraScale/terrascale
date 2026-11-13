@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 
 const [record, ...workers] = process.argv.slice(2);
 const { CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_API_TOKEN: token, REVISION: revision } = process.env;
@@ -25,4 +25,5 @@ for (const { worker_name: worker, version_id: version } of deploys) {
   const { annotations } = await cloudflare(`${worker}/versions/${version}`);
   assert.equal(annotations['workers/message'], revision, `${worker}: version ${version} does not carry ${revision}`);
   console.log(`${worker}: active deployment ${active.id} serves version ${version} at 100%, message ${revision}`);
+  appendFileSync(process.env.GITHUB_STEP_SUMMARY, `- ${worker}: deployed ${revision}\n`);
 }

@@ -1,6 +1,5 @@
 name: Dashboard
 
-# Main pushes run this through images-ghcr.yml, the dashboard's single main entry point.
 on:
   workflow_call:
   workflow_dispatch:
@@ -42,17 +41,3 @@ jobs:
         run: |
           if [ -n "$BASE_SHA" ]; then git fetch --no-tags --depth=1 origin "$BASE_SHA"; fi
           make dashboard-lint
-      - name: Publish the checked application
-        if: github.event_name != 'pull_request'
-        env:
-          REVISION: ${{ github.sha }}
-        run: |
-          dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore \
-            --output "$RUNNER_TEMP/dashboard-publish" -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$REVISION"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: github.event_name != 'pull_request'
-        with:
-          name: dashboard-publish
-          path: ${{ runner.temp }}/dashboard-publish
-          if-no-files-found: error
-          retention-days: 1
