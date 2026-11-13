@@ -19,12 +19,12 @@ internal sealed partial class ParkedPushJsonContext : JsonSerializerContext;
 
 internal partial class HomePush
 {
-    private static readonly TimeSpan ParkRetention = TimeSpan.FromDays(7);
+    private const string PreviousLayout = "previous_layout";
+    private const int NoStream = 10059;
+    private static readonly TimeSpan ParkDuplicateWindow = TimeSpan.FromDays(7);
     private static readonly string[] ParkReasons = ["malformed", "empty", "deleted_database"];
-    private Measurement<long>[] _parkedCounts = EmptyParkedCounts();
-
-    private static Measurement<long>[] EmptyParkedCounts() =>
-        [.. ParkReasons.Select(reason => new Measurement<long>(0, new KeyValuePair<string, object?>("reason", reason)))];
+    private Measurement<long>[] _parkedCounts = [.. ParkReasons.Append(PreviousLayout).Select(reason => new Measurement<long>(0, new KeyValuePair<string, object?>("reason", reason)))];
+    private long _previousParked;
 
     private async Task ParkAsync(PushQueue queue, PushItem item, string reason, CancellationToken cancellationToken)
     {
@@ -40,16 +40,14 @@ internal partial class HomePush
         {
             Storage = StreamConfigStorage.File,
             Retention = StreamConfigRetention.Limits,
-            Discard = StreamConfigDiscard.Old,
+            Discard = StreamConfigDiscard.New,
             MaxBytes = 1L << 30,
-            MaxMsgs = 10_000,
-            MaxAge = ParkRetention,
             MaxMsgSize = 2 * MaxPayloadBytes,
-            DuplicateWindow = ParkRetention,
+            DuplicateWindow = ParkDuplicateWindow,
             NumReplicas = 1,
         }, cancellationToken).ConfigureAwait(false);
         var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source)));
-        var subject = $"terrabase.push-park.{options.Region}.{reason}.{origin}.{identity}.{sequence.ToString(CultureInfo.InvariantCulture)}";
+        var subject = $"terrabase.push-parked.{options.Region}.{reason}.{origin}.{identity}.{sequence.ToString(CultureInfo.InvariantCulture)}";
         var parked = await js.PublishAsync(subject,
             JsonSerializer.SerializeToUtf8Bytes(record, ParkedPushJsonContext.Default.ParkedPush),
             opts: new NatsJSPubOpts { MsgId = identity + "." + sequence.ToString(CultureInfo.InvariantCulture) }, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -74,24 +72,37 @@ internal partial class HomePush
             {
                 await RefreshParkedCountsAsync(js, cancellationToken).ConfigureAwait(false);
             }
-            catch (NatsJSApiException error) when (error.Error.ErrCode == 10059)
-            {
-                Volatile.Write(ref _parkedCounts, EmptyParkedCounts());
-            }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger.ZLogError($"The durable parked push count could not be read: {error.GetType().Name:@Error}");
             }
         }
     }
+
     private async Task RefreshParkedCountsAsync(NatsJSContext js, CancellationToken cancellationToken)
     {
-        var stream = await js.GetStreamAsync(PushNames.ParkStream(options.Region),
-            new StreamInfoRequest { SubjectsFilter = ">" }, cancellationToken).ConfigureAwait(false);
-        var subjects = stream.Info.State.Subjects;
+        var subjects = (await ParkStateAsync(js, PushNames.ParkStream(options.Region), ">", cancellationToken).ConfigureAwait(false))?.Subjects;
+        var previous = (await ParkStateAsync(js, PushNames.PreviousParkStream(options.Region), null, cancellationToken).ConfigureAwait(false))?.Messages ?? 0;
         var counts = ParkReasons.Select(reason => new Measurement<long>(
             checked((long)(subjects?.Where(subject => subject.Key.Split('.') is [_, _, _, var label, ..] && label == reason).Sum(subject => (decimal)subject.Value) ?? 0)),
-            new KeyValuePair<string, object?>("reason", reason))).ToArray();
+            new KeyValuePair<string, object?>("reason", reason)))
+            .Append(new Measurement<long>(previous, new KeyValuePair<string, object?>("reason", PreviousLayout))).ToArray();
         Volatile.Write(ref _parkedCounts, counts);
+        if (Interlocked.Exchange(ref _previousParked, previous) != previous && previous > 0)
+        {
+            logger.ZLogWarning($"The parked stream of the previous layout {PushNames.PreviousParkStream(options.Region):@Stream} holds {previous:@Records} records; they are kept as they are");
+        }
+    }
+
+    private static async Task<StreamState?> ParkStateAsync(NatsJSContext js, string name, string? subjects, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await js.GetStreamAsync(name, subjects is null ? null : new StreamInfoRequest { SubjectsFilter = subjects }, cancellationToken).ConfigureAwait(false)).Info.State;
+        }
+        catch (NatsJSApiException error) when (error.Error.ErrCode == NoStream)
+        {
+            return null;
+        }
     }
 }

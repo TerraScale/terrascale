@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createCipheriv, createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { openSync, closeSync, readFileSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
+import { appendFileSync, openSync, closeSync, readFileSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
 import { connect as http2 } from 'node:http2';
 import { createConnection, createServer } from 'node:net';
 import { setPriority } from 'node:os';
@@ -10,16 +10,19 @@ import { resolve } from 'node:path';
 
 const journeyState = process.env.E2E_STATE;
 assert(journeyState, 'E2E_STATE names the isolated local journey namespace');
+assert(process.env.E2E_BUILD, 'E2E_BUILD holds the TerraBase build');
+assert(process.env.E2E_TOOLS, 'E2E_TOOLS holds nats-server');
+assert(process.env.DOTNET_ROOT, 'DOTNET_ROOT holds the .NET runtime');
 assert.equal(process.env.E2E_REGIONS, '2');
 const state = resolve(journeyState, 'replication-' + randomBytes(6).toString('hex'));
 mkdirSync(state + '/logs', { recursive: true, mode: 0o700 });
 console.log('local state: ' + state);
-const root = resolve(import.meta.dirname, '../..');
 const peer = randomBytes(32).toString('hex');
 const master = randomBytes(32);
 const access = randomBytes(16).toString('hex');
 const secret = randomBytes(32).toString('hex');
 const token = randomBytes(24).toString('hex');
+appendFileSync(journeyState + '/secrets', [peer, master.toString('base64'), access, secret, token].join('\n') + '\n', { mode: 0o600 });
 const processes = new Set();
 const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 function id(at = Date.now()) {
@@ -33,7 +36,7 @@ function id(at = Date.now()) {
 }
 function start(name, command, args, extra = {}) {
   const log = openSync(resolve(state, 'logs', name + '.log'), 'a', 0o600);
-  const child = spawn(command, args, { env: { ...process.env, DOTNET_ROOT: process.env.HOME + '/.local/share/mise/dotnet-root', DOTNET_PROCESSOR_COUNT: '4', ...extra }, stdio: ['ignore', log, log] });
+  const child = spawn(command, args, { env: { ...process.env, DOTNET_PROCESSOR_COUNT: '4', ...extra }, stdio: ['ignore', log, log] });
   closeSync(log);
   setPriority(child.pid, 19);
   child.log = resolve(state, 'logs', name + '.log');
@@ -176,7 +179,7 @@ class Relay {
   constructor() {
     this.server = createServer(client => {
       const upstream = createConnection({ port: 4222, host: '127.0.0.1' });
-      const link = { client, upstream };
+      const link = { client, upstream, held: Buffer.alloc(0) };
       this.links.add(link);
       const close = () => {
         this.links.delete(link);
@@ -189,16 +192,20 @@ class Relay {
       }
       upstream.on('data', data => client.write(data));
       client.on('data', data => {
-        const text = data.toString('latin1');
+        const buffered = Buffer.concat([link.held, data]);
+        const text = buffered.toString('latin1');
         const at = this.trap ? text.indexOf(this.trap.subject) : -1;
         if (at < 0) {
-          upstream.write(data);
+          const cut = text.lastIndexOf('\r\n');
+          const end = cut < 0 ? 0 : cut + 2;
+          upstream.write(buffered.subarray(0, end));
+          link.held = buffered.subarray(end);
           return;
         }
         const line = text.lastIndexOf('\r\n', at);
         const trap = this.trap;
         this.trap = null;
-        upstream.end(data.subarray(0, line < 0 ? 0 : line + 2), close);
+        upstream.end(buffered.subarray(0, line < 0 ? 0 : line + 2), close);
         trap.resolve();
       });
     });
@@ -259,7 +266,7 @@ function seal(transaction, scope, keyId, dataKey) {
 const home = 'http://127.0.0.1:8081';
 function cell(region, second = false) {
   const gru = region === 'gru';
-  return start('frontier-' + region + (second ? '-b' : ''), process.env.HOME + '/.local/share/mise/dotnet-root/dotnet', [resolve(root, 'src/TerraBase/bin/Release/net11.0/terrabase.dll')], {
+  return start('frontier-' + region + (second ? '-b' : ''), resolve(process.env.DOTNET_ROOT, 'dotnet'), [resolve(process.env.E2E_BUILD, 'terrabase/terrabase.dll')], {
     DOTNET_ENVIRONMENT: 'Production', TS_REGION: region, TS_NODE: second ? 'journey-3' : gru ? 'journey-1' : 'journey-2', TS_PEERS_FILE: state + '/peers',
     TERRABASE_DATA_DIRECTORY: state + '/frontier-' + region + (second ? '-b' : ''), TERRABASE_PORT: second ? '8280' : gru ? '8080' : '8180',
     TERRABASE_INTERNAL_PORT: '8081', TERRABASE_METRICS_PORT: second ? '9291' : gru ? '9091' : '9191', TERRABASE_POSTGRES_PORT: second ? '6632' : gru ? '6432' : '6532',
@@ -277,11 +284,17 @@ try {
   writeFileSync(journeyState + '/r2', access + '\n' + secret + '\n', { mode: 0o600 });
   writeFileSync(state + '/peers', 'journey-1 gru 127.0.0.1\njourney-2 fra 127.0.0.2\njourney-3 gru 127.0.0.3\n');
   writeFileSync(state + '/nats.conf', JSON.stringify({ host: '127.0.0.1', port: 4222, authorization: { token }, jetstream: { store_dir: state + '/nats' } }), { mode: 0o600 });
-  const broker = start('frontier-nats', 'nats-server', ['-c', state + '/nats.conf']);
+  const broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
   await logged(broker, 'Server is ready');
   await relay.listen();
   nats = new Nats();
   await nats.connect();
+  const previousLayout = await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_PARK_GRU', { name: 'TERRABASE_PUSH_PARK_GRU', subjects: ['terrabase.push-park.gru.>'],
+    storage: 'file', retention: 'limits', discard: 'new', max_bytes: 1 << 30, duplicate_window: 600_000_000_000, num_replicas: 1 });
+  assert(!previousLayout.error, JSON.stringify(previousLayout));
+  const previousPayload = randomBytes(64);
+  assert(!(await nats.request('terrabase.push-park.gru.fra.' + id() + '.' + id() + '.' + id() + '.7', previousPayload)).error);
+  const gruStarted = Date.now();
   const consuming = nats.event('$JS.EVENT.ADVISORY.CONSUMER.CREATED.TERRABASE_PUSH_FRA.*', created => created.consumer?.startsWith('home-gru-epoch-'));
   let gru = cell('gru');
   cell('fra');
@@ -305,9 +318,9 @@ try {
   for (const db of [first, other]) await putKey(org.id + '/' + project.id + '/' + db.id, keyId, dataKey);
   const transaction = changes => ({ id: id(), region: 'fra', hlc: { physicalMilliseconds: Date.now(), logical: 0, nodeId: 'journey-2' }, changes });
   const effect = value => ({ op: 'update', table: 'items', key: { id: 1 }, values: { value } });
-  const send = async (db, tx, encryptionId = keyId, headers) => {
+  const send = async (db, tx, encryptionId = keyId, addressed = 'gru') => {
     const scope = org.id + '/' + project.id + '/' + db.id;
-    const ack = await nats.request('terrabase.push.fra.gru.' + scope.replaceAll('/', '.'), seal(tx, scope, encryptionId, dataKey), headers);
+    const ack = await nats.request('terrabase.push.fra.' + addressed + '.' + scope.replaceAll('/', '.'), seal(tx, scope, encryptionId, dataKey));
     assert(!ack.error, JSON.stringify(ack));
     return { tx, seq: ack.seq };
   };
@@ -351,23 +364,34 @@ try {
   const heldKey = id(Date.now() - 60_000);
   await putKey(org.id + '/' + project.id + '/' + first.id, heldKey, dataKey);
   writeFileSync(journeyState + '/r2-unavailable-keys', JSON.stringify({ ['v1/keys/' + org.id + '/' + project.id + '/' + first.id + '/' + heldKey]: 503 }), { mode: 0o600 });
+  const progress = (sent, count, consumer = () => true) => {
+    let seen = 0;
+    return nats.event('$JS.ACK.>', reply => {
+      const tokens = reply.subject.split('.');
+      const at = tokens[2] === 'TERRABASE_PUSH_FRA' ? 3 : 5;
+      return reply.raw === '+WPI' && consumer(tokens[at]) && tokens[at + 2] === String(sent.seq) && ++seen >= count;
+    });
+  };
+  const held = async (pending, count = 1) => {
+    const sent = await pending;
+    await progress(sent, count);
+    return sent;
+  };
   const late = transaction([{ op: 'insert', table: 'items', values: { id: 2, value: 17 } }]);
-  const waiting = logged(gru, 'A pushed database is held', { Kind: 'object_store' });
   const lateNotice = notice(first, late);
-  await send(first, late, heldKey);
-  await waiting;
-  const changeWriter = async (node, child) => {
-    const seen = logged(child, 'A pushed database is held', { Kind: 'object_store' }, readFileSync(child.log, 'utf8').length);
+  const lateSent = await held(send(first, late, heldKey));
+  const changeWriter = async node => {
     const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
     const owner = JSON.parse(Buffer.from(stored.message.data, 'base64'));
     const changed = { ...owner, node, epoch: owner.epoch + 1, previous: owner.node, activated: true, transfer: null,
       prepared: { source: owner.node, target: node, epoch: owner.epoch } };
+    const seen = progress(lateSent, 1, consumer => consumer === 'home-gru-epoch-' + changed.epoch);
     const ack = await nats.request('$KV.terrabase-region-owners.gru', changed, { 'Nats-Expected-Last-Subject-Sequence': String(stored.message.seq) });
     assert(!ack.error, JSON.stringify(ack));
     await seen;
   };
-  await changeWriter('journey-3', b);
-  await changeWriter('journey-1', gru);
+  await changeWriter('journey-3');
+  await changeWriter('journey-1');
   const successor = transaction([effect(6)]);
   const successorNotice = notice(first, successor);
   await send(first, successor);
@@ -405,13 +429,6 @@ try {
   };
   const heldGauge = () => scrape(/^terrabase_push_held[ {]/);
   const ageGauge = () => scrape(/^terrabase_push_held_age(_seconds)?[ {]/);
-  const progress = (sent, count) => {
-    let seen = 0;
-    return nats.event('$JS.ACK.>', reply => {
-      const tokens = reply.subject.split('.');
-      return reply.raw === '+WPI' && tokens[tokens[2] === 'TERRABASE_PUSH_FRA' ? 5 : 7] === String(sent.seq) && ++seen >= count;
-    });
-  };
   const rows = async (db, statement) => (await sql(db, statement)).results[0].rows;
   const offset = () => readFileSync(gru.log, 'utf8').length;
 
@@ -419,12 +436,10 @@ try {
   const update = transaction([{ op: 'update', table: 'items', key: { id: 30 }, values: { value: 2 } }]);
   update.hlc = { ...insert.hlc, logical: 1 };
   const insertKey = await refusedKey(first);
-  const insertHeld = logged(gru, 'A pushed database is held', { Database: first.id }, offset());
   const insertNotice = notice(first, insert);
   const updateNotice = notice(first, update);
-  const sentInsert = await send(first, insert, insertKey);
-  const attempts = progress(sentInsert, 6);
-  await insertHeld;
+  const sentInsert = await held(send(first, insert, insertKey));
+  const attempts = progress(sentInsert, 5);
   await send(first, update);
   const firstAge = await ageGauge();
   assert.equal(await heldGauge(), 1);
@@ -437,13 +452,33 @@ try {
   assert.equal(await heldGauge(), 1);
   assert(laterAge > firstAge, laterAge + ' > ' + firstAge);
   console.log('held insert: at least 6 failed attempts, its update not applied and not reverted, the other database applied 4 effects; held=1, oldest age ' + firstAge.toFixed(1) + 's -> ' + laterAge.toFixed(1) + 's');
-  const insertReleased = logged(gru, 'A held pushed database is released', { Database: first.id }, offset());
   unblock();
   assert.equal((await insertNotice).state, 'confirmed');
   assert.equal((await updateNotice).state, 'confirmed');
-  await insertReleased;
   assert.deepEqual(await rows(first, 'SELECT value FROM items WHERE id = 30'), [[2]]);
   console.log('released: insert then update applied in order, both confirmed, final value 2');
+
+  const moved = await database('moved');
+  const movedInsert = transaction([{ op: 'insert', table: 'items', values: { id: 40, value: 1 } }]);
+  const movedUpdate = transaction([{ op: 'update', table: 'items', key: { id: 40 }, values: { value: 2 } }]);
+  movedUpdate.hlc = { ...movedInsert.hlc, logical: 1 };
+  const movedKey = await refusedKey(moved);
+  let movedEarly = false;
+  const movedInsertNotice = notice(moved, movedInsert);
+  const movedUpdateNotice = notice(moved, movedUpdate).then(result => { movedEarly = true; return result; });
+  const movedAttempts = progress(await held(send(moved, movedInsert, movedKey, 'fra')), 3);
+  await send(moved, movedUpdate, keyId, 'gru');
+  await applied(other, transaction([effect(108)]));
+  await movedAttempts;
+  assert(!movedEarly);
+  assert.deepEqual(await rows(moved, 'SELECT count(*) FROM items WHERE id = 40'), [[0]]);
+  assert.deepEqual(await applications(moved), []);
+  unblock();
+  assert.equal((await movedInsertNotice).state, 'confirmed');
+  assert.equal((await movedUpdateNotice).state, 'confirmed');
+  assert.deepEqual(await rows(moved, 'SELECT value FROM items WHERE id = 40'), [[2]]);
+  assert.deepEqual(await applications(moved), ['40:2']);
+  console.log('home moved under a held message: the insert addressed to the former home fra held the update addressed to the current home gru in the same queue; after release both applied in stream order, final value 2');
 
   await sql(first, 'CREATE TABLE parents (id INTEGER PRIMARY KEY)');
   await sql(first, 'CREATE TABLE children (id INTEGER PRIMARY KEY, parent INTEGER NOT NULL REFERENCES parents (id))');
@@ -451,11 +486,9 @@ try {
   const child = transaction([{ op: 'insert', table: 'children', values: { id: 1, parent: 1 } }]);
   child.hlc = { ...parent.hlc, logical: 1 };
   const parentKey = await refusedKey(first);
-  const parentHeld = logged(gru, 'A pushed database is held', { Database: first.id }, offset());
   const parentNotice = notice(first, parent);
   const childNotice = notice(first, child);
-  const parentAttempts = progress(await send(first, parent, parentKey), 6);
-  await parentHeld;
+  const parentAttempts = progress(await held(send(first, parent, parentKey)), 5);
   await send(first, child);
   await applied(other, transaction([effect(104)]));
   await parentAttempts;
@@ -475,9 +508,7 @@ try {
   await putKey(scope(bulk), keyId, dataKey);
   const bulkKey = await refusedKey(bulk);
   const head = transaction([effect(0)]);
-  const bulkHeld = logged(gru, 'A pushed database is held', { Database: bulk.id }, offset());
-  await send(bulk, head, bulkKey);
-  await bulkHeld;
+  await held(send(bulk, head, bulkKey));
   const window = 4096;
   const later = [];
   for (let n = 1; n <= window + 64; n++) {
@@ -508,28 +539,26 @@ try {
   console.log('released: ' + order.length + ' messages applied in stream order, all confirmed, final value ' + (window + 64));
 
   const unknownId = id();
-  const unknownHeld = logged(gru, 'A pushed database is held', { Database: unknownId, Kind: 'unknown_database' }, offset());
-  await nats.request('terrabase.push.fra.gru.' + org.id + '.' + project.id + '.' + unknownId, Buffer.from('catalog-missing'));
-  await unknownHeld;
+  await held(nats.request('terrabase.push.fra.gru.' + org.id + '.' + project.id + '.' + unknownId, Buffer.from('catalog-missing')));
   await applied(other, transaction([effect(106)]));
   const doomed = await create('doomed');
   await request(home, '/v1/projects/' + project.id + '/databases/' + doomed.id, undefined, user, 'DELETE', 204);
-  const parkedDeleted = logged(gru, 'stored in the durable parked stream', { Reason: 'deleted_database' });
+  const parkedDeleted = nats.event('terrabase.push-parked.gru.deleted_database.>');
   const deletedPayload = Buffer.from('owed-to-nobody');
   const deletedAck = await nats.request('terrabase.push.fra.gru.' + scope(doomed).replaceAll('/', '.'), deletedPayload);
   await parkedDeleted;
-  const parkedEmpty = logged(gru, 'stored in the durable parked stream', { Reason: 'empty' });
+  const parkedEmpty = nats.event('terrabase.push-parked.gru.empty.>');
   await nats.request('terrabase.push.fra.gru.' + scope(other).replaceAll('/', '.'), Buffer.alloc(0));
   await parkedEmpty;
   await applied(other, transaction([effect(107)]));
   assert.equal(await value(other), 107);
-  const parked = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_PARK_GRU', { subjects_filter: '>' });
+  const parked = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_PARKED_GRU', { subjects_filter: '>' });
   const parkedSubjects = Object.keys(parked.state.subjects);
   assert.equal(parked.state.messages, 2);
   assert(parkedSubjects.some(subject => subject.includes('.deleted_database.')));
   assert(parkedSubjects.some(subject => subject.includes('.empty.')));
   assert(!parkedSubjects.some(subject => subject.includes('.unknown_database.')));
-  const stored = await nats.request('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_PARK_GRU', { last_by_subj: parkedSubjects.find(subject => subject.includes('.deleted_database.')) });
+  const stored = await nats.request('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_PARKED_GRU', { last_by_subj: parkedSubjects.find(subject => subject.includes('.deleted_database.')) });
   const record = JSON.parse(Buffer.from(stored.message.data, 'base64'));
   assert.equal(record.sequence, deletedAck.seq);
   assert.equal(record.database, scope(doomed));
@@ -541,16 +570,28 @@ try {
     assert(metrics.some(line => line.startsWith('terrabase_push_parked_total{') && line.includes('reason="' + reason + '"') && line.endsWith(' 1')));
   }
   assert(metrics.some(line => line.startsWith('terrabase_push_apply_retries_total{') && line.includes('reason="unknown_database"')));
+  assert(metrics.some(line => line.startsWith('terrabase_push_parked_records{') && line.includes('reason="previous_layout"') && line.endsWith(' 1')));
+  assert.equal(parked.config.max_age, 0);
+  assert.equal(parked.config.discard, 'new');
+  const kept = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_PARK_GRU');
+  assert.equal(kept.state.messages, 1);
+  assert.deepEqual([kept.config.max_age, kept.config.discard, kept.config.max_msgs, kept.config.subjects], [0, 'new', -1, ['terrabase.push-park.gru.>']]);
+  const keptRecord = await nats.request('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_PARK_GRU', { seq: 1 });
+  assert.equal(Buffer.from(keptRecord.message.data, 'base64').toString('hex'), previousPayload.toString('hex'));
   assert.equal(await heldGauge(), 1);
-  console.log('unknown database: held and retried, not parked, other databases applied; deleted database and empty payload: parked with durable records');
+  console.log('unknown database: held and retried, not parked, other databases applied; deleted database and empty payload: parked with durable records in a stream without expiry; the previous layout\'s record, created ' + Math.round((Date.now() - gruStarted) / 1000) + 's ago, is kept unchanged and counted');
 
   const database = async name => {
     const db = await create(name);
     await sql(db, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
-    await sql(db, 'INSERT INTO items VALUES (1, 0)');
+    await sql(db, 'CREATE TABLE applications (n INTEGER PRIMARY KEY, item INTEGER NOT NULL, value INTEGER)');
+    await sql(db, 'CREATE TRIGGER applied AFTER UPDATE ON items BEGIN INSERT INTO applications (item, value) VALUES (NEW.id, NEW.value); END');
+    await sql(db, 'INSERT INTO items VALUES (1, -1)');
     await putKey(scope(db), keyId, dataKey);
     return db;
   };
+  const applications = async (db, from = 0) => (await rows(db, 'SELECT item, value FROM applications WHERE n > ' + from + ' ORDER BY n')).map(([item, value]) => item + ':' + value);
+  const lastApplication = async db => (await rows(db, 'SELECT coalesce(max(n), 0) FROM applications'))[0][0];
   const series = count => {
     const at = Date.now();
     return Array.from({ length: count }, (_, n) => ({ ...transaction([effect(n)]), hlc: { physicalMilliseconds: at, logical: n, nodeId: 'journey-2' } }));
@@ -558,20 +599,26 @@ try {
   const collect = (db, txs) => {
     const order = [];
     const states = new Map();
+    const notices = new Map();
     const ids = new Set(txs.map(tx => tx.id));
     return nats.event('terrabase.applied.fra.' + org.id + '.' + project.id + '.' + db.id, result => {
-      if (ids.has(result.id) && !states.has(result.id)) {
-        order.push(result.id);
-        states.set(result.id, result.state);
+      if (ids.has(result.id)) {
+        notices.set(result.id, (notices.get(result.id) ?? 0) + 1);
+        if (!states.has(result.id)) {
+          order.push(result.id);
+          states.set(result.id, result.state);
+        }
       }
       return result.id === txs.at(-1).id;
-    }).then(() => ({ order, states }));
+    }).then(() => ({ order, states, repeated: [...notices.values()].reduce((sum, count) => sum + count - 1, 0) }));
   };
-  const inOrder = async (db, txs, seen) => {
-    const { order, states } = await seen;
+  const inOrder = async (db, txs, seen, from = 0) => {
+    const { order, states, repeated } = await seen;
     assert.deepEqual(order, txs.map(tx => tx.id));
     assert([...states.values()].every(state => state === 'confirmed'), JSON.stringify([...states.values()]));
+    assert.deepEqual(await applications(db, from), txs.map((_, n) => '1:' + n));
     assert.equal(await value(db), txs.length - 1);
+    return repeated;
   };
   const release = (db, key) => {
     delete blocked['v1/keys/' + scope(db) + '/' + key];
@@ -602,26 +649,22 @@ try {
   const droppedKey = await refusedKey(dropped);
   const droppedTxs = series(42);
   const droppedSeen = collect(dropped, droppedTxs);
-  const droppedHeld = logged(gru, 'A pushed database is held', { Database: dropped.id }, offset());
-  await send(dropped, droppedTxs[0], droppedKey);
-  await droppedHeld;
+  await held(send(dropped, droppedTxs[0], droppedKey));
   for (const tx of droppedTxs.slice(1, 41)) await send(dropped, tx);
   await applied(other, transaction([effect(200)]));
   const readBack = relay.drop('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_FRA');
   unblock();
   await readBack;
   await send(dropped, droppedTxs[41]);
-  await inOrder(dropped, droppedTxs, droppedSeen);
-  console.log('read-back dropped: the broker connection closed on the held database\'s read-back call; all ' + droppedTxs.length + ' messages applied in stream order, all confirmed, final value ' + (droppedTxs.length - 1));
+  const droppedRepeats = await inOrder(dropped, droppedTxs, droppedSeen);
+  console.log('read-back dropped: the broker connection closed on the held database\'s read-back call; all ' + droppedTxs.length + ' messages applied exactly once in stream order (application log), all confirmed, final value ' + (droppedTxs.length - 1) + '; ' + droppedRepeats + ' repeated notices of recorded results');
 
   const lapsed = await database('lapsed');
   const headKey = await refusedKey(lapsed);
   const rereadKey = await refusedKey(lapsed);
   const lapsedTxs = series(72);
   const lapsedSeen = collect(lapsed, lapsedTxs);
-  const lapsedHeld = logged(gru, 'A pushed database is held', { Database: lapsed.id }, offset());
-  await send(lapsed, lapsedTxs[0], headKey);
-  await lapsedHeld;
+  await held(send(lapsed, lapsedTxs[0], headKey));
   for (const tx of lapsedTxs.slice(1, 32)) await send(lapsed, tx);
   const rereadHead = await send(lapsed, lapsedTxs[32], rereadKey);
   for (const tx of lapsedTxs.slice(33, 71)) await send(lapsed, tx);
@@ -632,9 +675,9 @@ try {
   const reopened = advisory('CREATED', '*');
   await lapse(() => release(lapsed, rereadKey));
   await send(lapsed, lapsedTxs[71]);
-  await inOrder(lapsed, lapsedTxs, lapsedSeen);
+  const lapsedRepeats = await inOrder(lapsed, lapsedTxs, lapsedSeen);
   await reopened;
-  console.log('writer lease lapsed and renewed on the same node while a read-back head was held: the consumer was recreated and all ' + lapsedTxs.length + ' messages applied in stream order, all confirmed');
+  console.log('writer lease lapsed and renewed on the same node while a read-back head was held: the consumer was recreated and all ' + lapsedTxs.length + ' messages applied exactly once in stream order (application log), all confirmed; ' + lapsedRepeats + ' repeated notices of recorded results');
 
   const flipped = await database('flipped');
   const [previous] = await consumers();
@@ -649,14 +692,17 @@ try {
   await removed;
   const flippedSeen = collect(first, flippedTxs);
   for (const tx of flippedTxs) await send(first, tx);
-  const { order: flippedOrder, states: flippedStates } = await flippedSeen;
+  const { order: flippedOrder, states: flippedStates, repeated: flippedRepeats } = await flippedSeen;
   assert.deepEqual(flippedOrder, flippedTxs.map(tx => tx.id));
-  const outcomes = Object.entries(Object.groupBy([...flippedStates.values()], state => state)).map(([state, list]) => state + '=' + list.length).join(' ');
+  assert.equal(flippedRepeats, 0);
+  assert([...flippedStates.values()].every(state => state === 'confirmed'), JSON.stringify(Object.groupBy([...flippedStates.values()], state => state)));
+  const onWriter = await request('http://127.0.0.3:8081', '/v1/projects/' + project.id + '/databases/' + first.id + '/sql/execute', { statements: [{ sql: 'SELECT value FROM items WHERE id = 1' }] });
+  assert.deepEqual(onWriter.results[0].rows, [[flippedTxs.length - 1]]);
   assert.equal(await scrape(/^terrabase_push_applies_total[ {]/), appliesBefore);
   assert.deepEqual(await consumers(), ['home-gru-epoch-' + toB]);
   const fresh = await nats.request('$JS.API.CONSUMER.INFO.TERRABASE_PUSH_FRA.home-gru-epoch-' + toB);
   assert.equal(fresh.num_redelivered, 0, JSON.stringify(fresh));
-  console.log('writer change with a pull outstanding: ' + previous + ' deleted, home-gru-epoch-' + toB + ' created; the new writer decided ' + flippedTxs.length + ' messages in stream order (' + outcomes + ' against its own copy), the old writer applied none after the change, redelivered 0');
+  console.log('writer change with a pull outstanding: ' + previous + ' deleted, home-gru-epoch-' + toB + ' created; the new writer confirmed ' + flippedTxs.length + ' messages once each in stream order and holds the last value ' + (flippedTxs.length - 1) + ', the old writer applied none after the change, redelivered 0');
 
   const newer = 'home-gru-epoch-' + (toB + 5);
   const fake = await nats.request('$JS.API.CONSUMER.CREATE.TERRABASE_PUSH_FRA.' + newer, { stream_name: 'TERRABASE_PUSH_FRA',
@@ -706,10 +752,12 @@ try {
   assert.equal((await replayedLast).state, 'confirmed');
   const afterReplay = walFrames();
   const replayWrites = written(beforeReplay, afterReplay);
+  const replayedFrom = await lastApplication(quiet);
+  assert.equal(replayedFrom, quietTxs.length);
   const controlTxs = series(quietTxs.length);
   const controlSeen = collect(quiet, controlTxs);
   for (const tx of controlTxs) await send(quiet, tx);
-  await inOrder(quiet, controlTxs, controlSeen);
+  await inOrder(quiet, controlTxs, controlSeen, replayedFrom);
   const controlWrites = written(afterReplay, walFrames());
   const perMessage = [...controlWrites].filter(([, count]) => count >= controlTxs.length).map(([number]) => number);
   assert(perMessage.length > 0, JSON.stringify([...controlWrites]));

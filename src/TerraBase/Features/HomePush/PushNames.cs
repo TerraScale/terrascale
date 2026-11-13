@@ -17,6 +17,9 @@ internal static class PushNames
     public static string DatabaseFilter(string origin, TenantContext database) =>
         $"terrabase.push.{origin}.*.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}";
 
+    public static string QueueFilter(string subject) =>
+        Origin(subject) is { } origin && Database(subject) is { } database ? DatabaseFilter(origin, database) : subject;
+
     public static string Consumer(string home, long epoch) => ConsumerPrefix(home) + epoch.ToString(CultureInfo.InvariantCulture);
 
     public static long? ConsumerEpoch(string home, string name) =>
@@ -32,9 +35,11 @@ internal static class PushNames
 
     public static string AppliedAll(string origin) => $"terrabase.applied.{origin}.>";
 
-    public static string ParkStream(string home) => "TERRABASE_PUSH_PARK_" + home.ToUpperInvariant();
+    public static string ParkStream(string home) => "TERRABASE_PUSH_PARKED_" + home.ToUpperInvariant();
 
-    public static string ParkSubjects(string home) => $"terrabase.push-park.{home}.>";
+    public static string ParkSubjects(string home) => $"terrabase.push-parked.{home}.>";
+
+    public static string PreviousParkStream(string home) => "TERRABASE_PUSH_PARK_" + home.ToUpperInvariant();
 
     public static string? Origin(string subject) => subject.Split('.') is [_, _, var origin, ..] && TerraBaseOptions.IsRegion(origin) ? origin : null;
 

@@ -41,12 +41,13 @@ internal partial class HomePush
         internal CancellationTokenSource Stopping => stopping;
         internal CancellationToken Token { get; } = stopping.Token;
         internal bool Ended { get; set; }
-        internal List<Task> Drains { get; } = [];
+        internal HashSet<PushQueue> Active { get; } = [];
+        internal TaskCompletionSource Idle { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private sealed class PushQueue(string subject, string origin, string source, ConsumeRun run)
+    private sealed class PushQueue(string filter, string origin, string source, ConsumeRun run)
     {
-        internal string Subject => subject;
+        internal string Filter => filter;
         internal string Origin => origin;
         internal string Source => source;
         internal ConsumeRun Run => run;
@@ -77,7 +78,8 @@ internal partial class HomePush
     private async Task DispatchAsync(NatsConnection nats, ConsumeRun run, INatsJSMsg<byte[]> message, string source)
     {
         var sequence = message.Metadata?.Sequence.Stream ?? throw new IOException("a pushed message has no stream sequence");
-        var key = message.Subject + "/" + source;
+        var filter = PushNames.QueueFilter(message.Subject);
+        var key = filter + "/" + source;
         PushQueue? started = null;
         var handBack = false;
         lock (_queuesGate)
@@ -89,7 +91,8 @@ internal partial class HomePush
 
             if (!_queues.TryGetValue(key, out var queue))
             {
-                _queues[key] = queue = started = new PushQueue(message.Subject, PushNames.Origin(message.Subject) ?? "unknown", source, run);
+                _queues[key] = queue = started = new PushQueue(filter, PushNames.Origin(message.Subject) ?? "unknown", source, run);
+                _ = run.Active.Add(queue);
             }
 
             if (queue.Items.Any(item => item.Sequence == sequence))
@@ -111,7 +114,7 @@ internal partial class HomePush
 
         if (started is not null)
         {
-            run.Drains.Add(DrainAsync(nats, key, started));
+            _ = DrainAsync(nats, key, started);
         }
 
         if (handBack)
@@ -125,10 +128,14 @@ internal partial class HomePush
         lock (_queuesGate)
         {
             run.Ended = true;
+            if (run.Active.Count == 0)
+            {
+                _ = run.Idle.TrySetResult();
+            }
         }
 
         await run.Stopping.CancelAsync().ConfigureAwait(false);
-        await Task.WhenAll(run.Drains).ConfigureAwait(false);
+        await run.Idle.Task.ConfigureAwait(false);
         run.Stopping.Dispose();
     }
 
@@ -156,6 +163,15 @@ internal partial class HomePush
         if (owed)
         {
             queue.Run.Stopping.Cancel();
+        }
+
+        lock (_queuesGate)
+        {
+            _ = queue.Run.Active.Remove(queue);
+            if (queue.Run.Ended && queue.Run.Active.Count == 0)
+            {
+                _ = queue.Run.Idle.TrySetResult();
+            }
         }
     }
 
@@ -278,7 +294,7 @@ internal partial class HomePush
             queue.HeldKind = kind;
         }
 
-        logger.ZLogWarning($"A pushed database is held: {PushNames.Database(queue.Subject)?.DatabaseId:@Database} from {queue.Origin:@Origin} at stream sequence {sequence:@Sequence} cannot apply yet: {kind:@Kind}");
+        logger.ZLogWarning($"A pushed database is held: {PushNames.Database(queue.Filter)?.DatabaseId:@Database} from {queue.Origin:@Origin} at stream sequence {sequence:@Sequence} cannot apply yet: {kind:@Kind}");
     }
 
     private void Released(PushQueue queue, PushItem head)
@@ -306,9 +322,11 @@ internal partial class HomePush
         {
             lock (_queuesGate)
             {
-                queue.ReadFrom = null;
+                queue.Run.Ended = true;
             }
-            return;
+
+            await queue.Run.Stopping.CancelAsync().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         var next = from;
@@ -317,7 +335,7 @@ internal partial class HomePush
             StoredMessage? stored;
             try
             {
-                stored = (await stream.GetAsync(new StreamMsgGetRequest { Seq = next, NextBySubj = queue.Subject }, cancellationToken).ConfigureAwait(false)).Message;
+                stored = (await stream.GetAsync(new StreamMsgGetRequest { Seq = next, NextBySubj = queue.Filter }, cancellationToken).ConfigureAwait(false)).Message;
             }
             catch (NatsJSApiException error) when (error.Error.Code == 404 || error.Error.ErrCode == NoMessageFound)
             {
@@ -332,7 +350,7 @@ internal partial class HomePush
                     return;
                 }
 
-                queue.Items.Enqueue(new Reread(queue.Subject, stored.Seq, stored.Data.ToArray()));
+                queue.Items.Enqueue(new Reread(stored.Subject, stored.Seq, stored.Data.ToArray()));
                 next = stored.Seq + 1;
                 queue.ReadFrom = next;
             }

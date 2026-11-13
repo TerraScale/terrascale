@@ -57,13 +57,15 @@ A committed transaction with any superseded changes increments `terrabase_home_a
 `IHomeApply` in `TerraBase.Features.HomeApply`:
 
 ```csharp
-ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken);
+ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, CancellationToken cancellationToken);
 ValueTask<HomeApplyResult?> StateAsync(TenantContext database, string transactionId, CancellationToken cancellationToken);
 ```
 
 `ApplyAsync` runs on the database's home only, inside the organization's QoS context (E11). It throws only when the
 home is unavailable (`StorageBusyException`, a busy `SqlStatementException`, cancellation, shutdown) and returns null
-when the database is not stored on this node; every data outcome is a result. Validate the transaction as
+when the database is not stored on this node; every data outcome is a result. `position` is the stream identity and
+sequence of a pushed message (null for a forwarded write); its frontier commits in the same engine transaction as
+the effects and the result. Validate the transaction as
 `ApplyEndpoint.Invalid` does before calling it. Callers ack a
 JetStream message after `ApplyAsync` returns, whatever its state. A stuck apply backoff releases the parallel slot before the delay.
 
@@ -196,8 +198,10 @@ created it (`home-<region>-epoch-<n>`). The origin tells its client a write
 succeeded before the home applies it, so every pushed message that may carry a write is owed to a customer: it is
 never dropped, parked or skipped.
 
-Messages are queued per origin database (one queue per stream subject: origin, home and database), in stream order,
-and only a queue's head applies. A head that cannot apply is retried with backoff from 100 ms, doubling up to a
+Messages are queued per origin stream and database, in stream order, and only a queue's head applies. The queue's
+identity leaves out the home a message is addressed to: after a database's home moves, the origin stream holds earlier
+messages addressed to the former home and later ones addressed to the current home, and they share one queue, so a
+held earlier message holds the later ones too. A head that cannot apply is retried with backoff from 100 ms, doubling up to a
 60 second ceiling, with no attempt limit. Its database is held: later messages of that database wait behind it, and
 every other database keeps applying. A held database writes nothing to `terrascale.conflicts`, because nothing was
 decided against the customer. The consumer releases its shared apply slot during backoff.
@@ -205,7 +209,8 @@ decided against the customer. The consumer releases its shared apply slot during
 A queue keeps at most 32 messages in flight. A later delivery for that database is acknowledged to the consumer
 without being applied, and the queue records the lowest such sequence. The message stays in the origin stream, which
 drops a database's messages only after the origin hears they were applied, or when the database is deleted. Once the
-queue is empty it reads the stream again from that sequence, filtered to its subject and in order, and applies what it
+queue is empty it reads the stream again from that sequence, filtered to that origin and database for every
+addressed home, and in order, and applies what it
 reads. While a read-back is pending every new delivery for that database is handed back the same way, so nothing
 overtakes an earlier message. A held database therefore occupies at most 32 of the consumer's 4,096 in-flight
 messages however long it is held. A read-back or progress acknowledgement that fails is retried with the same backoff
@@ -216,8 +221,9 @@ of its own or an older writer epoch on that origin stream and creates a fresh on
 stream sequence 1. A node never deletes or reads a consumer of a newer epoch; it waits until that consumer is gone or
 it learns the newer owner. Deleting a consumer ends the pull requests still waiting on it, and its unacknowledged
 deliveries cannot be acknowledged or redelivered into the fresh consumer. A run ends at once when the writer lease is
-lost or lapses (also when the same node renews it), when the consumer fails, or when a queue must end while it still
-holds messages. Ending a run stops every queue of that origin and waits for them before the next run opens, so the
+lost or lapses, when the consumer fails, when the origin stream was recreated under a pending read-back, or when a
+queue must end while it still holds messages. A renewal before the lease lapses keeps the run; a renewal after a lapse,
+also on the same node, is a new lease and starts a new run. Ending a run stops every queue of that origin and waits for them before the next run opens, so the
 next writer receives handed-back messages again; the frontier and recorded results turn the replayed, already applied
 ones into no-ops, and a replay that does not move the frontier commits nothing.
 
@@ -239,12 +245,48 @@ sequence 1.
 | The catalog holds a deletion record for the database (`deleted_database`) | Parked | Acknowledged after the park is stored |
 | More than 32 messages of one database in flight | Read back from the stream later, in order | Acknowledged when handed back |
 | Read-back or progress acknowledgement fails (`broker`, `io`, `cancelled`) | Retried; database held | Progress on every retry |
-| Writer lease lost or lapsed, also when the same node renews it | The consumer run ends at once; every queue of that origin stops and nothing more is dispatched or negatively acknowledged | The next run deletes the consumer and starts a fresh one at sequence 1; deliveries outstanding on the old consumer die with it |
+| The origin stream was recreated while a read-back is pending | The consumer run ends | The next run reads the new stream from sequence 1 |
+| Writer lease lost or lapsed (a renewal after a lapse is a new lease) | The consumer run ends at once; every queue of that origin stops and nothing more is dispatched or negatively acknowledged | The next run deletes the consumer and starts a fresh one at sequence 1; deliveries outstanding on the old consumer die with it |
 
 Only messages that cannot carry a write still owed to anyone are parked. A park stores the received payload, origin,
-stream identity, sequence, database, reason and UTC time before the message is acknowledged. Because nothing parked
-is owed to a customer, the parking stream's bounds are safe: at most 10,000 messages and 1 GiB for seven days,
-oldest evicted first, with the same single-replica storage policy as the origin stream.
+stream identity, sequence, database, reason and UTC time in `TERRABASE_PUSH_PARKED_<HOME>` before the message is
+acknowledged. That stream never expires or evicts a record: it holds at most 1 GiB, and when it is full a new park is
+refused, so the head stays held and retried (`io`) until an operator makes room. Its storage policy is the origin
+stream's (single replica, file).
+
+`TERRABASE_PUSH_PARK_<HOME>` holds records parked by earlier releases (the raw payload under
+`terrabase.push-park.<home>.<origin>.<organization>.<project>.<database>.<sequence>`). This release never writes,
+reconfigures or purges it; its record count is reported as `parked_records{reason="previous_layout"}`, and a warning
+names the count whenever it changes.
+
+Applies record a permanent outcome only for a property of the message against the database at the home, never for a
+condition of this node:
+
+| Outcome | Condition | Can it pass by itself? |
+| --- | --- | --- |
+| `reverted` (`unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`) | The engine refuses the statement against the home's rows; `constraint` includes values too big and refusals such as a datatype mismatch | No: the rows it conflicts with were applied earlier in the database's order |
+| `reverted` (`missing_row`) | An update of a row with neither a row nor a tombstone at the home | No: an origin sees a row only from the home or from its own earlier write, and that write applies earlier in the same queue |
+| `reverted` (`schema`) | The change names a table, column or primary-key shape the home does not have, or is not an insert, update or delete | No: schema changes run only at the home, and origins learn the schema from it |
+| `superseded` (kept in a confirmed result) | A newer stamp at the home wins the column or row | No: the merge decides it by stamps |
+| Parked (`malformed`, `empty`, `deleted_database`) | The subject names no database, the payload is empty, or the catalog holds the database's deletion record | No |
+
+A node whose own clock is not trusted refuses to issue stamps for its own writes; applying a received transaction never
+asks for a stamp, and observing a remote stamp only clips it, so clock trust never decides an apply. A remote stamp
+that names no node fails the observation and holds the database (`other`). Busy, interrupted, read-only and unclassified
+engine failures, and SQL errors for a missing table or column, hold the database and retry.
+
+To recover a parked record there is no command; the procedure is manual. Read the record with
+`nats stream get TERRABASE_PUSH_PARKED_<HOME> <sequence>`: a JSON record whose `payload` field holds the received
+payload in base64 (in the previous-layout stream the message is the raw payload). Before republishing, check that the database exists and is not deleted, that the catalog names this
+region as its home, and that the record's reason no longer holds (an empty payload or a subject without a database
+cannot be repaired by republishing). The payload is encrypted, so the transaction id inside it is visible only after
+decrypting it with the database's data key; if it can be read, `GET /v1/sync/organizations/<organization>/projects/<project>/databases/<database>/apply/<transaction>`
+on the internal listener answers `provisional` when no result is recorded. A transaction with a recorded result
+returns that result instead of applying again, but only while the result is kept (seven days). Then publish the payload to
+`terrabase.push.<origin>.<home>.<organization>.<project>.<database>`. The republished message gets a new stream
+sequence after everything the origin published since, so it does not restore the original order: it applies after
+later writes of the same database, and the merge decides each column by its stamp. The record stays in the parking
+stream until an operator removes it.
 
 What an operator sees:
 
