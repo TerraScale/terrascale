@@ -157,7 +157,7 @@ async function meteredOnce(cells: Cells, id: string, protocol: string, work: () 
   expect.soft(after[other], protocol + ' records no intermediate requests, units or bytes').toEqual(before[other]);
   expect.soft(after[owner].sent - before[owner].sent).toBeGreaterThan(0);
   if (['REST', 'WebSocket', 'Postgres'].includes(protocol)) expect.soft(after[owner].operations - before[owner].operations).toBe(1);
-  console.log('R3 usage ' + protocol + ': owner ' + owner + ', requests +1; ' + other + ' requests, operations and bytes +0');
+  console.log('R3 usage ' + protocol + ': ' + JSON.stringify(Object.fromEntries(['gru', 'fra'].map(region => [region, Object.fromEntries(Object.keys(before[owner]).map(meter => [meter, after[region as 'gru' | 'fra'][meter as keyof Meter] - before[region as 'gru' | 'fra'][meter as keyof Meter]]))]))));
 }
 
 function postgresRows(id: string): string {

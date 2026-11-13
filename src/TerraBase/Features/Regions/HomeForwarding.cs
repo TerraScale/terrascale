@@ -130,14 +130,13 @@ internal static class HomeForwarding
             return null;
         }
 
-        if (!await ForwardingAuthorization.CheckAsync(context, cancellationToken).ConfigureAwait(false))
-        {
-            return null;
-        }
-
         var owners = context.RequestServices.GetRequiredService<RegionalOwners>();
         if (!owners.Writer)
         {
+            if (!await ForwardingAuthorization.CheckAsync(context, cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
             var local = context.RequestServices.GetRequiredService<TerraBaseOptions>();
             var node = (await owners.NodesAsync(cancellationToken).ConfigureAwait(false))
                 .FirstOrDefault(node => node.Region == local.Region && node.Name != local.MachineId);
@@ -170,7 +169,7 @@ internal static class HomeForwarding
                     return null;
                 }
 
-                return await HomeAtAsync(peers, shapeHome, cancellationToken).ConfigureAwait(false);
+                return await AuthorizedHomeAtAsync(shapeHome).ConfigureAwait(false);
             }
 
             if (database is not null
@@ -180,7 +179,7 @@ internal static class HomeForwarding
                         && routedDatabase.Home(options.Region) != options.Region))
             {
                 var destination = services.GetRequiredService<IHomeLocator>().Cached(project, database)?.Region ?? routedDatabase.Home(options.Region);
-                return await HomeAtAsync(peers, destination, cancellationToken).ConfigureAwait(false);
+                return await AuthorizedHomeAtAsync(destination).ConfigureAwait(false);
             }
 
             if (database is null
@@ -194,7 +193,18 @@ internal static class HomeForwarding
             return null;
         }
 
+        if (!await ForwardingAuthorization.CheckAsync(context, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
         return await services.GetRequiredService<IHomeLocator>().LocateAsync(project, database, cancellationToken).ConfigureAwait(false);
+
+        async ValueTask<HomeNode?> AuthorizedHomeAtAsync(string region)
+        {
+            return await ForwardingAuthorization.CheckAsync(context, cancellationToken).ConfigureAwait(false)
+                ? await HomeAtAsync(peers, region, cancellationToken).ConfigureAwait(false)
+                : null;
+        }
     }
 
     private static async ValueTask<HomeNode?> HomeAtAsync(IRegionPeers peers, string home, CancellationToken cancellationToken)

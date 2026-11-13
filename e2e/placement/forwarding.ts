@@ -169,6 +169,7 @@ export async function unanswered(cells: Cells, page: Page, id: string, token: st
           await ended;
           expect.soft(pgOutput, protocol + ' ' + (mutating ? 'write' : 'read')).toContain(mutating ? '08007' : '08006');
           if (!mutating) expect.soft(pgOutput).not.toContain('08007');
+          console.log('R3 unanswered PostgreSQL ' + (mutating ? 'write' : 'read') + ': ' + (pgOutput.match(/\b08\d{3}\b/)?.[0] ?? 'no SQLSTATE'));
         } else {
           const code = await page.evaluate(sql => new Promise<string>((resolve, reject) => {
             const socket = (window as Window & { outcomeSocket?: WebSocket }).outcomeSocket!;
@@ -177,8 +178,8 @@ export async function unanswered(cells: Cells, page: Page, id: string, token: st
             socket.send(JSON.stringify({ id: 2, type: 'execute', statements: [{ sql }] }));
           }), sql);
           expect.soft(code, protocol + ' ' + (mutating ? 'write' : 'read')).toBe(mutating ? 'write_outcome_unknown' : 'unavailable');
+          console.log('R3 unanswered WebSocket ' + (mutating ? 'write' : 'read') + ': ' + code);
         }
-        console.log('R3 unanswered ' + protocol + ' ' + (mutating ? 'write: outcome unknown' : 'read: unavailable'));
       } finally {
         execFileSync('iptables', ['-D', ...rule], firewall);
         if (pg && pg.exitCode === null) { pg.kill('SIGTERM'); await ended; }
