@@ -63,6 +63,8 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
   fi
   start terrabase env "${cells[@]}" TS_REGION=gru TS_NODE=journey-1 TERRABASE_DATA_DIRECTORY="$state/terrabase" \
     TERRABASE_PORT=8080 TERRABASE_METRICS_PORT=9091 TERRABASE_POSTGRES_PORT=6432 dotnet "$build/terrabase/terrabase.dll"
+  ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz
+  node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof"
   start terrabase-fra env "${cells[@]}" TS_REGION=fra TS_NODE=journey-2 TERRABASE_DATA_DIRECTORY="$state/terrabase-fra" \
     TERRABASE_PORT=8180 TERRABASE_METRICS_PORT=9191 TERRABASE_POSTGRES_PORT=6532 dotnet "$build/terrabase/terrabase.dll"
   if [ "${E2E_NODES_PER_REGION:-1}" = 2 ]; then
@@ -84,6 +86,7 @@ else
     TERRABASE_FILES_S3_ENDPOINT=https://journey.r2.cloudflarestorage.com/ TERRABASE_FILES_S3_ACCESS_KEY_ID="$r2_access_key_id" \
     TERRABASE_FILES_S3_SECRET_ACCESS_KEY="$r2_secret_access_key" dotnet "$build/terrabase/terrabase.dll"
   ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz
+  node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof"
 fi
 
 auth=(TS_AUTH_TERRABASE_URL=http://127.0.0.1:8081 TS_AUTH_LISTEN=http://127.0.0.1:8090 TS_AUTH_METRICS_LISTEN=http://127.0.0.1:9092
