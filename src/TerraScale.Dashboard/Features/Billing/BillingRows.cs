@@ -35,17 +35,9 @@ public sealed class BillingBinding : IBillingRow
     public string Status { get; set; } = "pending";
     public bool TrialUsed { get; set; }
     public DateTimeOffset OverageStartsAt { get; set; }
-    public string ObservedPlanName { get; set; } = "";
-    public long ObservedOperationsAllowance { get; set; }
-    public long ObservedStorageAllowance { get; set; }
-    public decimal ObservedOperationRate { get; set; }
-    public decimal ObservedStorageRate { get; set; }
-    public string ObservedCurrency { get; set; } = "usd";
-    public string ObservedPricingVersion { get; set; } = "";
     public DateTimeOffset? ExpiryUnavailableSince { get; set; }
     public DateTimeOffset? ExpiryLastLoggedAt { get; set; }
     public string TaxLocationStatus { get; set; } = "";
-    public DateTimeOffset? EffectivePlanSince { get; set; }
     public long Revision { get; set; }
 
     public BillingBinding Copy()
@@ -75,7 +67,6 @@ public sealed class BillingBinding : IBillingRow
             builder.Property(row => row.OverageStartsAt).HasConversion(BillingColumns.Utc);
             builder.Property(row => row.ExpiryUnavailableSince).HasConversion(BillingColumns.OptionalUtc);
             builder.Property(row => row.ExpiryLastLoggedAt).HasConversion(BillingColumns.OptionalUtc);
-            builder.Property(row => row.EffectivePlanSince).HasConversion(BillingColumns.OptionalUtc);
             builder.Property(row => row.InternalReservation).HasConversion(
                 reservation => reservation == null ? null : JsonSerializer.Serialize(reservation, BillingRowJson.Default.InternalBillingReservation),
                 json => json == null ? null : JsonSerializer.Deserialize(json, BillingRowJson.Default.InternalBillingReservation));

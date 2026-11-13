@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 {
-    /// <inheritdoc />
     public partial class RecordStripeEvents : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
@@ -37,7 +35,6 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 column: "received_at");
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(

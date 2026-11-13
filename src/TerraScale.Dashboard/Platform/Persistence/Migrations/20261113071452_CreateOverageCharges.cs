@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 {
-    /// <inheritdoc />
     public partial class CreateOverageCharges : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
@@ -31,13 +29,18 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     quantity = table.Column<long>(type: "INTEGER", nullable: false),
                     amount_cents = table.Column<long>(type: "INTEGER", nullable: false),
                     description = table.Column<string>(type: "TEXT", nullable: false),
+                    state = table.Column<string>(type: "TEXT", nullable: false),
+                    skip_reason = table.Column<string>(type: "TEXT", nullable: true),
                     provider_id = table.Column<string>(type: "TEXT", nullable: true),
-                    accepted_at = table.Column<DateTime>(type: "TEXT", nullable: true)
+                    provider_amount_cents = table.Column<long>(type: "INTEGER", nullable: true),
+                    accepted_at = table.Column<DateTime>(type: "TEXT", nullable: true),
+                    claim_owner = table.Column<string>(type: "TEXT", nullable: true),
+                    claim_until = table.Column<DateTime>(type: "TEXT", nullable: true)
                 },
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_billing_overage_charges", x => x.id);
-                    table.CheckConstraint("ck_overage_charge", "usage >= 0 AND allowance >= 0 AND quantity >= 0 AND amount_cents >= 0 AND unit_rate >= 0 AND (provider_id IS NULL) = (accepted_at IS NULL)");
+                    table.CheckConstraint("ck_overage_charge", "usage >= 0 AND allowance >= 0 AND quantity >= 0 AND amount_cents >= 0 AND unit_rate >= 0 AND state IN ('pending', 'charged', 'adopted', 'mismatch', 'skipped', 'nothing_due') AND (provider_id IS NULL) = (accepted_at IS NULL) AND (provider_id IS NULL) = (provider_amount_cents IS NULL) AND (provider_id IS NOT NULL) = (state IN ('charged', 'adopted', 'mismatch')) AND (skip_reason IS NOT NULL) = (state = 'skipped') AND (state = 'nothing_due') = (amount_cents = 0) AND (claim_owner IS NULL) = (claim_until IS NULL)");
                     table.ForeignKey(
                         name: "FK_billing_overage_charges_billing_organization_id",
                         column: x => x.organization_id,
@@ -47,9 +50,9 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_billing_overage_charges_organization_id_subscription_id_month_meter",
+                name: "IX_billing_overage_charges_organization_id_month_meter",
                 table: "billing_overage_charges",
-                columns: new[] { "organization_id", "subscription_id", "month", "meter" },
+                columns: new[] { "organization_id", "month", "meter" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
@@ -58,9 +61,13 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 column: "provider_id",
                 unique: true,
                 filter: "provider_id IS NOT NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_billing_overage_charges_state_id",
+                table: "billing_overage_charges",
+                columns: new[] { "state", "id" });
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(

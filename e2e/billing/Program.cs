@@ -1,4 +1,3 @@
-using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -6,13 +5,15 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraScale.Dashboard;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.Persistence.Migrations;
 
 var cancellationToken = CancellationToken.None;
@@ -35,6 +36,8 @@ var storage = application.Services.GetRequiredService<IDbContextFactory<Dashboar
 var organizations = application.Services.GetRequiredService<OrganizationStore>();
 var reporter = application.Services.GetRequiredService<UsageOverageReporter>();
 var billing = application.Services.GetRequiredService<StripeBilling>();
+var refresh = application.Services.GetRequiredService<StripeBindingRefresh>();
+var reconciler = application.Services.GetServices<IHostedService>().OfType<PlanReconciler>().Single();
 var created = new List<string>();
 
 async Task AdvanceAsync(string value)
@@ -45,38 +48,11 @@ async Task AdvanceAsync(string value)
     clock.Now = DateTimeOffset.Parse(time.Now, CultureInfo.InvariantCulture);
 }
 
-async Task<BillingBinding> CreateAsync(DateTimeOffset start, DateTimeOffset? since, string price = "price_starter_month")
+async Task<SubscriptionIds> SubscribeAsync(string organizationId, string price, string? customer)
 {
-    var id = AccountService.NewId();
-    await organizations.CreateAsync(new() { Id = id, PlanId = OrganizationRecord.StarterPlanId, PaymentMethodValidated = true }, cancellationToken);
-    created.Add(id);
-    using var response = await control.PostAsJsonAsync("/billing-subscription", new SubscriptionInput(id, price), BillingJson.Default.SubscriptionInput, cancellationToken);
+    using var response = await control.PostAsJsonAsync("/billing-subscription", new SubscriptionInput(organizationId, price, clock.Now.ToString("O", CultureInfo.InvariantCulture), customer), BillingJson.Default.SubscriptionInput, cancellationToken);
     response.EnsureSuccessStatusCode();
-    var vendor = await response.Content.ReadFromJsonAsync(BillingJson.Default.SubscriptionIds, cancellationToken) ?? throw new IOException("Billing subscription is unavailable.");
-    var binding = new BillingBinding
-    {
-        OrganizationId = id,
-        Version = AccountService.NewId(),
-        RequestId = AccountService.NewId(),
-        State = "active",
-        CustomerId = vendor.Customer,
-        SubscriptionId = vendor.Subscription,
-        StartedAt = start,
-        EffectivePlanSince = since,
-        EffectivePlan = "starter",
-        EffectiveInterval = "monthly",
-        Status = "active",
-        Plan = "starter",
-        Interval = "monthly"
-    };
-    BillingMonth.Observe(binding, PlanCatalog.For("starter"), since ?? start);
-    binding.EffectivePlanSince = since;
-    await using var db = await storage.CreateDbContextAsync(cancellationToken);
-    db.Billing.Add(binding);
-    db.StripeCustomers.Add(new() { Id = AccountService.NewId(), OrganizationId = id, CustomerId = vendor.Customer, CreatedAt = start.UtcDateTime });
-    await db.SaveChangesAsync(cancellationToken);
-    await BillingMonth.RecordAsync(storage, binding, clock.Now, cancellationToken);
-    return binding;
+    return await response.Content.ReadFromJsonAsync(BillingJson.Default.SubscriptionIds, cancellationToken) ?? throw new IOException("Billing subscription is unavailable.");
 }
 
 async Task<BillingBinding> BindingAsync(string id)
@@ -85,29 +61,82 @@ async Task<BillingBinding> BindingAsync(string id)
     return await db.Billing.AsNoTracking().SingleAsync(row => row.OrganizationId == id, cancellationToken);
 }
 
-async Task PlanAsync(string id, string key)
+async Task RefreshAsync(BillingBinding binding)
 {
-    await BillingMonth.RecordAsync(storage, await BindingAsync(id), clock.Now, cancellationToken);
-    var org = await organizations.FindAsync(id, cancellationToken) ?? throw new IOException("Billing organization is unavailable.");
-    org.Organization.PlanId = PlanCatalog.For(key).Id;
-    await organizations.ReplaceAsync(org, cancellationToken);
-    await using var db = await storage.CreateDbContextAsync(cancellationToken);
-    var binding = await db.Billing.SingleAsync(row => row.OrganizationId == id, cancellationToken);
-    binding.EffectivePlan = key;
-    BillingMonth.Observe(binding, PlanCatalog.For(key), clock.Now);
-    binding.Version = AccountService.NewId();
-    await db.SaveChangesAsync(cancellationToken);
-    await BillingMonth.RecordAsync(storage, binding, clock.Now, cancellationToken);
+    await EventAsync(await BindingAsync(binding.OrganizationId), "evt_refresh_" + AccountService.NewId());
 }
 
-async Task CheckAsync(BillingBinding binding, string month, long quantity)
+async Task<BillingBinding> CreateAsync(string price = "price_starter_month")
+{
+    var id = AccountService.NewId();
+    var key = price == "price_pro_month" ? "pro" : "starter";
+    await organizations.CreateAsync(new() { Id = id, PlanId = PlanCatalog.For(key).Id, PaymentMethodValidated = true }, cancellationToken);
+    created.Add(id);
+    var vendor = await SubscribeAsync(id, price, null);
+    var binding = new BillingBinding
+    {
+        OrganizationId = id,
+        Version = AccountService.NewId(),
+        RequestId = AccountService.NewId(),
+        State = "active",
+        CustomerId = vendor.Customer,
+        SubscriptionId = vendor.Subscription,
+        StartedAt = clock.Now,
+        EffectivePlan = key,
+        EffectiveInterval = "monthly",
+        Status = "active",
+        Plan = key,
+        Interval = "monthly",
+        OverageStartsAt = new(clock.Now.Year, clock.Now.Month, 1, 0, 0, 0, TimeSpan.Zero)
+    };
+    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+    {
+        db.Billing.Add(binding);
+        db.StripeCustomers.Add(new() { Id = AccountService.NewId(), OrganizationId = id, CustomerId = vendor.Customer, CreatedAt = clock.Now.UtcDateTime });
+        await db.SaveChangesAsync(cancellationToken);
+    }
+    await RefreshAsync(binding);
+    return await BindingAsync(id);
+}
+
+async Task<BillingBinding> SucceedAsync(BillingBinding binding, string price)
+{
+    var vendor = await SubscribeAsync(binding.OrganizationId, price, binding.CustomerId);
+    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+    {
+        var row = await db.Billing.SingleAsync(item => item.OrganizationId == binding.OrganizationId, cancellationToken);
+        row.SubscriptionId = vendor.Subscription;
+        row.Status = "active";
+        row.Version = AccountService.NewId();
+        await db.SaveChangesAsync(cancellationToken);
+    }
+    await RefreshAsync(binding);
+    return await BindingAsync(binding.OrganizationId);
+}
+
+async Task CancelAsync(BillingBinding binding)
+{
+    await ControlAsync("/billing-cancel", new CancelInput(binding.SubscriptionId, clock.Now.ToString("O", CultureInfo.InvariantCulture)));
+    await RefreshAsync(binding);
+}
+
+async Task<string> ItemAsync(BillingBinding binding, long amount, long quantity, string? unitAmountDecimal, string? charge, string month)
+{
+    Dictionary<string, string> metadata = new() { ["terrascale_kind"] = OperationUnitOverage.Kind, ["terrascale_month"] = month, ["terrascale_org"] = binding.OrganizationId };
+    if (charge is not null) { metadata["terrascale_charge"] = charge; }
+    using var response = await control.PostAsJsonAsync("/billing-item", new ItemInput(binding.CustomerId, binding.SubscriptionId, amount, quantity, unitAmountDecimal, metadata), BillingJson.Default.ItemInput, cancellationToken);
+    response.EnsureSuccessStatusCode();
+    return (await response.Content.ReadFromJsonAsync(BillingJson.Default.ItemId, cancellationToken) ?? throw new IOException("Provider item is unavailable.")).Id;
+}
+
+async Task CheckAsync(BillingBinding binding, string month, int count, long amount)
 {
     using var response = await control.GetAsync("/billing-items?customer=" + binding.CustomerId + "&month=" + month, cancellationToken);
     response.EnsureSuccessStatusCode();
     var items = await response.Content.ReadFromJsonAsync(BillingJson.Default.ItemTotals, cancellationToken) ?? throw new IOException("Billing items are unavailable.");
-    if (items.Amount != OperationUnitOverage.Cents(quantity) || items.Count != (quantity > 0 ? 1 : 0))
+    if (items.Amount != amount || items.Count != count)
     {
-        throw new InvalidOperationException($"Overage {month}: expected one charge of {quantity}, got {items.Count} items totaling {items.Amount} cents.");
+        throw new InvalidOperationException($"Provider items {month}: expected {count} totaling {amount} cents, got {items.Count} totaling {items.Amount} cents.");
     }
 }
 
@@ -118,18 +147,23 @@ async Task ControlAsync(string path, object input)
     response.EnsureSuccessStatusCode();
 }
 
-async Task<int> ProviderCallsAsync()
-{
-    using var response = await control.GetAsync("/log", cancellationToken);
-    response.EnsureSuccessStatusCode();
-    var log = await response.Content.ReadFromJsonAsync(BillingJson.Default.JsonElement, cancellationToken);
-    return log.GetProperty("calls").GetArrayLength();
-}
-
-async Task<OverageCharge> ChargeAsync(BillingBinding binding, DateTimeOffset month)
+async Task<OverageCharge?> ChargeAsync(BillingBinding binding, DateTimeOffset month, string meter = OperationUnitOverage.Kind)
 {
     await using var db = await storage.CreateDbContextAsync(cancellationToken);
-    return await db.OverageCharges.AsNoTracking().SingleAsync(row => row.OrganizationId == binding.OrganizationId && row.SubscriptionId == binding.SubscriptionId && row.Month == month && row.Meter == OperationUnitOverage.Kind, cancellationToken);
+    return await db.OverageCharges.AsNoTracking().SingleOrDefaultAsync(row => row.OrganizationId == binding.OrganizationId && row.Month == month && row.Meter == meter, cancellationToken);
+}
+
+async Task<OverageCharge> FrozenAsync(BillingBinding binding, DateTimeOffset month) => await ChargeAsync(binding, month) ?? throw new InvalidOperationException("The month has no operations charge.");
+
+async Task<string?> SkippedAsync(BillingBinding binding, DateTimeOffset month, string meter)
+{
+    await using var db = await storage.CreateDbContextAsync(cancellationToken);
+    return await db.SkippedBillingMeters.AsNoTracking().Where(row => row.OrganizationId == binding.OrganizationId && row.Month == month && row.Meter == meter).Select(row => row.Reason).SingleOrDefaultAsync(cancellationToken);
+}
+
+async Task FailNextItemAsync()
+{
+    await ControlAsync("/failure", new FailureInput("POST", "/v1/invoiceitems", 400, 1, false));
 }
 
 async Task SetGraceAsync(BillingBinding binding)
@@ -159,105 +193,174 @@ async Task EventAsync(BillingBinding binding, string eventId)
 
 try
 {
-    await AdvanceAsync("2028-01-15T12:00:00Z");
-    var binding = await CreateAsync(clock.Now, clock.Now);
     var january = new DateTimeOffset(2028, 1, 1, 0, 0, 0, TimeSpan.Zero);
-    await AdvanceAsync("2028-02-01T00:00:00Z");
-    await BillingMonth.RecordAsync(storage, await BindingAsync(binding.OrganizationId), clock.Now, cancellationToken);
+    const string Month = "2028-01";
+    await AdvanceAsync("2028-01-03T00:00:00Z");
+    var previous = await CreateAsync();
+    var late = await CreateAsync();
+    var replaced = await CreateAsync("price_pro_month");
+    var noStorage = await CreateAsync();
+    var crashed = await CreateAsync();
+    var raced = await CreateAsync();
+    var mismatched = await CreateAsync();
+    var gated = await CreateAsync();
+    var midpoint = await CreateAsync();
+    var ended = await CreateAsync();
+    var unmapped = await CreateAsync("unmapped");
+    await AdvanceAsync("2028-01-15T12:00:00Z");
+    var binding = await CreateAsync();
+    await AdvanceAsync("2028-01-20T00:00:00Z");
+    var previousItem = await ItemAsync(previous, 400, 800_000, "0.0005", null, Month);
+    await CancelAsync(replaced);
+    await AdvanceAsync("2028-01-22T00:00:00Z");
+    foreach (var other in new[] { "2027-10", "2027-11", "2027-12" }) { await ItemAsync(previous, 100, 1, null, null, other); }
+    var successor = await SucceedAsync(replaced, "price_starter_month");
+    await ControlAsync("/billing-plan-change", new PlanChangeInput(late.SubscriptionId, "price_pro_month", "2028-01-30T00:00:00Z"));
+    await AdvanceAsync("2028-02-01T06:00:00Z");
+    foreach (var organization in new[] { binding, previous, successor, noStorage, crashed, raced, mismatched, gated, midpoint, unmapped }) { await RefreshAsync(organization); }
+    await CancelAsync(ended);
+
     await Task.WhenAll(reporter.ReportAsync(binding.OrganizationId, 1_250_000, 0, january, cancellationToken), otherReporter.ReportAsync(binding.OrganizationId, 2_250_000, 0, january, cancellationToken));
     await using (var db = await storage.CreateDbContextAsync(cancellationToken))
     {
         if (await db.OverageCharges.CountAsync(row => row.OrganizationId == binding.OrganizationId && row.Month == january, cancellationToken) != 2) { throw new InvalidOperationException("The racing freeze must leave exactly one row per meter."); }
     }
-    var frozen = await ChargeAsync(binding, january);
-    await CheckAsync(binding, "2028-01", frozen.Quantity);
-    if (frozen.ProviderId is null || frozen.Allowance != 250_000 || frozen.AmountCents != (long)Math.Round(frozen.Quantity * frozen.UnitRate, MidpointRounding.AwayFromZero)) { throw new InvalidOperationException("Frozen pricing mismatch."); }
-    Console.WriteLine("billing ledger journey: racing reporters -> one provider object, one row per meter, winner quantity and amount");
+    var frozen = await FrozenAsync(binding, january);
+    await CheckAsync(binding, Month, 1, frozen.AmountCents);
+    if (frozen.State != OverageCharge.Charged || frozen.ProviderId is null || frozen.Allowance != 250_000 || frozen.AmountCents != (long)Math.Round(frozen.Quantity * frozen.UnitRate, MidpointRounding.AwayFromZero)) { throw new InvalidOperationException("Frozen pricing mismatch."); }
+    Console.WriteLine("billing ledger journey: racing reporters -> one provider item, one row per meter, winner quantity and amount");
 
-    var delayed = await CreateAsync(january, january);
-    await BillingMonth.RecordAsync(storage, await BindingAsync(delayed.OrganizationId), clock.Now, cancellationToken);
-    await ControlAsync("/failure", new FailureInput("POST", "/v1/invoiceitems", 400, 1, false));
-    await reporter.ReportAsync(delayed.OrganizationId, 1_250_000, 0, january, cancellationToken);
-    if ((await ChargeAsync(delayed, january)).ProviderId is not null) { throw new InvalidOperationException("Failed January must remain pending."); }
-    await AdvanceAsync("2028-03-01T00:00:00Z");
-    await BillingMonth.RecordAsync(storage, await BindingAsync(delayed.OrganizationId), clock.Now, cancellationToken);
-    await reporter.ReportAsync(delayed.OrganizationId, 2_250_000, 0, january.AddMonths(1), cancellationToken);
-    await CheckAsync(delayed, "2028-02", 2_000_000);
-    await reporter.ReportAsync(delayed.OrganizationId, 3_250_000, 0, january.AddMonths(1), cancellationToken);
-    await CheckAsync(delayed, "2028-02", 2_000_000);
-    await reporter.RunCurrentAsync(cancellationToken);
-    await CheckAsync(delayed, "2028-01", 1_000_000);
-    Console.WriteLine("billing ledger journey: January failed; February succeeded; late February ignored; January recovered independently");
+    await reporter.ReportAsync(previous.OrganizationId, 1_250_000, 0, january, cancellationToken);
+    var adopted = await FrozenAsync(previous, january);
+    if (adopted.State != OverageCharge.Adopted || adopted.ProviderId != previousItem || adopted.ProviderAmountCents != 400 || adopted.AmountCents != 500) { throw new InvalidOperationException($"Previous reporter item must be adopted: {adopted.State} {adopted.ProviderAmountCents}."); }
+    await CheckAsync(previous, Month, 1, 400);
+    Console.WriteLine("billing ledger journey: previous reporter item for 2028-01 on the second provider page -> adopted with its 400 cents beside the ledger's 500, no second item");
 
-    await BillingMonth.RecordAsync(storage, await BindingAsync(binding.OrganizationId), clock.Now, cancellationToken);
+    if (await reporter.ReportAsync(late.OrganizationId, 1_250_000, 0, january, cancellationToken) != MonthSettlement.WaitingForTerms || await ChargeAsync(late, january) is not null) { throw new InvalidOperationException("January must wait for a refresh after the month ends."); }
+    await AdvanceAsync("2028-02-02T09:00:00Z");
+    await RefreshAsync(late);
+    await reporter.ReportAsync(late.OrganizationId, 1_250_000, 0, january, cancellationToken);
+    var upgraded = await FrozenAsync(late, january);
+    if (upgraded.State != OverageCharge.NothingDue || upgraded.PlanName != "Pro" || upgraded.AmountCents != 0) { throw new InvalidOperationException("An upgrade effective on the 30th must give January its lower charge."); }
+    await CheckAsync(late, Month, 0, 0);
+    Console.WriteLine("billing terms journey: upgrade effective 2028-01-30, learned 2028-02-02 -> January waits for the post-month refresh, then Pro terms, no overage");
+
+    await reporter.ReportAsync(successor.OrganizationId, 1_500_000, 0, january, cancellationToken);
+    var spanning = await FrozenAsync(successor, january);
+    if (spanning.State != OverageCharge.NothingDue || spanning.PlanName != "Pro" || spanning.SubscriptionId != successor.SubscriptionId) { throw new InvalidOperationException("A canceled subscription's terms must count for its month."); }
+    await CheckAsync(successor, Month, 0, 0);
+    Console.WriteLine("billing terms journey: Pro subscription canceled 2028-01-20, Starter started 2028-01-22, 1,500,000 units -> Pro allowance, no overage");
+
+    await reporter.ReportAsync(noStorage.OrganizationId, 1_250_000, null, january, cancellationToken);
+    var operationsOnly = await FrozenAsync(noStorage, january);
+    if (operationsOnly.State != OverageCharge.Charged || operationsOnly.AmountCents != 500 || await SkippedAsync(noStorage, january, StorageOverage.Kind) != "missing_storage_contract") { throw new InvalidOperationException("A missing storage contract must not drop the operations charge."); }
+    await CheckAsync(noStorage, Month, 1, 500);
+    Console.WriteLine("billing ledger journey: no storage contract -> storage skipped with its reason, operations 500 cents charged in its own row");
+
+    await reporter.ReportAsync(midpoint.OrganizationId, 251_000, 0, january, cancellationToken);
+    var rounded = await FrozenAsync(midpoint, january);
+    await CheckAsync(midpoint, Month, 1, 1);
+    if (rounded.AmountCents != 1 || rounded.Description != "Operation units overage, Starter, 2028-01: 1,000") { throw new InvalidOperationException("Midpoint amount or readable invoice description differs."); }
+    Console.WriteLine("billing ledger journey: half-cent midpoint -> exact one-cent provider item; readable operation name, plan, month and quantity");
+
+    await reporter.ReportAsync(unmapped.OrganizationId, 1_250_000, 0, january, cancellationToken);
+    if (await ChargeAsync(unmapped, january) is not null || await SkippedAsync(unmapped, january, OperationUnitOverage.Kind) != "missing_plan") { throw new InvalidOperationException("Unmapped price must skip the month with its reason."); }
+    Console.WriteLine("billing terms journey: unmapped provider price -> no calculable terms, month skipped as missing_plan");
+
+    await reporter.ReportAsync(ended.OrganizationId, 1_250_000, 0, january, cancellationToken);
+    var retired = await FrozenAsync(ended, january);
+    if (retired.State != OverageCharge.Skipped || retired.SkipReason != "subscription_ended" || retired.AmountCents != 500 || retired.ProviderId is not null) { throw new InvalidOperationException("Ended subscription without a provider item must keep a visible skipped amount."); }
+    await CheckAsync(ended, Month, 0, 0);
+    Console.WriteLine("billing ledger journey: subscription ended before dispatch, no provider item -> 500 cents kept as subscription_ended");
+
+    await reporter.ReportAsync(crashed.OrganizationId, 1_250_000, 0, january, cancellationToken);
+    var accepted = await FrozenAsync(crashed, january);
     await using (var db = await storage.CreateDbContextAsync(cancellationToken))
     {
-        var changed = await db.Billing.SingleAsync(row => row.OrganizationId == binding.OrganizationId, cancellationToken);
-        changed.ObservedOperationRate = 10m;
-        changed.ObservedOperationsAllowance = 1;
-        changed.ObservedPlanName = "Changed catalog";
-        changed.ObservedPricingVersion = "changed";
-        changed.Version = AccountService.NewId();
-        await db.SaveChangesAsync(cancellationToken);
-    }
-    await reporter.ReportAsync(binding.OrganizationId, 1_250_000, 0, january.AddMonths(1), cancellationToken);
-    var historical = await ChargeAsync(binding, january.AddMonths(1));
-    if (historical.UnitRate != frozen.UnitRate || historical.Allowance != frozen.Allowance || historical.Quantity != 1_000_000) { throw new InvalidOperationException("Unreported closed month used today's catalog."); }
-    await CheckAsync(binding, "2028-02", 1_000_000);
-    await reporter.ReportAsync(binding.OrganizationId, 9_250_000, 0, january, cancellationToken);
-    var unchanged = await ChargeAsync(binding, january);
-    if (unchanged.UnitRate != frozen.UnitRate || unchanged.AmountCents != frozen.AmountCents || unchanged.PlanName != frozen.PlanName) { throw new InvalidOperationException("Catalog change rewrote the charge."); }
-    await CheckAsync(binding, "2028-01", frozen.Quantity);
-    await PlanAsync(delayed.OrganizationId, "pro");
-    var aboveBoth = await CreateAsync(clock.Now, clock.Now);
-    await PlanAsync(aboveBoth.OrganizationId, "pro");
-    await AdvanceAsync("2028-03-20T00:00:00Z");
-    await PlanAsync(delayed.OrganizationId, "starter");
-    await PlanAsync(aboveBoth.OrganizationId, "starter");
-    await AdvanceAsync("2028-04-01T00:00:00Z");
-    await BillingMonth.RecordAsync(storage, await BindingAsync(delayed.OrganizationId), clock.Now, cancellationToken);
-    await BillingMonth.RecordAsync(storage, await BindingAsync(aboveBoth.OrganizationId), clock.Now, cancellationToken);
-    await reporter.ReportAsync(delayed.OrganizationId, 1_250_000, 0, january.AddMonths(2), cancellationToken);
-    await CheckAsync(delayed, "2028-03", 0);
-    await reporter.ReportAsync(aboveBoth.OrganizationId, 3_000_000, 0, january.AddMonths(2), cancellationToken);
-    await CheckAsync(aboveBoth, "2028-03", 1_000_000);
-    var lower = await ChargeAsync(aboveBoth, january.AddMonths(2));
-    if (lower.PlanName != "Pro" || lower.Allowance != 2_000_000 || lower.AmountCents != 500) { throw new InvalidOperationException("Two plans must freeze the lower per-meter charge."); }
-    Console.WriteLine("billing ledger journey: mid-month downgrade within Pro allowance -> zero; usage above both allowances -> Pro amount; closed catalog terms unchanged");
-
-    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
-    {
-        var accepted = await db.OverageCharges.SingleAsync(row => row.Id == frozen.Id, cancellationToken);
-        accepted.ProviderId = null;
-        accepted.AcceptedAt = null;
+        var row = await db.OverageCharges.SingleAsync(item => item.Id == accepted.Id, cancellationToken);
+        row.State = OverageCharge.Pending;
+        row.ProviderId = null;
+        row.ProviderAmountCents = null;
+        row.AcceptedAt = null;
+        row.ClaimOwner = "crashed-instance";
+        row.ClaimUntil = clock.Now.AddMinutes(-1);
         await db.SaveChangesAsync(cancellationToken);
     }
     await ControlAsync("/billing-forget-idempotency", new EmptyInput());
+    await CancelAsync(crashed);
     await reporter.RunCurrentAsync(cancellationToken);
-    await CheckAsync(binding, "2028-01", frozen.Quantity);
-    if ((await ChargeAsync(binding, january)).ProviderId != frozen.ProviderId) { throw new InvalidOperationException("Metadata recovery lost the accepted object."); }
-    Console.WriteLine("billing ledger journey: accepted object without local receipt; provider forgot key; metadata lookup -> no create");
+    var recovered = await FrozenAsync(crashed, january);
+    if (recovered.State != OverageCharge.Charged || recovered.ProviderId != accepted.ProviderId) { throw new InvalidOperationException("An accepted item must be found before the row is retired."); }
+    await CheckAsync(crashed, Month, 1, 500);
+    Console.WriteLine("billing ledger journey: provider accepted, instance died before saving, subscription then canceled -> row charged with the provider item id");
 
-    var existing = await CreateAsync(january.AddYears(-1), null);
+    await FailNextItemAsync();
+    await reporter.ReportAsync(raced.OrganizationId, 1_250_000, 0, january, cancellationToken);
+    var hold = new HoldInput("POST", "/v1/invoiceitems", raced.CustomerId);
+    await ControlAsync("/billing-hold", hold);
+    var dispatching = reporter.RunCurrentAsync(cancellationToken);
+    await ControlAsync("/billing-held", hold);
+    await CancelAsync(raced);
+    await otherReporter.RunCurrentAsync(cancellationToken);
+    var during = await FrozenAsync(raced, january);
+    if (during.State != OverageCharge.Pending || during.ClaimOwner is null) { throw new InvalidOperationException("Retirement must wait for the dispatch claim."); }
+    await ControlAsync("/billing-release", hold);
+    await dispatching;
+    await otherReporter.RunCurrentAsync(cancellationToken);
+    var raceResult = await FrozenAsync(raced, january);
+    if (raceResult.State != OverageCharge.Charged || raceResult.ProviderId is null || raceResult.SkipReason is not null) { throw new InvalidOperationException("Dispatch and retirement must leave one outcome."); }
+    await CheckAsync(raced, Month, 1, 500);
+    Console.WriteLine("billing ledger journey: one instance dispatching while another retires the same row -> claim serializes them, one charged outcome matching the provider");
+
+    await FailNextItemAsync();
+    await reporter.ReportAsync(mismatched.OrganizationId, 1_250_000, 0, january, cancellationToken);
+    var unsent = await FrozenAsync(mismatched, january);
+    var foreign = await ItemAsync(mismatched, 499, 1, null, unsent.Id, Month);
+    await reporter.RunCurrentAsync(cancellationToken);
+    await reporter.RunCurrentAsync(cancellationToken);
+    var held = await FrozenAsync(mismatched, january);
+    if (held.State != OverageCharge.Mismatch || held.ProviderId != foreign || held.ProviderAmountCents != 499 || held.AmountCents != 500) { throw new InvalidOperationException("A provider item with another amount must be held as a mismatch."); }
+    await CheckAsync(mismatched, Month, 1, 499);
+    Console.WriteLine("billing ledger journey: provider item for the row with 499 cents instead of 500 -> mismatch state, no second item");
+
+    await FailNextItemAsync();
+    await reporter.ReportAsync(gated.OrganizationId, 1_250_000, 0, january, cancellationToken);
+    var unknownMigration = new HistoryRow("29991231235959_UnknownToThisBuild", "11.0.0");
+    DateTimeOffset checkedAt;
     await using (var db = await storage.CreateDbContextAsync(cancellationToken))
     {
-        var sql = new RecordBillingTerms().UpOperations.OfType<SqlOperation>().Single().Sql.Replace("'now'", "{0}", StringComparison.Ordinal) + " AND organization_id = {1}";
+        checkedAt = (await db.BillingSubscriptions.AsNoTracking().SingleAsync(row => row.OrganizationId == gated.OrganizationId, cancellationToken)).CheckedAt;
+        await db.Database.ExecuteSqlRawAsync(db.GetService<IHistoryRepository>().GetInsertScript(unknownMigration), cancellationToken);
+    }
+    try
+    {
+        await reporter.RunOnceAsync(cancellationToken);
+        await reporter.RunCurrentAsync(cancellationToken);
+        await refresh.RunOnceAsync(cancellationToken);
+        await reconciler.RunOnceAsync(cancellationToken);
+        await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        if ((await FrozenAsync(gated, january)).State != OverageCharge.Pending || (await db.BillingSubscriptions.AsNoTracking().SingleAsync(row => row.OrganizationId == gated.OrganizationId, cancellationToken)).CheckedAt != checkedAt)
+        {
+            throw new InvalidOperationException("A build that lacks an applied migration must run no billing job.");
+        }
+    }
+    finally
+    {
+        await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(db.GetService<IHistoryRepository>().GetDeleteScript(unknownMigration.MigrationId), cancellationToken);
+    }
+    await reporter.RunCurrentAsync(cancellationToken);
+    if ((await FrozenAsync(gated, january)).State != OverageCharge.Charged) { throw new InvalidOperationException("Billing jobs must resume once the build knows every migration."); }
+    Console.WriteLine("billing migration journey: database holds a migration this build lacks -> reporter, refresh and reconciler idle; resume after it is gone");
+
+    var existing = await CreateAsync();
+    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+    {
+        var sql = new AddBillingLedgerColumns().UpOperations.OfType<SqlOperation>().Single().Sql.Replace("'now'", "{0}", StringComparison.Ordinal) + " AND organization_id = {1}";
         await db.Database.ExecuteSqlRawAsync(sql, [clock.Now.ToString("O", CultureInfo.InvariantCulture), existing.OrganizationId], cancellationToken);
     }
-    if ((await BindingAsync(existing.OrganizationId)).OverageStartsAt != january.AddMonths(4)) { throw new InvalidOperationException("Deployment must exclude the deployment month and all earlier months."); }
-    await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january, cancellationToken);
-    await CheckAsync(existing, "2028-01", 0);
-    await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january.AddMonths(3), cancellationToken);
-    await CheckAsync(existing, "2028-04", 0);
-    await AdvanceAsync("2028-06-01T00:00:00Z");
-    await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january.AddMonths(3), cancellationToken);
-    await CheckAsync(existing, "2028-04", 0);
-    await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january.AddMonths(4), cancellationToken);
-    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
-    {
-        if (!await db.SkippedBillingMonths.AnyAsync(row => row.OrganizationId == existing.OrganizationId && row.Month == january.AddMonths(4), cancellationToken)) { throw new InvalidOperationException("Unknown plan must have a permanent skipped-month record."); }
-    }
-    Console.WriteLine("billing migration journey: deployment month and earlier excluded; missing historical plan permanently skipped");
+    if ((await BindingAsync(existing.OrganizationId)).OverageStartsAt != january.AddMonths(2) || await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january.AddMonths(1), cancellationToken) != MonthSettlement.NotDue) { throw new InvalidOperationException("Deployment must exclude the deployment month and all earlier months."); }
+    Console.WriteLine("billing migration journey: deployment month and earlier excluded from the ledger");
 
     var expiredReceipt = "evt_cleanup_" + AccountService.NewId();
     var liveReceipt = "evt_cleanup_" + AccountService.NewId();
@@ -288,75 +391,6 @@ try
             !await db.StripeEventReceipts.AnyAsync(row => row.Id == liveReceipt, cancellationToken)) { throw new InvalidOperationException("Concurrent receipt cleanup changed retention."); }
     }
     Console.WriteLine("billing webhook journey: concurrent bulk cleanup removes expired receipt and retains recent receipt");
-
-    var midpoint = await CreateAsync(clock.Now, clock.Now);
-    var ended = await CreateAsync(clock.Now, clock.Now);
-    var expired = await CreateAsync(clock.Now, clock.Now);
-    var endedPending = await CreateAsync(clock.Now, clock.Now);
-    await AdvanceAsync("2028-07-01T00:00:00Z");
-    var june = january.AddMonths(5);
-    await BillingMonth.RecordAsync(storage, await BindingAsync(midpoint.OrganizationId), clock.Now, cancellationToken);
-    await reporter.ReportAsync(midpoint.OrganizationId, 251_000, 0, june, cancellationToken);
-    var rounded = await ChargeAsync(midpoint, june);
-    await CheckAsync(midpoint, "2028-06", 1_000);
-    if (rounded.AmountCents != 1 || rounded.Description != "Operation units overage, Starter, 2028-06: 1,000") { throw new InvalidOperationException("Midpoint amount or readable invoice description differs."); }
-    Console.WriteLine("billing ledger journey: half-cent midpoint -> exact one-cent provider item; readable operation name, plan, month and quantity");
-
-    await BillingMonth.RecordAsync(storage, await BindingAsync(endedPending.OrganizationId), clock.Now, cancellationToken);
-    await ControlAsync("/failure", new FailureInput("POST", "/v1/invoiceitems", 400, 1, false));
-    await reporter.ReportAsync(endedPending.OrganizationId, 1_250_000, 0, june, cancellationToken);
-    foreach (var (closed, status) in new[] { (ended, "canceled"), (expired, "incomplete_expired"), (endedPending, "canceled") })
-    {
-        await ControlAsync("/payment", new PaymentInput(closed.SubscriptionId, false, false, status));
-        await EventAsync(closed, "evt_ended_" + AccountService.NewId());
-        var calls = await ProviderCallsAsync();
-        await reporter.ReportAsync(closed.OrganizationId, 1_250_000, 0, june, cancellationToken);
-        if (await ProviderCallsAsync() != calls) { throw new InvalidOperationException("Ended subscription reporting called the provider."); }
-    }
-    await reporter.RunCurrentAsync(cancellationToken);
-    await reporter.RunCurrentAsync(cancellationToken);
-    foreach (var closed in new[] { ended, expired, endedPending })
-    {
-        var skipped = await ChargeAsync(closed, june);
-        if (skipped.AmountCents != 500 || skipped.SkipReason != "subscription_ended" || skipped.ProviderId is not null) { throw new InvalidOperationException("Ended subscription must retain a visible, permanently skipped charge."); }
-        await CheckAsync(closed, "2028-06", 0);
-    }
-    Console.WriteLine("billing ledger journey: canceled and incomplete-expired keep skipped amounts; already-pending canceled charge is not retried");
-
-    long reads = 0;
-    using (var listener = new MeterListener
-    {
-        InstrumentPublished = (instrument, active) =>
-        {
-            if (instrument.Meter.Name == TerraBaseRpcClient.MeterName && instrument.Name == "dashboard.terrabase.rpc.calls") { active.EnableMeasurementEvents(instrument); }
-        }
-    })
-    {
-        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
-        {
-            foreach (var tag in tags)
-            {
-                if (tag.Key == "method" && Equals(tag.Value, "ListAllowancesAsync")) { Interlocked.Add(ref reads, value); }
-            }
-        });
-        listener.Start();
-        await reporter.RunOnceAsync(cancellationToken);
-        var before = reads;
-        var unmapped = await CreateAsync(clock.Now, null, "unmapped");
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
-        {
-            var unknown = await db.Billing.SingleAsync(row => row.OrganizationId == unmapped.OrganizationId, cancellationToken);
-            unknown.EffectivePlan = "";
-            unknown.ObservedPricingVersion = "";
-            unknown.EffectivePlanSince = null;
-            unknown.OverageStartsAt = default;
-            await db.SaveChangesAsync(cancellationToken);
-        }
-        reads = 0;
-        await reporter.RunOnceAsync(cancellationToken);
-        if (before == 0 || reads != before) { throw new InvalidOperationException($"Unmapped subscription changed historical usage reads: {before} -> {reads}."); }
-        Console.WriteLine($"billing ledger journey: unset-start unmapped subscription adds no usage-month reads ({reads})");
-    }
 
     await SetGraceAsync(binding);
     var paid = await billing.ResolveExpiredGraceAsync(binding.OrganizationId, cancellationToken);
@@ -420,9 +454,14 @@ internal sealed class BillingClock : TimeProvider
 }
 
 internal sealed record ClockInput(string Now);
-internal sealed record SubscriptionInput(string Organization, string Price);
+internal sealed record SubscriptionInput(string Organization, string Price, string Start, string? Customer);
 internal sealed record SubscriptionIds(string Customer, string Subscription);
 internal sealed record ItemTotals(int Count, long Amount);
+internal sealed record ItemInput(string Customer, string Subscription, long Amount, long Quantity, string? UnitAmountDecimal, Dictionary<string, string> Metadata);
+internal sealed record ItemId(string Id);
+internal sealed record CancelInput(string Subscription, string At);
+internal sealed record PlanChangeInput(string Subscription, string Price, string At);
+internal sealed record HoldInput(string Method, string Path, string Customer);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(JsonElement))]
@@ -436,6 +475,11 @@ internal sealed record ItemTotals(int Count, long Amount);
 [JsonSerializable(typeof(SubscriptionInput))]
 [JsonSerializable(typeof(SubscriptionIds))]
 [JsonSerializable(typeof(ItemTotals))]
+[JsonSerializable(typeof(ItemInput))]
+[JsonSerializable(typeof(ItemId))]
+[JsonSerializable(typeof(CancelInput))]
+[JsonSerializable(typeof(PlanChangeInput))]
+[JsonSerializable(typeof(HoldInput))]
 internal sealed partial class BillingJson : JsonSerializerContext;
 
 internal sealed record EmptyInput;

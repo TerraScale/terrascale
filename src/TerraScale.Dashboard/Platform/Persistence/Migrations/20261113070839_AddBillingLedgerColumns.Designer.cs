@@ -11,10 +11,9 @@ using TerraScale.Dashboard.Platform.Persistence;
 namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 {
     [DbContext(typeof(DashboardDbContext))]
-    [Migration("20261113042335_AddPaymentGrace")]
-    partial class AddPaymentGrace
+    [Migration("20261113070839_AddBillingLedgerColumns")]
+    partial class AddBillingLedgerColumns
     {
-        /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
@@ -778,6 +777,14 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("erasure_id");
 
+                    b.Property<DateTime?>("ExpiryLastLoggedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expiry_last_logged_at");
+
+                    b.Property<DateTime?>("ExpiryUnavailableSince")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expiry_unavailable_since");
+
                     b.Property<string>("InternalReservation")
                         .HasColumnType("TEXT")
                         .HasColumnName("internal_reservation");
@@ -791,6 +798,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("kind");
+
+                    b.Property<DateTime>("OverageStartsAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("overage_starts_at");
 
                     b.Property<string>("Plan")
                         .IsRequired()
@@ -833,6 +844,11 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("subscription_id");
+
+                    b.Property<string>("TaxLocationStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("tax_location_status");
 
                     b.Property<bool>("TrialUsed")
                         .HasColumnType("INTEGER")

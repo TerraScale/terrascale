@@ -11,10 +11,9 @@ using TerraScale.Dashboard.Platform.Persistence;
 namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 {
     [DbContext(typeof(DashboardDbContext))]
-    [Migration("20261113042719_RecordBillingTerms")]
-    partial class RecordBillingTerms
+    [Migration("20261113070642_AddPaymentGrace")]
+    partial class AddPaymentGrace
     {
-        /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
@@ -774,21 +773,9 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("effective_plan");
 
-                    b.Property<DateTime?>("EffectivePlanSince")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("effective_plan_since");
-
                     b.Property<string>("ErasureId")
                         .HasColumnType("TEXT")
                         .HasColumnName("erasure_id");
-
-                    b.Property<DateTime?>("ExpiryLastLoggedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("expiry_last_logged_at");
-
-                    b.Property<DateTime?>("ExpiryUnavailableSince")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("expiry_unavailable_since");
 
                     b.Property<string>("InternalReservation")
                         .HasColumnType("TEXT")
@@ -803,41 +790,6 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("kind");
-
-                    b.Property<string>("ObservedCurrency")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("observed_currency");
-
-                    b.Property<decimal>("ObservedOperationRate")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("observed_operation_rate");
-
-                    b.Property<long>("ObservedOperationsAllowance")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("observed_operations_allowance");
-
-                    b.Property<string>("ObservedPlanName")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("observed_plan_name");
-
-                    b.Property<string>("ObservedPricingVersion")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("observed_pricing_version");
-
-                    b.Property<long>("ObservedStorageAllowance")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("observed_storage_allowance");
-
-                    b.Property<decimal>("ObservedStorageRate")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("observed_storage_rate");
-
-                    b.Property<DateTime>("OverageStartsAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("overage_starts_at");
 
                     b.Property<string>("Plan")
                         .IsRequired()
@@ -880,11 +832,6 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("subscription_id");
-
-                    b.Property<string>("TaxLocationStatus")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("tax_location_status");
 
                     b.Property<bool>("TrialUsed")
                         .HasColumnType("INTEGER")

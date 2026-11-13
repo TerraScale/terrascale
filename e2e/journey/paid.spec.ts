@@ -22,12 +22,12 @@ function kv(page: Page, card: string, label: string) {
   return page.locator(`${card} dt`, { hasText: new RegExp(`^${label}$`) }).locator('xpath=following-sibling::dd[1]');
 }
 
-test('completed overage months use recorded plans and deployment never rebills old months', async () => {
+test('overage months freeze on provider-dated terms, adopt earlier items and never charge twice', async () => {
   const build = process.env.E2E_BUILD;
   if (!build) throw new Error('E2E_BUILD is required for the billing journey');
   const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll')], { env: process.env });
-  const lines = result.stdout.split('\n').filter((line) => /^billing (ledger|migration|grace|tax|webhook) journey:/.test(line));
-  expect(lines).toHaveLength(15);
+  const lines = result.stdout.split('\n').filter((line) => /^billing (ledger|terms|migration|grace|tax|webhook) journey:/.test(line));
+  expect(lines).toHaveLength(20);
   console.log(lines.join('\n'));
 });
 

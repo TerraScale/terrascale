@@ -34,7 +34,6 @@ internal static class BillingStorage
 
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
             db.Add(row);
-            if (row is BillingBinding binding) { await BillingMonth.ObserveAsync(db, binding, cancellationToken); }
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
@@ -58,7 +57,6 @@ internal static class BillingStorage
             entry.State = EntityState.Modified;
             row.Version = AccountService.NewId();
             entry.Property(nameof(IBillingRow.Version)).OriginalValue = expected;
-            if (row is BillingBinding binding) { await BillingMonth.ObserveAsync(db, binding, cancellationToken); }
             try
             {
                 await db.SaveChangesAsync(cancellationToken);

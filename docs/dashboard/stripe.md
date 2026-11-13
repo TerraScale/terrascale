@@ -127,55 +127,96 @@ successful delivery attempts in Stripe Workbench when validating an endpoint.
 
 ## Closed-month overage ledger
 
-Paid operation and storage overage is frozen only after its UTC month closes.
-`billing_term_observations` appends the plan name, allowances, rates, currency,
-pricing version and observation time atomically with each binding change.
-An unmapped price is also an observed fact: any affected month is skipped, with
-a known computed amount retained when possible. The month uses the last observed terms before it started and every set observed
-during it. Each meter freezes the lowest resulting integer-cent charge, which
-can select different terms for operations and storage. The row names the terms
-it selected. `billing_months` also retains a closing observation and indexes
-completed months. Neither source looks up historical prices in today's catalog.
-If no qualifying plan was observed, `billing_skipped_months` permanently closes
-the month without a charge and increments the skipped-month counter and log.
-Missing storage-contract data also skips the month before either meter freezes.
+Overage is charged only on terms the provider establishes for the organisation's
+UTC month, never on what the dashboard happened to observe or when.
 
-`billing_overage_charges` has a unique key on organisation, subscription, UTC
-month and meter. Each insert freezes usage, allowance, unit rate, currency,
-pricing version, plan name, overage quantity, rounded amount and description.
-Concurrent inserts read the winning row. The payload cannot change after that
-insert; only the provider ID, acceptance time and terminal skip reason can be recorded. A zero-cent
-row closes its meter without a provider object. Usage arriving after freezing
-is never charged. `terrascale_billing_overage_late_usage_observations_total`
-counts observations with usage above the frozen value, including repeated
-observations; it is not a unique count of late units.
+**Terms timeline.** Every successful billing refresh records the provider's facts
+for each subscription in `billing_subscriptions` (start from `start_date`, end
+from `ended_at`, status, and `checked_at`, the time of that refresh) and appends
+terms to `billing_terms` with the provider's effective time:
 
-Before dispatching any nonzero row without a provider ID, the reporter lists
-all of that customer's invoice items and matches `terrascale_charge=<row ID>`.
-It records an existing match rather than creating another item, including after
-the provider's idempotency cache expires. Creation sends the immutable row's exact integer-cent amount, currency and description, with key
-`TerraScale.Dashboard/overage-<row ID>`. The row ID uniquely identifies the
-organisation, subscription, month and meter. Two dispatchers send the same key
-and payload. The provider item also carries organisation, month and meter
-metadata. Accepted provider objects are never updated or deleted by the reporter.
+| Basis | Effective time | Terms |
+| --- | --- | --- |
+| `start_date` | the subscription's `start_date` | the price in the `customer.subscription.created` event, or the current price when the provider holds no change event since the start |
+| `event` | the event's `created` time | the price in each `customer.subscription.updated` event's subscription snapshot |
+| `first_check` | the start of the provider's event window (29 days before the refresh) | the current price, when the window holds no change event |
+| `unestablished` | the earliest time the change could have taken effect | the price the refresh saw, when no provider event explains it, or when the history before the event window is gone |
 
-The hourly pass records boundary observations and dispatches pending ledger
-rows. The daily pass freezes closed-month usage; failures remain pending per
-row and neither block nor reopen later months. There is no progress watermark.
-Monthly scans query distinct recorded months at or after `billing.overage_starts_at`,
-set to the first full UTC month after deployment for existing subscriptions
-and the reservation's UTC month for new customers. They never walk calendar
-months from an unchecked date; unset starts are excluded. An unobserved month
-after a service gap is forgiven rather than reconstructed from current terms.
-Canceled and incomplete-expired subscriptions keep their computed amounts in
-ledger rows with `skip_reason = 'subscription_ended'`; those rows are never
-dispatched or retried. Pending rows are checked again before provider creation. Months before deployment
-are never charged by this code. The deployment month is also excluded for
-existing customers: the previous reporter may already have created items for
-it. That month's unreported overage is forgiven rather than risking a second
-charge. Resubscription cannot move this initial cutoff backwards. A missing historical
-observation is skipped permanently. Annual subscriptions collect overage monthly.
-The billing page estimates current usage; the current month has no provider item.
+The refresh lists `customer.subscription.created` and `customer.subscription.updated`
+events created since that subscription's last `checked_at`, so a change learned
+late keeps its provider time: an upgrade on the 30th processed on the 2nd counts
+for the earlier month. `learned_at` only records when the dashboard read it. A
+price that maps to no plan records terms without a pricing version. Recording
+terms never blocks the entitlement refresh: it runs after the binding commits,
+and a failure is logged and counted by `terrascale_billing_terms_unrecorded_total`.
+
+**Freezing a month.** `billing.overage_starts_at` is the organisation's first
+unsettled month. A month is frozen only when every subscription the organisation
+had in it was read by a refresh at or after the month's end (or after the
+subscription ended), and the binding's current subscription has been recorded.
+Until then it waits, and the daily pass publishes
+`terrascale_billing_overage_months_waiting_for_terms` and
+`terrascale_billing_overage_oldest_waiting_month_seconds`. A month without any
+subscription moves the start to the next subscription's month.
+
+The candidates are, for every subscription of the organisation that overlaps the
+month, the terms in effect when the month (or the subscription) began and every
+terms change before the month (or the subscription) ended. A subscription
+canceled on the 20th and its replacement started on the 22nd both count. Usage is
+measured per organisation and month, so each meter freezes the lowest integer-cent
+charge over the candidates; operations and storage can select different terms.
+If a candidate is `unestablished`, a part of the month has no terms, or a
+candidate's price is unmapped, the row keeps its calculable amount with
+`skip_reason` `terms_unestablished` or `missing_plan` and is never dispatched.
+A meter without usage or without the storage contract is recorded in
+`billing_skipped_meters` with its reason; the other meter still freezes in its
+own row. The organisation's newest overlapping subscription owns the charge.
+
+`billing_overage_charges` has a unique key on organisation, UTC month and meter,
+so two subscriptions in one month can never produce two charges. Each insert
+freezes usage, allowance, rate, currency, pricing version, plan name, quantity,
+rounded amount and the readable description; only `state`, the provider fields,
+`skip_reason` and the claim can change afterwards. States:
+
+| State | Meaning |
+| --- | --- |
+| `pending` | waiting for dispatch |
+| `charged` | the provider holds the ledger's item; `provider_id` and `provider_amount_cents` record it |
+| `adopted` | the previous reporter already charged this month and meter; the row records its item and total beside the ledger's own amount, and nothing more is charged or refunded |
+| `mismatch` | the provider holds an item for this row whose amount, customer or currency differs; held for review, never retried, counted by `terrascale_billing_overage_mismatch_total` |
+| `skipped` | not charged, with the amount kept and `skip_reason` |
+| `nothing_due` | the lowest charge is zero |
+
+**Dispatch.** A dispatcher first claims a pending row (`claim_owner`,
+`claim_until` ten minutes ahead); a row whose claim is live is left alone. One
+attempt runs under a four-minute cancellation budget, far below the provider's
+24-hour idempotency-key retention; an abandoned attempt releases the claim and
+the next pass starts with a fresh lookup. Inside the claim, immediately before
+any create, it lists the customer's invoice items created since the month began
+(every page) and:
+
+1. records an item tagged `terrascale_charge=<row ID>` as `charged`, or as `mismatch` if it differs;
+2. adopts items of the previous reporter, identified by `terrascale_kind`,
+   `terrascale_month` and `terrascale_org` without `terrascale_charge`;
+3. retires the row as `skipped` with `subscription_ended` when the subscription
+   the charge belongs to has ended, so a crash after the provider accepted an
+   item is recorded as `charged` even after a cancellation;
+4. otherwise creates the item with the exact integer amount, currency,
+   description and key `TerraScale.Dashboard/overage-<row ID>`.
+
+The result is saved only while the same claim is held, so retirement and
+dispatch of one row never interleave. The daily pass settles at most three
+months, reads at most 200 usage pages and dispatches at most 500 rows; it reads
+bindings and rows in pages and resumes an unfinished usage scan where it
+stopped. The hourly pass only dispatches. Annual subscriptions collect overage
+monthly. The billing page estimates current usage; the current month has no
+ledger row.
+
+**Mixed builds.** The reporter, binding refresh, plan reconciler, event-receipt
+recovery and grace reconciliation first compare the database's applied
+migrations with the ones the build knows. If the database has one the build
+lacks, they log once and stay idle, so a release or rollback never runs billing
+jobs on a schema they do not understand.
 
 ## Payment recovery and event receipts
 
@@ -218,15 +259,27 @@ acknowledged without effects, so cleanup cannot reopen old events.
 
 ## Releasing this change
 
-Complete the rollout to every region without a soak between regions and before
-the last UTC day of a month. The schema changes only add tables and columns.
-Going back to the previous build is safe only before the first ledger month
-starts. After that boundary, roll forward: the previous reporter does not
-honor frozen charges.
+The schema changes only add tables and columns. The build running today has no
+migration check, so during this first rollout old instances keep working beside
+new ones until the last one is replaced. Release between the 4th and the last
+day of a UTC month and replace every instance in every region within one day;
+outside that window an old instance also revisits the previous month.
 
-After the last instance starts, both read-only checks must return no rows:
-no organization is both in payment grace and restricted, and no binding with
-a subscription has an unset start month.
+What an old instance can still do while it runs:
+
+- create or update the current month's invoice items with its own metadata
+  (`terrascale_kind`, `terrascale_month`, `terrascale_org`, no
+  `terrascale_charge`; quantity times unit amount). The ledger adopts those
+  items when the month freezes instead of charging again, also for bindings
+  created during the rollout;
+- restore `billing_required` on an organisation the new build placed in
+  payment grace. The next refresh of the new build puts it back in grace.
+
+Existing subscriptions start the ledger at the month after the deployment
+month, which the previous reporter has already charged.
+
+After the last instance is replaced, run these read-only checks. The first two
+must return no rows; the last two list what to review:
 
 ```sql
 SELECT id, billing_status, payment_grace_until
@@ -238,7 +291,28 @@ SELECT organization_id
 FROM billing
 WHERE kind = 'stripe' AND subscription_id <> ''
   AND (overage_starts_at IS NULL OR julianday(overage_starts_at) <= julianday('0001-01-01'));
+
+SELECT organization_id, month, meter, amount_cents, provider_id, provider_amount_cents
+FROM billing_overage_charges
+WHERE state = 'adopted'
+ORDER BY month, organization_id;
+
+SELECT id, billing_status, payment_grace_until
+FROM organizations
+WHERE payment_grace_until IS NOT NULL
+  AND billing_status = 'billing_required'
+ORDER BY payment_grace_until;
 ```
+
+The last query lists organisations restricted while they had a grace deadline,
+including deadlines already past, which an old instance may have restricted
+before the new build asked the provider. A row in the first or last query is
+repaired by that organisation's next refresh (daily, or on its next provider
+event). Rollback: before any month
+has frozen in the ledger, the previous build can return. After a row exists in
+`billing_overage_charges`, roll forward only: the previous reporter does not
+read the ledger and would charge those months again. Future releases and
+rollbacks are protected by the migration check.
 
 ## Internal billing
 

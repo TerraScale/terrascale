@@ -27,7 +27,12 @@ namespace TerraScale.Dashboard.Platform.Observability
         private long failingDeletionEntries;
         private long organizationCreationFailures;
         private long organizationMetadataFailures;
-        private long skippedOverageMonths;
+        private long skippedOverageMeters;
+        private long adoptedOverageCharges;
+        private long mismatchedOverageCharges;
+        private long unrecordedTerms;
+        private long waitingOverageMonths;
+        private long oldestWaitingOverageMonth;
         private long lateOverageObservations;
         private long deferredGraceExpiries;
         private long failedTaxRepairs;
@@ -36,9 +41,15 @@ namespace TerraScale.Dashboard.Platform.Observability
         public void ReportDeferredGraceExpiry() => Interlocked.Increment(ref deferredGraceExpiries);
         public void ReportFailedTaxRepair() => Interlocked.Increment(ref failedTaxRepairs);
 
-        public void ReportSkippedOverageMonth()
+        public void ReportSkippedOverageMeter() => Interlocked.Increment(ref skippedOverageMeters);
+        public void ReportAdoptedOverage() => Interlocked.Increment(ref adoptedOverageCharges);
+        public void ReportMismatchedOverage() => Interlocked.Increment(ref mismatchedOverageCharges);
+        public void ReportUnrecordedTerms() => Interlocked.Increment(ref unrecordedTerms);
+
+        public void ReportWaitingOverageMonths(long count, DateTimeOffset? oldest)
         {
-            Interlocked.Increment(ref skippedOverageMonths);
+            Interlocked.Exchange(ref waitingOverageMonths, count);
+            Interlocked.Exchange(ref oldestWaitingOverageMonth, oldest?.ToUnixTimeSeconds() ?? 0);
         }
 
         public void ReportOrganizationCreationFailure()
@@ -161,11 +172,21 @@ namespace TerraScale.Dashboard.Platform.Observability
                 "# TYPE terrascale_organization_checkout_failures_total counter\n" +
                 "terrascale_organization_checkout_failures_total{phase=\"creating\"} " + Interlocked.Read(ref organizationCreationFailures).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "terrascale_organization_checkout_failures_total{phase=\"metadata\"} " + Interlocked.Read(ref organizationMetadataFailures).ToString(CultureInfo.InvariantCulture) + "\n" +
-                "# TYPE terrascale_billing_overage_skipped_months_total counter\n" +
                 "terrascale_billing_overage_late_usage_observations_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref lateOverageObservations).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "terrascale_billing_grace_expiry_deferred_provider_unavailable_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref deferredGraceExpiries).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "terrascale_billing_tax_repair_failed_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref failedTaxRepairs).ToString(CultureInfo.InvariantCulture) + "\n" +
-                "terrascale_billing_overage_skipped_months_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref skippedOverageMonths).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_overage_skipped_meters_total counter\n" +
+                "terrascale_billing_overage_skipped_meters_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref skippedOverageMeters).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_overage_adopted_total counter\n" +
+                "terrascale_billing_overage_adopted_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref adoptedOverageCharges).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_overage_mismatch_total counter\n" +
+                "terrascale_billing_overage_mismatch_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref mismatchedOverageCharges).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_terms_unrecorded_total counter\n" +
+                "terrascale_billing_terms_unrecorded_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref unrecordedTerms).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_overage_months_waiting_for_terms gauge\n" +
+                "terrascale_billing_overage_months_waiting_for_terms{service=\"ts-dashboard\"} " + Interlocked.Read(ref waitingOverageMonths).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_overage_oldest_waiting_month_seconds gauge\n" +
+                "terrascale_billing_overage_oldest_waiting_month_seconds{service=\"ts-dashboard\"} " + Interlocked.Read(ref oldestWaitingOverageMonth).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "# TYPE terrascale_deletion_cleanup_failing_entries gauge\n" +
                 "terrascale_deletion_cleanup_failing_entries{service=\"ts-dashboard\"} " + Interlocked.Read(ref failingDeletionEntries).ToString(CultureInfo.InvariantCulture) + "\n");
         }

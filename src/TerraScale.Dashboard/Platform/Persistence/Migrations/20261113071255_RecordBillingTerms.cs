@@ -1,23 +1,24 @@
-using System;
+﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 {
-    public partial class RecordBillingTermObservations : Migration
+    public partial class RecordBillingTerms : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "billing_term_observations",
+                name: "billing_terms",
                 columns: table => new
                 {
                     organization_id = table.Column<string>(type: "TEXT", nullable: false),
                     subscription_id = table.Column<string>(type: "TEXT", nullable: false),
-                    observed_at = table.Column<DateTime>(type: "TEXT", nullable: false),
+                    effective_from = table.Column<DateTime>(type: "TEXT", nullable: false),
                     pricing_version = table.Column<string>(type: "TEXT", nullable: false),
-                    month = table.Column<DateTime>(type: "TEXT", nullable: false),
+                    basis = table.Column<string>(type: "TEXT", nullable: false),
+                    learned_at = table.Column<DateTime>(type: "TEXT", nullable: false),
                     plan = table.Column<string>(type: "TEXT", nullable: false),
                     plan_name = table.Column<string>(type: "TEXT", nullable: false),
                     operations_allowance = table.Column<long>(type: "INTEGER", nullable: false),
@@ -28,27 +29,21 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_billing_term_observations", x => new { x.organization_id, x.subscription_id, x.observed_at, x.pricing_version });
-                    table.CheckConstraint("ck_billing_term_observations", "length(subscription_id) > 0");
+                    table.PrimaryKey("PK_billing_terms", x => new { x.organization_id, x.subscription_id, x.effective_from, x.pricing_version });
+                    table.CheckConstraint("ck_billing_terms", "length(subscription_id) > 0 AND basis IN ('start_date', 'event', 'first_check', 'unestablished')");
                     table.ForeignKey(
-                        name: "FK_billing_term_observations_billing_organization_id",
+                        name: "FK_billing_terms_billing_organization_id",
                         column: x => x.organization_id,
                         principalTable: "billing",
                         principalColumn: "organization_id",
                         onDelete: ReferentialAction.Cascade);
                 });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_billing_term_observations_month",
-                table: "billing_term_observations",
-                column: "month");
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "billing_term_observations");
-
+                name: "billing_terms");
         }
     }
 }

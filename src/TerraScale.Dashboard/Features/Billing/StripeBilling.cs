@@ -501,6 +501,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 var unmappedPrice = false;
                 DateTimeOffset? renewalAt = null;
                 string status;
+                Subscription? observedSubscription = null;
                 var subscriptionId = binding.SubscriptionId.Length > 0 ? binding.SubscriptionId :
                     checkout is { Status: "complete", Mode: "subscription", SubscriptionId.Length: > 0 } ? checkout.SubscriptionId : "";
                 if (subscriptionId.Length > 0)
@@ -514,6 +515,8 @@ namespace TerraScale.Dashboard.Features.Billing
                     {
                         throw new IOException("Subscription ownership does not match.");
                     }
+
+                    observedSubscription = subscription;
 
                     binding.TaxLocationStatus = subscription.Customer?.Tax?.AutomaticTax ?? "unrecognized_location";
                     taxRepair = subscription.Metadata.GetValueOrDefault("terrascale_tax") == "automatic" && binding.TaxLocationStatus is "supported" or "not_collecting" && subscription.AutomaticTax?.Enabled != true && subscription.Status is not ("canceled" or "incomplete_expired");
@@ -556,10 +559,6 @@ namespace TerraScale.Dashboard.Features.Billing
                     effectiveInterval = binding.Interval;
                     paymentValid = checkout.Mode == "setup" && checkout.SetupIntent is { Status: "succeeded", PaymentMethodId.Length: > 0 };
                     status = paymentValid ? "active" : "incomplete";
-                }
-                if (!await BillingMonth.RecordAsync(storage, binding, time.GetUtcNow(), cancellationToken))
-                {
-                    continue;
                 }
                 var previousEffectivePlan = binding.EffectivePlan;
                 var previousEffectiveInterval = binding.EffectiveInterval;
@@ -623,18 +622,6 @@ namespace TerraScale.Dashboard.Features.Billing
                     binding.EffectivePlan = previousEffectivePlan;
                     binding.EffectiveInterval = previousEffectiveInterval;
                 }
-                if (!unmappedPrice && PlanCatalog.Plans.FirstOrDefault(candidate => candidate.Key == binding.EffectivePlan) is { } observed)
-                {
-                    BillingMonth.Observe(binding, observed, time.GetUtcNow());
-                }
-                else
-                {
-                    if (binding.ObservedPricingVersion.Length > 0 || binding.EffectivePlanSince is null)
-                    {
-                        binding.EffectivePlanSince = time.GetUtcNow();
-                    }
-                    binding.ObservedPricingVersion = "";
-                }
                 if (binding.OverageStartsAt == default)
                 {
                     var now = time.GetUtcNow();
@@ -661,6 +648,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     {
                         await plans.PublishAsync(org, cancellationToken);
                         if (taxRepair) { await RepairTaxAsync(client, subscriptionId, cancellationToken); }
+                        if (observedSubscription is not null) { await RecordTermsAsync(client, orgId, observedSubscription, cancellationToken); }
                         return paymentValid;
                     }
                 }
@@ -730,10 +718,6 @@ namespace TerraScale.Dashboard.Features.Billing
                 current.RequestId = initial.RequestId; current.StartedAt = initial.StartedAt; current.CheckoutId = "";
                 current.SubscriptionId = ""; current.EffectivePlan = ""; current.EffectiveInterval = "";
                 current.RenewalAt = null;
-                var startsAt = new DateTimeOffset(time.GetUtcNow().Year, time.GetUtcNow().Month, 1, 0, 0, 0, TimeSpan.Zero);
-                if (current.OverageStartsAt < startsAt) { current.OverageStartsAt = startsAt; }
-                current.ObservedPricingVersion = "";
-                current.EffectivePlanSince = null;
                 current.Status = "pending";
             }, cancellationToken);
         }
