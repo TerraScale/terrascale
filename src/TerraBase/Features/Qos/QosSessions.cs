@@ -4,7 +4,9 @@ namespace TerraBase.Features.Qos;
 
 internal sealed class QosSessions
 {
-    public static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(30);
+    public static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
+
+    public static readonly TimeSpan MessageTimeout = TimeSpan.FromSeconds(30);
 
     private const int MaxSessions = 4096;
     private readonly Lock _gate = new();
@@ -27,10 +29,30 @@ internal sealed class QosSessions
         }
     }
 
-    private void Leave(string organization)
+    public IDisposable? TryRelay()
     {
         lock (_gate)
         {
+            if (_active >= MaxSessions)
+            {
+                return null;
+            }
+
+            _active++;
+            return new Lease(this, null);
+        }
+    }
+
+    private void Leave(string? organization)
+    {
+        lock (_gate)
+        {
+            _active--;
+            if (organization is null)
+            {
+                return;
+            }
+
             var count = _counts[organization];
             if (count == 1)
             {
@@ -40,12 +62,10 @@ internal sealed class QosSessions
             {
                 _counts[organization] = count - 1;
             }
-
-            _active--;
         }
     }
 
-    private sealed class Lease(QosSessions owner, string organization) : IDisposable
+    private sealed class Lease(QosSessions owner, string? organization) : IDisposable
     {
         private QosSessions? _owner = owner;
 

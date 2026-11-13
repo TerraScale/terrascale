@@ -77,6 +77,14 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             if (relay is not null)
             {
+                using var lease = services.GetRequiredService<QosSessions>().TryRelay();
+                if (lease is null)
+                {
+                    output.Error("53300", "organization session limit exceeded", fatal: true);
+                    await output.FlushAsync(closed).ConfigureAwait(false);
+                    return;
+                }
+
                 await services.GetRequiredService<PostgresRelay>().RunAsync(relay.Home, relay.Startup, relay.Client, input, pipe, closed).ConfigureAwait(false);
             }
 
@@ -275,7 +283,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                             _sessions.TryRemove(session.ProcessId, out _);
                         }
 
-                        lease.Dispose();
+                        using var releasing = lease;
                         if (sql is not null)
                         {
                             await sql.DisposeAsync().ConfigureAwait(false);
@@ -438,16 +446,30 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         while (true)
         {
             (byte type, byte[] body, IMemoryReservation reservation) messageRead;
-            using (var idle = new CancellationTokenSource(QosSessions.IdleTimeout, Time))
-            using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, idle.Token))
+            var partial = false;
+            using (var deadline = new CancellationTokenSource(session.Sql.IsAutocommit ? QosSessions.IdleTimeout : Timeout.InfiniteTimeSpan, Time))
+            using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token))
             {
                 try
                 {
+                    var first = await input.ReadAtLeastAsync(1, waiting.Token).ConfigureAwait(false);
+                    input.AdvanceTo(first.Buffer.Start, first.Buffer.Start);
+                    if (first.Buffer.IsEmpty && first.IsCompleted)
+                    {
+                        return;
+                    }
+
+                    partial = true;
+                    if (session.Sql.IsAutocommit)
+                    {
+                        deadline.CancelAfter(QosSessions.MessageTimeout);
+                    }
+
                     messageRead = await ReadMessageAsync(input, waiting.Token).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (idle.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    output.Error("57P05", "session idle timeout exceeded", fatal: true);
+                    output.Error("57P05", partial ? "incomplete message timeout exceeded" : "session idle timeout exceeded", fatal: true);
                     await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                     return;
                 }

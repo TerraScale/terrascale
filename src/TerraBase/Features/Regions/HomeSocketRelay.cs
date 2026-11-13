@@ -1,16 +1,18 @@
 using System.Buffers;
 using System.Net;
 using System.Net.WebSockets;
+using System.Text.Json;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Regions;
 
-internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredential credential)
+internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredential credential, QosSessions sessions)
 {
     private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
@@ -20,6 +22,21 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(home);
         context.ReleaseRequestLease();
+        using var lease = sessions.TryRelay();
+        if (lease is null)
+        {
+            var offered = context.WebSockets.WebSocketRequestedProtocols.Contains(SqlSocketEndpoint.Protocol, StringComparer.Ordinal);
+            using var refused = await context.WebSockets.AcceptWebSocketAsync(offered ? SqlSocketEndpoint.Protocol : null).ConfigureAwait(false);
+            var error = new SqlError(SqlErrors.TenantBusy, "organization session limit exceeded");
+            var reply = new SqlSocketError(null, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), context.TraceIdentifier).Error, false);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(Shutdown.DrainBudget);
+            await refused.SendAsync(JsonSerializer.SerializeToUtf8Bytes(reply, SqlJsonContext.Default.SqlSocketError), WebSocketMessageType.Text, true, deadline.Token)
+                .ConfigureAwait(false);
+            await refused.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, SqlErrors.TenantBusy, deadline.Token).ConfigureAwait(false);
+            return;
+        }
+
         using var upstream = new ClientWebSocket
         {
             Options =

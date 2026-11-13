@@ -1,5 +1,8 @@
 import { connect } from 'node:net';
-import { connect as secure, type TLSSocket } from 'node:tls';
+import { request as upgrade } from 'node:http';
+import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import type { Socket } from 'node:net';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { connect as peer } from 'node:http2';
@@ -25,7 +28,7 @@ async function token(request: APIRequestContext, scope: string): Promise<string>
   return credential;
 }
 
-async function* messages(socket: TLSSocket) {
+async function* messages(socket: Socket) {
   let buffered = Buffer.alloc(0);
   for await (const chunk of socket) {
     buffered = Buffer.concat([buffered, chunk]);
@@ -46,12 +49,8 @@ function message(type: string, body: Buffer): Buffer {
 
 async function postgres() {
   const current = journey();
-  const transport = connect(5432, 'pg.terrascale.tech');
-  const supported = once(transport, 'data');
-  transport.write(Buffer.from([0, 0, 0, 8, 4, 210, 22, 47]));
-  expect(((await supported)[0] as Buffer).toString()).toBe('S');
-  const socket = secure({ socket: transport, servername: 'pg.terrascale.tech' });
-  await once(socket, 'secureConnect');
+  const socket = connect(6432, '127.0.0.1');
+  await once(socket, 'connect');
   const parameters = Buffer.from(`user\0any\0database\0${current.projectId}/${current.databaseId}\0\0`);
   const prefix = Buffer.alloc(8);
   prefix.writeInt32BE(parameters.length + 8);
@@ -59,12 +58,14 @@ async function postgres() {
   let admitted!: (value: boolean) => void;
   const connected = new Promise<boolean>(resolve => { admitted = resolve; });
   const errors: string[] = [];
+  const results = new EventEmitter();
   const closed = (async () => {
     for await (const packet of messages(socket)) {
       if (packet.type === 'R' && packet.body.readInt32BE() === 3) {
         socket.write(message('p', Buffer.from(current.apiKey + '\0')));
       }
       if (packet.type === 'Z') admitted(true);
+      if (packet.type === 'D') results.emit('row', packet.body.subarray(6).toString());
       if (packet.type === 'E') {
         errors.push(...packet.body.toString().split('\0').filter(Boolean));
         admitted(false);
@@ -74,11 +75,18 @@ async function postgres() {
     return errors;
   })();
   socket.write(Buffer.concat([prefix, parameters]));
-  return { socket, connected, closed };
+  return {
+    socket, connected, closed,
+    query: async () => {
+      const row = once(results, 'row');
+      socket.write(message('Q', Buffer.from('SELECT 42\0')));
+      return (await row)[0] as string;
+    },
+  };
 }
 
 async function websocket(credential: string) {
-  const socket = new WebSocket(api.replace('https:', 'wss:') + path() + '/sql/ws', 'terrascale.sql.v1');
+  const socket = new WebSocket('ws://127.0.0.1:8080' + path() + '/sql/ws', 'terrascale.sql.v1');
   const closed = once(socket, 'close').then(([event]) => event as CloseEvent);
   const opened = once(socket, 'open');
   const received = once(socket, 'message');
@@ -88,6 +96,71 @@ async function websocket(credential: string) {
     type: string; error?: { code: string }; results?: { rows: unknown[][] }[];
   };
   return { socket, closed, reply };
+}
+
+function frame(opcode: number, payload: Buffer): Buffer {
+  expect(payload.length).toBeLessThan(126);
+  const mask = randomBytes(4);
+  const masked = Buffer.from(payload);
+  for (let i = 0; i < masked.length; i++) masked[i] ^= mask[i % 4];
+  return Buffer.concat([Buffer.from([128 | opcode, 128 | payload.length]), mask, masked]);
+}
+
+async function partialWebsocket(credential: string) {
+  const request = upgrade('http://127.0.0.1:8080' + path() + '/sql/ws', {
+    headers: {
+      connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13',
+      'sec-websocket-key': randomBytes(16).toString('base64'), 'sec-websocket-protocol': 'terrascale.sql.v1',
+      authorization: 'Bearer ' + credential,
+    },
+  });
+  request.on('response', response => request.destroy(new Error('upgrade refused with ' + response.statusCode)));
+  const upgraded = once(request, 'upgrade');
+  request.end();
+  const [response, socket, head] = await upgraded;
+  expect(response.statusCode).toBe(101);
+  const events = new EventEmitter();
+  const closed = once(events, 'closed').then(([event]) => event as { code: number; reason: string });
+  let buffered = Buffer.alloc(0);
+  socket.on('data', (chunk: Buffer) => {
+    buffered = Buffer.concat([buffered, chunk]);
+    while (buffered.length >= 2) {
+      const short = buffered[1] & 127;
+      const prefix = short === 126 ? 4 : short === 127 ? 10 : 2;
+      if (buffered.length < prefix) return;
+      const length = short === 126 ? buffered.readUInt16BE(2) : short === 127 ? Number(buffered.readBigUInt64BE(2)) : short;
+      if (buffered.length < prefix + length) return;
+      const opcode = buffered[0] & 15;
+      const payload = buffered.subarray(prefix, prefix + length);
+      buffered = buffered.subarray(prefix + length);
+      if (opcode === 1) events.emit('message', JSON.parse(payload.toString()));
+      if (opcode === 8) {
+        socket.destroy();
+        events.emit('closed', { code: payload.readUInt16BE(), reason: payload.subarray(2).toString() });
+      }
+    }
+  });
+  socket.on('error', (error: Error) => events.emit('error', error));
+  socket.on('close', () => events.emit('closed', { code: 1006, reason: 'transport closed' }));
+  const result = once(events, 'message');
+  if (head.length > 0) socket.unshift(head);
+  socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT 1' }] }))));
+  expect((await result)[0].results[0].rows).toEqual([[1]]);
+  return { socket: socket as Socket, closed };
+}
+
+async function openSockets(count: number, credentials: readonly string[], clients: Awaited<ReturnType<typeof websocket>>[]) {
+  let next = 0;
+  const outcomes = await Promise.allSettled(Array.from({ length: Math.min(8, count) }, async () => {
+    for (let i = next++; i < count; i = next++) {
+      const accepted = await websocket(credentials[i % credentials.length]);
+      clients.push(accepted);
+      expect(accepted.reply.type, 'session ' + (i + 1)).toBe('result');
+    }
+  }));
+  for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
+  expect(clients).toHaveLength(count);
+  for (const client of clients) expect(client.socket.readyState).toBe(WebSocket.OPEN);
 }
 
 async function setPlan(plan: 'hobby' | 'enterprise'): Promise<void> {
@@ -111,65 +184,71 @@ async function setPlan(plan: 'hobby' | 'enterprise'): Promise<void> {
   }
 }
 
-test('Postgres and WebSocket share the organization session cap and release idle sessions', async ({ request }) => {
-  const credential = await token(request, 'sql:read sql:write');
-  const read = await token(request, 'sql:read');
-  const sockets: Awaited<ReturnType<typeof websocket>>[] = [];
-  const clients: Awaited<ReturnType<typeof postgres>>[] = [];
-  try {
-    const first = await postgres();
-    clients.push(first);
-    expect(await first.connected).toBe(true);
-    for (let i = 0; i < 7; i++) {
-      const accepted = await websocket(i % 2 === 0 ? credential : read);
-      sockets.push(accepted);
-      expect(accepted.reply.type).toBe('result');
-    }
-
-    const refused = await postgres();
-    clients.push(refused);
-    expect(await refused.connected).toBe(false);
-    const pgRefusal = await refused.closed;
-    expect(pgRefusal).toContain('C53300');
-    expect(pgRefusal).toContain('Morganization session limit exceeded');
-    const socketRefusal = await websocket(credential);
-    sockets.push(socketRefusal);
-    expect(socketRefusal.reply).toMatchObject({ type: 'error', error: { code: 'tenant_busy' } });
-    expect((await socketRefusal.closed).code).toBe(1008);
-
-    first.socket.write(Buffer.from('Q'));
-    const [pgIdle, ...wsIdle] = await Promise.all([first.closed, ...sockets.slice(0, 7).map(client => client.closed)]);
-    expect(pgIdle).toContain('C57P05');
-    expect(pgIdle).toContain('Msession idle timeout exceeded');
-    for (const event of wsIdle) {
-      expect(event.code).toBe(1008);
-      expect(event.reason).toBe('session idle timeout exceeded');
-    }
-
-    const recovered = await postgres();
-    clients.push(recovered);
-    expect(await recovered.connected).toBe(true);
-    const recoveredSocket = await websocket(credential);
-    sockets.push(recoveredSocket);
-    expect(recoveredSocket.reply.type).toBe('result');
-    const result = once(recoveredSocket.socket, 'message');
-    recoveredSocket.socket.send(JSON.stringify({ id: 2, type: 'execute', statements: [{ sql: 'SELECT 42' }] }));
-    expect(JSON.parse(((await result)[0] as MessageEvent<string>).data).results[0].rows).toEqual([[42]]);
-  } finally {
-    for (const client of clients) if (!client.socket.destroyed) client.socket.end(message('X', Buffer.alloc(0)));
-    for (const client of sockets) if (client.socket.readyState === WebSocket.OPEN) client.socket.close();
-    await Promise.all([...clients.map(client => client.closed), ...sockets.map(client => client.closed)]);
-  }
-
+test('one serving process shares session caps and bounds incomplete messages without expiring pooled clients', async ({ request }) => {
   await onLocalStack(async () => {
+    const credential = await token(request, 'sql:read sql:write');
+    const read = await token(request, 'sql:read');
+    const sockets: Awaited<ReturnType<typeof websocket>>[] = [];
+    const clients: Awaited<ReturnType<typeof postgres>>[] = [];
+    const partials: Awaited<ReturnType<typeof partialWebsocket>>[] = [];
+    try {
+      const first = await postgres();
+      clients.push(first);
+      expect(await first.connected).toBe(true);
+      const pooled = await postgres();
+      clients.push(pooled);
+      expect(await pooled.connected).toBe(true);
+      await openSockets(5, [credential, read], sockets);
+      const fragmented = await partialWebsocket(credential);
+      partials.push(fragmented);
+      expect(first.socket.destroyed).toBe(false);
+      expect(fragmented.socket.destroyed).toBe(false);
+
+      const refused = await postgres();
+      clients.push(refused);
+      expect(await refused.connected).toBe(false);
+      const pgRefusal = await refused.closed;
+      expect(pgRefusal).toContain('C53300');
+      expect(pgRefusal).toContain('Morganization session limit exceeded');
+      const socketRefusal = await websocket(credential);
+      sockets.push(socketRefusal);
+      expect(socketRefusal.reply).toMatchObject({ type: 'error', error: { code: 'tenant_busy' } });
+      expect((await socketRefusal.closed).code).toBe(1008);
+
+      first.socket.write(Buffer.from('Q'));
+      fragmented.socket.write(Buffer.from([1]));
+      const [pgPartial, wsPartial] = await Promise.all([first.closed, fragmented.closed]);
+      expect(pgPartial).toContain('C57P05');
+      expect(pgPartial).toContain('Mincomplete message timeout exceeded');
+      expect(wsPartial).toEqual({ code: 1008, reason: 'incomplete message timeout exceeded' });
+      expect(await pooled.query()).toBe('42');
+      for (const client of sockets.slice(0, 5)) {
+        expect(client.socket.readyState).toBe(WebSocket.OPEN);
+        const result = once(client.socket, 'message');
+        client.socket.send(JSON.stringify({ id: 2, type: 'execute', statements: [{ sql: 'SELECT 42' }] }));
+        expect(JSON.parse(((await result)[0] as MessageEvent<string>).data).results[0].rows).toEqual([[42]]);
+      }
+
+      const recovered = await postgres();
+      clients.push(recovered);
+      expect(await recovered.connected).toBe(true);
+      const recoveredSocket = await websocket(credential);
+      sockets.push(recoveredSocket);
+      expect(recoveredSocket.reply.type).toBe('result');
+      const result = once(recoveredSocket.socket, 'message');
+      recoveredSocket.socket.send(JSON.stringify({ id: 2, type: 'execute', statements: [{ sql: 'SELECT 42' }] }));
+      expect(JSON.parse(((await result)[0] as MessageEvent<string>).data).results[0].rows).toEqual([[42]]);
+    } finally {
+      for (const client of partials) client.socket.destroy();
+      for (const client of clients) if (!client.socket.destroyed) client.socket.end(message('X', Buffer.alloc(0)));
+      for (const client of sockets) if (client.socket.readyState === WebSocket.OPEN) client.socket.close();
+      await Promise.all([...clients.map(client => client.closed), ...sockets.map(client => client.closed)]);
+    }
+
     const enterprise: Awaited<ReturnType<typeof websocket>>[] = [];
     try {
       await setPlan('enterprise');
-      for (let i = 0; i < 128; i++) {
-        const accepted = await websocket(credential);
-        enterprise.push(accepted);
-        expect(accepted.reply.type, `Enterprise session ${i + 1}`).toBe('result');
-      }
+      await openSockets(128, [credential], enterprise);
       const refused = await websocket(credential);
       enterprise.push(refused);
       expect(refused.reply).toMatchObject({ type: 'error', error: { code: 'tenant_busy' } });

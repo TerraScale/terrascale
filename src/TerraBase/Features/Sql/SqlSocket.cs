@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.Features;
 using System.Buffers;
 using System.Net.WebSockets;
 using System.Text.Json.Serialization.Metadata;
@@ -102,9 +103,9 @@ internal sealed class SqlSocket(
             : new CancellationTokenSource();
         await using var expired = expiry.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the token expired")).ConfigureAwait(false);
         _session = sql.Open(Database, _canWrite);
-        _session.Prefer(WritePreference.Parse(context.Request.Headers[WritePreference.Header]) ?? WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))
         {
+            _session.Prefer(WritePreference.Parse(context.Request.Headers[WritePreference.Header]) ?? WriteOverride.Auto);
             if (frameAuth)
             {
                 await SendAsync(new SqlSocketResult(_authId, "result", [], false), SqlJsonContext.Default.SqlSocketResult, cancellationToken).ConfigureAwait(false);
@@ -252,8 +253,13 @@ internal sealed class SqlSocket(
             return null;
         }
 
-        using var idle = new CancellationTokenSource(QosSessions.IdleTimeout, time);
-        await using var expired = idle.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "session idle timeout exceeded")).ConfigureAwait(false);
+        var partial = false;
+        using var idle = new CancellationTokenSource(_session is { IsAutocommit: false } ? Timeout.InfiniteTimeSpan : QosSessions.IdleTimeout, time);
+        var closing = Task.CompletedTask;
+        var expired = idle.Token.Register(() => closing = CloseAsync(WebSocketCloseStatus.PolicyViolation,
+            partial ? "incomplete message timeout exceeded" : "session idle timeout exceeded"));
+        var input = context.Features.GetRequiredFeature<SqlSocketInput>();
+        input.Started = StartMessage;
         using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closed.Token);
         var buffer = ArrayPool<byte>.Shared.Rent(FirstBufferBytes);
         var length = 0;
@@ -303,6 +309,11 @@ internal sealed class SqlSocket(
                 }
 
                 length += read.Count;
+                if (!read.EndOfMessage)
+                {
+                    StartMessage();
+                }
+
                 if (read.EndOfMessage)
                 {
                     return (buffer, length, reservation);
@@ -318,6 +329,21 @@ internal sealed class SqlSocket(
         {
             Release();
             throw;
+        }
+        finally
+        {
+            input.Started = null;
+            await expired.DisposeAsync().ConfigureAwait(false);
+            await closing.ConfigureAwait(false);
+        }
+
+        void StartMessage()
+        {
+            if (!partial && _session is not { IsAutocommit: false })
+            {
+                partial = true;
+                idle.CancelAfter(QosSessions.MessageTimeout);
+            }
         }
 
         void Release()

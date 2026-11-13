@@ -150,6 +150,11 @@ try
     app.UseTerraBaseUsage();
     app.UseTerraBaseBadRequests();
     app.UseRouting();
+    app.Use((context, next) =>
+    {
+        SqlSocketInput.Wrap(context);
+        return next(context);
+    });
     app.UseWebSockets();
     app.UseTerraBaseClientCors();
     app.UseTerraBaseShapeNoStore();
