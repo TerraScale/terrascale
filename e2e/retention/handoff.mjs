@@ -136,6 +136,9 @@ function displace(root, id, target) {
 }
 
 try {
+  const contract = await fetch('https://api.terrascale.tech/openapi/v1.json');
+  assert.equal(contract.status, 200, 'export the real generated contract before the proof');
+  writeFileSync(join(directory, 'openapi-v1.json'), await contract.text());
   const receiverBuild = process.env.E2E_RETENTION_RECEIVER_BUILD;
   assert(receiverBuild && existsSync(join(receiverBuild, 'terrabase.dll')), 'the preparation build is required for mixed-version proof');
   const receiverPid = Number(readFileSync(join(state, 'pids', 'terrabase-fra.pid'), 'utf8'));
@@ -193,8 +196,6 @@ try {
       { message: 'node loaded the real auth signing keys', timeout: 45_000 })
       .toMatch(/terrabase_auth_key_fetches_total\{[^}]*outcome="success"[^}]*\} [1-9]/);
   }
-  const contract = await fetch('http://127.0.0.1:8081/openapi/v1.json', { headers: { 'x-terrabase-peer-credential': secret } });
-  if (contract.status === 200) writeFileSync(join(directory, 'openapi-v1.json'), await contract.text());
   console.log('real nodes: journey-1 and journey-2, gru, shared NATS writer lease, auth keys loaded');
   const seed = await request(1, database(owner.databaseId));
   if (seed.status === 200) await checked(1, database(owner.databaseId), 'DELETE', undefined, 204);
