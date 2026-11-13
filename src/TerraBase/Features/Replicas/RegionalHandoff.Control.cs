@@ -2,6 +2,8 @@ using NATS.Client.KeyValueStore;
 using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Engine.Revisions;
+using TerraBase.Features.Platform;
 using TerraBase.Errors;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
@@ -326,15 +328,15 @@ internal sealed partial class RegionalHandoff
             }
             foreach (var database in page.Databases)
             {
-                if (replicas.HeldRevision(database) is { } replica)
+                if (!PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && replicas.HeldRevision(database) is { } replica)
                 {
                     var primary = await revisions.CurrentRevisionAsync(database, token).ConfigureAwait(false);
-                    if (primary is null || replica.CompareAcrossIncarnations(primary.Value) > 0)
+                    if (primary is not { } held || held.Incarnation != replica.Incarnation || DatabaseRevision.Compare(replica, held) > 0)
                     {
                         _refusedEpoch = owner.Epoch;
                         var refusal = primary is null ? HomeRefusal.PrimaryMissing : HomeRefusal.ReplicaNewer;
                         services.GetRequiredService<HomeLeases>().Refused(refusal, "writer");
-                        logger.ZLogWarning($"Regional writer refused at epoch {owner.Epoch:@Epoch}: database {database.DatabaseId:@Database} has a local replica at {replica.ToString():@Replica} newer than its primary file at {primary?.ToString() ?? "none":@Primary}; this node stays a non-writer");
+                        logger.ZLogWarning($"Regional writer refused at epoch {owner.Epoch:@Epoch}: database {database.DatabaseId:@Database} has a local replica at {replica.ToString():@Replica} that its primary file does not cover, at {primary?.ToString() ?? "none":@Primary}; this node stays a non-writer");
                         return false;
                     }
                 }

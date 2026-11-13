@@ -298,6 +298,12 @@ internal sealed class HomeMoves(
                 return new Conflict("this move was abandoned", "move_aborted");
             }
 
+            if (!owners.Writer)
+            {
+                leases.Refused(HomeRefusal.NotWriter, "home");
+                return new Conflict("this node is not its region's writer", "move_aborted");
+            }
+
             if (await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement })
             {
                 return new Conflict("this region does not record the database", "move_aborted");
@@ -350,12 +356,6 @@ internal sealed class HomeMoves(
 
     private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, string? name, DatabaseIdentity? identity, CancellationToken cancellationToken)
     {
-        if (!owners.Writer)
-        {
-            leases.Refused(HomeRefusal.NotWriter, "home");
-            return new Conflict("this node is not its region's writer", "move_aborted");
-        }
-
         if (await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var previous })
         {
             return new Conflict("this region does not record the database", "move_aborted");

@@ -224,7 +224,7 @@ export class Ledger {
     if (response.status() === 404) return [];
     if (response.status() === 400) {
       const error = await response.json();
-      expect(error.error.code).toBe('sql_error');
+      expect(error.error.code).toBe('undefined_table');
       expect(error.error.message).toContain('no such table: fault_rows');
       return [];
     }
