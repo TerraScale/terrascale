@@ -337,7 +337,8 @@ New wrappers use `v2.<keyId>.<base64(nonce|ciphertext|tag)>`, with the version a
 as AES-GCM associated data. Unprefixed wrappers use only `k0`. Database and replica sidecars
 use version 2 headers; version 1 sidecars remain readable under `k0`. Missing, malformed,
 unknown or unauthentic ids fail closed without trying other keys. The encrypted database bytes,
-storage format identity and backup payloads do not change.
+storage format identity and backup payloads do not change. Existing data directories reopen without
+a storage-format reset; the key sidecar versions are independent of the native database format.
 
 Rotate in stages: distribute the new key to every node while retaining the current active id;
 restart all nodes; then select the new active id and restart them again. New wraps immediately
