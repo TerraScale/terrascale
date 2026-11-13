@@ -22,9 +22,7 @@ internal sealed partial class TursoDatabaseStore
             {
                 if (Captures && BackupAnchor is null && Volatile.Read(ref BackupTaps) == 0)
                 {
-                    while (TursoStorageTransaction.Trim(writer.Connection, null, long.MaxValue, IsSystem))
-                    {
-                    }
+                    _ = TursoStorageTransaction.Trim(writer.Connection, null, long.MaxValue, IsSystem);
                     ObserveCdcSize(writer.Connection);
                 }
 

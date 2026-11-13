@@ -4,8 +4,8 @@ internal sealed partial class TursoStorageEngine
 {
     private void SyncPublicationDirectory(string directory)
     {
-        var root = Path.GetFullPath(_dataDirectory);
-        var current = Path.GetFullPath(directory);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_dataDirectory));
+        var current = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         while (true)
         {
             DirectorySync(current);
@@ -29,6 +29,13 @@ internal sealed partial class TursoStorageEngine
 
     private void RecoverPublications()
     {
+        if (Directory.EnumerateDirectories(_dataDirectory).Any(path => IsId(Path.GetFileName(path)))
+            && (!File.Exists(Path.Combine(_dataDirectory, SystemName + FileExtension))
+                || !File.Exists(Path.Combine(_dataDirectory, IntentFile))))
+        {
+            throw new IOException("a required catalog or intent store is missing its main file while the data directory contains organizations");
+        }
+
         RecoverDirectory(_dataDirectory);
         foreach (var organization in Directory.EnumerateDirectories(_dataDirectory).Where(path => IsId(Path.GetFileName(path))))
         {

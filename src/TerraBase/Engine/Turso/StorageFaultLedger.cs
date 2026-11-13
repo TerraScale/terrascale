@@ -163,6 +163,34 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         }
     }
 
+    internal async Task RewriteIntentAsync(TursoDatabaseStore store, Ulid incarnation, CancellationToken cancellationToken)
+    {
+        if (store.IsSystem)
+        {
+            return;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _ = await InSystemAsync(engine.IntentStore!, command =>
+            {
+                using var update = command("""
+                    UPDATE _tb_write_intent SET incarnation = $incarnation
+                    WHERE organization = $organization AND project = $project AND database = $database AND run <> $faulting;
+                    """);
+                Key.Of(store.Tenant!).Bind(update);
+                update.Parameters.AddWithValue("$incarnation", incarnation.ToString());
+                update.Parameters.AddWithValue("$faulting", Faulting);
+                return update.ExecuteNonQuery();
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     internal async Task FlagAsync(TursoDatabaseStore store)
     {
         try
@@ -271,6 +299,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
 
     internal async Task RecoverAsync(TursoDatabaseStore system, CancellationToken cancellationToken)
     {
+        var recoveryStarted = Stopwatch.GetTimestamp();
         var faults = 0;
 
         List<double> proofs = [];
@@ -357,7 +386,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         if (proofs.Count > 0)
         {
             proofs.Sort();
-            logger.ZLogInformation($"Restart proofs of {proofs.Count:@Count} copies written at an unclean exit took {proofs[proofs.Count / 2]:@MedianMs} ms median, {proofs[(int)Math.Ceiling(proofs.Count * 0.99) - 1]:@P99Ms} ms p99, {proofs[^1]:@MaxMs} ms max");
+            logger.ZLogInformation($"Restart proofs of {proofs.Count:@Count} copies written at an unclean exit took {Stopwatch.GetElapsedTime(recoveryStarted).TotalMilliseconds:@TotalMs} ms total, {proofs[proofs.Count / 2]:@MedianMs} ms median, {proofs[(int)Math.Ceiling(proofs.Count * 0.99) - 1]:@P99Ms} ms p99, {proofs[^1]:@MaxMs} ms max");
         }
 
         if (faults > 0)

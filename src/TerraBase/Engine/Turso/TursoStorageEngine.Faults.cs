@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using TerraBase.Tenancy;
 using Turso.Data.Sqlite;
 
@@ -31,7 +32,7 @@ internal sealed partial class TursoStorageEngine
                     ? null : "the recovered database incarnation does not match its write intent";
             }, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is SqliteException or IOException or InvalidDataException)
+        catch (Exception error) when (error is SqliteException or IOException or InvalidDataException or CryptographicException or UnauthorizedAccessException)
         {
             return "the database or its log could not be recovered";
         }

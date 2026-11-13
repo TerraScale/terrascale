@@ -15,13 +15,13 @@ static void stopped(const char *operation, const char *path, int result) {
 int rename(const char *from, const char *to) {
     int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
     int result = real(from, to);
-    stopped("publish", to, result);
+    stopped(strstr(from, ".rewriting") ? "rewrite" : "publish", to, result);
     return result;
 }
 int link(const char *from, const char *to) {
     int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "link");
     int result = real(from, to);
-    stopped("publish", to, result);
+    stopped(strstr(from, ".rewriting") ? "rewrite" : "publish", to, result);
     return result;
 }
 int unlink(const char *path) {

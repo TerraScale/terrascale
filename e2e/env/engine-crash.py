@@ -9,6 +9,7 @@ import socket
 import subprocess
 import tempfile
 import threading
+import time
 
 os.umask(0o077)
 root = pathlib.Path.cwd()
@@ -34,8 +35,10 @@ env = {
     "DOTNET_ENVIRONMENT": "Development",
     "TERRABASE_AUTH_ISSUER": "https://auth.invalid/",
     "TERRABASE_AUTH_AUDIENCE": "https://api.invalid/",
-    "TERRABASE_DATA_DIRECTORY": str(state / "data"),
+    "TERRABASE_DATA_DIRECTORY": str(state / "data") + "/",
     "TERRABASE_PEER_SECRET": peer,
+    "DOTNET_STARTUP_HOOKS": str(state / "hook.dll"),
+    "ENGINE_CRASH_SOCKET": str(state / "hook.sock"),
     "TERRABASE_MASTER_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
     "TERRABASE_PORT": str(ports[0]),
     "TERRABASE_INTERNAL_PORT": str(ports[1]),
@@ -76,7 +79,7 @@ def request(method, path, body=None, actor=True):
     return json.loads(text) if text else None
 
 
-def start(point=None):
+def start(point=None, failure=None):
     global node, generation, reader
     generation += 1
     current = dict(env)
@@ -90,6 +93,7 @@ def start(point=None):
     )
     log = state / ("node-" + str(generation) + ".log")
     ready = threading.Event()
+    hook_ready = threading.Event()
     process = node
 
     def drain():
@@ -97,13 +101,24 @@ def start(point=None):
             while line := process.stdout.readline():
                 output.write(line)
                 output.flush()
+                if b"engine crash hook ready" in line:
+                    hook_ready.set()
                 if b"Application started" in line:
                     ready.set()
+            ready.set()
+            hook_ready.set()
 
     reader = threading.Thread(target=drain)
     reader.start()
     if ready.wait(40):
-        return
+        if failure is not None:
+            node.wait(timeout=15)
+            reader.join(timeout=5)
+            assert failure in log.read_text(), log.read_text()[-5000:]
+            assert node.returncode != 0
+            return
+        if hook_ready.wait(10) and node.poll() is None:
+            return
     raise RuntimeError("node did not start: " + log.read_text()[-5000:])
 
 
@@ -136,7 +151,9 @@ def sql(project, database, statements):
 def crash_request(point, method, path, body=None):
     start(point)
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        pending = executor.submit(request, method, path, body)
+        pending = (
+            executor.submit(hook, "rewrite", database) if point == "rewrite" else executor.submit(request, method, path, body)
+        )
 
         def expired(signum, frame):
             raise TimeoutError("the node did not reach the crash boundary")
@@ -148,8 +165,11 @@ def crash_request(point, method, path, body=None):
             assert os.WIFSTOPPED(status), "node exited before reaching the boundary"
             keys = list((state / "data" / organization / project).glob("*.db.key"))
             assert len(keys) == 1
-            assert not pathlib.Path(str(keys[0])[:-4]).exists()
-            print(point + ": main absent, key present at filesystem boundary", flush=True)
+            assert pathlib.Path(str(keys[0])[:-4]).exists() == (point == "rewrite")
+            print(
+                point + ": main " + ("present" if point == "rewrite" else "absent") + ", key present at filesystem boundary",
+                flush=True,
+            )
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
@@ -158,8 +178,47 @@ def crash_request(point, method, path, body=None):
             pending.result(timeout=5)
             raise AssertionError("interrupted request unexpectedly returned success")
         except RuntimeError as error:
-            assert str(error).startswith("curl "), str(error)
+            assert str(error).startswith(("curl ", "hook interrupted")), str(error)
     print("kill -KILL node at " + point + ": exit -9", flush=True)
+
+
+def hook(operation, database_id):
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(35)
+        client.connect(env["ENGINE_CRASH_SOCKET"])
+        client.sendall(f"{operation} {organization} {project} {database_id}\n".encode())
+        result = client.recv(65536).decode().strip()
+        if not result:
+            raise RuntimeError("hook interrupted by process exit")
+        assert result == "ok", result
+
+
+references = {}
+for pack in ("Microsoft.NETCore.App.Ref", "Microsoft.AspNetCore.App.Ref"):
+    for file in (pathlib.Path(env["DOTNET_ROOT"]) / "packs" / pack / "11.0.0/ref/net11.0").glob("*.dll"):
+        references[file.name] = file
+for file in (root / "src/TerraBase/bin/Release/net11.0").glob("*.dll"):
+    references.setdefault(file.name, file)
+response = state / "compile.rsp"
+response.write_text(
+    "\n".join(
+        ["-nologo", "-target:library", "-nullable:enable", "-langversion:preview", "-out:" + str(state / "hook.dll")]
+        + ["-r:" + str(file) for file in references.values()]
+        + [str(root / "e2e/env/engine-crash-hook.cs")]
+    )
+)
+subprocess.run(
+    [
+        "nice",
+        "-n",
+        "19",
+        env["DOTNET_ROOT"] + "/dotnet",
+        env["DOTNET_ROOT"] + "/sdk/11.0.100/Roslyn/bincore/csc.dll",
+        "@" + str(response),
+    ],
+    env={key: value for key, value in env.items() if key != "DOTNET_STARTUP_HOOKS"},
+    check=True,
+)
 
 
 subprocess.run(
@@ -171,7 +230,7 @@ try:
     organization = request("POST", "/v1/management/organizations", {"name": "Crash proof"})["id"]
     project = request("POST", f"/v1/management/organizations/{organization}/projects", {"name": "Crash proof"})["id"]
     database = request("POST", f"/v1/projects/{project}/databases", {"name": "durable"})["id"]
-    print("create organization, project, database: 201", flush=True)
+    print("create organization, project, database under trailing-separator data directory: 201", flush=True)
     print(
         json.dumps(
             sql(
@@ -200,6 +259,12 @@ try:
     print("101 acknowledged rows, no backup tap: " + retained[0], flush=True)
     end()
 
+    crash_request("rewrite", "", "")
+    start()
+    assert sql(project, database, ["SELECT count(*) FROM durable;"])["results"][0]["rows"] == [[101]]
+    print("rewrite rename restart: copy healthy; 101 acknowledged rows remain", flush=True)
+    end()
+
     crash_request("delete", "DELETE", f"/v1/projects/{project}/databases/{database}")
     start()
     assert not list((state / "data" / organization / project).glob("*.db*"))
@@ -215,6 +280,81 @@ try:
         assert pathlib.Path(str(file) + ".key").exists()
     print("publish restart: no half pairs or creation scratch remain; catalog=" + json.dumps(records), flush=True)
     end()
+    start()
+    request_database = request("POST", f"/v1/projects/{project}/databases", {"name": "healthy"})["id"]
+    sql(project, request_database, ["CREATE TABLE healthy (id INTEGER PRIMARY KEY);", "INSERT INTO healthy VALUES (1);"])
+    end()
+
+    databases = ["0" + "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(25)) for _ in range(50)]
+    for sample in range(3):
+        start()
+        for identity in databases:
+            hook("hold", identity)
+        end(hard=True)
+        sizes = [(state / "data" / organization / project / (identity + ".db")).stat().st_size for identity in databases]
+        began = time.perf_counter()
+        start()
+        elapsed = time.perf_counter() - began
+        recovery_log = (state / ("node-" + str(generation) + ".log")).read_text()
+        proofs = [json.loads(line.split(">", 1)[1]) for line in recovery_log.splitlines() if "Restart proofs" in line]
+        assert len(proofs) == 1 and proofs[0]["Count"] == 50, proofs
+        for identity in databases:
+            hook("check", identity)
+        print(
+            f"recovery sample {sample + 1}: 50 open intents, main files {min(sizes)}..{max(sizes)} bytes; "
+            f"recovery phase {proofs[0]['TotalMs']:.3f}ms; process launch to ready {elapsed:.3f}s",
+            flush=True,
+        )
+        print(
+            f"recovery checks sample {sample + 1}: median {proofs[0]['MedianMs']:.3f}ms, "
+            f"p99 {proofs[0]['P99Ms']:.3f}ms, max {proofs[0]['MaxMs']:.3f}ms",
+            flush=True,
+        )
+        end()
+
+    start()
+    damaged = databases[0]
+    inaccessible = databases[1]
+    hook("intent", damaged)
+    hook("intent", inaccessible)
+    end(hard=True)
+    key = state / "data" / organization / project / (damaged + ".db.key")
+    record = key.read_text().splitlines()
+    wrapped = bytearray(base64.b64decode(record[1]))
+    wrapped[-1] ^= 1
+    key.write_text(record[0] + "\n" + base64.b64encode(wrapped).decode() + "\n")
+    blocked = state / "data" / organization / project / (inaccessible + ".db.key")
+    blocked.chmod(0)
+    try:
+        start()
+        assert sql(project, request_database, ["SELECT count(*) FROM healthy;"])["results"][0]["rows"] == [[1]]
+        recovery_log = (state / ("node-" + str(generation) + ".log")).read_text()
+        faults = [
+            json.loads(line.split(">", 1)[1]) for line in recovery_log.splitlines() if "faulted by an unclean ending" in line
+        ]
+        assert len(faults) == 1 and faults[0]["Count"] == 2, faults
+        print("damaged wrapped key and inaccessible key: node starts, two copies faulted, healthy database readable", flush=True)
+        end()
+    finally:
+        blocked.chmod(0o600)
+
+    for name in ("_system.db", "_intents.db"):
+        path = state / "data" / name
+        saved = state / (name + ".saved")
+        path.rename(saved)
+        start(failure="a required catalog or intent store is missing its main file")
+        end()
+        assert pathlib.Path(str(path) + ".key").exists()
+        assert not path.exists()
+        saved_key = state / (name + ".key.saved")
+        key = pathlib.Path(str(path) + ".key")
+        key.rename(saved_key)
+        start(failure="a required catalog or intent store is missing its main file")
+        end()
+        assert not path.exists()
+        saved_key.rename(key)
+        saved.rename(path)
+        print(name + " missing on populated node: startup refuses with or without key; key retained", flush=True)
     print("proof state: " + str(state), flush=True)
 finally:
     end()

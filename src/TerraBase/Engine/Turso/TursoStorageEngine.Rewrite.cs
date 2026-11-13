@@ -123,6 +123,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                     (offset, _, _) = await store.WriteRewriteAsync(scratch, minimumOffset, replay, target, finalPass: true, final.Token).ConfigureAwait(false);
                     try
                     {
+                        await Ledger.RewriteIntentAsync(store, target, final.Token).ConfigureAwait(false);
                         await store.WriteLane.RunAsync(() =>
                         {
                             Replace(path, scratch, step, store, final.Token, ref renamed);
@@ -134,6 +135,12 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                         store.Rewritten(target);
                         Ledger.FailClosed("a healthy rewrite's rename may not be durable");
                         throw new RewriteUncertainException(error);
+                    }
+
+                    catch
+                    {
+                        await Ledger.RewriteIntentAsync(store, source, CancellationToken.None).ConfigureAwait(false);
+                        throw;
                     }
 
                     store.RewroteHealthily(source, target);
