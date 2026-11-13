@@ -24,6 +24,7 @@ public static class RequestIdentity
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(newId);
+        secret = ProofKey(secret);
         app.Use(async (context, next) =>
         {
             var ids = context.Request.Headers[Header];
@@ -52,11 +53,14 @@ public static class RequestIdentity
         return app;
     }
 
-    /// <summary>Install only on first-party transports; never on outbound callbacks or third-party HTTP clients.</summary>
-    public static HttpMessageHandler Wrap(HttpMessageHandler inner, string? secret) => new Propagation(secret) { InnerHandler = inner };
+    public static HttpMessageHandler Wrap(HttpMessageHandler inner, string? secret) => new Propagation(ProofKey(secret)) { InnerHandler = inner };
 
-    /// <summary>Creates a factory-managed handler restricted to one configured service origin.</summary>
-    public static DelegatingHandler CreatePropagationHandler(string? secret, Uri origin) => new Propagation(secret, origin);
+    public static DelegatingHandler CreatePropagationHandler(string? secret, Uri origin) => new Propagation(ProofKey(secret), origin);
+
+    private static string? ProofKey(string? previous) =>
+        Environment.GetEnvironmentVariable("TERRASCALE_REQUEST_PROOF_KEY_FILE") is { Length: > 0 } path
+            ? File.ReadAllText(path).TrimEnd('\r', '\n')
+            : Environment.GetEnvironmentVariable("TERRASCALE_REQUEST_PROOF_KEY") is { Length: > 0 } key ? key : previous;
 
     private sealed class Propagation(string? secret, Uri? origin = null) : DelegatingHandler
     {

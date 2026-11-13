@@ -1,3 +1,5 @@
+using TerraScale.DotNet.TerraBase;
+
 namespace TerraScale.Dashboard.Platform.Persistence
 {
     // Each secret arrives as an environment variable, or as a file named by <NAME>_FILE (ts-orch delivers OCI Vault
@@ -17,26 +19,41 @@ namespace TerraScale.Dashboard.Platform.Persistence
         // TerraBase and ts-auth hold the same value; TerraBase verifies it on its internal listener.
         public const string TerraBasePeerSecretName = "TERRABASE_PEER_SECRET";
 
+        private readonly Lazy<CallerCredential?> caller = new(() =>
+            environment("TS_DASHBOARD_TERRABASE_KEY_FILE") is { Length: > 0 } path
+                ? new CallerCredential("dashboard", File.ReadAllText(path), TimeProvider.System) : null);
+
         public DashboardIdentity() : this(Environment.GetEnvironmentVariable) { }
 
         public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken)
         {
             var credentials = new DashboardCredentials(Read(AuthClientSecretName), Read(SessionEncryptionKeyName),
-                new(Read(StripeSecretKeyName), Read(StripeWebhookSecretName)), Read(TerraBasePeerSecretName));
+                new(Read(StripeSecretKeyName), Read(StripeWebhookSecretName)), Read(TerraBasePeerSecretName))
+            {
+                Caller = caller.Value,
+                RequestProofKey = environment("TERRASCALE_REQUEST_PROOF_KEY_FILE") is { Length: > 0 } path
+                    ? File.ReadAllText(path).TrimEnd('\r', '\n')
+                    : Optional("TERRASCALE_REQUEST_PROOF_KEY") ?? Read(TerraBasePeerSecretName),
+            };
             credentials.Validate();
             return Task.FromResult(credentials);
         }
 
-        private string Read(string name)
+        private string Read(string name) => Optional(name) ?? throw new IOException($"Dashboard secret {name} is not set.");
+
+        private string? Optional(string name)
         {
             return environment(name) is { Length: > 0 } value ? value
             : environment(name + "_FILE") is { Length: > 0 } path ? File.ReadAllText(path).TrimEnd('\r', '\n')
-            : throw new IOException($"Dashboard secret {name} is not set.");
+            : null;
         }
     }
 
     public sealed record DashboardCredentials(string AuthClientSecret, string SessionEncryptionKey, StripeCredentials Stripe, string TerraBasePeerSecret)
     {
+        public CallerCredential? Caller { get; init; }
+        public string RequestProofKey { get; init; } = TerraBasePeerSecret;
+
         // ts-auth fixes the dashboard client's ID in its code; only the secret is delivered.
         public string AuthClientId => "01M4EQ2FRJ8S8B29E8TQVWNW4J";
 

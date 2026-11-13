@@ -15,13 +15,19 @@ See [organization checkout](organization-checkout.md) for the payment-before-cre
 ### Access
 
 `AddDashboardStorage` registers one pooled `IDbContextFactory<DashboardDbContext>` over a `TerraBaseSqlDatabase` on
-TerraBase's private listener (`TS_DASHBOARD_TERRABASE_URL`, h2c). Its `HttpClient` adds two headers to every SQL
+TerraBase's private listener (`TS_DASHBOARD_TERRABASE_URL`, h2c). Its `HttpClient` adds the following headers to every SQL
 request and to the SQL WebSocket upgrade:
 
 - `X-TerraBase-Peer-Credential`: the `TERRABASE_PEER_SECRET` the dashboard already holds; TerraBase treats the call
   as the platform operator.
 - `TerraScale-Write: home`: every read and write runs at the database's home, so a flow reads its own writes in
   every region.
+
+When `TS_DASHBOARD_TERRABASE_KEY_FILE` names a private P-256 JWK containing `kid`, storage HTTP and product gRPC
+requests also carry `X-TerraScale-Caller`. Assertions identify `dashboard`, expire after five minutes and are
+replaced every minute; user RPC calls retain their bearer token. Without the file setting, the transports send
+the existing headers. Request correlation uses `TERRASCALE_REQUEST_PROOF_KEY` or its `_FILE` companion when
+supplied, otherwise the peer credential.
 
 Request paths save with one `SaveChangesAsync` (one `/sql/execute` request, one transaction) or one
 `ExecuteDeleteAsync`; none opens an explicit transaction. Storage calls appear in `Server-Timing` as `terrabase`

@@ -106,7 +106,9 @@ public static class App
         builder.Services.AddSingleton(services => new HttpClient(StorageTiming.Wrap(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
             [],
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
-            peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable]),
+            peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable],
+            caller: services.GetRequiredService<IConfiguration>()["TS_AUTH_TERRABASE_KEY_FILE"] is { Length: > 0 } path
+                ? new CallerCredential("ts-auth", File.ReadAllText(path), services.GetRequiredService<TimeProvider>()) : null),
             services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable]))));
         builder.Services.AddSingleton(services => new TerraBaseSqlClient(services.GetRequiredService<HttpClient>(), new TerraBaseSqlClientOptions
         {
