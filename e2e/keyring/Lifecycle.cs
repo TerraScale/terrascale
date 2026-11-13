@@ -9,8 +9,10 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.Management;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
+using TerraBase.Primitives;
 
 namespace Journey.Keyring;
 
@@ -72,6 +74,9 @@ internal static class Lifecycle
             if (root.TryGetProperty("mode", out var mode) && mode.GetString() == "published")
             {
                 await ReadPublishedAsync(app.Services, database, cancellationToken);
+                await PreserveUnregisteredAsync(app.Services, database, cancellationToken);
+                await ReadPublishedAsync(app.Services, database, cancellationToken);
+                await Console.Out.WriteLineAsync("keyring-driver:unregistered-survived row=42");
                 return;
             }
             var replicas = app.Services.GetRequiredService<IDatabaseReplicas>();
@@ -161,13 +166,35 @@ internal static class Lifecycle
 
     private static async Task ReadPublishedAsync(IServiceProvider services, TenantContext database, CancellationToken cancellationToken)
     {
-            var store = await services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
-                ?? throw new InvalidOperationException("promoted database missing");
-            await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken);
-            var result = await transaction.ExecuteStatementAsync(
-                new SqlStatement("SELECT value FROM keyring_rows", [], new Dictionary<string, object?>(), 10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
-            Require(result.Rows is [var row] && row is [long value] && value == 42, "promoted data did not survive");
-            await Console.Out.WriteLineAsync("keyring-driver:opened row=42".AsMemory(), cancellationToken);
+        var store = await services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
+            ?? throw new InvalidOperationException("promoted database missing");
+        await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken);
+        var result = await transaction.ExecuteStatementAsync(
+            new SqlStatement("SELECT value FROM keyring_rows", [], new Dictionary<string, object?>(), 10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
+        Require(result.Rows is [var row] && row is [long value] && value == 42, "promoted data did not survive");
+        await Console.Out.WriteLineAsync("keyring-driver:opened row=42".AsMemory(), cancellationToken);
+    }
+
+    private static async Task PreserveUnregisteredAsync(IServiceProvider services, TenantContext database, CancellationToken cancellationToken)
+    {
+        var system = await services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
+        var options = services.GetRequiredService<TerraBaseOptions>();
+        var kind = "orphan_database_files/" + options.MachineId;
+        var id = database.OrganizationId + ":" + database.ProjectId + ":" + database.DatabaseId;
+        var record = new OrphanDatabaseFile(database with { Plan = PlanTier.Hobby }, TimeProvider.System.GetUtcNow().AddDays(-2), EntityIds.New(), 1, 1);
+        await using (var transaction = await system.BeginTransactionAsync(write: true, cancellationToken))
+        {
+            await transaction.ExecuteStatementAsync(new SqlStatement("DELETE FROM catalog_databases WHERE id = ?", [database.DatabaseId],
+                new Dictionary<string, object?>(), 10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
+            await SystemCatalog.PutAsync(transaction, kind, id, record,
+                ManagementJsonContext.Default.OrphanDatabaseFile, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        await services.GetRequiredService<EngineManagementService>().AuditFilesAsync(cancellationToken);
+        await using var read = await system.BeginTransactionAsync(write: false, cancellationToken);
+        var observed = await SystemCatalog.GetAsync(read, kind, id, ManagementJsonContext.Default.OrphanDatabaseFile, cancellationToken);
+        Require(observed is not null && observed.Seen != record.Seen && observed.FirstSeen == record.FirstSeen,
+            "file audit did not preserve the aged unregistered database");
     }
 
     private static IEnumerable<IWrappedKeyFiles> ChangeRole(IServiceProvider services, RegionalOwners owners, TerraBaseOptions options)

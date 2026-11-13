@@ -235,7 +235,13 @@ jobs:
       - name: Install the API journey
         working-directory: e2e
         run: npm ci --no-audit --no-fund
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: keyring-baseline
+        with:
+          path: ${{ runner.temp }}/services/keyring-baseline
+          key: keyring-baseline-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/keyring/build.sh', 'global.json', 'benchmark/turso-sync-host/turso-pin.env') }}
       - name: Build the single-key baseline
+        if: steps.keyring-baseline.outputs.cache-hit != 'true'
         run: bash e2e/keyring/build.sh
       - name: Prove key retention, rotation and promotion recovery
         run: |

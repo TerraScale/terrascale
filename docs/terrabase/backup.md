@@ -344,8 +344,9 @@ Selecting a different active id starts rotation. New wrappers then use
 associated data, and sidecars use version 2 headers. Unprefixed wrappers use only `k0`.
 Both sidecar versions remain readable. Missing, malformed, unknown or unauthentic ids fail
 closed without trying other keys. A malformed replica key record fails every open of that
-replica; it is not silently reset. Clear that disposable cache by stopping the node, removing
-that replica's database and sidecars under the replica directory, and restarting to pull it again.
+replica; it is not silently reset. Preserve its database and sidecars while repairing the key
+configuration. Remove a copy only with durable evidence that its content is published elsewhere
+or with that database's durable deletion marker.
 The native database format identity and encrypted data pages
 do not change; key sidecars have their own version. **After the first rotation, rollback to a
 build that cannot read version 2 wrappers is unsupported.**
@@ -399,7 +400,8 @@ database and key, followed by a destination directory sync, prove the source red
 Otherwise the database and all replica sidecars are put back and the replica directory is
 synced. An absent registration or catalog record never permits deletion. Interrupted moves and
 failed imports take the same put-back path. A conflicting or unreadable recovery record is
-preserved and startup fails rather than discarding data.
+preserved and startup fails rather than discarding data. The file audit also preserves a
+published database whose catalog registration is absent, even after its observation grace period.
 The rewrap pass removes only its own .key.rewrapping temporaries. Detached keys remain
 readable and are rewrapped unless a live import holds their registration. Database deletion
 removes that database's own detached files under its durable deletion marker.
