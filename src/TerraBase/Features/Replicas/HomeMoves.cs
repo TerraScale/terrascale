@@ -38,6 +38,7 @@ internal sealed class HomeMoves(
 
     private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan SettleEvery = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan CatchUpBound = TimeSpan.FromSeconds(30);
 
     private readonly HttpClient _http = PeerHttp.Create(credential);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.Ordinal);
@@ -285,7 +286,7 @@ internal sealed class HomeMoves(
             {
                 if (placement.Version >= request.Version)
                 {
-                    await DrainAsync(database, request.Version).ConfigureAwait(false);
+                    await CatchUpAsync(database).ConfigureAwait(false);
                     return new HomePromoteAnswer(true);
                 }
 
@@ -423,7 +424,7 @@ internal sealed class HomeMoves(
             }
 
             await apply.PrepareAsync(database, CancellationToken.None).ConfigureAwait(false);
-            await DrainAsync(database, placement.Version).ConfigureAwait(false);
+            await CatchUpAsync(database).ConfigureAwait(false);
             return new HomePromoteAnswer(true);
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -440,25 +441,31 @@ internal sealed class HomeMoves(
         }
     }
 
-    private async Task DrainAsync(TenantContext database, long fence)
+    private async Task CatchUpAsync(TenantContext database)
     {
+        using var bound = new CancellationTokenSource(CatchUpBound, time);
         var backoff = new Backoff(TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(5));
-        for (var attempt = 0; attempt < 60; attempt++)
+        try
         {
-            try
+            while (true)
             {
-                var drained = await pushes.DrainOriginsAsync(database, fence, CancellationToken.None).ConfigureAwait(false);
-                logger.ZLogInformation($"A new home applied {drained} pushed transactions addressed to its former home");
-                return;
-            }
-            catch (Exception error) when (error is not OperationCanceledException)
-            {
-                logger.ZLogWarning($"Pushes addressed to the former home wait to be applied: {error.GetType().Name:@Error}");
-                await Task.Delay(backoff.Next(), time).ConfigureAwait(false);
+                try
+                {
+                    await pushes.CatchUpAsync(database, bound.Token).ConfigureAwait(false);
+                    logger.ZLogInformation($"A new home's sequencers reached the end of every origin stream for the database");
+                    return;
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    logger.ZLogWarning($"A new home's sequencers wait to start: {error.GetType().Name:@Error}");
+                    await Task.Delay(backoff.Next(), time, bound.Token).ConfigureAwait(false);
+                }
             }
         }
-
-        throw new IOException("the new home could not drain retained origin pushes");
+        catch (OperationCanceledException) when (bound.IsCancellationRequested)
+        {
+            logger.ZLogWarning($"A new home's sequencers did not reach the end of every origin stream within the promotion; they keep applying in stream order");
+        }
     }
 
     public async Task<HomePromoteAnswer> AbortAsync(TenantContext database, HomeAbortRequest request, CancellationToken cancellationToken)
@@ -471,7 +478,7 @@ internal sealed class HomeMoves(
             if (await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
                 && placement.Home == options.Region && placement.Version >= request.Version)
             {
-                await DrainAsync(database, request.Version).ConfigureAwait(false);
+                await CatchUpAsync(database).ConfigureAwait(false);
                 return new HomePromoteAnswer(true);
             }
 

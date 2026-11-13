@@ -62,23 +62,20 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         await using (applying.ConfigureAwait(false))
         {
             await EnsureTablesAsync(applying, cancellationToken).ConfigureAwait(false);
+            if (position is not null && !await Frontier.BehindAsync(applying, position, cancellationToken).ConfigureAwait(false))
+            {
+                return await RecordedAsync(applying, id, cancellationToken).ConfigureAwait(false) ?? new HomeApplyResult(id, WriteStates.Provisional, [], []);
+            }
+
             if (await RecordedAsync(applying, id, cancellationToken).ConfigureAwait(false) is { } recorded)
             {
-                if (position is not null && await Frontier.BehindAsync(applying, position, cancellationToken).ConfigureAwait(false))
+                if (position is not null)
                 {
                     await Frontier.AdvanceAsync(applying, position, cancellationToken).ConfigureAwait(false);
                     _ = await applying.CommitAsync(cancellationToken).ConfigureAwait(false);
                 }
 
                 return recorded;
-            }
-
-            if (position is not null
-                && (await Frontier.ReadAsync(applying, cancellationToken).ConfigureAwait(false)).TryGetValue(position.Source, out var sequence)
-                && sequence >= position.Sequence
-                && string.CompareOrdinal(id, FloorId(time.GetUtcNow() - KeptApplied)) < 0)
-            {
-                return new HomeApplyResult(id, WriteStates.Provisional, [], []);
             }
 
             var before = await applying.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false);
@@ -129,6 +126,57 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
         {
             throw new StorageBusyException();
+        }
+    }
+
+    public async ValueTask<ulong?> FrontierAsync(TenantContext database, string source, CancellationToken cancellationToken)
+    {
+        IStorageTransaction? reading;
+        try
+        {
+            reading = await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+        {
+            throw new StorageBusyException();
+        }
+
+        if (reading is null)
+        {
+            return null;
+        }
+
+        await using (reading.ConfigureAwait(false))
+        {
+            return (await Frontier.ReadAsync(reading, cancellationToken).ConfigureAwait(false)).GetValueOrDefault(source);
+        }
+    }
+
+    public async ValueTask SkipAsync(TenantContext database, StreamSequence position, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(position);
+        IStorageTransaction? skipping;
+        try
+        {
+            skipping = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+        {
+            throw new StorageBusyException();
+        }
+
+        if (skipping is null)
+        {
+            return;
+        }
+
+        await using (skipping.ConfigureAwait(false))
+        {
+            if (await Frontier.BehindAsync(skipping, position, cancellationToken).ConfigureAwait(false))
+            {
+                await Frontier.AdvanceAsync(skipping, position, cancellationToken).ConfigureAwait(false);
+                _ = await skipping.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 

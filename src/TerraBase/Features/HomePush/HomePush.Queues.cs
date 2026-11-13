@@ -19,25 +19,27 @@ namespace TerraBase.Features.HomePush;
 internal partial class HomePush
 {
     private const int HeldInFlight = 32;
+    private const int ReadAhead = 32;
+    private const int MaxHints = 1024;
     private const int NoMessageFound = 10037;
     private static readonly TimeSpan HeldBackoffCeiling = TimeSpan.FromSeconds(60);
 
-    private closed record class PushItem(string Subject, ulong Sequence, byte[]? Data);
-
-    private sealed record class Delivered(INatsJSMsg<byte[]> Message, ulong Sequence) : PushItem(Message.Subject, Sequence, Message.Data);
-
-    private sealed record class Reread(string Subject, ulong Sequence, byte[]? Data) : PushItem(Subject, Sequence, Data);
-
     private closed record class PushStep;
 
-    private sealed record class PushDone : PushStep;
+    private sealed record class PushDone(TenantContext Database, string Region, ulong Sequence, HomeApplyResult Result) : PushStep;
 
     private sealed record class PushPark(string Reason) : PushStep;
 
     private sealed record class PushWait(string Kind) : PushStep;
 
-    private sealed class ConsumeRun(CancellationTokenSource stopping)
+    private sealed record class PushAway : PushStep;
+
+    private readonly record struct Held(string Kind, ulong At);
+
+    private sealed class ConsumeRun(string origin, CancellationTokenSource stopping)
     {
+        internal string Origin => origin;
+        internal string? Source { get; set; }
         internal CancellationTokenSource Stopping => stopping;
         internal CancellationToken Token { get; } = stopping.Token;
         internal bool Ended { get; set; }
@@ -45,15 +47,20 @@ internal partial class HomePush
         internal TaskCompletionSource Idle { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private sealed class PushQueue(string filter, string origin, string source, ConsumeRun run)
+    private sealed class PushQueue(TenantContext database, string filter, string key, ConsumeRun run)
     {
+        internal TenantContext Database => database;
         internal string Filter => filter;
-        internal string Origin => origin;
-        internal string Source => source;
+        internal string Key => key;
         internal ConsumeRun Run => run;
-        internal Queue<PushItem> Items { get; } = new();
-        internal ulong? ReadFrom { get; set; }
-        internal ulong HandedBack { get; set; }
+        internal string Origin => run.Origin;
+        internal string Source => run.Source!;
+        internal List<INatsJSMsg<byte[]>> Unacked { get; } = [];
+        internal SortedSet<ulong> Hints { get; } = [];
+        internal List<TaskCompletionSource> Waiters { get; } = [];
+        internal bool Wake { get; set; }
+        internal ulong? Cursor { get; set; }
+        internal INatsJSStream? Stream { get; set; }
         internal long? HeldSince { get; set; }
         internal string? HeldKind { get; set; }
     }
@@ -75,13 +82,63 @@ internal partial class HomePush
         }
     }
 
-    private async Task DispatchAsync(NatsConnection nats, ConsumeRun run, INatsJSMsg<byte[]> message, string source)
+    internal async Task CatchUpAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        var nats = _nats ?? throw new IOException("the push connection is not open");
+        var reached = new List<Task>();
+        foreach (var origin in (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Region).Append(options.Region).Distinct(StringComparer.Ordinal))
+        {
+            var waiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            PushQueue? started;
+            lock (_queuesGate)
+            {
+                if (!_runs.TryGetValue(origin, out var run) || run.Ended)
+                {
+                    throw new IOException("this node does not consume the push from " + origin);
+                }
+
+                var queue = Attach(run, database, out started);
+                queue.Wake = true;
+                queue.Waiters.Add(waiter);
+            }
+
+            if (started is not null)
+            {
+                _ = DrainAsync(nats, started);
+            }
+
+            reached.Add(waiter.Task);
+        }
+
+        await Task.WhenAll(reached).WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private PushQueue Attach(ConsumeRun run, TenantContext database, out PushQueue? started)
+    {
+        var filter = PushNames.DatabaseFilter(run.Origin, database);
+        var key = filter + "/" + run.Source;
+        started = null;
+        if (!_queues.TryGetValue(key, out var queue))
+        {
+            _queues[key] = queue = started = new PushQueue(database, filter, key, run);
+            _ = run.Active.Add(queue);
+        }
+
+        return queue;
+    }
+
+    private async Task DispatchAsync(NatsConnection nats, ConsumeRun run, INatsJSMsg<byte[]> message)
     {
         var sequence = message.Metadata?.Sequence.Stream ?? throw new IOException("a pushed message has no stream sequence");
-        var filter = PushNames.QueueFilter(message.Subject);
-        var key = filter + "/" + source;
-        PushQueue? started = null;
-        var handBack = false;
+        if (PushNames.Database(message.Subject) is not { } database)
+        {
+            await ParkAsync(run.Origin, run.Source!, sequence, message.Subject, message.Data, "malformed", run.Token).ConfigureAwait(false);
+            await message.AckAsync(cancellationToken: run.Token).ConfigureAwait(false);
+            return;
+        }
+
+        PushQueue? started;
+        var ackNow = false;
         lock (_queuesGate)
         {
             if (run.Ended)
@@ -89,35 +146,32 @@ internal partial class HomePush
                 return;
             }
 
-            if (!_queues.TryGetValue(key, out var queue))
+            var queue = Attach(run, database, out started);
+            queue.Wake = true;
+            if (queue.Hints.Count < MaxHints)
             {
-                _queues[key] = queue = started = new PushQueue(filter, PushNames.Origin(message.Subject) ?? "unknown", source, run);
-                _ = run.Active.Add(queue);
+                _ = queue.Hints.Add(sequence);
             }
 
-            if (queue.Items.Any(item => item.Sequence == sequence))
+            if (!queue.Unacked.Any(delivered => delivered.Metadata?.Sequence.Stream == sequence))
             {
-                return;
-            }
-
-            if (queue.ReadFrom is null && queue.Items.Count < HeldInFlight)
-            {
-                queue.Items.Enqueue(new Delivered(message, sequence));
-            }
-            else
-            {
-                queue.ReadFrom = Math.Min(queue.ReadFrom ?? sequence, sequence);
-                queue.HandedBack = Math.Max(queue.HandedBack, sequence);
-                handBack = true;
+                if (queue.Unacked.Count < HeldInFlight)
+                {
+                    queue.Unacked.Add(message);
+                }
+                else
+                {
+                    ackNow = true;
+                }
             }
         }
 
         if (started is not null)
         {
-            _ = DrainAsync(nats, key, started);
+            _ = DrainAsync(nats, started);
         }
 
-        if (handBack)
+        if (ackNow)
         {
             await message.AckAsync(cancellationToken: run.Token).ConfigureAwait(false);
         }
@@ -128,6 +182,11 @@ internal partial class HomePush
         lock (_queuesGate)
         {
             run.Ended = true;
+            if (_runs.GetValueOrDefault(run.Origin) == run)
+            {
+                _ = _runs.Remove(run.Origin);
+            }
+
             if (run.Active.Count == 0)
             {
                 _ = run.Idle.TrySetResult();
@@ -139,25 +198,34 @@ internal partial class HomePush
         run.Stopping.Dispose();
     }
 
-    private void Retire(string key, PushQueue queue)
+    private void Retire(PushQueue queue)
     {
         bool owed;
+        TaskCompletionSource[] waiting;
         lock (_queuesGate)
         {
-            owed = queue.Items.Count > 0 || queue.ReadFrom is not null;
+            owed = queue.Wake || queue.Unacked.Count > 0;
             if (owed)
             {
                 queue.Run.Ended = true;
             }
 
-            queue.Items.Clear();
-            queue.ReadFrom = null;
+            waiting = [.. queue.Waiters];
+            queue.Waiters.Clear();
+            queue.Unacked.Clear();
+            queue.Hints.Clear();
+            queue.Wake = false;
             queue.HeldSince = null;
             queue.HeldKind = null;
-            if (_queues.GetValueOrDefault(key) == queue)
+            if (_queues.GetValueOrDefault(queue.Key) == queue)
             {
-                _ = _queues.Remove(key);
+                _ = _queues.Remove(queue.Key);
             }
+        }
+
+        foreach (var waiter in waiting)
+        {
+            _ = waiter.TrySetException(new IOException("the sequencer stopped with its consumer run"));
         }
 
         if (owed)
@@ -175,7 +243,7 @@ internal partial class HomePush
         }
     }
 
-    private async Task DrainAsync(NatsConnection nats, string key, PushQueue queue)
+    private async Task DrainAsync(NatsConnection nats, PushQueue queue)
     {
         var cancellationToken = queue.Run.Token;
         var backoff = new Backoff(TimeSpan.FromMilliseconds(100), HeldBackoffCeiling);
@@ -183,51 +251,61 @@ internal partial class HomePush
         {
             while (true)
             {
-                PushItem? head;
-                ulong? readFrom;
-                ulong handedBack;
+                TaskCompletionSource[] waiting;
                 lock (_queuesGate)
                 {
-                    if (queue.Items.Count == 0 && queue.ReadFrom is null)
+                    if (!queue.Wake)
                     {
+                        _ = _queues.Remove(queue.Key);
+                        _ = queue.Run.Active.Remove(queue);
+                        if (queue.Run.Ended && queue.Run.Active.Count == 0)
+                        {
+                            _ = queue.Run.Idle.TrySetResult();
+                        }
+
                         return;
                     }
 
-                    head = queue.Items.TryPeek(out var next) ? next : null;
-                    readFrom = queue.ReadFrom;
-                    handedBack = queue.HandedBack;
+                    queue.Wake = false;
+                    waiting = [.. queue.Waiters];
+                    queue.Waiters.Clear();
                 }
 
-                string kind;
+                Held held;
                 try
                 {
-                    if (head is null)
+                    if (await SequenceAsync(nats, queue, cancellationToken).ConfigureAwait(false) is not { } waits)
                     {
-                        await RereadAsync(queue, readFrom!.Value, handedBack, cancellationToken).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    if (await ApplyHeadAsync(nats, queue, head, cancellationToken).ConfigureAwait(false) is not { } waiting)
-                    {
-                        Released(queue, head);
+                        Released(queue);
                         backoff.Reset();
+                        foreach (var waiter in waiting)
+                        {
+                            _ = waiter.TrySetResult();
+                        }
+
                         continue;
                     }
 
-                    kind = waiting;
+                    held = waits;
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
-                    kind = RetryKind(error);
+                    held = new Held(RetryKind(error), queue.Cursor + 1 ?? 0);
                 }
 
-                Held(queue, head?.Sequence ?? readFrom!.Value, kind);
-                _applyRetries?.Add(1, new KeyValuePair<string, object?>("reason", kind));
+                lock (_queuesGate)
+                {
+                    queue.Wake = true;
+                    queue.Waiters.InsertRange(0, waiting);
+                }
+
+                Hold(queue, held);
+                _applyRetries?.Add(1, new KeyValuePair<string, object?>("reason", held.Kind));
                 try
                 {
-                    foreach (var delivered in Waiting(queue))
+                    foreach (var delivered in Unacked(queue))
                     {
-                        await delivered.Message.AckProgressAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+                        await delivered.AckProgressAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
                     }
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -241,84 +319,143 @@ internal partial class HomePush
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             logger.ZLogInformation($"A push queue stops with its consumer run");
+            Retire(queue);
         }
         catch (Exception error)
         {
             logger.ZLogError($"A push queue ends its consumer run after an unexpected failure: {error.GetType().Name:@Error}");
-        }
-        finally
-        {
-            Retire(key, queue);
+            Retire(queue);
         }
     }
 
-    private async Task<string?> ApplyHeadAsync(NatsConnection nats, PushQueue queue, PushItem head, CancellationToken cancellationToken)
+    private async Task<Held?> SequenceAsync(NatsConnection nats, PushQueue queue, CancellationToken cancellationToken)
     {
-        switch (await ApplyAsync(nats, queue, head, cancellationToken).ConfigureAwait(false))
+        var database = queue.Database;
+        var cursor = queue.Cursor ?? 0;
+        var home = false;
+        switch (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false))
         {
-            case PushWait(var waiting):
-                return waiting;
-            case PushPark(var reason):
-                await ParkAsync(queue, head, reason, cancellationToken).ConfigureAwait(false);
+            case Unavailable:
+                return new Held("catalog", queue.Cursor + 1 ?? 0);
+            case NotFound:
+                switch (await catalog.DeletedAsync(database, cancellationToken).ConfigureAwait(false))
+                {
+                    case true:
+                        break;
+                    case false:
+                        return new Held("unknown_database", queue.Cursor + 1 ?? 0);
+                    case Unavailable:
+                        return new Held("catalog", queue.Cursor + 1 ?? 0);
+                }
+
                 break;
-            case PushDone:
+            case TenantDatabaseRecord record when record.Placement.Home != options.Region:
+                await AckThroughAsync(queue, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                queue.Cursor = null;
+                return null;
+            case TenantDatabaseRecord:
+                if (await apply.FrontierAsync(database, queue.Source, cancellationToken).ConfigureAwait(false) is not { } frontier)
+                {
+                    return new Held("not_stored", queue.Cursor + 1 ?? 0);
+                }
+
+                cursor = frontier;
+                home = true;
                 break;
         }
 
-        if (head is Delivered delivered)
+        queue.Cursor = cursor;
+        if (home)
         {
-            await delivered.Message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-
-        return null;
-    }
-
-    private Delivered[] Waiting(PushQueue queue)
-    {
-        lock (_queuesGate)
-        {
-            return [.. queue.Items.OfType<Delivered>()];
-        }
-    }
-
-    private void Held(PushQueue queue, ulong sequence, string kind)
-    {
-        lock (_queuesGate)
-        {
-            if (queue.HeldSince is not null)
+            var replayed = new List<PushDone>();
+            foreach (var replay in Unacked(queue).Where(delivered => delivered.Metadata?.Sequence.Stream <= cursor))
             {
-                return;
+                var sequence = replay.Metadata!.Value.Sequence.Stream;
+                switch (await ApplyAsync(queue, replay.Subject, sequence, replay.Data, cancellationToken).ConfigureAwait(false))
+                {
+                    case PushWait(var kind):
+                        return new Held(kind, sequence);
+                    case PushAway:
+                        await AckThroughAsync(queue, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                        return null;
+                    case PushDone done:
+                        replayed.Add(done);
+                        break;
+                    case PushPark:
+                        break;
+                }
             }
 
-            queue.HeldSince = time.GetTimestamp();
-            queue.HeldKind = kind;
+            await AckThroughAsync(queue, cursor, cancellationToken).ConfigureAwait(false);
+            foreach (var done in replayed)
+            {
+                await NoticeAsync(nats, done, cancellationToken).ConfigureAwait(false);
+            }
         }
 
-        logger.ZLogWarning($"A pushed database is held: {PushNames.Database(queue.Filter)?.DatabaseId:@Database} from {queue.Origin:@Origin} at stream sequence {sequence:@Sequence} cannot apply yet: {kind:@Kind}");
+        var backlog = false;
+        while (true)
+        {
+            var (chain, ended) = await ReadAsync(queue, cursor, backlog, cancellationToken).ConfigureAwait(false);
+            backlog = !ended;
+            foreach (var stored in chain)
+            {
+                var position = new StreamSequence(queue.Source, stored.Seq);
+                PushDone? applied = null;
+                switch (await ApplyAsync(queue, stored.Subject, stored.Seq, stored.Data.ToArray(), cancellationToken).ConfigureAwait(false))
+                {
+                    case PushWait(var kind):
+                        return new Held(kind, stored.Seq);
+                    case PushAway:
+                        await AckThroughAsync(queue, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                        queue.Cursor = null;
+                        return null;
+                    case PushPark(var reason):
+                        await ParkAsync(queue.Origin, queue.Source, stored.Seq, stored.Subject, stored.Data.ToArray(), reason, cancellationToken).ConfigureAwait(false);
+                        await apply.SkipAsync(database, position, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case PushDone done:
+                        applied = done;
+                        break;
+                }
+
+                cursor = stored.Seq;
+                queue.Cursor = cursor;
+                Released(queue);
+                await AckThroughAsync(queue, cursor, cancellationToken).ConfigureAwait(false);
+                if (applied is not null)
+                {
+                    await NoticeAsync(nats, applied, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            if (ended)
+            {
+                await AckThroughAsync(queue, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+        }
     }
 
-    private void Released(PushQueue queue, PushItem head)
-    {
-        string? kind;
-        lock (_queuesGate)
-        {
-            _ = queue.Items.Dequeue();
-            kind = queue.HeldSince is null ? null : queue.HeldKind;
-            queue.HeldSince = null;
-            queue.HeldKind = null;
-        }
-
-        if (kind is not null)
-        {
-            logger.ZLogWarning($"A held pushed database is released: {PushNames.Database(head.Subject)?.DatabaseId:@Database} from {queue.Origin:@Origin} at stream sequence {head.Sequence:@Sequence} after {kind:@Kind}");
-        }
-    }
-
-    private async Task RereadAsync(PushQueue queue, ulong from, ulong handedBack, CancellationToken cancellationToken)
+    private async Task<(IReadOnlyList<StoredMessage> Chain, bool Ended)> ReadAsync(PushQueue queue, ulong cursor, bool backlog, CancellationToken cancellationToken)
     {
         var js = _js ?? throw new IOException("the push connection is not open");
-        var stream = await js.GetStreamAsync(PushNames.Stream(queue.Origin), cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (Source(stream) != queue.Source)
+        var stream = queue.Stream ??= await js.GetStreamAsync(PushNames.Stream(queue.Origin), cancellationToken: cancellationToken).ConfigureAwait(false);
+        SortedSet<ulong> wanted;
+        lock (_queuesGate)
+        {
+            wanted = [cursor + 1, .. queue.Hints.GetViewBetween(cursor + 1, ulong.MaxValue).Take(ReadAhead - 1).Select(hint => hint + 1)];
+        }
+
+        for (var ahead = cursor + 2; backlog && wanted.Count < ReadAhead; ahead++)
+        {
+            _ = wanted.Add(ahead);
+        }
+
+        ulong[] starts = [.. wanted];
+
+        var reads = await Task.WhenAll(starts.Select(start => NextAsync(stream, queue.Filter, start, cancellationToken))).ConfigureAwait(false);
+        if (Source(await js.GetStreamAsync(PushNames.Stream(queue.Origin), cancellationToken: cancellationToken).ConfigureAwait(false)) != queue.Source)
         {
             lock (_queuesGate)
             {
@@ -329,31 +466,93 @@ internal partial class HomePush
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        var next = from;
-        for (var read = 0; read < HeldInFlight; read++)
+        var next = new Dictionary<ulong, StoredMessage?>(starts.Length);
+        for (var i = 0; i < starts.Length; i++)
         {
-            StoredMessage? stored;
-            try
+            next[starts[i]] = reads[i];
+        }
+
+        var chain = new List<StoredMessage>();
+        var at = cursor;
+        while (next.TryGetValue(at + 1, out var stored))
+        {
+            if (stored is null)
             {
-                stored = (await stream.GetAsync(new StreamMsgGetRequest { Seq = next, NextBySubj = queue.Filter }, cancellationToken).ConfigureAwait(false)).Message;
-            }
-            catch (NatsJSApiException error) when (error.Error.Code == 404 || error.Error.ErrCode == NoMessageFound)
-            {
-                stored = null;
+                return (chain, true);
             }
 
-            lock (_queuesGate)
-            {
-                if (stored is null)
-                {
-                    queue.ReadFrom = queue.HandedBack > handedBack ? next : null;
-                    return;
-                }
+            chain.Add(stored);
+            at = stored.Seq;
+        }
 
-                queue.Items.Enqueue(new Reread(stored.Subject, stored.Seq, stored.Data.ToArray()));
-                next = stored.Seq + 1;
-                queue.ReadFrom = next;
+        return (chain, false);
+    }
+
+    private static async Task<StoredMessage?> NextAsync(INatsJSStream stream, string filter, ulong start, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await stream.GetAsync(new StreamMsgGetRequest { Seq = start, NextBySubj = filter }, cancellationToken).ConfigureAwait(false)).Message;
+        }
+        catch (NatsJSApiException error) when (error.Error.Code == 404 || error.Error.ErrCode == NoMessageFound)
+        {
+            return null;
+        }
+    }
+
+    private async Task AckThroughAsync(PushQueue queue, ulong through, CancellationToken cancellationToken)
+    {
+        INatsJSMsg<byte[]>[] decided;
+        lock (_queuesGate)
+        {
+            decided = [.. queue.Unacked.Where(delivered => delivered.Metadata?.Sequence.Stream <= through)];
+            _ = queue.Unacked.RemoveAll(delivered => delivered.Metadata?.Sequence.Stream <= through);
+            _ = queue.Hints.RemoveWhere(hint => hint <= through);
+        }
+
+        foreach (var delivered in decided)
+        {
+            await delivered.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private INatsJSMsg<byte[]>[] Unacked(PushQueue queue)
+    {
+        lock (_queuesGate)
+        {
+            return [.. queue.Unacked];
+        }
+    }
+
+    private void Hold(PushQueue queue, Held held)
+    {
+        lock (_queuesGate)
+        {
+            if (queue.HeldSince is not null)
+            {
+                return;
             }
+
+            queue.HeldSince = time.GetTimestamp();
+            queue.HeldKind = held.Kind;
+        }
+
+        logger.ZLogWarning($"A pushed database is held: {queue.Database.DatabaseId:@Database} from {queue.Origin:@Origin} at stream sequence {held.At:@Sequence} cannot apply yet: {held.Kind:@Kind}");
+    }
+
+    private void Released(PushQueue queue)
+    {
+        string? kind;
+        lock (_queuesGate)
+        {
+            kind = queue.HeldSince is null ? null : queue.HeldKind;
+            queue.HeldSince = null;
+            queue.HeldKind = null;
+        }
+
+        if (kind is not null)
+        {
+            logger.ZLogWarning($"A held pushed database is released: {queue.Database.DatabaseId:@Database} from {queue.Origin:@Origin} at stream sequence {queue.Cursor ?? 0:@Sequence} after {kind:@Kind}");
         }
     }
 
@@ -369,16 +568,19 @@ internal partial class HomePush
         _ => "other",
     };
 
-    private async Task<PushStep> ApplyAsync(NatsConnection nats, PushQueue queue, PushItem item, CancellationToken cancellationToken)
+    private async Task NoticeAsync(NatsConnection nats, PushDone done, CancellationToken cancellationToken)
     {
-        if (PushNames.Database(item.Subject) is not { } database)
+        await nats.PublishAsync(PushNames.Applied(done.Region, done.Database),
+            JsonSerializer.SerializeToUtf8Bytes(done.Result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
+        Progressed(done.Region, done.Database, done.Sequence);
+        _applies?.Add(1, new KeyValuePair<string, object?>("state", done.Result.State));
+    }
+
+    private async Task<PushStep> ApplyAsync(PushQueue queue, string subject, ulong sequence, byte[]? payload, CancellationToken cancellationToken)
+    {
+        if (PushNames.Database(subject) is not { } database)
         {
             return new PushPark("malformed");
-        }
-
-        if (item.Data is not { Length: > 0 } data)
-        {
-            return new PushPark("empty");
         }
 
         switch (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false))
@@ -393,9 +595,14 @@ internal partial class HomePush
                     Unavailable => new PushWait("catalog"),
                 };
             case TenantDatabaseRecord record when record.Placement.Home != options.Region:
-                return new PushDone();
+                return new PushAway();
             case TenantDatabaseRecord:
                 break;
+        }
+
+        if (payload is not { Length: > 0 } data)
+        {
+            return new PushPark("empty");
         }
 
         if (await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
@@ -409,7 +616,7 @@ internal partial class HomePush
         HomeApplyResult? result;
         try
         {
-            result = await apply.ApplyAsync(database, transaction, new StreamSequence(queue.Source, item.Sequence), cancellationToken).ConfigureAwait(false);
+            result = await apply.ApplyAsync(database, transaction, new StreamSequence(queue.Source, sequence), cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -422,10 +629,6 @@ internal partial class HomePush
             return new PushWait("not_stored");
         }
 
-        await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
-            JsonSerializer.SerializeToUtf8Bytes(result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
-        Progressed(transaction.Region!, database, item.Sequence);
-        _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
-        return new PushDone();
+        return new PushDone(database, transaction.Region!, sequence, result);
     }
 }

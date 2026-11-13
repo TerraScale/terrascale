@@ -26,16 +26,13 @@ internal partial class HomePush
     private Measurement<long>[] _parkedCounts = [.. ParkReasons.Append(PreviousLayout).Select(reason => new Measurement<long>(0, new KeyValuePair<string, object?>("reason", reason)))];
     private long _previousParked;
 
-    private async Task ParkAsync(PushQueue queue, PushItem item, string reason, CancellationToken cancellationToken)
+    private async Task ParkAsync(string origin, string source, ulong sequence, string pushed, byte[]? payload, string reason, CancellationToken cancellationToken)
     {
         var js = _js ?? throw new IOException("the push connection is not open");
-        var source = queue.Source;
-        var sequence = item.Sequence;
-        var origin = queue.Origin;
-        var database = PushNames.Database(item.Subject);
-        var record = new ParkedPush(origin, source, sequence, item.Subject,
+        var database = PushNames.Database(pushed);
+        var record = new ParkedPush(origin, source, sequence, pushed,
             database is null ? null : $"{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}",
-            reason, time.GetUtcNow(), item.Data ?? []);
+            reason, time.GetUtcNow(), payload ?? []);
         _ = await js.CreateOrUpdateStreamAsync(new StreamConfig(PushNames.ParkStream(options.Region), [PushNames.ParkSubjects(options.Region)])
         {
             Storage = StreamConfigStorage.File,

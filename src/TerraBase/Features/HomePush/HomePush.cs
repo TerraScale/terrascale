@@ -72,6 +72,7 @@ internal partial class HomePush(
         new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.DropOldest });
     private readonly Lock _queuesGate = new();
     private readonly Dictionary<string, PushQueue> _queues = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ConsumeRun> _runs = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _applying = new(MaxParallelDatabases, MaxParallelDatabases);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private NatsConnection? _nats;
@@ -285,71 +286,6 @@ internal partial class HomePush(
         Interlocked.Exchange(ref _progress, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
     }
 
-    internal async Task<int> DrainOriginsAsync(TenantContext database, long fence, CancellationToken cancellationToken)
-    {
-        if (_js is not { } js || _nats is not { } nats)
-        {
-            return 0;
-        }
-
-        var scans = new List<(INatsJSConsumer Consumer, string Source)>();
-        foreach (var origin in (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Region).Append(options.Region).Distinct(StringComparer.Ordinal))
-        {
-            scans.Add((await js.CreateOrderedConsumerAsync(PushNames.Stream(origin), new NatsJSOrderedConsumerOpts
-            {
-                FilterSubjects = [PushNames.DatabaseFilter(origin, database)],
-                DeliverPolicy = ConsumerConfigDeliverPolicy.All,
-            }, cancellationToken).ConfigureAwait(false), await SourceAsync(js, origin, cancellationToken).ConfigureAwait(false)));
-        }
-
-        var applied = 0;
-        while (true)
-        {
-            var read = 0;
-            foreach (var (scan, source) in scans)
-            {
-                await foreach (var message in scan.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
-                {
-                    read++;
-                    if (Epoch(message.Headers) >= fence)
-                    {
-                        continue;
-                    }
-
-                    if (message.Data is not { } data
-                        || await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
-                    {
-                        throw new IOException("a retained origin push could not be decoded during promotion");
-                    }
-
-                    var result = await apply.ApplyAsync(database, transaction, Position(message, source), cancellationToken).ConfigureAwait(false)
-                        ?? throw new StorageBusyException();
-                    await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
-                        JsonSerializer.SerializeToUtf8Bytes(result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
-                    _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
-                    if (message.Metadata is { } metadata)
-                    {
-                        Progressed(transaction.Region!, database, metadata.Sequence.Stream);
-                    }
-
-                    applied++;
-                }
-            }
-
-            if (read == 0)
-            {
-                break;
-            }
-        }
-
-        return applied;
-    }
-
-    private static long Epoch(NatsHeaders? headers) =>
-        headers is not null && headers.TryGetValue("Tb-Epoch", out var value) && long.TryParse(value.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var epoch)
-            ? epoch
-            : 0;
-
     private static NatsHeaders Headers(HlcTimestamp stamp, long epoch)
     {
         Span<byte> encoded = stackalloc byte[HlcTimestamp.EncodedLength];
@@ -501,7 +437,7 @@ internal partial class HomePush(
                 continue;
             }
 
-            var run = new ConsumeRun(CancellationTokenSource.CreateLinkedTokenSource(term.Lost, cancellationToken));
+            var run = new ConsumeRun(origin, CancellationTokenSource.CreateLinkedTokenSource(term.Lost, cancellationToken));
             var wait = true;
             try
             {
@@ -547,6 +483,12 @@ internal partial class HomePush(
             throw new IOException("the push stream was recreated while its consumer was opened");
         }
 
+        lock (_queuesGate)
+        {
+            run.Source = source;
+            _runs[origin] = run;
+        }
+
         await foreach (var message in consumer.ConsumeAsync<byte[]>(opts: new NatsJSConsumeOpts { MaxMsgs = 256 }, cancellationToken: run.Token)
             .ConfigureAwait(false))
         {
@@ -555,7 +497,7 @@ internal partial class HomePush(
                 break;
             }
 
-            await DispatchAsync(nats, run, message, source).ConfigureAwait(false);
+            await DispatchAsync(nats, run, message).ConfigureAwait(false);
         }
 
         return true;
@@ -619,9 +561,6 @@ internal partial class HomePush(
             return;
         }
     }
-
-    private static StreamSequence Position(INatsJSMsg<byte[]> message, string source) =>
-        new(source, message.Metadata?.Sequence.Stream ?? throw new IOException("a pushed message has no stream sequence"));
 
     private static async Task<string> SourceAsync(NatsJSContext js, string origin, CancellationToken cancellationToken)
     {
