@@ -192,11 +192,11 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         { FileBytes = fileBytes };
     }
 
-    public async ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, bool previous, CancellationToken cancellationToken)
+    public async ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, DateTimeOffset? requestedMonth, CancellationToken cancellationToken)
     {
         var observedAt = time.GetUtcNow();
         var current = new DateTimeOffset(observedAt.Year, observedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
-        var month = previous ? current.AddMonths(-1) : current;
+        var month = requestedMonth ?? current;
         using var budget = new CancellationTokenSource(AllowanceScanBudget, time);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budget.Token);
         try
@@ -223,7 +223,14 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
                     return new Unavailable("usage accounting is unavailable; retry");
                 }
 
-                items.Add(new AllowanceUsage(organizationId, units.Writes, null, units.Reads, units.StorageByteHours));
+                if (requestedMonth is not null && !units.Persisted && (units.Reads != 0 || units.Writes != 0))
+                {
+                    return new Unavailable("usage for the month has not been persisted; retry");
+                }
+
+                items.Add(requestedMonth is not null && !units.Persisted
+                    ? new AllowanceUsage(organizationId, null, null)
+                    : new AllowanceUsage(organizationId, units.Writes, null, units.Reads, units.StorageByteHours));
             }
 
             var ended = time.GetUtcNow();

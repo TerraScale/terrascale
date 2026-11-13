@@ -36,5 +36,5 @@ public interface IUsageService
 
     ValueTask<ProjectUsageResult> GetProjectUsageAsync(string userId, string organizationId, string projectId, UsageWindow window, CancellationToken cancellationToken);
 
-    ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, bool previous, CancellationToken cancellationToken);
+    ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, DateTimeOffset? requestedMonth, CancellationToken cancellationToken);
 }
