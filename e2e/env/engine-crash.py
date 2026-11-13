@@ -394,7 +394,10 @@ def crash_recording(identity, operation="fault"):
 def boundary_cases(selected=None):
     global proof_reads
     if selected == "isolation":
-        for case in ("latency", "native", "native-timeout", "recreate", "opened-key", "key-retry", "unknown-key", "creation", "checkpoints"):
+        for case in (
+            "latency", "native", "native-timeout", "recreate", "opened-key", "key-retry",
+            "unknown-key", "creation", "checkpoints",
+        ):
             boundary_cases(case)
         return
     if selected in (None, "latency"):
