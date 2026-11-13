@@ -172,7 +172,7 @@ internal sealed partial class RegionalHandoff(
             foreach (var stored in retained.Records)
             {
                 var record = RegionalRetention.Read(stored);
-                if (!await leases.TakeRegionalAsync(record.Storage, source, cancellationToken).ConfigureAwait(false))
+                if (!await leases.TakeRetainedRegionalAsync(record, source, cancellationToken).ConfigureAwait(false))
                 {
                     return false;
                 }

@@ -236,6 +236,26 @@ internal sealed partial class HomeLeases(
             leaseGate.Lease(database.DatabaseId!, held: false);
             return true;
         }
+        return await TakeRegionalCoreAsync(database, placement, source, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<bool> TakeRetainedRegionalAsync(DeletedDatabaseRecord record, string source, CancellationToken cancellationToken)
+    {
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        var current = await SystemCatalog.GetAsync(transaction, DeletedDatabases.Kind, record.Database.Id,
+            ManagementJsonContext.Default.DeletedDatabaseRecord, cancellationToken).ConfigureAwait(false);
+        if (current is null || current.DeletedAt != record.DeletedAt || !DatabasePurge.SameDatabase(current.Storage, record.Storage)
+            || current.Database.Home(options.Region) != options.Region
+            || await transaction.GetAsync(DatabasePurge.Kind, record.Database.Id, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return false;
+        }
+        return await TakeRegionalCoreAsync(current.Storage, current.Database.Placement(options.Region), source, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> TakeRegionalCoreAsync(TenantContext database, DatabasePlacement placement, string source, CancellationToken cancellationToken)
+    {
         if (placement is { AllRegions: false, Replicas.Count: 0 })
         {
             leaseGate.Unlease(database.DatabaseId!);
