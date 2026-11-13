@@ -143,8 +143,7 @@ internal sealed partial class TursoStorageEngine
                 continue;
             }
             var name = entry.Name;
-            var wrapper = name.EndsWith(".key", StringComparison.Ordinal) || name.Contains(".key.rewrapping", StringComparison.Ordinal)
-                || name.Contains(".key.tmp", StringComparison.Ordinal);
+            var wrapper = WrappedKeyFile.IsKey(name);
             var intentAt = name.IndexOf(".promote.db.importing", StringComparison.Ordinal);
             var intent = intentAt > 0;
             var authoritativeIntent = intent && name.EndsWith(".promote.db.importing", StringComparison.Ordinal)
@@ -155,7 +154,7 @@ internal sealed partial class TursoStorageEngine
                 || name.Contains(".rewriting", StringComparison.Ordinal) || name.Contains(".migrating", StringComparison.Ordinal));
             try
             {
-                if (area == ".handoff" || name.Contains(".promote.db", StringComparison.Ordinal)
+                if (name.Contains(".retained-key", StringComparison.Ordinal) || area == ".handoff" || name.Contains(".promote.db", StringComparison.Ordinal)
                     || name.Contains(".key.rewrapping", StringComparison.Ordinal) || name.Contains(".creating", StringComparison.Ordinal)
                     || name.Contains(".key.tmp", StringComparison.Ordinal)
                     || name.EndsWith(".key", StringComparison.Ordinal) && !File.Exists(path[..^4]))
@@ -180,7 +179,8 @@ internal sealed partial class TursoStorageEngine
             }
             wrappers++;
             var stem = name.EndsWith(".db.key", StringComparison.Ordinal) ? name[..^".db.key".Length] : null;
-            var authoritative = stem is SystemName or IntentName || stem is not null && Ulid.TryParse(stem, out _);
+            var authoritative = name.Contains(".retained-key", StringComparison.Ordinal)
+                || stem is SystemName or IntentName || stem is not null && Ulid.TryParse(stem, out _);
             try
             {
                 if (wrapper)

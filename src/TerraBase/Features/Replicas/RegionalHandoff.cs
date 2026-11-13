@@ -335,8 +335,9 @@ internal sealed partial class RegionalHandoff(
                 await imports.ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
                 _prepared[position.Database] = position.Revision;
             }
-            catch
+            catch (Exception error)
             {
+                logger.ZLogError(error, $"Regional prepared import failed; the detached source and prior local files are retained");
                 replication.Resume(database);
                 throw;
             }

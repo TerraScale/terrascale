@@ -96,6 +96,7 @@ internal sealed partial class TursoStorageEngine
         {
             Task? pending;
             TursoDatabaseStore? retired = null;
+            var preserving = false;
             await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -104,15 +105,26 @@ internal sealed partial class TursoStorageEngine
                 pending = (Task?)_initializing.GetValueOrDefault(key) ?? _migrating.GetValueOrDefault(key);
                 if (pending is null)
                 {
-                    if (_stores.TryRemove(key, out var store))
+                    if (_stores.TryGetValue(key, out var store))
                     {
+                        ReserveIntent(key);
+                        preserving = true;
                         retired = store;
                         await Io.RunAsync(() => { store.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
-                        await Pool.DrainedAsync(store).WaitAsync(QueryBudget, Time, cancellationToken).ConfigureAwait(false);
+                        ExitCreation();
+                        try
+                        {
+                            await Pool.DrainedAsync(store).WaitAsync(QueryBudget, Time, cancellationToken).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            await EnterCreationAsync(CancellationToken.None).ConfigureAwait(false);
+                        }
                         if (Pool.FailedClosesOf(store) > 0)
                         {
                             throw new IOException("the previous handoff database still has native handles; all files are preserved");
                         }
+                        _ = _stores.TryRemove(new KeyValuePair<(string, string, string), TursoDatabaseStore>(key, store));
                     }
                     await Io.RunAsync(() =>
                     {
@@ -156,6 +168,10 @@ internal sealed partial class TursoStorageEngine
             }
             finally
             {
+                if (preserving)
+                {
+                    _pendingIntents.Remove(key);
+                }
                 ExitCreation();
                 if (retired is not null)
                 {

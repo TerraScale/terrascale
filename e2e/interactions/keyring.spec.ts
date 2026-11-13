@@ -340,7 +340,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
   }
 });
 
-for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'number', 'empty', 'base64', 'version', 'authority-parent', 'artifact-decoy', 'scratch', 'cost-1', 'cost-2', 'cost-3']) {
+for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'number', 'empty', 'base64', 'version', 'authority-parent', 'artifact-decoy', 'retained-key', 'retained-key-missing', 'orphan-key', 'scratch', 'cost-1', 'cost-2', 'cost-3']) {
   test('inventory contains persisted ' + mode, async () => {
     mkdirSync(stateDir, { recursive: true });
     const directory = mkdtempSync(join(stateDir, 'inventory-' + mode + '-'));
@@ -370,7 +370,7 @@ for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'numb
       const output = openSync(log, 'w', 0o600);
       child = spawn('dotnet', operation ? ['exec', '--depsfile', join(process.env.E2E_BUILD!, 'terrabase/terrabase.deps.json'),
         '--runtimeconfig', join(process.env.E2E_BUILD!, 'terrabase/terrabase.runtimeconfig.json'), process.env.E2E_KEYRING_DRIVER!,
-        ...(operation === 'cost' ? ['inventory-cost'] : operation === 'trim' ? ['inventory-trim'] : ['inventory-seed', operation])] : [candidate], {
+        ...(operation === 'retained-live' ? ['inventory-retained'] : operation === 'cost' ? ['inventory-cost'] : operation === 'trim' ? ['inventory-trim'] : ['inventory-seed', operation])] : [candidate], {
         env: { ...environment, DOTNET_PROCESSOR_COUNT: '4', DOTNET_ENVIRONMENT: 'Development',
           TERRABASE_MASTER_KEYS_FILE: ring, TERRABASE_PEER_SECRET: peer, TERRABASE_DATA_DIRECTORY: data,
           TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
@@ -404,32 +404,45 @@ for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'numb
         writeFileSync(join(data, '.tmp/inspection/abandoned/copy.db'), 'private scratch');
         writeFileSync(join(data, 'outside-inspection'), 'keep');
         writeFileSync(join(data, '.tmp/outside-inspection'), 'keep sibling');
-      } else if (mode === 'authority-parent' || mode === 'artifact-decoy') {
+      } else if (['authority-parent', 'artifact-decoy', 'retained-key', 'retained-key-missing', 'orphan-key'].includes(mode)) {
         const nonce = randomBytes(12);
         const cipher = createCipheriv('aes-256-gcm', Buffer.from(k0, 'base64'), nonce);
         const wrapped = Buffer.concat([nonce, cipher.update(randomBytes(32)), cipher.final(), cipher.getAuthTag()]).toString('base64');
-        const name = mode === 'authority-parent' ? '01J00000000000000000000077.db.key' : 'artifact.db.key';
+        const name = mode.startsWith('retained-key') ? '.01J00000000000000000000077.01J00000000000000000000078.retained-key'
+          : mode === 'artifact-decoy' ? 'artifact.db.key' : '01J00000000000000000000077.db.key';
         const artifactDirectory = join(data, '01J00000000000000000000071', '01J00000000000000000000072');
         mkdirSync(artifactDirectory, { recursive: true });
         writeFileSync(join(artifactDirectory, name), 'TERRABASE-DB-KEY-1\n' + wrapped + '\n');
-      } else {
+      } else if (mode !== 'retained') {
         start(mode === 'missing-key' ? 'retained' : mode);
         await expect.poll(() => child?.exitCode, log).toBe(0);
         await stop();
       }
-      start(undefined, ['missing-key', 'authority-parent', 'artifact-decoy'].includes(mode));
-      if (mode === 'missing-key' || mode === 'authority-parent') {
+      start(mode === 'retained' ? 'retained-live' : undefined, ['missing-key', 'authority-parent', 'artifact-decoy', 'retained-key-missing'].includes(mode));
+      if (mode === 'missing-key' || mode === 'authority-parent' || mode === 'retained-key-missing') {
         await expect.poll(() => child?.exitCode, log).toBe(2);
         expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k0'");
       } else {
         await ready();
         const metrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
-        if (mode === 'scratch') {
+        if (mode === 'retained-key' || mode === 'orphan-key') {
+          const parent = join(data, '01J00000000000000000000071', '01J00000000000000000000072');
+          const retained = readdirSync(parent).filter(name => name.endsWith('.retained-key'));
+          expect(retained).toHaveLength(1);
+          expect(existsSync(join(parent, '01J00000000000000000000077.db.key'))).toBe(false);
+          await expect.poll(() => readFileSync(join(parent, retained[0]), 'ascii').startsWith('TERRABASE-DB-KEY-2\nv2.k1.')).toBe(true);
+          await stop();
+          start(undefined, true);
+          await ready();
+          expect(existsSync(join(parent, retained[0]))).toBe(true);
+        } else if (mode === 'scratch') {
           expect(existsSync(join(data, '.tmp/inspection/abandoned'))).toBe(false);
           expect(readFileSync(join(data, 'outside-inspection'), 'utf8')).toBe('keep');
           expect(readFileSync(join(data, '.tmp/outside-inspection'), 'utf8')).toBe('keep sibling');
         } else if (mode === 'retained') {
-          expect(metrics).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} [1-9]\d*(?:\n|$)/);
+          await expect.poll(async () => (await fetch('http://127.0.0.1:18383/metrics')).text()).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} [1-9]\d*(?:\n|$)/);
+          expect(readFileSync(log, 'utf8')).toContain('keyring-driver:seed-stored retained');
+          expect(await (await fetch('http://127.0.0.1:18383/metrics')).text()).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} [1-9]\d*(?:\n|$)/);
           await stop();
           start('trim');
           await expect.poll(() => child?.exitCode).toBe(0);

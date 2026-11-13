@@ -82,6 +82,12 @@ internal sealed record DetachedImport(
         var root = ScratchRoot(dataDirectory);
         if (Directory.Exists(root))
         {
+            foreach (var key in WrappedKeyFile.Paths(root).ToArray())
+            {
+                DatabaseKeys.RejectLink(key);
+                File.Move(key, Path.Combine(dataDirectory, $".inspection.{EntityIds.New()}.retained-key"), overwrite: false);
+                DirectorySync.Sync(dataDirectory);
+            }
             Directory.Delete(root, recursive: true);
         }
     }
@@ -103,7 +109,7 @@ internal sealed record DetachedImport(
         var scratch = Directory.CreateDirectory(Path.Combine(ScratchRoot(dataDirectory), EntityIds.New().ToString()));
         try
         {
-            foreach (var file in files)
+            foreach (var file in files.Where(file => !WrappedKeyFile.IsKey(Path.GetFileName(file))))
             {
                 File.Copy(file, Path.Combine(scratch.FullName, Path.GetFileName(file)));
             }

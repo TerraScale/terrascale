@@ -8,13 +8,29 @@ namespace TerraBase.Engine.Turso;
 
 internal static class WrappedKeyFile
 {
+    internal static bool IsKey(string path) =>
+        path.EndsWith(".key", StringComparison.Ordinal) || path.Contains(".key.rewrapping", StringComparison.Ordinal)
+        || path.Contains(".key.tmp", StringComparison.Ordinal) || path.Contains(".retained-key", StringComparison.Ordinal);
+
+    internal static void Retain(string path)
+    {
+        DatabaseKeys.RejectLink(path);
+        if (!File.Exists(path) || path.Contains(".retained-key", StringComparison.Ordinal))
+        {
+            return;
+        }
+        var directory = Path.GetDirectoryName(path)!;
+        var retained = Path.Combine(directory, $".{Path.GetFileName(path)}.{EntityIds.New()}.retained-key");
+        File.Move(path, retained, overwrite: false);
+        DirectorySync.Sync(directory);
+    }
+
     internal static IEnumerable<string> Paths(string directory)
     {
         DatabaseKeys.RejectLink(directory);
         foreach (var file in Directory.EnumerateFiles(directory))
         {
-            if (file.EndsWith(".key", StringComparison.Ordinal) || file.Contains(".key.rewrapping", StringComparison.Ordinal)
-                || file.Contains(".key.tmp", StringComparison.Ordinal))
+            if (IsKey(Path.GetFileName(file)))
             {
                 yield return file;
             }
@@ -62,6 +78,12 @@ internal static class WrappedKeyFile
                 return keyring.ActiveId;
             }
 
+            if (path.Contains(".retained-key", StringComparison.Ordinal))
+            {
+                var replica = File.ReadLines(path).First().StartsWith("TERRABASE-REPLICA-KEY-", StringComparison.Ordinal);
+                header = replica ? keyring.ActiveId == "k0" ? TursoReplicas.PreviousKeyHeader : TursoReplicas.KeyHeader
+                    : keyring.ActiveId == "k0" ? DatabaseKeys.PreviousHeader : DatabaseKeys.Header;
+            }
             var temporary = path + ".rewrapping." + EntityIds.New();
             DatabaseKeys.RejectLink(temporary);
             using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))

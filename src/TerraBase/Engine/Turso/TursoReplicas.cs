@@ -35,7 +35,7 @@ internal sealed partial class TursoReplicas(
 
     internal const string DirectoryName = ".replicas";
     internal const string KeyHeader = "TERRABASE-REPLICA-KEY-2\n";
-    private const string PreviousKeyHeader = "TERRABASE-REPLICA-KEY-1\n";
+    internal const string PreviousKeyHeader = "TERRABASE-REPLICA-KEY-1\n";
     private static readonly Lock KeyRecords = new();
     private static readonly HashSet<string> ActiveDetached = new(StringComparer.Ordinal);
     private const int MaxIdleConnections = 4;
@@ -239,7 +239,14 @@ internal sealed partial class TursoReplicas(
         foreach (var file in Directory.GetFiles(directory, Path.GetFileName(detached) + "*").Where(file => file != detached + ".importing"))
         {
             DatabaseKeys.RejectLink(file);
-            File.Delete(file);
+            if (WrappedKeyFile.IsKey(Path.GetFileName(file)))
+            {
+                WrappedKeyFile.Retain(file);
+            }
+            else
+            {
+                File.Delete(file);
+            }
         }
         DirectorySync.Sync(directory);
         File.Delete(detached + ".importing");
@@ -528,7 +535,14 @@ internal sealed partial class TursoReplicas(
             var deleted = false;
             foreach (var file in Directory.EnumerateFiles(directory, name + "*"))
             {
+                if (WrappedKeyFile.IsKey(Path.GetFileName(file)))
+            {
+                WrappedKeyFile.Retain(file);
+            }
+            else
+            {
                 File.Delete(file);
+            }
                 deleted = true;
             }
 

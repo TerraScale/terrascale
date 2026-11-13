@@ -283,7 +283,6 @@ internal sealed partial class RegionReplication
         try
         {
             await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
-            _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

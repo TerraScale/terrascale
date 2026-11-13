@@ -660,6 +660,28 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         {
                             TursoReplicas.DeleteDetached(Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db"));
                             TursoReplicas.DeleteDetached(Path.Combine(_dataDirectory, TursoReplicas.DirectoryName, key.Organization, key.Project, key.Database + ".promote.db"));
+                            var handoff = Path.Combine(_dataDirectory, ".handoff");
+                            DatabaseKeys.RejectLink(handoff);
+                            if (Directory.Exists(handoff))
+                            {
+                                foreach (var retained in Directory.EnumerateDirectories(handoff))
+                                {
+                                    var previous = Path.Combine(retained, key.Organization, key.Project, key.Database + FileExtension);
+                                    RejectDatabaseLinks(previous);
+                                    var parent = Path.GetDirectoryName(previous)!;
+                                    if (Directory.Exists(parent))
+                                    {
+                                        foreach (var file in Directory.GetFiles(parent, Path.GetFileName(previous) + "*")
+                                            .Where(file => file == previous || file.StartsWith(previous + "-", StringComparison.Ordinal)
+                                                || file.StartsWith(previous + ".", StringComparison.Ordinal)))
+                                        {
+                                            DatabaseKeys.RejectLink(file);
+                                            DeleteFileIfPresent(file);
+                                        }
+                                        DirectorySync(parent);
+                                    }
+                                }
+                            }
                         }
                         var directory = Path.GetDirectoryName(path)!;
                         if (Directory.Exists(directory))
@@ -669,7 +691,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                                 foreach (var retainedKey in Directory.GetFiles(directory, Path.GetFileName(path) + ".key.rewrapping*"))
                                 {
                                     DatabaseKeys.RejectLink(retainedKey);
-                                    File.Delete(retainedKey);
+                                    WrappedKeyFile.Retain(retainedKey);
                                 }
                             }
                             foreach (var file in Directory.EnumerateFiles(directory, $".{key.Database}.*.creating*")
@@ -1410,7 +1432,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 {
                     if (!File.Exists(path) && !File.Exists(path + "-wal"))
                     {
-                        DeleteFileIfPresent(path + DatabaseKeys.Suffix);
+                        RetainKey(Path.GetDirectoryName(path)!, name, path + DatabaseKeys.Suffix);
                         DirectorySync(Path.GetDirectoryName(path)!);
                     }
                 }, CancellationToken.None).ConfigureAwait(false);
@@ -1428,15 +1450,24 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private void DeleteSidecars(string path, bool keepKey = false, bool keepMarker = false)
     {
         RejectDatabaseLinks(path);
-        foreach (var sidecar in Sidecars.Where(sidecar => (!keepKey || sidecar != DatabaseKeys.Suffix) && (!keepMarker || sidecar != DeletionMarker)))
+        foreach (var sidecar in Sidecars.Where(sidecar => sidecar != DatabaseKeys.Suffix && (!keepMarker || sidecar != DeletionMarker)))
         {
             RejectLink(path + sidecar);
             DeleteFileIfPresent(path + sidecar);
+        }
+        if (!keepKey && !File.Exists(path) && !File.Exists(path + "-wal") && File.Exists(path + DatabaseKeys.Suffix))
+        {
+            RetainKey(Path.GetDirectoryName(path)!, Path.GetFileNameWithoutExtension(path), path + DatabaseKeys.Suffix);
         }
     }
 
     private static void DeleteFileIfPresent(string path)
     {
+        if (WrappedKeyFile.IsKey(Path.GetFileName(path)))
+        {
+            WrappedKeyFile.Retain(path);
+            return;
+        }
         try
         {
             File.Delete(path);

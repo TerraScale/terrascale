@@ -59,7 +59,6 @@ internal static class Lifecycle
         if (args is ["inventory-cost"])
         {
             InventoryProof.SeedCost();
-            await InventoryProof.SeedStoredAsync("cost", CancellationToken.None);
         }
         await RunAsync(args);
     }
@@ -98,7 +97,12 @@ internal static class Lifecycle
         {
             if (args[0] == "inventory-cost")
             {
-                await InventoryProof.CostAsync(startup.Elapsed.TotalMilliseconds, cancellationToken);
+                await InventoryProof.CostAsync(app.Services, startup.Elapsed.TotalMilliseconds, cancellationToken);
+                return;
+            }
+            if (args[0] == "inventory-retained")
+            {
+                await InventoryProof.HoldRetainedAsync(app.Services, cancellationToken);
                 return;
             }
             if (args[0] == "inventory-import")

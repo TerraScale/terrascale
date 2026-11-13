@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Hosting;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
@@ -149,8 +150,11 @@ internal static class InventoryProof
         }
     }
 
-    internal static async Task CostAsync(double startupMilliseconds, CancellationToken cancellationToken)
+    internal static async Task CostAsync(IServiceProvider services, double startupMilliseconds, CancellationToken cancellationToken)
     {
+        await using var tap = await services.GetRequiredService<IWalBackup>().OpenTapAsync(null, cancellationToken)
+            ?? throw new InvalidOperationException("catalog backup tap is missing");
+        await SeedStoredAsync("cost", cancellationToken);
         using var client = new HttpClient();
         var timer = Stopwatch.StartNew();
         var text = await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
@@ -190,6 +194,16 @@ internal static class InventoryProof
             }
         }
         while (await timer.WaitForNextTickAsync(cancellationToken));
+    }
+
+    internal static async Task HoldRetainedAsync(IServiceProvider services, CancellationToken cancellationToken)
+    {
+        await using var tap = await services.GetRequiredService<IWalBackup>().OpenTapAsync(null, cancellationToken)
+            ?? throw new InvalidOperationException("catalog backup tap is missing");
+        await SeedStoredAsync("retained", cancellationToken);
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(() => stopping.TrySetResult());
+        await stopping.Task.WaitAsync(cancellationToken);
     }
 
     internal static async Task ImportAsync(IServiceProvider services, CancellationToken cancellationToken)
@@ -235,6 +249,8 @@ internal static class InventoryProof
         var before = Gauge(await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken),
             "terrabase_keys_local_wrapped", "k0");
         Require(before == 0, "old wrappers were not drained before import");
+        await using var tap = await services.GetRequiredService<IWalBackup>().OpenTapAsync(null, cancellationToken)
+            ?? throw new InvalidOperationException("catalog backup tap is missing");
         incoming = await CredentialAsync(old, "old");
         await RegionalCatalog.ImportAsync(engine, snapshot with { Records = [.. snapshot.Records, incoming] }, receipts, cancellationToken);
         var current = Gauge(await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken),
