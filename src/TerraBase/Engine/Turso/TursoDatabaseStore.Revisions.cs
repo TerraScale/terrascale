@@ -2,6 +2,7 @@ using System.Buffers;
 using TerraBase.Engine.Revisions;
 using TerraBase.Tenancy;
 using Turso.Data.Sqlite;
+using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
@@ -36,6 +37,56 @@ internal sealed partial class TursoDatabaseStore
         {
             await RecordOperationDamageAsync(error).ConfigureAwait(false);
             LogAfterCommit("the revision index", error);
+        }
+    }
+
+    internal async Task TrimIdleAsync(CancellationToken cancellationToken)
+    {
+        if (Ledger is { } ledger)
+        {
+            await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (Closed || !Captures || Ledger?.Refusal(this) is not null || pool.Paused(this) || !_writer.Wait(0, cancellationToken))
+        {
+            return;
+        }
+
+        TookWriter("idle change history maintenance", null, 0);
+        var admitted = false;
+        try
+        {
+            io.Admit();
+            admitted = true;
+            _ = await io.WithAdmissionAsync(async () => await OnWriterAsync(writer =>
+            {
+                ObserveCdcSize(writer.Connection);
+                var before = RetainedCdcRows;
+                if (BackupAnchor is null && Volatile.Read(ref BackupTaps) == 0)
+                {
+                    _ = TursoStorageTransaction.Trim(writer.Connection, null, long.MaxValue, IsSystem);
+                }
+                ObserveCdcSize(writer.Connection);
+                if (RetainedCdcRows < before)
+                {
+                    logger?.ZLogInformation($"Idle change history retained {RetainedCdcRows:@RetainedRows} rows");
+                }
+                return true;
+            }, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        }
+        finally
+        {
+            try
+            {
+                ReleaseWriter();
+            }
+            finally
+            {
+                if (admitted)
+                {
+                    io.Release();
+                }
+            }
         }
     }
 

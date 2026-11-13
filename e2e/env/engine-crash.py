@@ -4,16 +4,25 @@ import json
 import os
 import pathlib
 import secrets
+import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 
 os.umask(0o077)
 root = pathlib.Path.cwd()
+build = (
+    pathlib.Path(os.environ["E2E_BUILD"]) / "terrabase"
+    if "E2E_BUILD" in os.environ else root / "src/TerraBase/bin/Release/net11.0"
+)
+baseline = pathlib.Path(sys.argv[1]).resolve()
 state = pathlib.Path(tempfile.mkdtemp(prefix="engine-crash-"))
+capacity = shutil.disk_usage(state)
+assert capacity.used + 24_000_000_000 < capacity.total * 0.8
 ports = []
 for _ in range(4):
     with socket.socket() as sock:
@@ -30,7 +39,7 @@ env = {
         for key, value in os.environ.items()
         if not key.startswith(("TERRABASE_", "TS_", "AWS_")) and key != "BUCKET_NAME"
     },
-    "DOTNET_ROOT": str(pathlib.Path.home() / ".local/share/mise/dotnet-root"),
+    "DOTNET_ROOT": os.environ["DOTNET_ROOT"],
     "DOTNET_PROCESSOR_COUNT": "4",
     "DOTNET_ENVIRONMENT": "Development",
     "TERRABASE_AUTH_ISSUER": "https://auth.invalid/",
@@ -48,6 +57,8 @@ env = {
 node = None
 generation = 0
 reader = None
+idle_observed = []
+idle_drained = threading.Event()
 
 
 def request(method, path, body=None, actor=True):
@@ -79,14 +90,19 @@ def request(method, path, body=None, actor=True):
     return json.loads(text) if text else None
 
 
-def start(point=None, failure=None):
+def start(point=None, failure=None, binary=None, directory=None):
     global node, generation, reader
     generation += 1
     current = dict(env)
+    if directory is not None:
+        current["TERRABASE_DATA_DIRECTORY"] = str(directory) + "/"
     if point:
         current.update(LD_PRELOAD=str(state / "crash.so"), ENGINE_CRASH_POINT=point)
     node = subprocess.Popen(
-        ["nice", "-n", "19", env["DOTNET_ROOT"] + "/dotnet", str(root / "src/TerraBase/bin/Release/net11.0/terrabase.dll")],
+        [
+            "nice", "-n", "19", env["DOTNET_ROOT"] + "/dotnet",
+            str(binary or build / "terrabase.dll"),
+        ],
         env=current,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -101,6 +117,11 @@ def start(point=None, failure=None):
             while line := process.stdout.readline():
                 output.write(line)
                 output.flush()
+                if b"Idle change history retained" in line:
+                    retained_rows = json.loads(line.decode().split(">", 1)[1])["RetainedRows"]
+                    idle_observed.append(retained_rows)
+                    if retained_rows < 32:
+                        idle_drained.set()
                 if b"engine crash hook ready" in line:
                     hook_ready.set()
                 if b"Application started" in line:
@@ -110,7 +131,7 @@ def start(point=None, failure=None):
 
     reader = threading.Thread(target=drain)
     reader.start()
-    if ready.wait(40):
+    if ready.wait(600):
         if failure is not None:
             node.wait(timeout=15)
             reader.join(timeout=5)
@@ -137,6 +158,15 @@ def end(hard=False):
             reader.join(timeout=5)
             node.stdout.close()
             node = None
+        if hard:
+            snapshot = state / "rollback"
+            shutil.copytree(state / "data", snapshot)
+            try:
+                start(binary=baseline, directory=snapshot)
+                print("origin/main startup on crash directory: ready", flush=True)
+                end()
+            finally:
+                shutil.rmtree(snapshot)
 
 
 def sql(project, database, statements):
@@ -185,11 +215,12 @@ def crash_request(point, method, path, body=None):
     print("kill -KILL node at " + point + ": exit -9", flush=True)
 
 
-def hook(operation, database_id):
+def hook(operation, database_id, count=None):
     with socket.socket(socket.AF_UNIX) as client:
-        client.settimeout(35)
+        client.settimeout(600)
         client.connect(env["ENGINE_CRASH_SOCKET"])
-        client.sendall(f"{operation} {organization} {project} {database_id}\n".encode())
+        message = f"{operation} {organization} {project} {database_id}" + (f" {count}" if count is not None else "")
+        client.sendall((message + "\n").encode())
         result = client.recv(65536).decode().strip()
         if not result:
             raise RuntimeError("hook interrupted by process exit")
@@ -200,7 +231,7 @@ references = {}
 for pack in ("Microsoft.NETCore.App.Ref", "Microsoft.AspNetCore.App.Ref"):
     for file in (pathlib.Path(env["DOTNET_ROOT"]) / "packs" / pack / "11.0.0/ref/net11.0").glob("*.dll"):
         references[file.name] = file
-for file in (root / "src/TerraBase/bin/Release/net11.0").glob("*.dll"):
+for file in build.glob("*.dll"):
     references.setdefault(file.name, file)
 response = state / "compile.rsp"
 response.write_text(
@@ -265,13 +296,20 @@ try:
     crash_request("rewrite-intent", "", "")
     start()
     assert sql(project, database, ["SELECT count(*) FROM durable;"])["results"][0]["rows"] == [[101]]
-    print("rewrite dual-intent before rename restart: copy healthy; 101 acknowledged rows remain", flush=True)
+    print("rewrite before rename restart: copy healthy; 101 acknowledged rows remain", flush=True)
     end()
 
     crash_request("rewrite", "", "")
     start()
-    assert sql(project, database, ["SELECT count(*) FROM durable;"])["results"][0]["rows"] == [[101]]
-    print("rewrite rename restart: copy healthy; 101 acknowledged rows remain", flush=True)
+    try:
+        sql(project, database, ["SELECT count(*) FROM durable;"])
+        raise AssertionError("a single-value intent cannot prove the replacement lineage")
+    except RuntimeError as error:
+        assert "fault" in str(error), str(error)
+    print(
+        "rewrite after rename: single-value writer retained; replacement lineage unavailable; "
+        "copy refuses pending later writer release", flush=True,
+    )
     end()
 
     crash_request("delete", "DELETE", f"/v1/projects/{project}/databases/{database}")
@@ -294,24 +332,62 @@ try:
     sql(project, request_database, ["CREATE TABLE healthy (id INTEGER PRIMARY KEY);", "INSERT INTO healthy VALUES (1);"])
     end()
 
-    databases = ["0" + "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(25)) for _ in range(50)]
+    start()
+    idle = "0" + "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(25))
+    hook("backlog", idle)
+    end()
+    start()
+    idle_observed.clear()
+    idle_drained.clear()
+    assert idle_drained.wait(150), idle_observed
+    metrics = subprocess.check_output(["curl", "-fsS", f"http://127.0.0.1:{ports[2]}/metrics"], text=True)
+    retained = [float(line.rsplit(" ", 1)[1]) for line in metrics.splitlines() if line.startswith("terrabase_cdc_retained_rows{")]
+    assert len(idle_observed) >= 2 and retained and retained[0] < 32, (idle_observed, retained)
+    print(
+        "idle history after restart, no tenant writes or opens: retained-row gauge " + str(idle_observed)
+        + " final " + str(retained), flush=True,
+    )
+    end()
+
+    databases = ["0" + "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(25)) for _ in range(24)]
+    start()
+    for index, identity in enumerate(databases):
+        hook("populate", identity, 200 if index < 20 else 1000)
+    end()
     for sample in range(3):
         start()
         for identity in databases:
-            hook("hold", identity)
+            hook("replay", identity)
+            hook("intent", identity)
         end(hard=True)
         sizes = [(state / "data" / organization / project / (identity + ".db")).stat().st_size for identity in databases]
+        wal_sizes = [(state / "data" / organization / project / (identity + ".db-wal")).stat().st_size for identity in databases]
+        assert min(wal_sizes) >= 16 * 1024 * 1024, wal_sizes
+        for file in (state / "data").rglob("*"):
+            if file.is_file() and (file.suffix == ".db" or file.name.endswith("-wal")):
+                with file.open("rb") as handle:
+                    os.posix_fadvise(handle.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
         began = time.perf_counter()
         start()
         elapsed = time.perf_counter() - began
         recovery_log = (state / ("node-" + str(generation) + ".log")).read_text()
         proofs = [json.loads(line.split(">", 1)[1]) for line in recovery_log.splitlines() if "Restart proofs" in line]
-        assert len(proofs) == 1 and proofs[0]["Count"] == 50, proofs
+        checks = [json.loads(line.split(">", 1)[1]) for line in recovery_log.splitlines() if "Database restart proof:" in line]
+        assert len(proofs) == 1 and proofs[0]["Count"] == 24, proofs
+        assert len(checks) == 24, checks
         for identity in databases:
             hook("check", identity)
+        gb = sum(item["Bytes"] for item in checks) / 1e9
+        wal_gb = sum(wal_sizes) / 1e9
+        replay = sum(item["ReplayMs"] for item in checks) / 1000
+        integrity = sum(item["IntegrityMs"] for item in checks) / 1000
         print(
-            f"recovery sample {sample + 1}: 50 open intents, main files {min(sizes)}..{max(sizes)} bytes; "
-            f"recovery phase {proofs[0]['TotalMs']:.3f}ms; process launch to ready {elapsed:.3f}s",
+            f"recovery sample {sample + 1}: 24 open intents, main files {min(sizes)}..{max(sizes)} bytes, {gb:.3f} GB; "
+            f"recovery phase {proofs[0]['TotalMs'] / 1000:.3f}s; process launch to ready {elapsed:.3f}s; "
+            f"replay {replay:.3f}s ({replay / wal_gb:.3f}s/WAL-GB over {wal_gb:.3f} GB WAL); "
+            f"integrity {integrity:.3f}s ({integrity / gb:.3f}s/GB); "
+            f"max replay {max(item['ReplayMs'] for item in checks) / 1000:.3f}s; "
+            f"ledger/key overhead {proofs[0]['TotalMs'] / 1000 - replay - integrity:.3f}s",
             flush=True,
         )
         print(
@@ -367,3 +443,4 @@ try:
     print("proof state: " + str(state), flush=True)
 finally:
     end()
+    shutil.rmtree(state)

@@ -163,34 +163,6 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         }
     }
 
-    internal async Task RewriteIntentAsync(TursoDatabaseStore store, Ulid incarnation, Ulid replacement, CancellationToken cancellationToken)
-    {
-        if (store.IsSystem)
-        {
-            return;
-        }
-
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            _ = await InSystemAsync(engine.IntentStore!, command =>
-            {
-                using var update = command("""
-                    UPDATE _tb_write_intent SET incarnation = $incarnation
-                    WHERE organization = $organization AND project = $project AND database = $database AND run <> $faulting;
-                    """);
-                Key.Of(store.Tenant!).Bind(update);
-                update.Parameters.AddWithValue("$incarnation", incarnation == replacement ? incarnation.ToString() : $"{incarnation}:{replacement}");
-                update.Parameters.AddWithValue("$faulting", Faulting);
-                return update.ExecuteNonQuery();
-            }, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
     internal async Task FlagAsync(TursoDatabaseStore store)
     {
         try
