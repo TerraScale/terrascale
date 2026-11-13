@@ -3,7 +3,7 @@ import type { Audit } from './audit';
 import { saveSecret, type Journey } from './state';
 import { stripeStandIn } from './stack';
 
-export type PaidJourney = Journey & { secondDatabaseId: string; secondDatabaseName: string };
+export type PaidJourney = Journey & { secondDatabaseId: string; secondDatabaseName: string; checkoutSessionId: string };
 
 type StripeCall = { method: string; path: string; query: string[]; expand?: string[]; status: number };
 export type StripeLog = {

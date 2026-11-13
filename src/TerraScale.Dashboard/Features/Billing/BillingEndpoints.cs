@@ -15,14 +15,14 @@ namespace TerraScale.Dashboard.Features.Billing
     {
         public static IServiceCollection AddBillingFeatures(this IServiceCollection services)
         {
-            return services.AddSingleton<StripeBilling>().AddSingleton<InternalBillingService>().AddHostedService<PlanReconciler>()
+            return services.AddSingleton<BillingSchemaGate>().AddSingleton<StripeBilling>().AddSingleton<InternalBillingService>().AddHostedService<PlanReconciler>()
                 .AddSingleton<StripeBindingRefresh>()
                 .AddHostedService(services => services.GetRequiredService<StripeBindingRefresh>())
                 .AddSingleton<UsageOverageReporter>().AddHostedService<UsageOverageWorker>();
         }
 
         public static async Task<BillingPage> LoadAsync(ShellModel shell, StripeBilling billing, SpendingService spending,
-            IQueryCollection query, DateTimeOffset now, InternalBillingService internalBilling, CancellationToken cancellationToken)
+            IQueryCollection query, DateTimeOffset now, InternalBillingService internalBilling, UsageOverageReporter reporter, CancellationToken cancellationToken)
         {
             // All provider work finishes before Razor starts the response. A
             // corrupt binding can then produce a complete service error page.
@@ -47,7 +47,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var invoicesRead = billing.InvoicesAsync(shell.Context, cancellationToken);
             var detailsRead = billing.DetailsAsync(shell.Context, cancellationToken);
             var overageRead = page.Binding is { Kind: "stripe", SubscriptionId.Length: > 0 } subscribed && PlanCatalog.For(shell.Context.Organization) is { PriceCents: > 0 }
-                ? billing.OperationUnitOverageAsync(subscribed, now, cancellationToken) : Task.FromResult(0L);
+                ? reporter.OperationUnitOverageAsync(subscribed, cancellationToken) : Task.FromResult(0L);
             BillingCard? paymentMethod = null;
             var paymentMethodUnavailable = false;
             try { paymentMethod = await paymentMethodRead; }

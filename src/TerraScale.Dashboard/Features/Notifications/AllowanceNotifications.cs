@@ -36,7 +36,7 @@ namespace TerraScale.Dashboard.Features.Notifications
     }
     public interface IAllowanceNotificationBackend
     {
-        Task<AllowanceUsagePage> ReadAsync(string? after, bool previous, CancellationToken cancellationToken);
+        Task<AllowanceUsagePage> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken);
         Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken);
     }
 
@@ -50,7 +50,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             string? after = null;
             do
             {
-                var page = await backend.ReadAsync(after, false, cancellationToken);
+                var page = await backend.ReadAsync(after, null, cancellationToken);
                 var month = ValidatedMonth(page, after, clock.GetUtcNow());
                 foreach (var item in page.Items)
                 {
@@ -65,7 +65,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             } while (after is not null);
         }
 
-        public static DateTimeOffset ValidatedMonth(AllowanceUsagePage page, string? after, DateTimeOffset now, bool previous = false)
+        public static DateTimeOffset ValidatedMonth(AllowanceUsagePage page, string? after, DateTimeOffset now, DateTimeOffset? expectedMonth = null)
         {
             if (page.Items.Count > 0 && page.OperationsContract != OperationsContract)
             {
@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             }
 
             var current = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
-            var month = previous ? current.AddMonths(-1) : current;
+            var month = expectedMonth ?? current;
             if (page.PeriodStart != month || page.ObservedAt < current || page.ObservedAt > now || now - page.ObservedAt > TimeSpan.FromMinutes(5) ||
                 page.Items.Count > 25 || page.Items.Any(item => !TerraScaleIds.IsValid(item.OrganizationId) || item.Operations < 0 || item.LogicalBytes < 0 || item.SqlReads < 0 || item.StorageByteHours < 0) ||
                 page.Items.Select(item => item.OrganizationId).Distinct(StringComparer.Ordinal).Count() != page.Items.Count ||

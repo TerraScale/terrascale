@@ -8,15 +8,30 @@ const objects = new Map();
 const checkouts = new Map();
 const replays = new Map();
 const failures = new Map();
+const deliveredEvents = new Map();
 const authFailures = new Set();
 const refundStatuses = new Map();
+const subscriptionTaxUpdates = new Map();
 const log = { calls: [], events: [], cancels: [], refunds: [], unexpected: [] };
+const holds = new Map();
+let billingClock = null;
 
 const now = () => Math.floor(Date.now() / 1000);
 const hour = 3600;
 const within = (earliest, latest) => (value) => value === null || (/^\d+$/.test(value) && Number(value) >= now() + earliest && Number(value) <= now() + latest);
 const id = (prefix) => `${prefix}_${randomBytes(12).toString('hex')}`;
 const list = (data) => ({ data, has_more: false });
+const pageSize = 2;
+const paged = (data, query, at) => {
+  const ordered = [...data].sort((left, right) => at(right) - at(left) || (left.id < right.id ? 1 : -1));
+  const after = query.get('starting_after');
+  const start = after ? ordered.findIndex((item) => item.id === after) + 1 : 0;
+  const size = Math.min(Number(query.get('limit') ?? 10), pageSize);
+  return { object: 'list', data: ordered.slice(start, start + size), has_more: start + size < ordered.length };
+};
+const inRange = (query, value) => (!query.has('created[gte]') || value >= Number(query.get('created[gte]'))) && (!query.has('created[lte]') || value <= Number(query.get('created[lte]')));
+const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
+const record = (type, created, object) => store({ id: id('evt'), object: 'event', type, created, data: { object: structuredClone(object) } });
 const store = (object) => (objects.set(object.id, object), object);
 const find = (prefix, key) => (key?.startsWith(`${prefix}_`) ? objects.get(key) : undefined);
 const owned = (prefix, customer) => [...objects.values()].filter((object) => object.id.startsWith(`${prefix}_`) && object.customer === customer);
@@ -48,6 +63,11 @@ function render(object, query) {
 }
 
 const api = [
+  ['GET', /^\/v1\/prices\/(price_\w+)$/, (query, [price]) => find('price', price), {}, {}, ['expand']],
+  ['GET', /^\/v1\/events$/, (query) => {
+    const types = [...query.entries()].filter(([key]) => key.startsWith('types[')).map(([, value]) => value);
+    return paged([...objects.values()].filter((object) => object.object === 'event' && types.includes(object.type) && inRange(query, object.created)), query, (event) => event.created);
+  }, {}, {}, ['types', 'created', 'limit', 'starting_after']],
   ['GET', /^\/v1\/prices$/, () => list([...objects.values()].filter((object) => object.id.startsWith('price_'))), {}, {}, ['active', 'currency', 'type', 'limit', 'expand', 'product']],
   ['POST', /^\/v1\/customers$/, (form) => store({ id: id('cus'), metadata: fields(form, 'metadata'), name: form.get('name'), email: form.get('email') }), {}, {}, ['name', 'email', 'metadata']],
   ['GET', /^\/v1\/customers\/search$/, (query) => {
@@ -66,17 +86,23 @@ const api = [
     if (form.get('mode') !== 'subscription' || !price || form.get('line_items[0][quantity]') !== '1' || !find('cus', form.get('customer'))) return undefined;
     const session = store({
       object: 'checkout.session', id: id('cs_test'), client_reference_id: form.get('client_reference_id'), customer: form.get('customer'),
-      metadata: fields(form, 'metadata'), mode: 'subscription', status: 'open', url: null,
+      metadata: fields(form, 'metadata'), mode: 'subscription', status: 'open', url: null, automatic_tax: { enabled: form.get('automatic_tax[enabled]') === 'true' },
     });
+    session.billing_address_collection = form.get('billing_address_collection');
+    session.customer_update = fields(form, 'customer_update');
     session.url = `https://checkout.stripe.com/c/pay/${session.id}`;
     checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url'), cancel: form.get('cancel_url') });
     return session;
   }, {}, {
     expires_at: within(hour / 2, 24 * hour),
+    billing_address_collection: (value) => value === 'required',
+    'customer_update[address]': (value) => value === 'auto',
+    'customer_update[name]': (value) => value === 'auto',
+    'automatic_tax[enabled]': (value) => value === 'true',
     'allowed_payment_method_types[0]': (value) => value === 'card',
     'allowed_payment_method_types[1]': (value) => value === 'link',
     'allowed_payment_method_types[2]': (value) => value === null,
-  }, ['mode', 'customer', 'client_reference_id', 'success_url', 'cancel_url', 'expires_at', 'billing_address_collection', 'payment_method_collection', 'allowed_payment_method_types', 'line_items', 'metadata', 'tax_id_collection', 'customer_update', 'subscription_data']],
+  }, ['mode', 'customer', 'client_reference_id', 'success_url', 'cancel_url', 'expires_at', 'billing_address_collection', 'payment_method_collection', 'allowed_payment_method_types', 'line_items', 'metadata', 'tax_id_collection', 'customer_update', 'subscription_data', 'automatic_tax']],
   ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }, {}, ['customer', 'limit', 'starting_after']],
   ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session), {}, {}, ['expand']],
   ['POST', /^\/v1\/checkout\/sessions\/(cs_test_\w+)\/expire$/, (form, [session]) => {
@@ -87,8 +113,12 @@ const api = [
   ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription), {}, {}, ['expand']],
   ['POST', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [subscription]) => {
     const found = find('sub', subscription);
+    if (found && form.has('automatic_tax[enabled]')) {
+      found.automatic_tax = { enabled: true };
+      subscriptionTaxUpdates.set(subscription, (subscriptionTaxUpdates.get(subscription) ?? 0) + 1);
+    }
     return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
-  }, {}, {}, ['metadata']],
+  }, {}, { 'automatic_tax[enabled]': (value) => value === null || value === 'true' }, ['metadata', 'automatic_tax', 'pending_invoice_item_interval']],
   ['DELETE', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [key]) => {
     const subscription = find('sub', key);
     if (subscription?.status === 'canceled') return { refused: 'A canceled subscription can only update its metadata and cancellation_details.' };
@@ -106,12 +136,12 @@ const api = [
     log.refunds.push({ payment: payment.id, subscription: payment.subscription, amount: refund.amount });
     return refund;
   }, { payment_intent: /^pi_\w+$/ }, {}, ['payment_intent', 'charge', 'amount', 'reason']],
-  ['GET', /^\/v1\/invoiceitems$/, () => list([]), { customer: customerId }, {}, ['customer', 'created', 'limit']],
+  ['POST', /^\/v1\/invoiceitems$/, (form) => find('sub', form.get('subscription'))?.status === 'canceled' ? { refused: 'Invoice items cannot be added to a canceled subscription.' } : store({ id: id('ii'), object: 'invoiceitem', date: billingClock ?? now(), customer: form.get('customer'), currency: form.get('currency'), quantity: 1, amount: Number(form.get('amount')), description: form.get('description'), metadata: fields(form, 'metadata'), parent: { type: 'subscription_details', subscription_details: { subscription: form.get('subscription') } } }), { customer: customerId }, {}, ['customer', 'subscription', 'currency', 'amount', 'description', 'metadata']],
+  ['GET', /^\/v1\/invoiceitems$/, (query) => paged(owned('ii', query.get('customer')).filter((item) => inRange(query, item.date)), query, (item) => item.date), { customer: customerId }, {}, ['customer', 'created', 'limit', 'starting_after']],
 ];
 
-function complete(session) {
+function complete(session, start = now()) {
   const { price, metadata } = checkouts.get(session.id);
-  const start = now();
   const renewal = new Date(start * 1000);
   renewal.setUTCMonth(renewal.getUTCMonth() + (price.recurring.interval === 'year' ? 12 : 1));
   const end = Math.floor(renewal.getTime() / 1000);
@@ -126,18 +156,21 @@ function complete(session) {
     lines: list([{ period: { end, start } }]), number: `${randomBytes(4).toString('hex').toUpperCase()}-0001`, period_end: start, period_start: start, status: 'paid',
   });
   const subscription = store({
-    id: subscriptionId, customer: session.customer, default_payment_method: method.id, metadata, status: 'active',
+    object: 'subscription', id: subscriptionId, customer: session.customer, start_date: start, ended_at: null, canceled_at: null, default_payment_method: method.id, latest_invoice: invoice, metadata, status: 'active', automatic_tax: structuredClone(session.automatic_tax),
     items: list([{ current_period_end: end, current_period_start: start, price: structuredClone(price), quantity: 1 }]),
   });
+  record('customer.subscription.created', start, subscription);
+  objects.get(session.customer).tax = { automatic_tax: 'supported' };
   objects.get(session.customer).address = { city: 'Sao Paulo', country: 'BR', line1: 'Avenida Paulista 1000', line2: null, postal_code: '01310-100', state: 'SP' };
   return Object.assign(session, { status: 'complete', payment_status: 'paid', subscription: subscription.id, url: null });
 }
 
-async function deliver(type, object) {
-  const payload = JSON.stringify({ id: id('evt'), api_version: apiVersion, data: { object }, livemode: false, type });
+async function deliver(type, object, created = now()) {
+  const payload = JSON.stringify({ id: id('evt'), api_version: apiVersion, data: { object }, livemode: false, type, created });
   const timestamp = now();
   const signature = createHmac('sha256', secret('whsec_')).update(`${timestamp}.${payload}`).digest('hex');
   const answer = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': `t=${timestamp},v1=${signature}` }, body: payload });
+  deliveredEvents.set(object.id, payload);
   log.events.push({ type, object: object.id, status: answer.status });
 }
 
@@ -173,8 +206,102 @@ async function handle(request, response, body) {
     }
     return reply(response, result.status, answer);
   }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-clock') {
+    billingClock = Math.floor(new Date(JSON.parse(body).now).getTime() / 1000);
+    return reply(response, 200, { now: new Date(JSON.parse(body).now).toISOString() });
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-subscription') {
+    const { organization, price: selected = "price_starter_month", start, customer: existing } = JSON.parse(body);
+    const price = selected === "unmapped" ? store({ ...find("price", "price_starter_month"), id: id("price"), unit_amount: 1234 }) : find("price", selected);
+    const customer = existing ? find('cus', existing) : store({ id: id('cus'), metadata: { organization_id: organization } });
+    const session = store({ id: id('cs_test'), customer: customer.id, automatic_tax: { enabled: true } });
+    checkouts.set(session.id, { price, metadata: { organization_id: organization, terrascale_tax: 'automatic' } });
+    complete(session, Math.floor(new Date(start).getTime() / 1000));
+    const subscription = find('sub', session.subscription);
+    return reply(response, 200, { customer: customer.id, subscription: subscription.id });
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-plan-change') {
+    const { subscription: key, price, at } = JSON.parse(body);
+    const subscription = find('sub', key);
+    if (!subscription || !find('price', price)) return reply(response, 404, {});
+    subscription.items.data[0].price = structuredClone(find('price', price));
+    record('customer.subscription.updated', Math.floor(new Date(at).getTime() / 1000), subscription);
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-cancel') {
+    const { subscription: key, at } = JSON.parse(body);
+    const subscription = find('sub', key);
+    if (!subscription) return reply(response, 404, {});
+    const ended = Math.floor(new Date(at).getTime() / 1000);
+    Object.assign(subscription, { status: 'canceled', ended_at: ended, canceled_at: ended });
+    record('customer.subscription.deleted', ended, subscription);
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-item') {
+    const { customer, subscription, amount, quantity = 1, unitAmountDecimal = null, metadata } = JSON.parse(body);
+    const item = store({ id: id('ii'), object: 'invoiceitem', date: billingClock ?? now(), customer, currency: 'usd', quantity, unit_amount_decimal: unitAmountDecimal, amount, description: 'Journey provider item', metadata, parent: { type: 'subscription_details', subscription_details: { subscription } } });
+    return reply(response, 200, { id: item.id });
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-hold') {
+    const { method, path, customer } = JSON.parse(body);
+    holds.set(`${method} ${path}`, { customer, arrived: deferred(), released: deferred(), taken: false });
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-held') {
+    const { method, path } = JSON.parse(body);
+    await holds.get(`${method} ${path}`)?.arrived.promise;
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-release') {
+    const { method, path } = JSON.parse(body);
+    holds.get(`${method} ${path}`)?.released.resolve();
+    holds.delete(`${method} ${path}`);
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/billing-items') {
+    const items = owned('ii', url.searchParams.get('customer')).filter((item) => item.metadata.terrascale_month === url.searchParams.get('month'));
+    return reply(response, 200, { count: items.length, amount: items.reduce((sum, item) => sum + item.amount, 0) });
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-forget-idempotency') {
+    replays.clear();
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/replay-event') {
+    const payload = deliveredEvents.get(JSON.parse(body).object);
+    if (!payload) return reply(response, 404, {});
+    const timestamp = now();
+    const signature = createHmac('sha256', secret('whsec_')).update(`${timestamp}.${payload}`).digest('hex');
+    const answer = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': `t=${timestamp},v1=${signature}` }, body: payload });
+    return reply(response, 200, { status: answer.status });
+  }
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/auth-failure') {
     authFailures.add(JSON.parse(body).checkout);
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/subscription-tax-state') {
+    return reply(response, 200, { updates: subscriptionTaxUpdates.get(url.searchParams.get('subscription')) ?? 0, enabled: find('sub', url.searchParams.get('subscription'))?.automatic_tax?.enabled ?? false });
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/subscription-tax') {
+    const { subscription: key, location = 'supported', policy } = JSON.parse(body);
+    const subscription = find('sub', key);
+    if (!subscription) return reply(response, 404, {});
+    objects.get(subscription.customer).tax = { automatic_tax: location };
+    if (policy === 'existing') delete subscription.metadata.terrascale_tax;
+    if (policy === 'new') subscription.metadata.terrascale_tax = 'automatic';
+    subscription.automatic_tax = { enabled: false };
+    await deliver('customer.subscription.updated', structuredClone(subscription));
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/payment') {
+    const { subscription: key, paid, status, invoiceStatus, created = now(), deliver: notify = true, eventType } = JSON.parse(body);
+    const subscription = find('sub', key);
+    if (!subscription) return reply(response, 404, {});
+    const invoice = owned('in', subscription.customer).find((item) => item.parent.subscription_details.subscription === key);
+    subscription.status = status ?? (paid ? 'active' : 'past_due');
+    invoice.status = invoiceStatus ?? (paid ? 'paid' : 'open');
+    invoice.object = 'invoice';
+    invoice.amount_remaining = paid ? 0 : invoice.amount_due;
+    if (notify) await deliver(eventType ?? (invoiceStatus === 'void' ? 'invoice.voided' : invoiceStatus === 'uncollectible' ? 'invoice.marked_uncollectible' : paid ? 'invoice.paid' : 'invoice.payment_failed'), structuredClone(invoice), created);
     return reply(response, 200, {});
   }
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/log') return reply(response, 200, log);
@@ -207,9 +334,10 @@ async function handle(request, response, body) {
   const unfiltered = Object.entries(route?.[3] ?? {}).find(([key, value]) => !value.test(parameters.get(key) ?? ''))?.[0];
   if (unfiltered) return unexpected(response, request, url, `filter ${unfiltered}`);
   const failure = failures.get(request.method + ' ' + url.pathname);
-  if (failure?.remaining > 0) {
-    failure.remaining -= 1;
+  if (failure && (failure.remaining === null || failure.remaining > 0)) {
+    if (failure.remaining !== null) failure.remaining -= 1;
     log.calls.push({ method: request.method, path: url.pathname, status: failure.status });
+    if (failure.transport) { response.destroy(); return; }
     return reply(response, failure.status, { error: { type: 'invalid_request_error', code: failure.status === 404 ? 'resource_missing' : undefined, message: 'Journey Stripe failure.' } });
   }
   const replay = request.method === 'POST' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';
@@ -225,6 +353,12 @@ async function handle(request, response, body) {
   const invalid = Object.entries(route?.[4] ?? {}).find(([key, valid]) => !valid(parameters.get(key)))?.[0];
   if (invalid) return unexpected(response, request, url, `parameter ${invalid}`, 400, { type: 'invalid_request_error', param: invalid, message: `Invalid ${invalid}.` });
   const found = route?.[2](parameters, route[1].exec(url.pathname).slice(1));
+  const hold = holds.get(`${request.method} ${url.pathname}`);
+  if (found && hold && !hold.taken && parameters.get('customer') === hold.customer) {
+    hold.taken = true;
+    hold.arrived.resolve();
+    await hold.released.promise;
+  }
   if (!found) return unexpected(response, request, url, route ? 'no such object' : 'route');
   if (found.refused) return reply(response, 400, { error: { type: 'invalid_request_error', message: found.refused } });
   const answer = render(found, parameters);

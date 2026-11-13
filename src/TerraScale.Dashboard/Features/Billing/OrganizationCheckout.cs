@@ -99,7 +99,7 @@ public sealed partial class StripeBilling
         options.ClientReferenceId = draftId;
         options.Metadata = metadata;
         options.LineItems = [new() { Price = price.Id, Quantity = 1 }];
-        options.SubscriptionData = new() { Metadata = metadata };
+        options.SubscriptionData = new() { Metadata = new(metadata) { ["terrascale_tax"] = "automatic" } };
         options.SuccessUrl = Origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}";
         options.CancelUrl = Origin + "/organization?newOrganization=payment&payment=canceled&draft_id=" + Uri.EscapeDataString(draftId);
         options.ExpiresAt = DateTime.SpecifyKind(createdAt, DateTimeKind.Utc) + CheckoutLifetime;
