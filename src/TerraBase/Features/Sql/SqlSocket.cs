@@ -191,7 +191,7 @@ internal sealed class SqlSocket(
     private async ValueTask<bool> ValidateAsync(SessionPreauthentication preauthentication, CancellationToken cancellationToken)
     {
         var validating = preauthentication.Token;
-        var frame = await ReceiveAsync(FirstBufferBytes, validating).ConfigureAwait(false);
+        var frame = await ReceiveAsync(FirstBufferBytes, cancellationToken).ConfigureAwait(false);
         if (frame is null || _closing)
         {
             if (frame is { } late)
