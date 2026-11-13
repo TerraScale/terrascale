@@ -11,8 +11,11 @@ A database-restricted API key or token must carry the database ULID, never its n
 
 Invalid names return 400 `invalid_request`, observed duplicates 409 `name_taken`,
 platform databases 409 `platform_database_protected`, unknown databases 404
-`unknown_database`, and other regions 421 `wrong_region` with
-`X-TerraBase-Database-Home`. The SDK surfaces typed exceptions. Only documented
+`unknown_database`. In the source-only, unreleased server proxy contract, a request reaching a region without
+a copy is served through one proxy hop by a region that holds the database. A region pin has no effect on the
+serving region of these calls: the proxy removes it. An unreachable destination or stale forwarded placement
+returns `503 unavailable`. See [release scope and proxy behavior](../../region-proxy.md).
+The SDK surfaces typed exceptions. Only documented
 pre-execution 503 refusals may be resent; reconcile uncertain outcomes with a GET
 by immutable ID before retrying.
 

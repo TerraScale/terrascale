@@ -93,6 +93,8 @@ bash env/local.sh exec npx playwright test --project placement
 bash env/local.sh stop
 ```
 
+The R3 proxy scenario also needs `iptables` on PATH; its packet-drop rule lives only in the throwaway network namespace and is removed in cleanup. The placement project runs one worker because its shared Free-plan account can hold only one database.
+
 The namespace remembers the mode chosen by `start`; later `exec` and `stop` need no switch. Without it, the
 Development cell, service startup and default test list stay the same. The placement project is selected explicitly;
 selecting it in one-region mode reports its tests skipped with the reason that `E2E_REGIONS=2` is required.
@@ -136,7 +138,7 @@ both versions, and each answers 409 `platform_project_protected`.
 
 `placement/regions.spec.ts` R16 removes gru from a database's regions, verifies requests through gru are proxied, and reads gru's data directory
 (`$E2E_STATE/terrabase`, through `stateDir`) to see that no file named after the database is left there, then that
-the files are back once gru is added again. R17 removes a follower, verifies its routing record learns a rename, and adds it again with current data. R18 deletes a database at its home while its follower is removed, then checks the removed follower forgets it. R19 starts a real, unprimed node in the home region with NATS disconnected and verifies direct placement requests return 503 not_writer for both live and absent ids, while the writer returns 200 and 404 respectively.
+the files are back once gru is added again. R3 also opens SQL sockets with header credentials, checks 1012 and PostgreSQL FATAL 57P01 on a writer move, refuses forwarded REST and socket upgrades with 503 instead of a second hop, and drops destination SYN packets to prove the five-second REST connect bound. R17 removes a follower, verifies its routing record learns a rename, and adds it again with current data. R18 deletes a database at its home while its follower is removed, then checks the removed follower forgets it. R19 starts a real, unprimed node in the home region with NATS disconnected and verifies direct placement requests return 503 not_writer for both live and absent ids, while the writer returns 200 and 404 respectively.
 
 Other existing projects can run in two-region mode by starting this same stack first and selecting their project
 normally. The placement pair shares one machine and third-party stand-ins, has no network delay and uses

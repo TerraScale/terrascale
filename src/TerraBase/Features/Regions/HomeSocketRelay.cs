@@ -19,6 +19,12 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(home);
+        if (Listeners.IsForwarded(context))
+        {
+            await HomeForwarding.UnavailableAsync(context, home.Region).ConfigureAwait(false);
+            return;
+        }
+
         context.ReleaseRequestLease();
         using var upstream = new ClientWebSocket
         {
@@ -102,6 +108,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         HttpStatusCode.Forbidden => "forbidden_scope",
         HttpStatusCode.NotFound => "unknown_database",
         HttpStatusCode.TooManyRequests => "busy",
+        HttpStatusCode.ServiceUnavailable => "unavailable",
         >= HttpStatusCode.InternalServerError => "internal_error",
         _ => "invalid_request",
     };

@@ -6,6 +6,7 @@ using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Configuration;
 using TerraBase.Errors;
+using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Usage;
@@ -91,6 +92,8 @@ internal sealed class SqlSocket(
             ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time)
             : new CancellationTokenSource();
         await using var expired = expiry.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the token expired")).ConfigureAwait(false);
+        using var moved = context.RequestServices.GetRequiredService<DatabaseFences>()
+            .WatchMoved(Database.DatabaseId!, () => _ = CloseAfterFrameAsync());
         _session = sql.Open(Database, _canWrite);
         _session.Prefer(WritePreference.Parse(context.Request.Headers[WritePreference.Header]) ?? WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))
@@ -210,7 +213,7 @@ internal sealed class SqlSocket(
         {
             case ManagedDatabase record when !record.PlacedIn(region) && !record.AllRegions && !record.Replicas.Contains(region):
                 return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable,
-                    "the database placement changed while opening the session; reconnect"),
+                    $"the database region {record.Home(region)} could not be reached"),
                     cancellationToken).ConfigureAwait(false);
             case Unavailable unavailable:
                 return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);
@@ -498,6 +501,12 @@ internal sealed class SqlSocket(
     private async ValueTask<bool> FinishAsync(
         long? id, SqlBatchOutcome outcome, long received, long started, RequestLogOperations operations, CancellationToken cancellationToken)
     {
+        if (outcome is SqlBatchFailure { Error.Code: SqlErrors.WrongRegion })
+        {
+            await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
+            return false;
+        }
+
         var (sent, status) = outcome switch
         {
             SqlExecuteBody body => (await SendAsync(new SqlSocketResult(id, "result", body.Results, !Session.IsAutocommit),

@@ -29,7 +29,6 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
         Tags("Databases");
         Produces<TerraBaseDatabaseRegions>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
@@ -56,7 +55,8 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
             : record.Replicas;
         if (home != options.Region)
         {
-            return DatabaseRegions.HomeRegion(home, replicas.Prepend(home));
+            await DatabaseRegions.ProxyAsync(HttpContext, home).ConfigureAwait(false);
+            return TypedResults.Empty;
         }
 
         var tenant = new TenantContext(ManagementRoute.OrganizationId(HttpContext), PlanTier.Hobby, record.ProjectId, record.Id);

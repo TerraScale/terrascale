@@ -27,8 +27,11 @@ The destination enforces the credential's project, database and scopes.
 
 The response carries the destination's `X-TerraBase-Region`. An unavailable destination answers `503 unavailable`;
 a write sent without an answer retains `503 write_outcome_unknown`. These paths do not return `wrong_region`.
-A placement change while opening a socket requires a reconnect; an active SQL transaction interrupted by a writer
-change returns `serialization_conflict`.
+The REST client allows five seconds to establish a connection. A forwarded request that would need another hop
+returns `503 unavailable` with `Retry-After: 1`, including a socket upgrade. An unknown writer gives the same refusal.
+A region pin selects the entry region; the proxy strips it and it cannot constrain the serving region.
+A writer move closes existing SQL WebSockets with 1012 and PostgreSQL sessions with FATAL 57P01 so clients reconnect.
+A fenced session never returns a retryable SQL conflict.
 
 The catalog and replication still record the writer separately from the other members. Operations restricted to
 the writer can still return placement guidance when called at a region that holds a copy.

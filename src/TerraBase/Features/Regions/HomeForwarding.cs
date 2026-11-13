@@ -73,6 +73,7 @@ internal static class HomeForwarding
     internal static Task UnansweredAsync(HttpContext context, string region, Exception error)
     {
         if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)
+            || error is OperationCanceledException { InnerException: TimeoutException }
             || error is HttpRequestException { HttpRequestError: HttpRequestError.NameResolutionError or HttpRequestError.ConnectionError or HttpRequestError.SecureConnectionError })
         {
             return UnavailableAsync(context, region);
@@ -172,6 +173,12 @@ internal static class HomeForwarding
     internal static async Task ForwardAsync(HttpContext context, HomeNode home, byte[]? body = null, string? pushThrough = null,
         Action<HttpResponseMessage>? answered = null, string? publishId = null)
     {
+        if (Listeners.IsForwarded(context))
+        {
+            await UnavailableAsync(context, home.Region).ConfigureAwait(false);
+            return;
+        }
+
         var services = context.RequestServices;
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
             new Uri(home.Address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()))

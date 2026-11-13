@@ -34,6 +34,7 @@ public static class RegionsExtensions
             .ConfigurePrimaryHttpMessageHandler((handler, _) =>
             {
                 var sockets = (SocketsHttpHandler)handler;
+                sockets.ConnectTimeout = TimeSpan.FromSeconds(5);
                 sockets.AllowAutoRedirect = false;
                 sockets.UseCookies = false;
                 sockets.PooledConnectionLifetime = Timeout.InfiniteTimeSpan;

@@ -3,11 +3,13 @@ namespace TerraScale.DotNet.TerraBase;
 /// <summary>
 /// TerraBase's regional contract (monorepo docs/terrabase/region-identity.md): the public origin
 /// <c>https://api.terrascale.tech</c> routes a request pinned with <c>X-TerraScale-Region-Pin</c> to that region, every
-/// region names itself in <c>X-TerraBase-Region</c>, and a region answers <c>421</c> to a request pinned to another region.
+/// region names itself in <c>X-TerraBase-Region</c>, and a region answers <c>421</c> to a request pinned to another entry region.
+/// In the unreleased server proxy contract, the pin has no effect on the serving region of database calls
+/// proxied from a region without a copy: the proxy removes it.
 /// </summary>
 public static class TerraBaseRegion
 {
-    /// <summary>The request header that pins a request to one region.</summary>
+    /// <summary>The request header that selects the entry region.</summary>
     public const string PinHeader = "X-TerraScale-Region-Pin";
 
     /// <summary>The public origin that routes pinned requests to every serving region.</summary>

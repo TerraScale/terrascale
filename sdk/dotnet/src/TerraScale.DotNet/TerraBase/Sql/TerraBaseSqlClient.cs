@@ -17,8 +17,10 @@ public sealed record TerraBaseSqlClientOptions
     public ITerraBaseEndpointResolver? EndpointResolver { get; init; }
 
     /// <summary>
-    /// A region id such as <c>gru</c>: every request is pinned to that region and, unless BaseAddress or
-    /// EndpointResolver is set, sent to <c>https://api.terrascale.tech</c>.
+    /// A region id such as <c>gru</c> selects the entry region. Unless BaseAddress or EndpointResolver is set,
+    /// requests use <c>https://api.terrascale.tech</c>. In the unreleased server proxy contract, calls reaching a
+    /// region without a copy are served through one proxy hop by a region that holds the database. This option
+    /// has no effect on the serving region of those calls: the proxy removes the pin.
     /// </summary>
     public string? Region { get; init; }
 

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:http2';
@@ -37,11 +37,7 @@ async function create(cells: Cells, regions: string[], projectId?: string): Prom
 }
 
 async function progress(cells: Cells, id: string, region = home, projectId?: string): Promise<Progress> {
-  let response = await cells.get(`${region}${database(id, projectId)}/regions`);
-  if (response.status() === 421) {
-    await answer(response, 421, 'wrong_region');
-    response = await cells.get(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id, projectId)}/regions`);
-  }
+  const response = await cells.get(`${region}${database(id, projectId)}/regions`);
   await answer(response, 200, '200 database regions');
   return response.json();
 }
@@ -113,17 +109,12 @@ test('R2 add a region and read a row committed before the addition', async ({ ce
 
 test('R3 replace the writer and proxy REST and WebSocket through a removed region', async ({ cells, request, page }) => {
   const created = await create(cells, ['gru', 'fra']);
+  let pg: ReturnType<typeof spawn> | undefined;
+  let pgExited: Promise<unknown[]> | undefined;
   try {
     await seed(cells, created.id);
     await observed(cells, created.id);
-    await move(cells, created.id, 'R3', 60_000);
-    await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (4)');
-    await expect.poll(async () => {
-      const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] } });
-      await answer(response, 200, '200 proxied through a non-member listener');
-      return { region: response.headers()['x-terrabase-region'], rows: (await response.json()).results[0].rows };
-    }, { message: 'the non-member listener proxies to fra', timeout: 45_000, intervals: [250, 500, 1000] })
-      .toEqual({ region: 'fra', rows: [[1], [2], [3], [4]] });
+    expect((await progress(cells, created.id, replica)).regions.map(row => row.region)).toEqual(['fra', 'gru']);
     const current = journey();
     const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
       form: {
@@ -131,10 +122,77 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
         client_id: current.apiKey.slice(0, 26),
         client_secret: current.apiKey,
         project: current.projectId,
-        scope: 'sql:read sql:write',
+        scope: 'sql:read sql:write databases:read',
       },
     }));
     saveSecret('placement-socket-token', grant.access_token);
+    await page.setExtraHTTPHeaders({ Authorization: `Bearer ${grant.access_token}`, 'X-TerraScale-Region-Pin': 'gru' });
+    await page.evaluate(url => new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket(url, 'terrascale.sql.v1');
+      const state = window as Window & { writerClosed?: Promise<number> };
+      state.writerClosed = new Promise<number>(closed => { socket.onclose = event => closed(event.code); });
+      socket.onerror = () => reject(new Error('header-authenticated session failed'));
+      socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] }));
+      socket.onmessage = message => {
+        const answer = JSON.parse(String(message.data));
+        if (answer.type === 'error') reject(new Error(JSON.stringify(answer.error)));
+        else resolve();
+      };
+    }), `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`);
+    pg = spawn('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=verbose',
+      `postgresql://any@pg.terrascale.tech:5432/${current.projectId}/${created.id}?sslmode=verify-full&sslrootcert=${encodeURIComponent(join(stateDir, 'pki', 'ca.pem'))}`], {
+      env: { PATH: process.env.PATH, HOME: mkdtempSync(join(stateDir, 'postgres-home-')), SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    pgExited = new Promise<unknown[]>(resolve => pg!.once('close', (...args) => resolve(args)));
+    let pgOutput = '';
+    pg.stdout!.setEncoding('utf8');
+    pg.stderr!.setEncoding('utf8');
+    pg.stderr!.on('data', chunk => { pgOutput += chunk; });
+    const opened = new Promise<void>((resolve, reject) => {
+      pg!.stdout!.on('data', chunk => {
+        pgOutput += chunk;
+        if (pgOutput.includes('writer_session_open')) resolve();
+      });
+      pg!.on('error', reject);
+      pg!.on('exit', () => reject(new Error('Postgres session exited before the writer move: ' + pgOutput)));
+    });
+    pg.stdin!.write("SELECT 'writer_session_open';\n");
+    await opened;
+    const duringMove = await Promise.all([
+      move(cells, created.id, 'R3', 60_000),
+      cells.get(`${replica}${database(created.id)}/regions`),
+    ]);
+    expect([200, 503]).toContain(duringMove[1].status());
+    if (duringMove[1].status() === 503) await answer(duringMove[1], 503, 'unavailable');
+    expect(await page.evaluate(() => (window as Window & { writerClosed?: Promise<number> }).writerClosed)).toBe(1012);
+    pg.stdin!.end('SELECT value FROM placement_rows ORDER BY value;\n');
+    await pgExited;
+    expect(pgOutput).toContain('FATAL');
+    expect(pgOutput).toContain('57P01');
+    console.log('R3 old Postgres session: FATAL 57P01 administrative shutdown');
+    console.log(`R3 writer move: concurrent regions read ${duringMove[1].status()}; old header-authenticated socket closed 1012`);
+    await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (4)');
+    await expect.poll(async () => {
+      const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] } });
+      await answer(response, 200, '200 proxied through a non-member listener');
+      return { region: response.headers()['x-terrabase-region'], rows: (await response.json()).results[0].rows };
+    }, { message: 'the non-member listener proxies to fra', timeout: 45_000, intervals: [250, 500, 1000] })
+      .toEqual({ region: 'fra', rows: [[1], [2], [3], [4]] });
+    const headerResult = await page.evaluate(url => new Promise<number[][]>((resolve, reject) => {
+      const socket = new WebSocket(url, 'terrascale.sql.v1');
+      socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] }));
+      socket.onerror = () => reject(new Error('header-authenticated proxy failed'));
+      socket.onmessage = message => {
+        const answer = JSON.parse(String(message.data));
+        socket.close();
+        if (answer.type === 'error') reject(new Error(JSON.stringify(answer.error)));
+        else resolve(answer.results[0].rows);
+      };
+      socket.onclose = () => reject(new Error('header-authenticated proxy closed before answering'));
+    }), `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`);
+    expect(headerResult).toEqual([[1], [2], [3], [4]]);
+    await page.setExtraHTTPHeaders({});
     const result = await page.evaluate(({ url, token }) => new Promise<{ rows: number[][] }>((resolve, reject) => {
       const socket = new WebSocket(url, 'terrascale.sql.v1');
       socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'auth', token }));
@@ -154,8 +212,87 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
       socket.onclose = () => reject(new Error('proxied WebSocket closed before answering'));
     }), { url: `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`, token: grant.access_token });
     expect(result.rows).toEqual([[1], [2], [3], [4]]);
-    console.log('R3 nonmember REST: 200 from fra, rows [[1],[2],[3],[4]]; WebSocket auth-frame query: same rows');
+    console.log('R3 nonmember REST: 200 from fra, rows [[1],[2],[3],[4]]; WebSocket header-credential and auth-frame queries: same rows');
+    const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
+    for (const socket of [false, true]) {
+      const session = connect('http://127.0.0.1:8081');
+      try {
+        await once(session, 'remoteSettings');
+        const stream = session.request({
+          ':method': socket ? 'CONNECT' : 'GET',
+          ':path': `${database(created.id)}/${socket ? 'sql/ws' : 'regions'}`,
+          ':scheme': 'http',
+          ':authority': 'gru.api.terrascale.tech',
+          ...(socket ? { ':protocol': 'websocket' } : {}),
+          authorization: `Bearer ${grant.access_token}`,
+          'x-terrabase-peer-credential': credential,
+          'x-terrabase-forwarded-for': '127.0.0.1',
+        });
+        const response = once(stream, 'response');
+        stream.end();
+        const [headers] = await response;
+        let body = '';
+        stream.setEncoding('utf8');
+        for await (const chunk of stream) body += chunk;
+        expect(headers[':status']).toBe(503);
+        expect(headers['retry-after']).toBe('1');
+        expect(JSON.parse(body).error.code).toBe('unavailable');
+        console.log(`R3 forwarded ${socket ? 'header socket upgrade' : 'REST regions'} at nonholding gru: 503 unavailable, Retry-After 1, no second hop`);
+      } finally {
+        session.close();
+      }
+    }
+    const peers = join(stateDir, 'peers');
+    const original = readFileSync(peers, 'utf8');
+    try {
+      writeFileSync(peers, original.split('\n').filter(line => !line.includes(' fra ')).join('\n'));
+      const missing = await cells.post(`${home}${database(created.id)}/sql/execute`, {
+        data: { statements: [{ sql: 'SELECT 1' }] },
+      });
+      await answer(missing, 503, 'unavailable');
+      expect(missing.headers()['retry-after']).toBe('1');
+      const refused = await page.evaluate(({ url, token }) => new Promise<{ code: string; message: string }>((resolve, reject) => {
+        const socket = new WebSocket(url, 'terrascale.sql.v1');
+        socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'auth', token }));
+        socket.onerror = () => reject(new Error('unknown-writer auth-frame session failed'));
+        socket.onmessage = message => {
+          const answer = JSON.parse(String(message.data));
+          socket.close();
+          if (answer.type === 'error') resolve(answer.error);
+          else reject(new Error('unknown writer unexpectedly accepted the session'));
+        };
+      }), { url: `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`, token: grant.access_token });
+      expect(refused).toMatchObject({ code: 'unavailable', message: 'the database region fra could not be reached' });
+      console.log('R3 unknown writer: REST 503 unavailable, auth-frame socket unavailable with the same message');
+    } finally {
+      writeFileSync(peers, original);
+    }
+    const rule = ['OUTPUT', '-p', 'tcp', '-d', '127.0.0.4', '--dport', '8081', '-j', 'DROP'];
+    const firewall = { env: { ...process.env, XTABLES_LOCKFILE: join(stateDir, 'iptables.lock') } };
+    execFileSync('iptables', ['-A', ...rule], firewall);
+    try {
+      writeFileSync(peers, original.replace('journey-2 fra 127.0.0.2', 'journey-2 fra 127.0.0.4'));
+      const started = performance.now();
+      const response = await cells.post(`${home}${database(created.id)}/sql/execute`, {
+        data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
+      });
+      const elapsed = performance.now() - started;
+      await answer(response, 503, 'unavailable');
+      expect(response.headers()['retry-after']).toBe('1');
+      expect(await response.text()).not.toContain('127.0.0.4');
+      expect(elapsed).toBeGreaterThan(4000);
+      expect(elapsed).toBeLessThan(10_000);
+      console.log(`R3 unreachable REST: 503 unavailable, Retry-After 1, ${Math.round(elapsed)} ms, no internal host`);
+    } finally {
+      writeFileSync(peers, original);
+      execFileSync('iptables', ['-D', ...rule], firewall);
+    }
   } finally {
+    if (pg && pg.exitCode === null) {
+      pg.kill('SIGTERM');
+      await pgExited;
+    }
+    await page.setExtraHTTPHeaders({});
     await removeDatabase(cells, created.id);
   }
 });

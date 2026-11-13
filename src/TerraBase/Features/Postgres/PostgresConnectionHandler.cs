@@ -91,7 +91,17 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, session.Until,
                     async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, session.Project, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
                     refused, services.GetRequiredService<TimeProvider>());
-                await ServeAsync(session, input, output, closed).ConfigureAwait(false);
+                using var moving = CancellationTokenSource.CreateLinkedTokenSource(closed);
+                using var moved = services.GetRequiredService<DatabaseFences>().WatchMoved(session.DatabaseId, moving.Cancel);
+                try
+                {
+                    await ServeAsync(session, input, output, moving.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (moving.IsCancellationRequested && !closed.IsCancellationRequested)
+                {
+                    output.Error("57P01", "the database writer moved; reconnect", fatal: true);
+                    await output.FlushAsync(closed).ConfigureAwait(false);
+                }
             }
         }
         catch (StorageCopyFaultedException)
@@ -245,6 +255,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                         session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
                             parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
                         {
+                            DatabaseId = authorized.Database.DatabaseId!,
                             Key = authorized.Key,
                             Until = authorized.Until,
                             TokenExpiry = authorized.TokenExpiry,
@@ -1157,6 +1168,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     }
     private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, IPAddress? Client, ISqlSession Sql, Dictionary<string, string> Settings)
     {
+        public required string DatabaseId { get; init; }
+
         public KeyToken? Key { get; init; }
         public DateTimeOffset? Until { get; init; }
         public DateTimeOffset? TokenExpiry { get; init; }

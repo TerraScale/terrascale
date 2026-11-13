@@ -113,8 +113,14 @@ internal static class DatabaseRegions
         return app;
     }
 
-    private static async Task ProxyAsync(HttpContext context, string region)
+    internal static async Task ProxyAsync(HttpContext context, string region)
     {
+        if (Listeners.IsForwarded(context))
+        {
+            await HomeForwarding.UnavailableAsync(context, region).ConfigureAwait(false);
+            return;
+        }
+
         var peers = context.RequestServices.GetRequiredService<IRegionPeers>();
         var peer = (await peers.OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
             .FirstOrDefault(candidate => candidate.Region == region);
