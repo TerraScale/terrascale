@@ -17,10 +17,10 @@ namespace TerraScale.TerraBase.Contracts.Functions
         /// <summary><c>DELETE …/functions/{name}</c>.</summary>
         UnaryResult<bool> DeleteAsync(string projectId, string database, string name);
 
-#pragma warning disable CS1591
+        /// <summary><c>PUT …/functions/{name}</c>.</summary>
         UnaryResult<TerraBaseFunctionInfo> DeployAsync(string projectId, string database, string name, TerraBaseFunctionDeploy request);
 
+        /// <summary><c>POST …/functions/{name}/invoke</c>.</summary>
         UnaryResult<TerraBaseFunctionCall> InvokeAsync(string projectId, string database, string name, string body);
-#pragma warning restore CS1591
     }
 }
