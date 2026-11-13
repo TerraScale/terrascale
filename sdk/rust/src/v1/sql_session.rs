@@ -532,6 +532,18 @@ fn fail(wire: &Wire, shared: &Shared, reason: &str) {
     for (_, waiter) in pending.into_iter().flatten() {
         let error = if state.uncertain {
             Error::CommitUncertain
+        } else if state.lost {
+            Error::Sql {
+                status: None,
+                error: SqlError {
+                    code: sql_error_codes::TRANSACTION_ROLLED_BACK.into(),
+                    message: format!(
+                        "the transaction rolled back when the SQL session closed: {reason}"
+                    ),
+                    statement: 0,
+                    sqlstate: Some("40000".into()),
+                },
+            }
         } else {
             Error::Transport(format!("SQL session closed: {reason}"))
         };

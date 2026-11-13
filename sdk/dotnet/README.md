@@ -56,7 +56,8 @@ sync transaction methods throw like the other sync paths).
   `GetBytes`, `IsNull`). `As<T>(JsonTypeInfo<T>)` and the typed `QueryAsync<T>` map a row through source-generated
   JSON metadata: the row becomes an object keyed by column name and a blob a base64 string.
 - A refused statement throws `TerraBaseSqlException` with `Code` (one of `TerraBaseSqlErrorCodes`, such as
-  `unique_violation`), `Sqlstate` (such as `23505`) and `Statement` (zero-based index). The request rolled back.
+  `unique_violation`), `Sqlstate` (such as `23505`) and `Statement` (zero-based index). A confirmed refusal rolls the request back;
+  `write_outcome_unknown` and `commit_uncertain` require reconciliation because the write may have committed.
   A REST request refused with `serialization_conflict` is resent at most twice; nothing else is resent.
 - Primary keys are ULIDs from `TerraScaleIdGenerator`; tables that take local writes avoid `AUTOINCREMENT`.
 

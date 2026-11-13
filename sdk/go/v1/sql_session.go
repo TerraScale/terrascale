@@ -42,6 +42,7 @@ type SQLSession struct {
 
 type sqlConn struct {
 	ws      *websocket.Conn
+	sending chan struct{}
 	mu      sync.Mutex
 	pending map[int64]sqlPending
 	err     error // set once the socket is gone
@@ -291,7 +292,7 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 			return nil, fmt.Errorf("terrabase: server did not select the %s subprotocol", SQLSubprotocol)
 		}
 		ws.SetReadLimit(c.maxResponse)
-		conn := &sqlConn{ws: ws, pending: map[int64]sqlPending{}}
+		conn := &sqlConn{ws: ws, sending: make(chan struct{}, 1), pending: map[int64]sqlPending{}}
 		go s.receive(conn)
 		return conn, nil
 	}
@@ -345,6 +346,11 @@ func (c *sqlConn) call(ctx context.Context, s *SQLSession, id int64, typ string,
 		return sqlAnswer{}, err
 	}
 	ch := make(chan sqlAnswer, 1)
+	select {
+	case <-ctx.Done():
+		return sqlAnswer{}, ctx.Err()
+	case c.sending <- struct{}{}:
+	}
 	s.mu.Lock()
 	c.mu.Lock()
 	if c.err != nil || s.uncertain != nil {
@@ -354,6 +360,7 @@ func (c *sqlConn) call(ctx context.Context, s *SQLSession, id int64, typ string,
 		}
 		c.mu.Unlock()
 		s.mu.Unlock()
+		<-c.sending
 		return sqlAnswer{}, err
 	}
 	committing := typ == "commit" || typ == "execute" && !s.inTx
@@ -365,7 +372,9 @@ func (c *sqlConn) call(ctx context.Context, s *SQLSession, id int64, typ string,
 	c.pending[id] = sqlPending{answer: ch, committing: committing, control: typ == "begin" || typ == "commit" || typ == "rollback"}
 	c.mu.Unlock()
 	s.mu.Unlock()
-	if err := c.ws.Write(ctx, websocket.MessageText, frame); err != nil {
+	writeErr := c.ws.Write(ctx, websocket.MessageText, frame)
+	<-c.sending
+	if err := writeErr; err != nil {
 		s.fail(c, fmt.Errorf("terrabase: SQL session socket closed: %w", err))
 		_ = c.ws.CloseNow()
 	}

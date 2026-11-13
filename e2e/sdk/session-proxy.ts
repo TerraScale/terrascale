@@ -48,7 +48,36 @@ export async function sessionProxy(mode: string) {
   let upgrades = 0;
   let dropped = false;
   let target: unknown;
+  let committed = false;
+  let armed = false;
+  let reads = 0;
+  let mutations = 0;
+  const waiting = new Set<() => void>();
   const server = createServer((incoming, response) => {
+    if (incoming.url === '/committed') {
+      if (committed) response.end();
+      else waiting.add(() => response.end());
+      return;
+    }
+    if (incoming.url === '/disarm-http') {
+      armed = false;
+      response.end();
+      return;
+    }
+    if (incoming.url === '/arm-http') {
+      armed = true;
+      response.end();
+      return;
+    }
+    if (mode === 'retry' && armed) {
+      const refuse = incoming.method === 'GET' ? ++reads === 1 : ++mutations === 1;
+      if (refuse) {
+        response.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '0' });
+        response.end(JSON.stringify({ error: { code: 'commit_uncertain', message: 'the reply was lost' } }));
+        incoming.resume();
+        return;
+      }
+    }
     if (incoming.url === '/cut') {
       for (const socket of sockets) socket.destroy();
       dropped = true;
@@ -75,13 +104,27 @@ export async function sessionProxy(mode: string) {
       client.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(response.headers).map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n`);
       const fromClient = frames(body => {
         if (body.type !== 'auth') requests.push(String(body.type));
-        if (body.type === 'commit' || ['autocommit', 'batch'].includes(mode) && body.type === 'execute' || mode === 'read' && body.type === 'execute' && requests.filter(type => type === 'execute').length === 2) target = body.id;
+        if ((!mode.startsWith('overtake-') && body.type === 'commit') || (mode.startsWith('overtake-') && body.type === 'execute' && (mode === 'overtake-begin' || requests.filter(type => type === 'execute').length === 2)) || ['autocommit', 'batch'].includes(mode) && body.type === 'execute' || mode === 'read' && body.type === 'execute' && requests.filter(type => type === 'execute').length === 2) target = body.id;
         return true;
       });
       const fromServer = frames(body => {
         if (mode !== 'before' && target !== undefined && body.id === target) {
           if (body.type !== 'result') throw new Error('the server did not commit successfully');
+          committed = true;
+          for (const resolve of waiting) resolve();
+          waiting.clear();
           dropped = true;
+          if (mode === 'cancel') return false;
+          if (mode === 'sql-error') {
+            const text = Buffer.from(JSON.stringify({ id: body.id, type: 'error', transaction: false,
+              error: { code: 'write_outcome_unknown', message: 'the commit reply was lost', statement: 0, sqlstate: '08007' } }));
+            const header = Buffer.alloc(4);
+            header[0] = 129;
+            header[1] = 126;
+            header.writeUInt16BE(text.length, 2);
+            client.write(Buffer.concat([header, text]));
+            return false;
+          }
           client.destroy();
           upstream.destroy();
           return false;
@@ -105,7 +148,7 @@ export async function sessionProxy(mode: string) {
   if (address === null || typeof address === 'string') throw new Error('proxy address');
   return {
     origin: `http://127.0.0.1:${address.port}`,
-    proof: () => ({ requests, upgrades, dropped }),
+    proof: () => ({ requests, upgrades, dropped, reads, mutations }),
     close: async () => {
       for (const socket of sockets) socket.destroy();
       server.closeAllConnections();

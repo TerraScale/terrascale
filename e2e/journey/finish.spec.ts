@@ -43,7 +43,12 @@ test('SQL sessions retain uncertainty after lost committing replies', async () =
   const failures: string[] = [];
   for (const sdk of sdks) {
     for (const asynchronous of sdk === 'python' ? [false, true] : [false]) {
-      for (const mode of ['commit', 'before', 'autocommit', 'batch', 'read']) {
+      const modes = ['commit', 'before', 'autocommit', 'batch', 'read'];
+      if (sdk === 'go') modes.push('overtake-commit', 'overtake-rollback', 'overtake-begin', 'overtake-batch', 'sql-error');
+      if (sdk === 'go' || sdk === 'rust') modes.push('retry');
+      if (sdk !== 'js') modes.push('cancel');
+      if (sdk === 'python' && !asynchronous) modes.push('dbapi');
+      for (const mode of modes) {
         await test.step(`${sdk} ${mode}${asynchronous ? ' async' : ''}`, async () => {
           try { await runSessionFault(sdk, mode, asynchronous); }
           catch (error) { failures.push(`${sdk} ${mode}${asynchronous ? ' async' : ''}: ${String(error)}`); }

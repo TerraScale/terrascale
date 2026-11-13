@@ -93,7 +93,12 @@ func (e *SQLError) Error() string {
 	return msg
 }
 
-func (e *SQLError) Unwrap() error { return e.API }
+func (e *SQLError) Unwrap() error {
+	if e.API == nil {
+		return nil
+	}
+	return e.API
+}
 
 // Is matches the error's code constant, also for session errors that carry no *APIError.
 func (e *SQLError) Is(target error) bool {

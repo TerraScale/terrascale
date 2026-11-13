@@ -733,6 +733,7 @@ impl Client {
                         Some(503),
                         Some(
                             "capacity"
+                                | "commit_uncertain"
                                 | "storage_unavailable"
                                 | "dependencies_unavailable"
                                 | "storage_busy"
@@ -1017,6 +1018,9 @@ impl Client {
                                 (Some(429), Some("rate_limited" | "tenant_busy")) => true,
                                 // An uncoded (edge) 429 grants no mutation retry.
                                 (Some(429), Some("http_429")) => replay_safe,
+                                (Some(503), Some("commit_uncertain")) => {
+                                    replay_safe && req.method == Method::GET
+                                }
                                 // A gateway answer without a TerraBase error code
                                 // never reached a handler that names its outcome.
                                 (Some(status @ 502..=504), Some(code))

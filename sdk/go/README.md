@@ -95,7 +95,7 @@ so the client never sends one. Reads are retried after 429 `rate_limited` and
 `tenant_busy` (an admission refusal) with `Retry-After`, and after the transient
 rejections (`capacity`, `storage_unavailable`, `dependencies_unavailable`) with
 backoff. Transport errors and gateway `502`/`504` answers are retried only for reads.
-`commit_uncertain` and `write_outcome_unknown` are never retried. Mutations return uncertain outcomes without a replay:
+`commit_uncertain` is retried only for replay-safe reads; `write_outcome_unknown` is never retried. Mutations return uncertain outcomes without a replay:
 use `errors.Is(err, tb.ErrCommitUncertain)` and re-read the state before deciding
 what to do. `500 internal_error` is never retried. Requests have a fixed
 30-second total budget and 64 MiB response cap. A server cooldown is never
@@ -288,10 +288,9 @@ err = s.Transaction(ctx, func(s *v1.SQLSession) error {
 - A lost committing reply returns `ErrCommitUncertain`; every later call returns
   the same uncertainty without reconnecting. If no committing request was sent,
   a lost open transaction returns `ErrTransactionRolledBack` until `Rollback`
-  clears local state, after which a call can reconnect. After `Close` calls return `ErrSQLSessionClosed`.
-- Tests replay the recorded session in
-  [websocket-session.json](contracts/terrabase/sql/websocket-session.json)
-  against a local fake; on 2026-11-04 a session ran the same flow against live gru.
+  clears local state, after which a call can reconnect. After `Close` calls return `ErrSQLSessionClosed` unless a retained uncertain outcome takes precedence.
+- The journey runs public SQL sessions through a network proxy to the real service,
+  dropping replies and checking persisted rows, retained errors and connection counts.
 - Live sample: `go run ./examples/sql` with `TERRASCALE_API_KEY`,
   `TERRASCALE_PROJECT_ID` and `TERRASCALE_DATABASE_NAME` creates a throwaway table,
   writes, reads and drops it.

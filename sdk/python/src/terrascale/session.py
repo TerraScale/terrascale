@@ -111,12 +111,14 @@ class _State:
         self.pending: dict[int, bool] = {}
         self.controls: set[int] = set()
 
-    def local(self, kind: str) -> bool:
-        """Answer locally when the session is closed or lost a transaction; True means done."""
+    def check_open(self) -> None:
         if self.failure is not None:
             raise self.failure
         if self.closed:
             raise TerraScaleError("the SQL session is closed")
+
+    def local(self, kind: str) -> bool:
+        self.check_open()
         if not self.lost:
             return False
         if kind == "rollback":
@@ -213,6 +215,7 @@ class SqlSession:
         self._ws: ClientConnection | None = self._open()
 
     def _open(self) -> ClientConnection:
+        self._state.check_open()
         client = self._db._c
         url = _url(client.base_url, client.project, self._db.name)
         refreshed = False
@@ -338,6 +341,7 @@ class SqlSession:
             ws.close()
 
     def __enter__(self) -> SqlSession:
+        self._state.check_open()
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -368,13 +372,13 @@ class AsyncSqlSession:
         return self._start().__await__()
 
     async def _start(self) -> AsyncSqlSession:
-        if self._state.closed:
-            raise TerraScaleError("the SQL session is closed")
+        self._state.check_open()
         await self._connected()
         return self
 
     async def _connected(self) -> _Link:
         async with self._opening:
+            self._state.check_open()
             if self._link is None:
                 link = _Link(await self._open())
                 link.reader = asyncio.create_task(self._read(link))
@@ -382,6 +386,7 @@ class AsyncSqlSession:
             return self._link
 
     async def _open(self) -> AsyncConnection:
+        self._state.check_open()
         client = self._db._c
         url = _url(client.base_url, client.project, self._db.name)
         refreshed = False

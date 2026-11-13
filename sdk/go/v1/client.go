@@ -373,14 +373,8 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 	}
 }
 
-// retryDelay implements the retry policy for requests that are safe to
-// replay (reads, queries and If-Match writes): 429 rate_limited and
-// tenant_busy, and the transient 503s
-// capacity, storage_unavailable, dependencies_unavailable, remote_region_unavailable,
-// confirmation_busy and catalog_stale are retried. Uncertain outcomes are never retried.
-// Reads also retry gateway failures (502 and 504). stored_corruption and 500 internal_error are never retried.
 func retryDelay(e *APIError, attempt int, replaySafe, readOnly bool) (time.Duration, bool) {
-	if !replaySafe || (!(e.Status == http.StatusTooManyRequests && (e.Code == ErrRateLimited || e.Code == ErrTenantBusy)) && !isTransient503(e) && !(readOnly && isGatewayFailure(e))) {
+	if !replaySafe || (!(e.Status == http.StatusTooManyRequests && (e.Code == ErrRateLimited || e.Code == ErrTenantBusy)) && !isTransient503(e) && !(readOnly && (isGatewayFailure(e) || e.Status == http.StatusServiceUnavailable && e.Code == ErrCommitUncertain))) {
 		return 0, false
 	}
 	if e.retryAfterSet {
