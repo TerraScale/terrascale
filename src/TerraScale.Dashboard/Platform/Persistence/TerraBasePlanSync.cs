@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
         // TerraBase's tiers carry the published catalog's allowances (https://terrascale.tech/pricing.json), so an organization
         // gets the smallest catalog plan covering its operation and database allowances; an internal policy above every
         // catalog plan is enterprise. An unpaid organization (billing_required) keeps Hobby, so no allowance precedes payment.
-        public static string PlanFor(OrganizationRecord organization, DateTimeOffset now)
+        public static string PlanFor(OrganizationRecord organization)
         {
             if (organization.BillingStatus != "active")
             {
@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
         public async Task EnsurePublishedAsync(OrganizationRecord organization, CancellationToken cancellationToken)
         {
-            var plan = PlanFor(organization, time.GetUtcNow());
+            var plan = PlanFor(organization);
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             budget.CancelAfter(TimeSpan.FromSeconds(10));
             var response = await PutAsync(organization.Id, plan, false, budget.Token);
@@ -82,7 +82,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
             string plan;
             // An invalid internal billing policy fails the billing pages themselves; publishing waits for a valid one.
-            try { plan = PlanFor(organization, time.GetUtcNow()); }
+            try { plan = PlanFor(organization); }
             catch (IOException) { return; }
             var now = time.GetUtcNow();
             var last = published.GetValueOrDefault(organization.Id);

@@ -299,7 +299,6 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 await ApplyEventReceiptAsync(receipt, cancellationToken);
             }
-            // Not applied: the endpoint answers 503 so Stripe redelivers it; a redelivery re-reads Stripe's current state.
             catch (Exception error) when (error is IOException or TerraBaseException or HttpRequestException or TimeoutException or StripeException ||
                                           error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
