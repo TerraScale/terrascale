@@ -174,6 +174,16 @@ internal sealed partial class TursoReplicas(
     public DatabaseRevision? HeldRevision(TenantContext database) =>
         _replicas.TryGetValue(Key(database), out var opening) && opening.IsValueCreated && opening.Value.IsCompletedSuccessfully ? opening.Value.Result.Held : null;
 
+    public ReplicaHolding Holding(TenantContext database) =>
+        !_replicas.TryGetValue(Key(database), out var opening) ? new NoReplica()
+        : !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully ? new PositionUnknown()
+        : opening.Value.Result switch
+        {
+            { Held: { } held } => new HeldAt(held),
+            { Pulled: false } => new NoReplica(),
+            _ => new PositionUnknown(),
+        };
+
     public async ValueTask<ReplicaComparison?> CompareAsync(TenantContext database, DatabaseRevision revision, IReadOnlyList<RangeChecksum> home, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(home);

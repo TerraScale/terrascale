@@ -32,7 +32,8 @@ internal sealed partial class RegionalHandoff
     private bool _checked;
     private long _refusedEpoch;
     private long _recheckAt;
-    private string? _refusal;
+    private ActivationRefusal? _writerRefusal;
+    private sealed record ActivationRefusal(HomeRefusal Kind, WriterRefusal Status);
     private long _unprovenEpoch;
     private bool _pageCaughtUp;
     private RegionalOwner? _startupOwner;
@@ -337,22 +338,16 @@ internal sealed partial class RegionalHandoff
             if (!_pageCaughtUp)
             {
                 _pageCaughtUp = true;
-                await CatchUpAsync([.. page.Databases.Where(database => Compared(database) && replicas.HeldRevision(database) is null)])
+                await CatchUpAsync([.. page.Databases.Where(database => Compared(database) && replicas.Holding(database) is not HeldAt)])
                     .ConfigureAwait(false);
             }
 
             foreach (var database in page.Databases)
             {
-                if (Compared(database) && replicas.HeldRevision(database) is { } replica)
+                if (Compared(database) && await RefusalAsync(database).ConfigureAwait(false) is { } refusal)
                 {
-                    var primary = await revisions.CurrentRevisionAsync(database, token).ConfigureAwait(false);
-                    if (primary is not { } held || held.Incarnation != replica.Incarnation || DatabaseRevision.Compare(replica, held) > 0)
-                    {
-                        var refusal = primary is null ? HomeRefusal.PrimaryMissing : HomeRefusal.ReplicaNewer;
-                        Refuse(refusal, $"{refusal}:{database.DatabaseId}:{replica}:{primary}",
-                            $"database {database.DatabaseId} has a local replica at {replica} that its primary file does not cover, at {primary?.ToString() ?? "none"}");
-                        return false;
-                    }
+                    Refuse(refusal);
+                    return false;
                 }
                 _checkedAfter = database;
             }
@@ -361,11 +356,28 @@ internal sealed partial class RegionalHandoff
         }
         while (_checkedAfter is not null);
         _checked = true;
-        _refusal = null;
+        _writerRefusal = null;
         return true;
 
         bool Compared(TenantContext database) => !PlatformDatabases.IsPlatformDatabase(database.DatabaseId)
             && (leases.Find(database.DatabaseId!) is not { } lease || lease.Home == options.Region);
+
+        async Task<ActivationRefusal?> RefusalAsync(TenantContext database) => replicas.Holding(database) switch
+        {
+            NoReplica => null,
+            PositionUnknown => Refusal(HomeRefusal.PositionUnknown, database,
+                "has a local replica whose position cannot be read, so nothing proves its primary file covers it"),
+            HeldAt(var replica) => await revisions.CurrentRevisionAsync(database, token).ConfigureAwait(false) switch
+            {
+                null => Refusal(HomeRefusal.PrimaryMissing, database, $"has a local replica at {replica} and no primary file"),
+                { } primary when primary.Incarnation != replica.Incarnation || DatabaseRevision.Compare(replica, primary) > 0 =>
+                    Refusal(HomeRefusal.ReplicaNewer, database, $"has a local replica at {replica} that its primary file does not cover, at {primary}"),
+                _ => null,
+            },
+        };
+
+        ActivationRefusal Refusal(HomeRefusal refusal, TenantContext database, string detail) =>
+            new(refusal, new WriterRefusal(HomeLeases.Reason(refusal), database.DatabaseId!, owner.Epoch, $"database {database.DatabaseId} {detail}"));
 
         async Task CatchUpAsync(IReadOnlyList<TenantContext> unheld)
         {
@@ -390,24 +402,28 @@ internal sealed partial class RegionalHandoff
             }).ConfigureAwait(false);
             if (late > 0)
             {
-                logger.ZLogWarning($"The activation check could not catch up {late:@Late} of {unheld.Count:@Databases} local replicas within {CatchUpBudget.TotalSeconds:@Seconds} s; it compares the positions the replicas hold, if any");
+                logger.ZLogWarning($"The activation check could not catch up {late:@Late} of {unheld.Count:@Databases} local replicas within {CatchUpBudget.TotalSeconds:@Seconds} s; a replica whose position stays unknown blocks the writer role until a later attempt reads it");
             }
         }
 
-        void Refuse(HomeRefusal refusal, string state, string detail)
+        void Refuse(ActivationRefusal refusal)
         {
-            _refusedEpoch = owner.Epoch;
-            _recheckAt = gate.Time.GetTimestamp() + (long)(RecheckEvery.TotalSeconds * gate.Time.TimestampFrequency);
-            _checkedAfter = null;
             _pageCaughtUp = false;
-            if (_refusal == state)
+            var unknown = refusal.Kind == HomeRefusal.PositionUnknown;
+            if (!unknown)
+            {
+                _refusedEpoch = owner.Epoch;
+                _recheckAt = gate.Time.GetTimestamp() + (long)(RecheckEvery.TotalSeconds * gate.Time.TimestampFrequency);
+                _checkedAfter = null;
+            }
+            if (_writerRefusal == refusal)
             {
                 return;
             }
 
-            _refusal = state;
-            services.GetRequiredService<HomeLeases>().Refused(refusal, "writer");
-            logger.ZLogWarning($"Regional writer refused at epoch {owner.Epoch:@Epoch}: {detail:@Detail}; this node stays a non-writer and checks again in {RecheckEvery.TotalSeconds:@Seconds} s");
+            _writerRefusal = refusal;
+            leases.Refused(refusal.Kind, "writer");
+            logger.ZLogWarning($"Regional writer refused at epoch {owner.Epoch:@Epoch}: {refusal.Status.Detail:@Detail}; this node stays a non-writer and checks again {(unknown ? "on its next activation attempt" : $"in {RecheckEvery.TotalSeconds} s"):@Recheck}");
         }
     }
 

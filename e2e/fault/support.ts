@@ -20,12 +20,14 @@ export const nodes = [
   { name: 'journey-4', region: 'fra', address: '127.0.0.4', port: 8380, metrics: 9391, service: 'terrabase-fra-2' },
 ] as const;
 export type KeptCopy = { id: string; organizationId: string; projectId: string; databaseId: string; revision?: string | null; reason: string; keptAt: string; files: string[]; bytes: number };
+export type WriterRefusal = { reason: string; databaseId: string; epoch: number; detail: string };
 export type Unserved = { databaseId: string; region: string; node: string; epoch: number; cause: string };
 export type HomeLease = { organizationId: string; projectId: string; databaseId: string; home: string; node: string; epoch: number; session: string; adopted?: string | null };
 export const node = (name: string) => nodes.find(candidate => candidate.name === name)!;
 
 export type Node = typeof nodes[number];
-type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; session: string; unserved?: Unserved[] | null; kept?: KeptCopy[] | null };
+type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; session: string; unserved?: Unserved[] | null; kept?: KeptCopy[] | null;
+  writerRefused?: WriterRefusal | null };
 export type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;

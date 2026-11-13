@@ -415,11 +415,17 @@ test('a regional writer role moves only with the target certificate and current 
     await kv.remove(owners, 'gru', current!.seq);
     await expect.poll(() => counted(gru, 'terrabase_home_refusals_total', { scope: 'writer' }), { message: 'journey-1 refuses to become writer over stale primary files' })
       .toBeGreaterThan(stale);
-    expect((await nodeStatus(gru)).writer).toBe(false);
-    const recreated = await kv.get<Record<string, unknown> & { node: string }>(owners, 'gru');
+    const recreated = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
     expect(recreated?.value.node).toBe('journey-1');
+    const blocked = await nodeStatus(gru);
+    expect(blocked.writer).toBe(false);
+    expect(blocked.writerRefused, 'journey-1 names the database whose replica it cannot prove its primary file covers')
+      .toMatchObject({ reason: expect.stringMatching(/^(replica_newer|position_unknown)$/), databaseId: expect.any(String), epoch: recreated!.value.epoch });
+    expect(await counted(gru, 'terrabase_regional_writer_refused'), 'the refusal stays visible while it lasts').toBe(1);
     await kv.put(owners, 'gru', { ...recreated!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, recreated!.seq);
     await writerIs('journey-3');
+    expect((await nodeStatus(gru)).writerRefused, 'the refusal clears once the owner record names another node').toBeNull();
+    expect(await counted(gru, 'terrabase_regional_writer_refused')).toBe(0);
     await ledger.compare(cells, [[800, 'written-on-journey-3']]);
     const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
     expect(back.status, back.body).toBe(204);

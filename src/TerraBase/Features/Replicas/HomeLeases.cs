@@ -36,6 +36,7 @@ internal enum HomeRefusal
     PrimaryMissing,
     Unproven,
     DrainFailed,
+    PositionUnknown,
 }
 
 internal interface IHomeWriteLease
@@ -83,7 +84,7 @@ internal sealed partial class HomeLeases(
 
     private static bool PlatformDatabase(string database) => database is PlatformDatabases.AuthId or PlatformDatabases.DashboardId;
 
-    private static string Reason(HomeRefusal refusal) => refusal switch
+    internal static string Reason(HomeRefusal refusal) => refusal switch
     {
         HomeRefusal.NotWriter => "not_writer",
         HomeRefusal.LeaseChanged => "lease_changed",
@@ -93,6 +94,7 @@ internal sealed partial class HomeLeases(
         HomeRefusal.PrimaryMissing => "primary_missing",
         HomeRefusal.Unproven => "unproven",
         HomeRefusal.DrainFailed => "drain_failed",
+        HomeRefusal.PositionUnknown => "position_unknown",
         _ => throw new UnreachableException(),
     };
 
