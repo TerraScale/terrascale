@@ -1358,6 +1358,7 @@ test('R3 replace: stale refusals are metered once at the source or final destina
         }, { message: 'the final writer is ready while the source cache names fra', timeout: 45_000, intervals: [1000] }).toBe(true);
         writer = node.endpoint;
         const before = await observationCounts(created.id);
+        let responseDetails: unknown;
         const peers = join(stateDir, 'peers');
         const complete = readFileSync(peers, 'utf8');
         if (terminal) writeFileSync(peers, complete.replace(/^(journey-extra-sjc sjc) \S+$/gm, '$1 127.0.0.9'));
@@ -1365,6 +1366,7 @@ test('R3 replace: stale refusals are metered once at the source or final destina
           const response = await cells.post(home + database(created.id) + '/sql/execute', {
             data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
           });
+          responseDetails = { body: await response.text(), region: response.headers()['x-terrabase-region'], timing: response.headers()['server-timing'] };
           if (terminal) {
             await answer(response, 503, 'unavailable');
             expect(response.headers()['retry-after']).toBe('1');
@@ -1379,7 +1381,7 @@ test('R3 replace: stale refusals are metered once at the source or final destina
         }
         const after = await observationCounts(created.id);
         const deltas = Object.fromEntries(['gru', 'fra', 'sjc'].map(region => [region, after[region].requests - before[region].requests]));
-        expect(deltas, 'one final request owner across all stored observations: ' + JSON.stringify({ before, after })).toEqual(terminal ? { gru: 1, fra: 0, sjc: 0 } : { gru: 0, fra: 0, sjc: 1 });
+        expect(deltas, 'one final request owner across all stored observations: ' + JSON.stringify({ before, after, response: responseDetails })).toEqual(terminal ? { gru: 1, fra: 0, sjc: 0 } : { gru: 0, fra: 0, sjc: 1 });
         const owner = terminal ? 'gru' : 'sjc';
         expect(after[owner].sent - before[owner].sent).toBeGreaterThan(0);
         expect(after[owner].received - before[owner].received).toBeGreaterThan(0);

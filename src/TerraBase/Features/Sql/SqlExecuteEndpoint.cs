@@ -171,6 +171,12 @@ internal sealed class SqlExecuteEndpoint(
 
         var reader = await replicas.OpenAsync(database, writes, preference, cancellationToken);
         SqlRequestTiming.Mark(HttpContext, "replica_open");
+        if (reader is null && Listeners.IsForwarded(HttpContext))
+        {
+            await DatabaseRegions.ProxyAsync(HttpContext, placement.Home, body).ConfigureAwait(false);
+            return Results.Empty;
+        }
+
         if (reader.RunsAtHome(writes, preference))
         {
             WriteRoute? route = null;

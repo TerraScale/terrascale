@@ -24,7 +24,7 @@ export async function startRegion(region: string, index: number): Promise<Region
   execFileSync('mkfifo', [gate]);
   const log = join(directory, 'node.log');
   const output = openSync(log, 'w', 0o600);
-  const node = spawn('nice', ['-n', '19', 'unshare', '--net', 'bash', '-c',
+  const node = spawn('unshare', ['--net', 'bash', '-c',
     'read -r ready < "$1"; exec dotnet "$2"', 'region', gate, join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.dll')], {
     env: {
       ...environment, TS_REGION: region, TS_NODE: `journey-extra-${region}`,
