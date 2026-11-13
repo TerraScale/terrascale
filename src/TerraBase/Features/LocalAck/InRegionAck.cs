@@ -45,7 +45,7 @@ internal sealed class InRegionAck(
     private long _lastAnswerTicks;
     private Counter<long>? _finished;
     private Counter<long>? _unreadable;
-    private Counter<long>? _deleted;
+    private Counter<long>? _unplaced;
     private bool _durabilityLogged;
 
     public bool PartnerHealthy => _partners is [var partner, ..] && partner == _answeredPartner
@@ -61,8 +61,8 @@ internal sealed class InRegionAck(
             "Held transactions this node applied at the home after their origin node was lost.");
         _unreadable = _meter.CreateCounter<long>("terrabase.localack.unreadable", "{attempt}",
             "Held transactions retained because their payload could not be decrypted or decoded.");
-        _deleted = _meter.CreateCounter<long>("terrabase.localack.deleted", "{transaction}",
-            "Held transactions dropped because their database no longer exists in the catalog.");
+        _unplaced = _meter.CreateCounter<long>("terrabase.localack.unplaced", "{attempt}",
+            "Held transactions kept because the catalog does not know their database.");
         _ = _meter.CreateObservableGauge("terrabase.localack.held", () => holds.Count, "{transaction}", "Transactions this node holds for its in-region partner.");
         _ = _meter.CreateObservableGauge("terrabase.localack.partner", () => PartnerHealthy ? 1 : 0, "{node}", "1 while the in-region partner answers.");
         try
@@ -176,14 +176,18 @@ internal sealed class InRegionAck(
                 after = held;
                 var database = new TenantContext(held.Organization!, PlanTier.Hobby, held.Project, held.Database);
                 var record = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false);
+                var key = (held.Organization!, held.Project!, held.Database!);
                 if (record is NotFound)
                 {
-                    await holds.DropAsync(held, cancellationToken).ConfigureAwait(false);
-                    _deleted?.Add(1);
+                    _unplaced?.Add(1);
+                    if (holds.MarkUnreadable(held))
+                    {
+                        logger.ZLogWarning($"A held transaction has a database unknown to the catalog and is retained: {held.Database:@Database} {held.Sequence:@Sequence}");
+                    }
+                    _ = stalled.Add(key);
                     continue;
                 }
 
-                var key = (held.Organization!, held.Project!, held.Database!);
                 if (stalled.Contains(key))
                 {
                     continue;
