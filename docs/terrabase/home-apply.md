@@ -66,18 +66,25 @@ home is unavailable (`StorageBusyException`, a busy `SqlStatementException`, can
 when the database is not stored on this node; every data outcome is a result. `position` is the stream identity and
 sequence of a pushed message (null for a forwarded write); its frontier commits in the same engine transaction as
 the effects and the result. A position at or below the frontier applies nothing and returns the recorded result, or
-`provisional` when none is kept. Validate the transaction as `ApplyEndpoint.Invalid` does before calling it. Only the
-stream sequencer (below) passes positions, and it passes exactly the next message after the frontier. A stuck apply
-backoff releases the parallel slot before the delay.
+`provisional` when none is kept (the sequencer publishes no notice for that). Validate the transaction as
+`ApplyEndpoint.Invalid` does before calling it. Only the stream sequencer (below) calls it for pushed messages, with the
+next message after the frontier that the stream returns for the database: positions are sparse, so the sequencer
+detects a purged gap only through the origin's purge marker (below), never from the positions themselves. A stuck
+apply backoff releases the parallel slot before the delay.
 
 ## Internal HTTP
 
 Internal listener only, behind the peer credential; 404 on the public listener.
 
-- `POST /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/apply`: body is one
-  `RegionTransaction`, at most 8 MiB, sent with `Content-Length`; answer `200` with a `HomeApplyResult`. `404` when the database is not homed
-  here or its placement does not name the origin region; `400` for a malformed transaction; `503` when the home is
-  unavailable (retry).
+- `POST /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/apply[?position=<sequence>]`:
+  body is one `RegionTransaction`, at most 8 MiB, sent with `Content-Length`. Its caller is an in-region partner
+  finishing a lost node's held transaction, which its origin had already stored in its push stream before the hold;
+  `position` is that stream sequence (a partner of the previous build sends no position). The home never applies the
+  body here: it wakes the sequencer of the transaction's origin and database, waits up to 10 seconds, and answers `200`
+  with the recorded `HomeApplyResult` once the transaction is decided, by its id or because the database's frontier
+  for the origin's current stream reached `position`. Otherwise it answers `503` and the partner keeps its hold and
+  retries. Without a position only the recorded result counts. `404` when the database is not homed here or its
+  placement does not name the origin region; `400` for a malformed transaction or position.
 - `GET …/databases/{database}/apply/{transaction}`: the transaction's `HomeApplyResult`, or
   `{"id":…,"state":"provisional"}` when the home has not seen it (or applied it more than 7 days ago).
 
@@ -200,7 +207,9 @@ The tables are created in place with no format change: older files gain them on 
 The home reads each origin region's push stream through one durable consumer, named after the writer epoch that
 created it (`home-<region>-epoch-<n>`). The origin tells its client a write
 succeeded before the home applies it, so every pushed message that may carry a write is owed to a customer: it is
-never dropped, parked or skipped.
+never dropped or skipped by a decision of the home. The exceptions are listed below: messages that cannot carry such
+a write are parked, and a database whose next message the origin purged before this copy applied it is held for an
+operator (`purged`).
 
 For each origin stream and database there is one sequencer on the home's writer node. It reads the database's
 frontier for that stream, asks the stream for the next message after it that matches the database (for every
@@ -209,23 +218,32 @@ again. A delivery from the consumer only wakes the sequencer and tells it which 
 reads at once); a delivered message is never applied because it was delivered. Acknowledging a delivery therefore
 decides nothing: a node that is not the database's home acknowledges its deliveries without applying them, and
 whatever it acknowledged is still read from the stream by whichever node becomes the home. Within one origin stream a
-database's messages apply in stream order with no gaps. There is no order between different origin streams.
+database's retained messages apply in stream order, and the sequencer never moves past a purge the database's copy did
+not reach (below). There is no order between different origin streams.
 
 The sequencer's identity leaves out the home a message is addressed to: after a home move the origin stream holds
 earlier messages addressed to the former home and later ones addressed to the current home, and the sequencer applies
 them in stream order. A message that cannot apply is retried with backoff from 100 ms, doubling up to a 60 second
-ceiling, with no attempt limit. Its database is held: later messages of that database on that stream wait behind it,
-and every other database keeps applying. A held database writes nothing to `terrascale.conflicts`, because nothing
-was decided against the customer. The sequencer releases its shared apply slot during backoff.
+ceiling, with no attempt limit, on a timer of its own: it needs no delivery to try again. Its database is held: later
+messages of that database on that stream wait behind it. Other databases keep applying while they are not held
+themselves and while the home's 16 shared apply slots and the stream are available; a held sequencer releases its slot
+during backoff. A held database writes nothing to `terrascale.conflicts`, because nothing was decided against the
+customer.
 
-A sequencer keeps at most 32 deliveries unacknowledged and sends progress for them while it is held; later deliveries
-are acknowledged at once and stay in the stream until the sequencer reads them. A held database therefore occupies at
-most 32 of the consumer's 4,096 in-flight messages however long it is held. Each round of reads checks afterwards that
-the stream still has the identity the run started with.
+A sequencer that is not held keeps at most 32 deliveries unacknowledged, so it can publish a replayed result again
+after a restart; later deliveries are acknowledged at once and stay in the stream until the sequencer reads them. A
+held sequencer acknowledges every delivery at once, so held databases never fill the consumer's 4,096 in-flight
+messages and never stop deliveries to healthy databases of the same origin. Each round of reads checks afterwards that
+the stream still has the identity the run started with, that the stream's last sequence is not below the frontier,
+and, at the home, that the origin's purge marker for the database is not ahead of the frontier.
 
 When a node becomes a database's home (a move or a failover), it starts the sequencer for every origin stream from the
-database's frontier and waits up to 30 seconds for each to reach the end of its stream before it answers the promotion;
-a sequencer still held at that point keeps going in stream order after the answer. Two nodes can only both run a
+database's frontier and waits up to 30 seconds for each to reach the end of its stream before it answers the promotion.
+When that wait runs out it still answers promoted: it counts `terrabase.placement.move.catch_up_timeouts` and logs, per
+origin, the database, its frontier and the stream's last sequence, and the sequencer keeps going in stream order after
+the answer. Direct writes at the new home are accepted from the moment it answers, also before its sequencers caught
+up, so a constraint can then be decided against a direct write that is newer than a pushed write still in the stream:
+an already acknowledged pushed write can become `reverted` where stream order would have confirmed it. Two nodes can only both run a
 sequencer for one database while each believes it holds the home: every apply checks the home lease when it commits,
 and a commit after a lost lease fails and is retried by the node that now holds it.
 
@@ -238,28 +256,40 @@ lost or lapses, when the consumer fails, when the origin stream was recreated, o
 while it still has work. A renewal before the lease lapses keeps the run; a renewal after a lapse, also on the same
 node, is a new lease and starts a new run. Ending a run stops every sequencer of that origin and waits for them before
 the next run opens. The next run redelivers every retained message; a redelivered message at or below the frontier
-publishes its recorded result again and commits nothing, and the sequencer continues from the frontier.
+publishes its recorded result again (nothing when no result is kept) and commits nothing, and the sequencer continues
+from the frontier.
 
-A message leaves an origin stream only in two ways. The origin purges its own stream for a database up to a position
-once its copy of the database, pulled from the home, holds a recorded result for every pending transaction up to that
-position (or the home's applied notice reported it reverted, which it publishes only after recording it); this is the
-home's decision, not a consumer acknowledgement. The deletion job purges a deleted database's messages after its
-retention. The stream has no age limit and refuses new messages when full instead of dropping old ones.
+A message leaves an origin stream only in two ways, both done by the origin on its own stream. The origin purges a
+database's messages up to a position once its copy of the database, pulled from the home, holds a recorded result for
+every pending transaction up to that position (or the home's applied notice reported it reverted, which it publishes
+only after recording it), and never past that copy's frontier for the stream; this is the home's decision, not a
+consumer acknowledgement. Before that purge it records the position in the same stream as the purge marker
+`terrabase.push-state.<origin>.purged.<organization>.<project>.<database>`, written with an expected-last-sequence check
+so it only moves forward, and it keeps only the newest marker. The marker lives in the stream it describes, so every
+node that can read the messages can read it, it disappears only with the stream (a new identity, whose frontier starts
+again), and a stream restored from an older snapshot is caught by its last sequence (`stream_behind`). When a node
+deletes a database, it purges that database's messages and marker from its own region's stream at once; messages of
+the deleted database still in other regions' streams are parked as `deleted_database` by the home. The stream has no
+age limit and refuses new messages when full instead of dropping old ones. While the home runs the previous build its
+copies hold no frontier, so the origin does not purge them until the home runs this build.
 
 | Kind (retry `reason`) | What happens | What the stream sees |
 | --- | --- | --- |
 | Applies (confirmed or reverted by the merge) | Effects, result and frontier commit in one engine transaction, then the applied notice is published | Acknowledged after the commit |
-| Applied before (a replay at or below the frontier) | The recorded result, or `provisional`, is published again; no effects | Acknowledged |
+| Applied before (a replay at or below the frontier) | The recorded result is published again, nothing when none is kept; no effects | Acknowledged |
 | The catalog names another home | Not applied here; the home reads the message from the stream | Acknowledged |
-| Catalog unreadable (`catalog`) | Retried; database held | Progress on every retry |
-| No catalog record and no deletion record (`unknown_database`) | Retried; database held | Progress on every retry |
-| Payload cannot be opened or decoded (`undecodable`), data key or object-store read fails (`object_store`), cryptographic failure (`crypto`) | Retried; database held | Progress on every retry |
-| SQL engine failure, including read-only, busy, and a table or column the engine reports missing while the statement runs (`engine`); cancellation or timeout (`cancelled`, `io`); disposal during shutdown (`disposed`); broker failure (`broker`); database file not on this node (`not_stored`); anything else (`other`) | Retried; database held | Progress on every retry |
+| Catalog unreadable (`catalog`) | Retried; database held | Acknowledged at once |
+| No catalog record and no deletion record (`unknown_database`) | Retried; database held | Acknowledged at once |
+| Payload cannot be opened or decoded (`undecodable`), data key or object-store read fails (`object_store`), cryptographic failure (`crypto`) | Retried; database held | Acknowledged at once |
+| SQL engine failure without one of the final codes below, including read-only, busy, I/O, "too many open files", and a table or column the engine reports missing while the statement runs (`engine`); cancellation or timeout (`cancelled`, `io`); disposal during shutdown (`disposed`); broker failure (`broker`); database file not on this node (`not_stored`); anything else (`other`) | Retried; database held | Acknowledged at once |
 | Subject names no database (`malformed`) | Parked | Acknowledged after the park is stored |
 | Empty payload (`empty`) | Parked | Acknowledged after the park is stored |
 | The catalog holds a deletion record for the database (`deleted_database`) | Parked | Acknowledged after the park is stored |
 | More than 32 messages of one database in flight | Read from the stream by the sequencer, in order | Acknowledged at once |
-| Stream read or progress acknowledgement fails (`broker`, `io`, `cancelled`) | Retried; database held | Progress on every retry |
+| Stream read or acknowledgement fails (`broker`, `io`, `cancelled`) | Retried; database held | Acknowledged at once |
+| The origin's purge marker for the database is ahead of this copy's frontier (`purged`) | Held for an operator; nothing more of the database applies from that stream | Acknowledged at once |
+| The stream's last sequence is below the frontier (`stream_behind`) | Held for an operator; nothing applies from that stream | Acknowledged at once |
+| A message the previous build may have seen, older than the 7 day result retention, with no recorded result (`upgrade_ambiguous`) | Held for an operator | Acknowledged at once |
 | The origin stream was recreated | The consumer run ends | The next run reads the new stream from sequence 1 under its new identity |
 | Writer lease lost or lapsed (a renewal after a lapse is a new lease) | The consumer run ends at once; every sequencer of that origin stops and nothing more is dispatched or negatively acknowledged | The next run deletes the consumer and starts a fresh one at sequence 1; deliveries outstanding on the old consumer die with it |
 
@@ -280,7 +310,7 @@ changes and parent deletes to the home rather than through an origin stream; a c
 
 | Outcome | Condition | Can it pass by itself? |
 | --- | --- | --- |
-| `reverted` (`unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`) | The engine refuses the statement against the home's rows; `constraint` includes values too big and refusals such as a datatype mismatch | No: the rows it conflicts with are already at the home |
+| `reverted` (`unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`) | The engine refuses the statement with one of the final codes: SQLite primary code 19 (`SQLITE_CONSTRAINT`, and the engine's native constraint status, which it maps to 19), 18 (`SQLITE_TOOBIG`) or 20 (`SQLITE_MISMATCH`). The message text never decides it: a failure without one of these codes holds the database and retries (`engine`) | No: the rows it conflicts with are already at the home |
 | `reverted` (`missing_row`) | An update of a row with neither a row nor a tombstone at the home | No: an origin sees a row only from the home or from its own earlier write, and that write applies earlier on the same origin stream |
 | `reverted` (`schema`) | Shape validation before any statement runs: the change names a table, column or primary-key shape the home does not have, or is not an insert, update or delete | No: schema changes run only at the home, and origins learn the schema from it |
 | `superseded` (kept in a confirmed result) | A newer stamp at the home wins the column or row | No: the merge decides it by stamps |
@@ -288,8 +318,19 @@ changes and parent deletes to the home rather than through an origin stream; a c
 
 A node whose own clock is not trusted refuses to issue stamps for its own writes; applying a received transaction never
 asks for a stamp, and observing a remote stamp only clips it, so clock trust never decides an apply. A remote stamp
-that names no node fails the observation and holds the database (`other`). Busy, interrupted, read-only and unclassified
-engine failures, and SQL errors for a missing table or column, hold the database and retry.
+that names no node fails the observation and holds the database (`other`). Every engine failure without a final code
+holds the database and retries, and is never recorded as the transaction's result.
+
+What an operator does for each hold reason (the warning log line names the database, origin, sequence and reason):
+
+| Reason | Action |
+| --- | --- |
+| `catalog`, `broker`, `io`, `cancelled`, `disposed`, `object_store`, `crypto`, `not_stored`, `engine`, `other` | Nothing while it passes by itself; if it lasts, fix the named dependency (catalog, broker, object store, data keys, disk, engine). |
+| `unknown_database` | Check whether the database was created and its catalog record reached this region; a database that never existed is deleted through the deletion job, after which its messages park. |
+| `undecodable` | Check the data key of the named encryption id; the message applies once it can be opened. |
+| `purged` | The database's copy at this home is behind what was acknowledged: the origin purged messages this copy never applied. Restore the database from the copy that applied them (the former home, a backup) or accept the loss explicitly; there is no automatic repair. |
+| `stream_behind` | The origin's stream was restored from an older state under the same identity. Compare the stream with the frontier and recreate or repair the stream; nothing applies until the stream's last sequence reaches the frontier again. |
+| `upgrade_ambiguous` | The previous build may have applied the message and its result has expired. Read the message's effects against the database and skip or republish it by hand. |
 
 To recover a parked record there is no command; the procedure is manual. Read the record with
 `nats stream get TERRABASE_PUSH_PARKED_<HOME> <sequence>`: a JSON record whose `payload` field holds the received
@@ -306,16 +347,47 @@ stream until an operator removes it.
 
 What an operator sees:
 
-- `terrabase.push.held`: origin databases held behind a message that has not applied yet.
+- `terrabase.push.held` by `reason`: origin databases held behind a message that has not applied yet.
+- `terrabase.push.holds` by `reason`: each time a database becomes held or its hold reason changes.
 - `terrabase.push.held_age` (seconds): time since the oldest held message first failed.
 - `terrabase.push.apply_retries` by `reason`: each failed apply or stream read attempt by the kinds above.
 - `terrabase.push.parked` and `terrabase.push.parked_records` by reason: newly parked and retained parked records.
-- One warning log line when a database becomes held and one when it is released, each with the database id, the
+- One warning log line when a database becomes held, one when its hold reason changes and one when it is released, each with the database id, the
   origin, the stream sequence and the kind, never payload content. Each newly parked message emits one log line.
 
 No metric carries a per-database label. The alert rules for these metrics live with the monitoring configuration.
 
+## Upgrade from the previous build
+
+The previous build consumed each origin stream with one durable consumer per home region (`home-<region>`), decided
+messages per database in parallel and acknowledged them out of order across databases. Before this build first
+consumes an origin stream it reads, once, the acknowledgement floor of every such consumer on that stream (the position
+up to which that consumer had decided everything) and records the lowest of them with the stream's last sequence as
+`terrabase.push-state.<origin>.upgrade` in that stream, written only if no record exists. Each later region raises the
+record's last sequence when it upgrades. Only after the record is stored does a node delete its own region's
+`home-<region>` consumer. A database with no frontier on that stream starts at the recorded floor, so a database can
+move to another node before its own frontier is written and still start there. The lowest floor is used because a
+message is decided only when the consumer of its home at that time acknowledged it, and every consumer saw every
+message.
+
+Messages above the floor are read from the stream as usual and deduplicated by transaction id. Up to the recorded last
+sequence the previous build may have seen them, so two cases differ: a message it parked as undecodable (found in a
+`TERRABASE_PUSH_PARK_<HOME>` stream) is skipped as decided, and a message whose transaction id is older than the
+7 day result retention less an hour, with no recorded result, holds the database (`upgrade_ambiguous`) instead of
+applying a second time. A message for a database the catalog does not know still holds (`unknown_database`), where the
+previous build dropped it.
+
+Rollback: the previous build recreates `home-<region>` with delivery from sequence 1 and deduplicates by transaction id,
+so it applies nothing twice whose result is younger than 7 days. A message retained longer than that after it was
+applied would apply again; the origin purges a message once a pulled copy shows it decided, so before a rollback check
+that no origin stream holds a message older than 7 days (`nats stream info TERRABASE_PUSH_<REGION>`, first message
+time). The previous build ignores the `terrabase.push-state.*` subjects and keeps writing and reading the `Tb-Epoch`
+header, which this build still writes for it.
+
 ## Known gaps
+
+- While an origin runs the previous build it purges without a purge marker, and while a home runs the previous build
+  its copies hold no frontier; the `purged` check covers only purges made by this build.
 
 - Tombstones in `_ts_rows` are kept until the row's key is written again.
 - Applied writes are metered where they committed (the origin region), not again at the home.

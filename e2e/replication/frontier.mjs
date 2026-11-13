@@ -278,6 +278,15 @@ function cell(region, second = false) {
     TS_NATS_URL: gru && !second ? 'nats://127.0.0.1:4223' : 'nats://127.0.0.1:4222', TERRABASE_NATS_TOKEN: token,
   });
 }
+async function trusted(port) {
+  const deadline = Date.now() + 90_000;
+  while (true) {
+    const text = await fetch('http://127.0.0.1:' + port + '/metrics').then(response => response.text(), () => '');
+    if (text.split('\n').some(line => line.startsWith('terrabase_clock_local_writes_allowed') && line.endsWith(' 1'))) return;
+    assert(Date.now() < deadline, 'the node on metrics port ' + port + ' never trusted its clock');
+    await new Promise(resolveWait => setTimeout(resolveWait, 100));
+  }
+}
 let nats;
 const relay = new Relay();
 try {
@@ -301,6 +310,7 @@ try {
   await consuming;
   await logged(gru, 'Application started');
   await logged(gru, 'This node holds a new home lease session');
+  await trusted(9091);
   const user = id();
   const org = await request(home, '/v1/management/organizations', { name: 'Frontier' }, user, 'POST', 201);
   await request(home, '/v1/management/organizations/' + org.id + '/plan', { plan: 'pro' }, user, 'PUT');
@@ -353,11 +363,15 @@ try {
   const rejected = notice(first, expired);
   await send(first, expired);
   assert.equal((await rejected).state, 'reverted');
-  const unknownOutcome = notice(first, expired);
+  let unknownOutcome = null;
+  const unknownNotice = notice(first, expired).then(result => { unknownOutcome = result; }, () => {});
   await stop(gru);
   gru = cell('gru');
-  assert.equal((await unknownOutcome).state, 'provisional');
-  console.log('expired reverted result: redelivery reports an unknown outcome');
+  await logged(gru, 'Application started');
+  await trusted(9091);
+  await applied(first, transaction([effect(9)]));
+  assert.equal(unknownOutcome, null);
+  console.log('expired reverted result: its redelivery publishes no notice and the next message applies');
 
   const b = cell('gru', true);
   await logged(b, 'Application started');
@@ -370,17 +384,21 @@ try {
     return nats.event('$JS.ACK.>', reply => {
       const tokens = reply.subject.split('.');
       const at = tokens[2] === 'TERRABASE_PUSH_FRA' ? 3 : 5;
-      return reply.raw === '+WPI' && consumer(tokens[at]) && tokens[at + 2] === String(sent.seq) && ++seen >= count;
+      return ['+WPI', '+ACK'].includes(reply.raw) && consumer(tokens[at]) && tokens[at + 2] === String(sent.seq) && ++seen >= count;
     });
   };
-  const held = async (pending, count = 1) => {
+  const rounds = (db, sent, count) => {
+    let seen = 0;
+    return nats.event('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_FRA', read => read.next_by_subj?.endsWith('.' + db.id) && read.seq <= sent.seq && ++seen >= count);
+  };
+  const held = async (db, pending, count = 2) => {
     const sent = await pending;
-    await progress(sent, count);
+    await rounds(db, sent, count);
     return sent;
   };
   const late = transaction([{ op: 'insert', table: 'items', values: { id: 2, value: 17 } }]);
   const lateNotice = notice(first, late);
-  const lateSent = await held(send(first, late, heldKey));
+  const lateSent = await held(first, send(first, late, heldKey));
   const changeWriter = async node => {
     const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
     const owner = JSON.parse(Buffer.from(stored.message.data, 'base64'));
@@ -439,8 +457,8 @@ try {
   const insertKey = await refusedKey(first);
   const insertNotice = notice(first, insert);
   const updateNotice = notice(first, update);
-  const sentInsert = await held(send(first, insert, insertKey));
-  const attempts = progress(sentInsert, 5);
+  const sentInsert = await held(first, send(first, insert, insertKey));
+  const attempts = rounds(first, sentInsert, 5);
   await send(first, update);
   const firstAge = await ageGauge();
   assert.equal(await heldGauge(), 1);
@@ -510,7 +528,7 @@ try {
   let movedEarly = false;
   const movedInsertNotice = notice(moved, movedInsert);
   const movedUpdateNotice = notice(moved, movedUpdate).then(result => { movedEarly = true; return result; });
-  const movedAttempts = progress(await held(send(moved, movedInsert, movedKey, 'fra')), 3);
+  const movedAttempts = held(moved, send(moved, movedInsert, movedKey, 'fra'), 4);
   await send(moved, movedUpdate, keyId, 'gru');
   await applied(other, transaction([effect(108)]));
   await movedAttempts;
@@ -532,7 +550,7 @@ try {
   const parentKey = await refusedKey(first);
   const parentNotice = notice(first, parent);
   const childNotice = notice(first, child);
-  const parentAttempts = progress(await held(send(first, parent, parentKey)), 5);
+  const parentAttempts = held(first, send(first, parent, parentKey), 6);
   await send(first, child);
   await applied(other, transaction([effect(104)]));
   await parentAttempts;
@@ -553,7 +571,7 @@ try {
   await putKey(scope(bulk), keyId, dataKey);
   const bulkKey = await refusedKey(bulk);
   const head = audited(transaction([effect(0)]));
-  await held(send(bulk, head, bulkKey));
+  await held(bulk, send(bulk, head, bulkKey));
   const window = 4096;
   const later = [];
   for (let n = 1; n <= window + 64; n++) {
@@ -606,8 +624,9 @@ try {
     if (tokens[at]?.startsWith('home-fra-epoch-') && reply.raw === '+ACK') fraAcks.add(tokens[at + 2]);
     return skipTarget !== null && fraAcks.has(skipTarget);
   });
-  const sentA = await held(send(relocated, columnA, relocatedKey));
+  const sentA = await send(relocated, columnA, relocatedKey);
   skipTarget = String(sentA.seq);
+  await rounds(relocated, sentA, 2);
   await skipped;
   const moveStarted = Date.now();
   const relocatedPath = '/v1/projects/' + project.id + '/databases/' + relocated.id;
@@ -630,7 +649,9 @@ try {
   console.log('home moved to fra through the regions API (' + moveSeconds.toFixed(1) + ' s) while sequence ' + sentA.seq + ' (column a) was held at gru and acknowledged unapplied by fra\'s consumer; sequence ' + sentB.seq + ' (column b), addressed to fra after the move, waited behind it; both applied once at fra in stream order (application log), a=1 b=2');
 
   const unknownId = id();
-  await held(nats.request('terrabase.push.fra.gru.' + org.id + '.' + project.id + '.' + unknownId, Buffer.from('catalog-missing')));
+  const unknownHeld = logged(gru, 'A pushed database is held', { Database: unknownId, Kind: 'unknown_database' }, offset());
+  assert(!(await nats.request('terrabase.push.fra.gru.' + org.id + '.' + project.id + '.' + unknownId, Buffer.from('catalog-missing'))).error);
+  await unknownHeld;
   await applied(other, transaction([effect(106)]));
   const doomed = await create('doomed');
   await request(home, '/v1/projects/' + project.id + '/databases/' + doomed.id, undefined, user, 'DELETE', 204);
@@ -680,6 +701,7 @@ try {
     const renewed = nats.event('$KV.terrabase-region-writers.gru', () => ++renewals >= 3);
     gru.kill('SIGCONT');
     await renewed;
+    await trusted(9091);
   };
   const flip = async node => {
     const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
@@ -697,7 +719,7 @@ try {
   const droppedKey = await refusedKey(dropped);
   const droppedTxs = series(42);
   const droppedSeen = collect(dropped, droppedTxs);
-  await held(send(dropped, droppedTxs[0], droppedKey));
+  await held(dropped, send(dropped, droppedTxs[0], droppedKey));
   for (const tx of droppedTxs.slice(1, 41)) await send(dropped, tx);
   await applied(other, transaction([effect(200)]));
   const readBack = relay.drop('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_FRA');
@@ -712,7 +734,7 @@ try {
   const rereadKey = await refusedKey(lapsed);
   const lapsedTxs = series(72);
   const lapsedSeen = collect(lapsed, lapsedTxs);
-  await held(send(lapsed, lapsedTxs[0], headKey));
+  await held(lapsed, send(lapsed, lapsedTxs[0], headKey));
   for (const tx of lapsedTxs.slice(1, 32)) await send(lapsed, tx);
   const rereadHead = await send(lapsed, lapsedTxs[32], rereadKey);
   for (const tx of lapsedTxs.slice(33, 71)) await send(lapsed, tx);
@@ -812,6 +834,58 @@ try {
   assert(perMessage.every(number => !replayWrites.has(number)), JSON.stringify({ perMessage, replay: [...replayWrites] }));
   console.log('replay of ' + quietTxs.length + ' applied messages after a same-node reopen: the pages every new apply writes (' + perMessage.join(', ') + ') were written 0 times by the replay (' + [...replayWrites.values()].reduce((sum, count) => sum + count, 0) + ' frames of other pages by storage bookkeeping); ' + controlTxs.length + ' new messages wrote each of them at least ' + controlTxs.length + ' times');
 
+
+  const finished = await database('finished');
+  const finishedKey = await refusedKey(finished);
+  const finishedTxs = series(2);
+  const finishedSeen = collect(finished, finishedTxs);
+  await held(finished, send(finished, finishedTxs[0], finishedKey));
+  const finishedLater = await send(finished, finishedTxs[1]);
+  const applyPath = '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + finished.id + '/apply';
+  const positioned = await request(home, applyPath + '?position=' + finishedLater.seq, finishedTxs[1], undefined, 'POST', 503);
+  const unpositioned = await request(home, applyPath, finishedTxs[1], undefined, 'POST', 503);
+  assert.equal(positioned.error.code, 'unavailable');
+  assert.equal(unpositioned.error.code, 'unavailable');
+  assert.deepEqual(await applications(finished), []);
+  release(finished, finishedKey);
+  await inOrder(finished, finishedTxs, finishedSeen);
+  assert.equal((await request(home, applyPath + '?position=' + finishedLater.seq, finishedTxs[1])).state, 'confirmed');
+  assert.equal((await request(home, applyPath, finishedTxs[1])).state, 'confirmed');
+  console.log('a partner finishing a lost node\'s held transaction at sequence ' + finishedLater.seq + ' while the earlier position was held: 503 with and without its position, nothing applied; after release both applied in stream order and both request shapes answer confirmed');
+
+  const gapped = await database('gapped');
+  const gappedKey = await refusedKey(gapped);
+  const [gapHead, gapTail] = series(2);
+  const gapSent = await held(gapped, send(gapped, gapHead, gappedKey));
+  const gapHeld = logged(gru, 'A pushed database is held', { Database: gapped.id, Kind: 'purged' }, offset());
+  const marker = await nats.request('terrabase.push-state.fra.purged.' + scope(gapped).replaceAll('/', '.'), Buffer.from(String(gapSent.seq)));
+  assert(!marker.error, JSON.stringify(marker));
+  const purged = await nats.request('$JS.API.STREAM.PURGE.TERRABASE_PUSH_FRA', { filter: 'terrabase.push.fra.*.' + scope(gapped).replaceAll('/', '.'), seq: gapSent.seq + 1 });
+  assert(purged.success, JSON.stringify(purged));
+  let gapApplied = null;
+  const gapNotice = notice(gapped, gapTail).then(result => { gapApplied = result; }, () => {});
+  await send(gapped, gapTail);
+  release(gapped, gappedKey);
+  await gapHeld;
+  await applied(other, transaction([effect(300)]));
+  assert.equal(gapApplied, null);
+  assert.deepEqual(await applications(gapped), []);
+  assert.equal(await scrape(/^terrabase_push_held\{.*reason="purged"/), 1);
+  console.log('purge marker at sequence ' + gapSent.seq + ' ahead of the frontier of a database whose head was purged unapplied: held with reason purged, the later message not applied, the other database applied');
+
+  const strays = Array.from({ length: 130 }, () => id());
+  const strayStarted = Date.now();
+  for (const stray of strays) {
+    for (let n = 0; n < 32; n++) {
+      const ack = await nats.request('terrabase.push.fra.gru.' + org.id + '.' + project.id + '.' + stray, Buffer.from('catalog-missing'));
+      assert(!ack.error, JSON.stringify(ack));
+    }
+  }
+  await applied(other, transaction([effect(301)]));
+  assert.equal(await value(other), 301);
+  const strayConsumer = await nats.request('$JS.API.CONSUMER.INFO.TERRABASE_PUSH_FRA.' + (await consumers())[0]);
+  assert(strayConsumer.num_ack_pending < 4096, JSON.stringify(strayConsumer));
+  console.log('130 unknown databases with 32 messages each (' + strays.length * 32 + ' messages) held on one origin: the healthy database applied after them in ' + ((Date.now() - strayStarted) / 1000).toFixed(1) + ' s; consumer ack pending ' + strayConsumer.num_ack_pending + ', unknown_database holds ' + await scrape(/^terrabase_push_held\{.*reason="unknown_database"/));
 } finally {
   rmSync(journeyState + '/r2-unavailable-keys', { force: true });
   nats?.close();

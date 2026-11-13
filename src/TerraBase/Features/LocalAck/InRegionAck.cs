@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -237,7 +238,7 @@ internal sealed class InRegionAck(
             }
 
             using var body = Json(JsonSerializer.SerializeToUtf8Bytes(transaction, HomeApplyJsonContext.Default.RegionTransaction));
-            using var response = await Http.PostAsync(new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "apply")[1..]), body, cancellationToken)
+            using var response = await Http.PostAsync(new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "apply")[1..] + "?position=" + held.Sequence.ToString(CultureInfo.InvariantCulture)), body, cancellationToken)
                 .ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {

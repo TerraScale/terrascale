@@ -68,7 +68,7 @@ internal partial class HomePush(
     private readonly ConcurrentDictionary<(string Origin, string Organization, string Project, string Database), ulong> _applied = new();
     private TaskCompletionSource _progress = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Lazy<ILocalCommitFeed?> _feed = new(services.GetService<ILocalCommitFeed>);
-    private readonly Channel<(TenantContext Database, ulong Through)> _purges = Channel.CreateBounded<(TenantContext, ulong)>(
+    private readonly Channel<(TenantContext Database, ulong Through, IReadOnlyDictionary<string, ulong> Frontier)> _purges = Channel.CreateBounded<(TenantContext, ulong, IReadOnlyDictionary<string, ulong>)>(
         new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.DropOldest });
     private readonly Lock _queuesGate = new();
     private readonly Dictionary<string, PushQueue> _queues = new(StringComparer.Ordinal);
@@ -82,6 +82,7 @@ internal partial class HomePush(
     private Counter<long>? _applies;
     private Counter<long>? _reverts;
     private Counter<long>? _applyRetries;
+    private Counter<long>? _holds;
     private Counter<long>? _parked;
     private Histogram<double>? _applyTime;
 
@@ -129,18 +130,20 @@ internal partial class HomePush(
             _applies = _meter.CreateCounter<long>("terrabase.push.applies", "{transaction}", "Home applies of pushed transactions by state.");
             _reverts = _meter.CreateCounter<long>("terrabase.push.reverts", "{transaction}", "Local transactions the home reverted.");
             _applyRetries = _meter.CreateCounter<long>("terrabase.push.apply_retries", "{retry}", "Home apply retries of a held head by bounded error kind.");
+            _holds = _meter.CreateCounter<long>("terrabase.push.holds", "{change}", "Origin databases entering a hold or changing its reason, by reason.");
             _parked = _meter.CreateCounter<long>("terrabase.push.parked", "{message}", "Messages durably parked by bounded reason.");
             _ = _meter.CreateObservableGauge("terrabase.push.parked_records", () => Volatile.Read(ref _parkedCounts), "{message}", "Retained durable parked records by reason.");
-            _ = _meter.CreateObservableGauge("terrabase.push.held", HeldCount, "{database}", "Origin databases whose head pushed message has not applied yet.");
+            _ = _meter.CreateObservableGauge("terrabase.push.held", HeldCount, "{database}", "Origin databases whose head pushed message has not applied yet, by hold reason.");
             _ = _meter.CreateObservableGauge("terrabase.push.held_age", OldestHeld, "s", "Seconds since the oldest held head first failed to apply.");
             _applyTime = _meter.CreateHistogram<double>("terrabase.push.apply_time", "ms", "Time in each home apply attempt, excluding retry backoff and transport.");
             _ = _meter.CreateObservableGauge("terrabase.push.pending", () => _overlay.Count, "{transaction}", "Local transactions the home has not confirmed.");
             _ = _meter.CreateObservableGauge("terrabase.localwrites.available", () => LocalAckAvailable ? 1 : 0, "{node}",
                 "1 while this node can acknowledge local writes with its discovered regional quorum.");
             replicas.Overlay = _overlay.RestoreAsync;
-            _overlay.Held += (database, through) =>
+            _overlay.Held += (database, through, frontier) =>
             {
-                _ = _purges.Writer.TryWrite((database, through));
+                _ = _purges.Writer.TryWrite((database, through, frontier));
+
                 partner.Release(database, through);
             };
             _overlay.Reverted += OnReverted;
@@ -296,7 +299,7 @@ internal partial class HomePush(
     private async Task EnsureStreamAsync(NatsJSContext js, NatsConnection nats, CancellationToken cancellationToken)
     {
         await nats.ConnectAsync().ConfigureAwait(false);
-        var config = new StreamConfig(PushNames.Stream(options.Region), [PushNames.Subjects(options.Region)])
+        var config = new StreamConfig(PushNames.Stream(options.Region), [PushNames.Subjects(options.Region), PushNames.StateSubjects(options.Region)])
         {
             Storage = StreamConfigStorage.File,
             Retention = StreamConfigRetention.Limits,
@@ -405,18 +408,34 @@ internal partial class HomePush(
         {
             Filter = PushNames.DatabaseFilter(options.Region, database),
         }, cancellationToken).ConfigureAwait(false);
+        _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
+        {
+            Filter = PushNames.Purged(options.Region, database),
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task PurgesAsync(NatsJSContext js, CancellationToken cancellationToken)
     {
-        await foreach (var (database, through) in _purges.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        await foreach (var (database, released, frontier) in _purges.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
             try
             {
+                var source = await SourceAsync(js, options.Region, cancellationToken).ConfigureAwait(false);
+                if (Math.Min(released, frontier.GetValueOrDefault(source)) is not (> 0 and var through))
+                {
+                    continue;
+                }
+
+                await MarkPurgedAsync(js, database, through, cancellationToken).ConfigureAwait(false);
                 _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
                 {
                     Filter = PushNames.DatabaseFilter(options.Region, database),
                     Seq = through + 1,
+                }, cancellationToken).ConfigureAwait(false);
+                _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
+                {
+                    Filter = PushNames.Purged(options.Region, database),
+                    Keep = 1,
                 }, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -471,6 +490,7 @@ internal partial class HomePush(
 
     private async Task<bool> ConsumeRunAsync(NatsJSContext js, NatsConnection nats, string origin, long epoch, ConsumeRun run)
     {
+        var previous = await PreviousFloorAsync(js, origin, run.Token).ConfigureAwait(false);
         var source = await SourceAsync(js, origin, run.Token).ConfigureAwait(false);
         if (await OpenConsumerAsync(js, origin, epoch, run.Token).ConfigureAwait(false) is not { } consumer)
         {
@@ -486,6 +506,7 @@ internal partial class HomePush(
         lock (_queuesGate)
         {
             run.Source = source;
+            run.Previous = previous;
             _runs[origin] = run;
         }
 

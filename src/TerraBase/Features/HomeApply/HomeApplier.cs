@@ -24,7 +24,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
     internal const int MaxChanges = 1024;
     internal const int KeptConflicts = 10_000;
     private static readonly TimeSpan KeptConflictAge = TimeSpan.FromDays(30);
-    private static readonly TimeSpan KeptApplied = TimeSpan.FromDays(7);
+    internal static readonly TimeSpan KeptApplied = TimeSpan.FromDays(7);
 
     private static readonly string[] Tables =
     [
@@ -482,15 +482,23 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         return new string(id);
     }
 
-    private static string? Rejects(SqlStatementException error) => error.Failure switch
+    private const int SqliteTooBig = 18;
+    private const int SqliteConstraint = 19;
+    private const int SqliteMismatch = 20;
+
+    private static string? Rejects(SqlStatementException error) => (error.EngineCode & 0xff) switch
     {
-        Unique => "unique",
-        PrimaryKey => "primary_key",
-        NotNull => "not_null",
-        Check => "check",
-        ForeignKeyFailure => "foreign_key",
-        Constraint => "constraint",
-        KnownError or TooBig => "constraint",
-        NoSuchTable or NoSuchColumn or Syntax or AlreadyExists or Busy or Interrupted or ReadOnly or StaleRow or Error or StorageFailure => null,
+        SqliteConstraint => error.Failure switch
+        {
+            Unique => "unique",
+            PrimaryKey => "primary_key",
+            NotNull => "not_null",
+            Check => "check",
+            ForeignKeyFailure => "foreign_key",
+            Constraint or KnownError or TooBig or NoSuchTable or NoSuchColumn or Syntax or AlreadyExists or Busy or Interrupted or ReadOnly or StaleRow or Error
+                or StorageFailure => "constraint",
+        },
+        SqliteTooBig or SqliteMismatch => "constraint",
+        _ => null,
     };
 }

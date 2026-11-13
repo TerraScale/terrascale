@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using NATS.Client.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine.Turso;
 using TerraBase.Engine;
@@ -46,10 +47,13 @@ internal sealed class HomeMoves(
     private readonly ConcurrentDictionary<string, MoveRequest> _running = new(StringComparer.Ordinal);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private Histogram<double>? _pause;
+    private Counter<long>? _catchUpTimeouts;
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         _pause = _meter.CreateHistogram<double>("terrabase.placement.move.pause", "ms", "Time writes of a database paused while its home moved.");
+        _catchUpTimeouts = _meter.CreateCounter<long>("terrabase.placement.move.catch_up_timeouts", "{move}",
+            "Promotions that answered before the new home's sequencers reached the end of every origin stream.");
         leases.FailOver = FailOverAsync;
         return base.StartAsync(cancellationToken);
     }
@@ -464,7 +468,22 @@ internal sealed class HomeMoves(
         }
         catch (OperationCanceledException) when (bound.IsCancellationRequested)
         {
-            logger.ZLogWarning($"A new home's sequencers did not reach the end of every origin stream within the promotion; they keep applying in stream order");
+            _catchUpTimeouts?.Add(1);
+            IReadOnlyList<(string Origin, ulong Frontier, ulong Last)> behind;
+            try
+            {
+                behind = await pushes.BehindAsync(database, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is IOException or NatsException or StorageBusyException or SqlStatementException)
+            {
+                logger.ZLogWarning($"A new home of {database.DatabaseId:@Database} answers promoted before its sequencers reached the end of every origin stream; how far behind is unknown: {error.GetType().Name:@Error}");
+                return;
+            }
+
+            foreach (var (origin, frontier, last) in behind)
+            {
+                logger.ZLogWarning($"A new home of {database.DatabaseId:@Database} answers promoted while the push from {origin:@Origin} is behind: frontier {frontier:@Frontier}, stream last {last:@Last}");
+            }
         }
     }
 
