@@ -525,6 +525,7 @@ def boundary_cases(selected=None):
         assert proof_reads == 1, ("creation evidence was read again during commit", proof_reads)
         assert hook("ledger", identity) == [1, 0]
         control.unlink()
+        release.unlink()
         end()
         print(
             f"held fault-binding key: independent fault and migration lease {elapsed:.3f}s; "
