@@ -282,6 +282,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                             {
                                 Key = authorized.Key,
                                 Until = authorized.Until,
+                                TokenExpiry = authorized.TokenExpiry,
                                 Project = project,
                                 Lease = lease,
                             };
@@ -401,7 +402,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         {
             TenantContext tenant when (restriction is null || restriction == tenant.DatabaseId)
                 && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => new RelayAccess(home, tenant),
-            TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until),
+            TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until, key.ValidTo),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
             NotFound => await ElsewhereAsync(key.ProjectId, database[(slash + 1)..], relayed, cancellationToken).ConfigureAwait(false),
             _ => Denied,

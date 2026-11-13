@@ -38,7 +38,6 @@ internal static partial class SqlErrors
     public const string RecoveryPending = "recovery_pending";
     public const string Unauthorized = "unauthorized";
     public const string WrongRegion = "wrong_region";
-    public const string WriteOutcomeUnknown = "write_outcome_unknown";
     public const string InternalError = "internal_error";
 
     public static string Sqlstate(string code) => code switch
@@ -68,7 +67,6 @@ internal static partial class SqlErrors
         Unavailable or CopyFaulted or RecoveryPending => "57P03",
         Unauthorized => "28000",
         WrongRegion => "08004",
-        WriteOutcomeUnknown => "08007",
         InternalError => "XX000",
         _ => "0A000",
     };
