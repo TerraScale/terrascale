@@ -48,12 +48,8 @@ internal sealed class CallerRegistry(FrozenDictionary<string, CallerKey> keys, i
         try
         {
             var json = File.ReadAllText(path);
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                return new(FrozenDictionary<string, CallerKey>.Empty, 0);
-            }
             var list = JsonSerializer.Deserialize(json, CallersJsonContext.Default.CallerList);
-            if (list is not { Version: 1, Callers: not null })
+            if (list is not { Version: 1, Callers.Count: > 0 })
             {
                 throw new JsonException();
             }
@@ -95,7 +91,7 @@ internal sealed class CallerRegistry(FrozenDictionary<string, CallerKey> keys, i
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ArgumentException
             or CryptographicException or FormatException)
         {
-            throw new TerraBaseConfigurationException("TERRABASE_CALLERS_FILE must contain a valid version 1 caller registry with public keys");
+            throw new TerraBaseConfigurationException("TERRABASE_CALLERS_FILE must contain a valid version 1 caller registry with at least one public key");
         }
     }
 }
