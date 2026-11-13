@@ -179,6 +179,7 @@ internal sealed class SqlSocket(
         }
         catch (OperationCanceledException) when (preauthentication.Expired)
         {
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, AuthExpired).ConfigureAwait(false);
             return false;
         }
         finally
