@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import { stateDir } from './stack';
 import { saveSecret } from './state';
 
@@ -39,7 +39,7 @@ export function installAction(): void {
 export async function branchAction(command: 'create' | 'reset' | 'delete', apiKey: string, database: string, step: string): Promise<Record<string, string>> {
   const output = join(home, `output-${step}`);
   writeFileSync(output, '', { mode: 0o600 });
-  const result = await test.step('branch.sh ' + command + ' ' + step, () => execute('bash', [join(tools(), 'branch.sh')], {
+  const result = await execute('bash', [join(tools(), 'branch.sh')], {
     PATH: process.env.PATH,
     HOME: home,
     SSL_CERT_FILE: process.env.SSL_CERT_FILE,
@@ -57,7 +57,7 @@ export async function branchAction(command: 'create' | 'reset' | 'delete', apiKe
     GITHUB_OUTPUT: output,
     GITHUB_RUN_ID: workflowRun,
     GITHUB_RUN_ATTEMPT: '1',
-  }));
+  });
   expect(result.code, `branch.sh ${command} (stderr: ${result.stderr.trim()})`).toBe(0);
   const outputs: Record<string, string> = Object.fromEntries(
     readFileSync(output, 'utf8')
