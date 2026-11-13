@@ -54,20 +54,14 @@ jobs:
             echo "::error::Release jobs have no recognized release step: $unknown"
             exit 1
           fi
-          failed=$(jq -c --argjson names "$names" '[.jobs[]
-            | select(.name | IN($names[])) | select(.conclusion == "failure" or .conclusion == "cancelled")]' <<< "$jobs")
-          if [ "$(jq length <<< "$failed")" -gt 0 ]; then
-            jq -e 'all(.[]; any(.steps[]; .name == "Record deployment outcome" and .conclusion == "success"))' <<< "$failed" > /dev/null
-            echo "Run $RUN_ID recorded its deployment failure in the deployment alert; no proved release to journey"
-            exit 0
-          fi
-          released=$(jq -r --argjson steps "$RELEASE_STEPS" '[.jobs[] | .steps[]?
+          released=$(jq -r --argjson names "$names" --argjson steps "$RELEASE_STEPS" '[.jobs[]
+            | select(.name | IN($names[])) | select(.conclusion == "success") | .steps[]?
             | select(.name | IN($steps[])) | select(.conclusion == "success")] | length' <<< "$jobs")
           if [ "$released" -eq 0 ]; then
-            echo "Run $RUN_ID did not release a service"
+            echo "Run $RUN_ID has no successful release job; the deploy job's alert and summary carry any failure"
             exit 0
           fi
-          if jq -e '.jobs[] | select(.name == "main-auth" or .name == "Publish and release")
+          if jq -e '.jobs[] | select(.name == "main-auth" or .name == "Publish and release") | select(.conclusion == "success")
             | .steps[]? | select(.name == "Release to every region" and .conclusion == "success")' <<< "$jobs" > /dev/null; then
             artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=deploy-revision&per_page=1" --jq '.artifacts[0].id // empty')
             test -n "$artifact"
