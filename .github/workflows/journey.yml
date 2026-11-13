@@ -87,12 +87,19 @@ jobs:
             projects: --project pages-desktop --project paid-invitation
           - shard: phone and flows
             projects: --project pages-mobile --project hosted --project interactions --project invitation
+          - shard: multi-region faults
+            projects: --project fault
+            regions: 2
+            nodes: 2
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
     env:
       PROJECTS: ${{ matrix.projects }}
+      E2E_REGIONS: ${{ matrix.regions || 1 }}
+      E2E_NODES_PER_REGION: ${{ matrix.nodes || 1 }}
+      DOTNET_PROCESSOR_COUNT: 4
       E2E_STATE: ${{ github.workspace }}/e2e/.state
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       DOTNET_NOLOGO: 1

@@ -5,6 +5,11 @@ const placementRequested = process.env.E2E_PLACEMENT_SELECTED === '1' || process
 if (placementRequested) process.env.E2E_PLACEMENT_SELECTED = '1';
 
 const secretFree = { trace: 'off' } as const;
+const faultRequested = process.env.E2E_FAULT_SELECTED === '1' || process.argv.includes('fault') || process.argv.includes('--project=fault');
+if (faultRequested) process.env.E2E_FAULT_SELECTED = '1';
+if (faultRequested && (production || process.env.E2E_REGIONS !== '2' || process.env.E2E_NODES_PER_REGION !== '2')) {
+  throw new Error('the fault project requires the local four-node stack: E2E_REGIONS=2 E2E_NODES_PER_REGION=2');
+}
 
 export default defineConfig({
   testDir: '.',
@@ -29,6 +34,26 @@ export default defineConfig({
     launchOptions: { env: { ...process.env, HOME: browserHome } },
   },
   projects: [
+    ...(faultRequested ? [{
+      name: 'fault-setup',
+      testMatch: 'fault/setup.spec.ts',
+      teardown: 'fault-close',
+      fullyParallel: false,
+      metadata: { setup: 'fault-setup' },
+      use: secretFree,
+    }, {
+      name: 'fault',
+      testMatch: 'fault/fault.spec.ts',
+      dependencies: ['fault-setup'],
+      fullyParallel: false,
+      metadata: { setup: 'fault-setup' },
+      use: secretFree,
+    }, {
+      name: 'fault-close',
+      testMatch: 'placement/close.spec.ts',
+      metadata: { setup: 'fault-setup' },
+      use: { storageState: sessionFile('fault-setup'), ...secretFree },
+    }] : []),
     ...(placementRequested ? [{
       name: 'placement-setup',
       testMatch: 'journey/setup.spec.ts',

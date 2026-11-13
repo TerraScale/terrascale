@@ -31,6 +31,9 @@ if [ -n "${GITHUB_ACTIONS:-}" ]; then sed 's/^/::add-mask::/' "$state/secrets"; 
 dashboard_peers=()
 if [ "${E2E_REGIONS:-1}" = 2 ]; then
   printf 'journey-1 gru 127.0.0.1\njourney-2 fra 127.0.0.2\n' > "$state/peers"
+  if [ "${E2E_NODES_PER_REGION:-1}" = 2 ]; then
+    printf 'journey-3 gru 127.0.0.3\njourney-4 fra 127.0.0.4\n' >> "$state/peers"
+  fi
   dashboard_peers=(TS_PEERS_FILE="$state/peers")
   rm -rf "$state/terrabase-fra"
   mkdir -p "$state/terrabase-fra"
@@ -43,10 +46,31 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
     TERRABASE_SHAPES_CDN_API_TOKEN="$cloudflare_token"
     TERRABASE_FILES_S3_ENDPOINT=https://journey.r2.cloudflarestorage.com/ TERRABASE_FILES_S3_ACCESS_KEY_ID="$r2_access_key_id"
     TERRABASE_FILES_S3_SECRET_ACCESS_KEY="$r2_secret_access_key")
+  if [ "${E2E_NODES_PER_REGION:-1}" = 2 ]; then
+    nats_token=$(random 32)
+    rm -rf "$state/nats"
+    printf '%s\n' "$nats_token" >> "$state/secrets"
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then printf '::add-mask::%s\n' "$nats_token"; fi
+    printf '%s' "$nats_token" > "$state/nats-token"
+    printf 'listen: 127.0.0.1:4222\nhttp: 127.0.0.1:8222\nauthorization { token: %s }\njetstream { store_dir: %s/nats }\n' \
+      "$nats_token" "$state" > "$state/nats.conf"
+    start nats "$E2E_TOOLS/nats-server" --config "$state/nats.conf"
+    ready nats curl -fsS --max-time 2 http://127.0.0.1:8222/healthz
+    cells+=(TS_NATS_URL=nats://127.0.0.1:4222 TERRABASE_NATS_TOKEN_FILE="$state/nats-token")
+  fi
   start terrabase env "${cells[@]}" TS_REGION=gru TS_NODE=journey-1 TERRABASE_DATA_DIRECTORY="$state/terrabase" \
     TERRABASE_PORT=8080 TERRABASE_METRICS_PORT=9091 TERRABASE_POSTGRES_PORT=6432 dotnet "$build/terrabase/terrabase.dll"
   start terrabase-fra env "${cells[@]}" TS_REGION=fra TS_NODE=journey-2 TERRABASE_DATA_DIRECTORY="$state/terrabase-fra" \
     TERRABASE_PORT=8180 TERRABASE_METRICS_PORT=9191 TERRABASE_POSTGRES_PORT=6532 dotnet "$build/terrabase/terrabase.dll"
+  if [ "${E2E_NODES_PER_REGION:-1}" = 2 ]; then
+    rm -rf "$state/terrabase-gru-2" "$state/terrabase-fra-2"
+    start terrabase-gru-2 env "${cells[@]}" TS_REGION=gru TS_NODE=journey-3 TERRABASE_DATA_DIRECTORY="$state/terrabase-gru-2" \
+      TERRABASE_PORT=8280 TERRABASE_METRICS_PORT=9291 TERRABASE_POSTGRES_PORT=6632 dotnet "$build/terrabase/terrabase.dll"
+    start terrabase-fra-2 env "${cells[@]}" TS_REGION=fra TS_NODE=journey-4 TERRABASE_DATA_DIRECTORY="$state/terrabase-fra-2" \
+      TERRABASE_PORT=8380 TERRABASE_METRICS_PORT=9391 TERRABASE_POSTGRES_PORT=6732 dotnet "$build/terrabase/terrabase.dll"
+    ready terrabase-gru-2 curl -fsS --max-time 2 http://127.0.0.1:8280/readyz
+    ready terrabase-fra-2 curl -fsS --max-time 2 http://127.0.0.1:8380/readyz
+  fi
   ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz
   ready terrabase-fra curl -fsS --max-time 2 http://127.0.0.1:8180/readyz
 else
