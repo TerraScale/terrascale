@@ -4,7 +4,6 @@ using System.Net;
 using TerraBase.Features.Replicas;
 using Google.Protobuf;
 using TerraBase.Engine;
-using TerraBase.Engine.Turso;
 using TerraBase.Engine.Revisions;
 using TerraBase.Errors;
 using TerraBase.Hosting;

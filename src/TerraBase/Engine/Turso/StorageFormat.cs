@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace TerraBase.Engine.Turso;
+namespace TerraBase.Engine;
 
 public static class StorageFormat
 {

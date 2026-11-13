@@ -8,7 +8,8 @@ import re
 import subprocess
 import sys
 
-root = "src/TerraBase/Engine/Turso/"
+root = str(next(pathlib.Path("src/TerraBase/Engine").glob("*/storage-format.lock")).parent) + "/"
+store = next(pathlib.Path(root).glob("*DatabaseStore.cs")).name
 base = sys.argv[1]
 
 
@@ -50,7 +51,7 @@ def lock(source):
 
 
 current = version(pathlib.Path(root + "StorageFormat.cs").read_text())
-digest = schema(pathlib.Path(root + "TursoDatabaseStore.cs").read_text())
+digest = schema(pathlib.Path(root + store).read_text())
 locked = lock(pathlib.Path(root + "storage-format.lock").read_text())
 if locked.get(current) != digest:
     fail("schema text changed without a new locked version and migration step")
@@ -60,7 +61,7 @@ if old_version is None:
 old = version(old_version)
 old_lock = previous(root + "storage-format.lock")
 baseline = lock(old_lock) if old_lock is not None else {
-    old: schema(previous(root + "TursoDatabaseStore.cs"))}
+    old: schema(previous(root + store))}
 if current < old:
     fail("storage versions only move forward")
 for number, expected in baseline.items():

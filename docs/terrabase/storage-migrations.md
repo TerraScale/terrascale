@@ -1,7 +1,7 @@
 # Storage migrations
 
 The storage format is an integer. Schema digests live in
-`src/TerraBase/Engine/Turso/storage-format.lock`, and the storage gate compares them with the schema
+the storage implementation’s `storage-format.lock`, and the storage gate compares them with the schema
 constants. Schema changes require a new version, a new lock entry and a consecutive SQL migration.
 Keep each migration unchanged for at least 60 days. Do not edit previous lock entries.
 

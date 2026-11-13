@@ -3,7 +3,7 @@ using TerraBase.Configuration;
 using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TursoStorageFormat = TerraBase.Engine.Turso.StorageFormat;
+using EngineStorageFormat = TerraBase.Engine.StorageFormat;
 
 namespace TerraBase.Features.Health;
 
@@ -18,7 +18,7 @@ public sealed record StatusBody(
 {
     public static StatusBody For(HttpContext context, string status, TerraBaseOptions options, string? bucket = null) =>
         Listeners.ArrivedOn(context) == TerraBaseListener.Internal
-            ? new(status, ServiceVersion.Value, options.Region, TursoStorageFormat.Id, ServiceVersion.Revision, options.MachineId, bucket)
+            ? new(status, ServiceVersion.Value, options.Region, EngineStorageFormat.Id, ServiceVersion.Revision, options.MachineId, bucket)
             : new(status, ServiceVersion.Value, options.Region);
 }
 public sealed class HealthzEndpoint(TerraBaseOptions options, ICatalogGate catalog) : EndpointWithoutRequest<IResult>
