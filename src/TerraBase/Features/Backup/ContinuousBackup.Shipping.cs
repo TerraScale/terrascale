@@ -298,8 +298,13 @@ internal sealed partial class ContinuousBackup
             return;
         }
 
+        var through = segment.Mark is { } storedMark
+            ? segment.EndsMarked && segment.At.ToUnixTimeMilliseconds() == storedMark.ToUnixTimeMilliseconds()
+                ? storedMark
+                : DateTimeOffset.FromUnixTimeSeconds(storedMark.ToUnixTimeSeconds())
+            : file.PlatformProgress?.At;
         var stored = new BackupStored(segment.Cursor, file.Generation!.Value, file.GenerationKey!, segment.Position,
-            file.LastSnapshot, segment.At, segment.Mark ?? file.PlatformProgress?.At, file.Target.Revision);
+            file.LastSnapshot, segment.At, through, file.Target.Revision);
         await StorePositionAsync(file, stored, segment.Key, segment.Sealed, "segment", cancellationToken).ConfigureAwait(false);
 
         file.Unstored = null;
