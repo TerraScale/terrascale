@@ -36,6 +36,7 @@ internal sealed partial class RegionalHandoff(
     private long _activeEpoch;
     private long _activatingEpoch;
     private TenantContext? _activationAfter;
+    private string? _activationRetainedAfter;
     private INatsKVStore? _kv;
     private NatsConnection? _nats;
     private RegionalWriterLease? _writerLease;
@@ -172,6 +173,7 @@ internal sealed partial class RegionalHandoff(
         {
             _activatingEpoch = owner.Epoch;
             _activationAfter = null;
+            _activationRetainedAfter = null;
         }
         do
         {
@@ -194,10 +196,9 @@ internal sealed partial class RegionalHandoff(
             _activationAfter = page.Next;
         }
         while (true);
-        string? retainedAfter = null;
         do
         {
-            var retained = await RegionalRetention.RecordsAsync(services.GetRequiredService<IStorageEngine>(), retainedAfter, cancellationToken).ConfigureAwait(false);
+            var retained = await RegionalRetention.RecordsAsync(services.GetRequiredService<IStorageEngine>(), _activationRetainedAfter, cancellationToken).ConfigureAwait(false);
             foreach (var stored in retained.Records)
             {
                 var record = RegionalRetention.Read(stored);
@@ -205,13 +206,18 @@ internal sealed partial class RegionalHandoff(
                 {
                     return false;
                 }
+                _activationRetainedAfter = stored.Id;
             }
-            retainedAfter = retained.HasMore ? retained.Records[^1].Id : null;
+            if (!retained.HasMore)
+            {
+                break;
+            }
         }
-        while (retainedAfter is not null);
+        while (true);
         _activeEpoch = owner.Epoch;
         _activatingEpoch = 0;
         _activationAfter = null;
+        _activationRetainedAfter = null;
         return true;
     }
 
