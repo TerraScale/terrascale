@@ -3,8 +3,8 @@
 Without ts-orch's cluster environment (`TS_REGION`, `TS_NODE` and `TS_PEERS_FILE` all unset, [ts-orch.md](ts-orch.md)) a
 node is a cell of its own, named `local`, in any environment:
 
-- The internal listener (8081) binds loopback; the client (8080) and metrics (9091) listeners bind every interface outside
-  Development.
+- The internal (8081) and metrics (9091) listeners bind loopback; the client (8080) and Postgres (5432) listeners bind every
+  interface outside Development. In a cluster, metrics also binds the node's internal peer address.
 - No peer discovery.
 - Outside Development, without `TERRABASE_AUTH_ISSUER`/`TERRABASE_AUTH_AUDIENCE`, it trusts the platform pair
   (`https://auth.terrascale.tech/terrascale`, `https://api.terrascale.tech`), as `ts-terrabase` does. Set the pair to trust
