@@ -2,7 +2,7 @@ import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
 import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
-import { backupStore, continuity, crashWrite, endpoint, Ledger, metric, probe, regions, restartAfterKill, topology } from './support';
+import { backupStore, continuity, crashWrite, endpoint, issuerDown, Ledger, metric, probe, regions, restartAfterKill, topology } from './support';
 import type { Cells } from '../placement/support';
 
 async function neverUnauthorized(cells: Cells, url: string): Promise<void> {
@@ -18,6 +18,15 @@ async function neverUnauthorized(cells: Cells, url: string): Promise<void> {
   console.log(`first answers to a valid token after the restart: ${[...new Set(answers)].join(' | ')}`);
 }
 
+async function keysPending(cells: Cells, url: string, node: Parameters<typeof metric>[0]): Promise<void> {
+  const response = await cells.get(url);
+  const body = await response.text();
+  expect(response.status(), `a valid token before the restarted node could load the signing keys: ${body}`).toBe(503);
+  expect(JSON.parse(body).error.code).toBe('auth_unavailable');
+  expect(response.headers()['retry-after']).toBe('1');
+  expect(await metric(node, 'terrabase_auth_signing_keys_loaded')).toBe(0);
+}
+
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
   expect(process.env.E2E_REGIONS).toBe('2');
@@ -30,6 +39,7 @@ test('a writer killed during a write restarts without losing acknowledged rows i
     data: { name: name('fault'), regions: [...regions] },
   }), 201);
   const ledger = new Ledger(created.id);
+  let issuer: (() => Promise<void>) | undefined;
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await ledger.write(cells, 'gru', [[1, 'before-gru']]);
@@ -43,6 +53,7 @@ test('a writer killed during a write restarts without losing acknowledged rows i
     }));
     saveSecret('fault-token', grant.access_token);
     const writer = (await topology()).find(node => node.region === 'gru')!;
+    issuer = issuerDown();
     const writing = crashWrite(writer, ledger, grant.access_token);
     await writing.sent;
     const restart = restartAfterKill(writer);
@@ -52,16 +63,20 @@ test('a writer killed during a write restarts without losing acknowledged rows i
     } finally {
       await restart();
     }
-    await neverUnauthorized(cells, `${endpoint('gru')}${database(created.id)}`);
     await expect.poll(async () => {
       const response = await request.get(`http://127.0.0.1:${writer.port}/readyz`);
       return response.status();
     }, { message: 'the crashed writer recovers from its existing data directory' }).toBe(200);
+    await keysPending(cells, `${endpoint('gru')}${database(created.id)}`, writer);
+    await issuer();
+    issuer = undefined;
+    await neverUnauthorized(cells, `${endpoint('gru')}${database(created.id)}`);
     await ledger.compare(cells, retained);
     await ledger.write(cells, 'gru', [[3, 'after-gru']]);
     await ledger.write(cells, 'fra', [[4, 'after-fra']]);
     await ledger.compare(cells);
   } finally {
+    if (issuer) await issuer();
     await removeDatabase(cells, created.id);
   }
 });
@@ -168,6 +183,10 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(opened.holes[0]!.from).toBeLessThan(opened.holes[0]!.to);
     expect(await probe(writer, '/backupz')).toBe(503);
     expect(await probe(writer, '/readyz')).toBe(200);
+    const stillOpen = await refusal(inside);
+    expect(stillOpen.message).toContain('no recovery point after it is stored yet');
+    expect(Date.parse(stillOpen.unavailableFrom)).toBeLessThan(inside);
+    expect(Date.parse(stillOpen.unavailableTo)).toBeGreaterThanOrEqual(Date.parse(stillOpen.unavailableFrom));
 
     await backupStore('up');
     outage = false;
@@ -205,11 +224,15 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 2);
 
     const restart = restartAfterKill(writer);
-    await restart();
-    await backupStore('up');
-    outage = false;
+    await restart(async () => {
+      expect(await probe(writer, '/readyz')).toBe(503);
+      expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(1);
+      await backupStore('up');
+      outage = false;
+    });
     await neverUnauthorized(cells, `${endpoint('gru')}${database(created.id)}`);
     await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
+    expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(0);
     await expect.poll(() => probe(writer, '/backupz'), { message: 'a replacement snapshot after the restart closes the second hole' }).toBe(200);
     const settled = await continuity(writer, created.id);
     expect(settled.holes.map(hole => hole.open)).toEqual([false, false]);

@@ -102,7 +102,7 @@ public static class Telemetry
                         or "terrabase.stats.rollups" or "terrabase.backup.generation_restarts"
                         => new MetricStreamConfiguration { CardinalityLimit = 3 },
                     "terrabase.storage.reads" => new MetricStreamConfiguration { CardinalityLimit = 6 },
-                    "terrabase.query_shapes.dropped" => new MetricStreamConfiguration { CardinalityLimit = 7 },
+                    "terrabase.query_shapes.dropped" or "terrabase.catalog.closed" => new MetricStreamConfiguration { CardinalityLimit = 7 },
                     "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
                         or "terrabase.stats.top.operations"
                         => new MetricStreamConfiguration { CardinalityLimit = 10 },

@@ -48,15 +48,15 @@ internal sealed class PointInTimeRestore(
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
+            if (await LostAsync(database, at, deadline.Token).ConfigureAwait(false) is { } lost)
+            {
+                return lost;
+            }
+
             using var backup = await targets.RestoreAsync(database, destination, deadline.Token).ConfigureAwait(false);
             if (backup is null)
             {
                 return new NotFound("continuous backup holds nothing of this database");
-            }
-
-            if (await LostAsync(database, at, deadline.Token).ConfigureAwait(false) is { } lost)
-            {
-                return lost;
             }
 
             var file = BackupLayout.File(database, options.MachineId);
@@ -272,6 +272,11 @@ internal sealed class PointInTimeRestore(
             return new Conflict("platform database historical recovery is fenced by erasure requirements", "recovery_erasure_fenced");
         }
 
+        if (await LostAsync(source, at, cancellationToken).ConfigureAwait(false) is { } lost)
+        {
+            return lost;
+        }
+
         var now = time.GetUtcNow();
         using var backup = await targets.RestoreAsync(source, destination, cancellationToken).ConfigureAwait(false);
         if (backup is null)
@@ -282,11 +287,6 @@ internal sealed class PointInTimeRestore(
         if (await backup.Keys.ShreddedAsync(BackupLayout.KeyScope(source), cancellationToken).ConfigureAwait(false) is { } shredded)
         {
             return Shredded(shredded.ShreddedAt);
-        }
-
-        if (await LostAsync(source, at, cancellationToken).ConfigureAwait(false) is { } lost)
-        {
-            return lost;
         }
 
         var file = BackupLayout.File(source, options.MachineId);

@@ -720,7 +720,9 @@ until R10a.
 `/backupz` answers as [Lag and health](#lag-and-health) defines; `/readyz` does not depend on it.
 A `/backupz` 503 must stop rollout advancement. Verify that the current runtime
 enforces this gate; the requirement is not evidence of an implemented OCI rollout gate.
-A Tigris outage appears on `/backupz` and in backup metrics.
+A Tigris outage appears on `/backupz` and in backup metrics. A node that starts during the outage is not ready: its
+catalog stays closed until the backup store answers the restore anchor's read (see [Catalog restore gate](restore-drill.md)),
+so `/readyz` answers 503 and catalog-backed requests answer 503 until then.
 
 After a rollout, also check:
 

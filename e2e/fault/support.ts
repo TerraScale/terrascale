@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, openSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
@@ -166,23 +166,23 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
   return { sent, outcome: outcome.then(() => ({ error: undefined }), (error: Error) => ({ error })) };
 }
 
-export function restartAfterKill(node: Node): () => Promise<void> {
-  const pidFile = join(stateDir, 'pids', `${node.service}.pid`);
+function killService(service: string, expected: Record<string, string>): () => Promise<void> {
+  const pidFile = join(stateDir, 'pids', `${service}.pid`);
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   const environment = Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
     const at = value.indexOf('=');
     return [value.slice(0, at), value.slice(at + 1)];
   }));
-  expect(environment.TS_NODE).toBe(node.name);
+  expect(environment).toMatchObject(expected);
   const command = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+  const cwd = readlinkSync(`/proc/${pid}/cwd`);
   process.kill(pid, 'SIGKILL');
-  console.log(`SIGKILL ${node.name}: client write flushed, response outstanding`);
   return async () => {
-    const log = join(stateDir, 'logs', `${node.service}.log`);
+    const log = join(stateDir, 'logs', `${service}.log`);
     const offset = readFileSync(log).length;
     const output = openSync(log, 'a', 0o600);
     try {
-      const child = spawn(command[0], command.slice(1), { env: environment, stdio: ['ignore', output, output] });
+      const child = spawn(command[0], command.slice(1), { cwd, env: environment, stdio: ['ignore', output, output] });
       child.on('error', error => { throw error; });
       writeFileSync(pidFile, `${child.pid}\n`);
       child.unref();
@@ -190,12 +190,27 @@ export function restartAfterKill(node: Node): () => Promise<void> {
       closeSync(output);
     }
     await expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
-      message: 'the restarted writer opens its listeners',
+      message: `the restarted ${service} opens its listeners`,
     }).toBe(true);
+  };
+}
+
+export function restartAfterKill(node: Node): (started?: () => Promise<void>) => Promise<void> {
+  const start = killService(node.service, { TS_NODE: node.name });
+  console.log(`SIGKILL ${node.name}: client write flushed, response outstanding`);
+  return async (started) => {
+    await start();
+    await started?.();
     await expect.poll(async () => (await nodeStatus(node)).writer, {
       message: 'the restarted node reacquires its fenced writer lease',
     }).toBe(true);
   };
+}
+
+export function issuerDown(): () => Promise<void> {
+  const start = killService('ts-auth', { TS_AUTH_LISTEN: 'http://127.0.0.1:8090' });
+  console.log('SIGKILL ts-auth: the token issuer is unreachable');
+  return start;
 }
 
 export async function metric(node: Node, metricName: string, label = ''): Promise<number> {
