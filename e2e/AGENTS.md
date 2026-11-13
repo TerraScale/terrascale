@@ -492,6 +492,10 @@ reads status, proves the retained data through the removed endpoint's proxy, and
 The two-region group B books an upper bound of 110 requests to cover the bounded repeat loop; the metrics check
 still refuses tenant_busy and verifies that every operation ran. The removed endpoint proxies the status and data requests to fra without a client redirect.
 
+The multi-region PR lane also runs the R3 placement scenario against its four-node stack: header-authenticated
+sockets, writer-move closure, second-hop refusals, unknown writers, bounded connection failure and a new session
+on a rejoined copy.
+
 ## Social provider stand-in
 
 The OAuth2 provider at identity.journey.terrascale.tech is served by env/oauth2.mjs behind the same edge. It validates redirect, state, one-use authorization code and PKCE, and supplies verified or unverified email claims through userinfo. Only inside the isolated namespace, 93.184.215.14/32 is assigned to loopback and this hostname resolves to it; every other hostname keeps its existing mapping. This exercises the production public-address SSRF checks without permitting loopback providers or any external route. The browser journey proves email ownership before creating or linking a user, replay refusal, and subsequent subject-based sign-in.
