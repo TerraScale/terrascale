@@ -24,6 +24,8 @@ public interface IStorageEngine : IAsyncDisposable
     ValueTask<bool> RecordDatabaseDeleteIntentAsync(
         TenantContext database, Func<CancellationToken, ValueTask<bool>> recordIntent, CancellationToken cancellationToken);
 
+    ValueTask MigrateDatabasesAsync(CancellationToken cancellationToken);
+
     ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken);
 
     event EventHandler<IDatabaseStore>? DatabaseDeleted;

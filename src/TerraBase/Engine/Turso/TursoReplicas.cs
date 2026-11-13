@@ -16,6 +16,7 @@ using TerraBase.Features.Sync;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using Turso;
+using Turso.Data.Sqlite;
 using Turso.Raw.Public;
 using Turso.Raw.Public.Handles;
 using Turso.Raw.Public.Value;
@@ -261,13 +262,29 @@ internal sealed partial class TursoReplicas(
         };
         var observer = new RevisionObserver(http, new Uri(source + "/pull-updates"));
         var observed = new HttpClient(observer) { Timeout = Timeout.InfiniteTimeSpan };
-        if (hexKey is not null && File.Exists(path + "-info"))
+        if (hexKey is not null && File.Exists(path) && File.Exists(path + "-info"))
         {
             try
             {
-                return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: true);
+                var currentFormat = await Task.Run(() =>
+                {
+                    using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                    {
+                        DataSource = path,
+                        Mode = SqliteOpenMode.ReadOnly,
+                        Pooling = false,
+                        EncryptionCipher = "aegis256",
+                        EncryptionKey = hexKey,
+                    }.ToString());
+                    TursoSession.OpenExisting(connection, path);
+                    return StorageMigrations.FileVersion(connection) == StorageFormat.Version;
+                }).ConfigureAwait(false);
+                if (currentFormat)
+                {
+                    return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: true);
+                }
             }
-            catch (TursoException error)
+            catch (Exception error) when (error is TursoException or SqliteException)
             {
                 logger.ZLogWarning($"A replica could not be reopened and is started again: {error.GetType().Name:@Error}");
             }

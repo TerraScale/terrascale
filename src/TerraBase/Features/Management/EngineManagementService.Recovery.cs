@@ -27,7 +27,10 @@ internal sealed partial class EngineManagementService
             unit: "By", description: "Bytes in unowned files preserved for operator recovery.");
         if (catalogGate.Value.IsOpen)
         {
-            await RecoverAsync(only: null, cancellationToken).ConfigureAwait(false);
+            if (await RecoverAsync(only: null, cancellationToken).ConfigureAwait(false))
+            {
+                await engine.MigrateDatabasesAsync(cancellationToken).ConfigureAwait(false);
+            }
             return;
         }
 
@@ -41,7 +44,10 @@ internal sealed partial class EngineManagementService
         {
             if (await Task.WhenAny(catalogGate.Value.Opened, _recoveryStopping.Task).ConfigureAwait(false) == catalogGate.Value.Opened)
             {
-                await RecoverAsync(local, CancellationToken.None).ConfigureAwait(false);
+                if (await RecoverAsync(local, CancellationToken.None).ConfigureAwait(false))
+                {
+                    await engine.MigrateDatabasesAsync(CancellationToken.None).ConfigureAwait(false);
+                }
             }
         }
         catch (Exception error)
@@ -50,7 +56,7 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    private async Task RecoverAsync(IReadOnlySet<string>? only, CancellationToken cancellationToken)
+    private async Task<bool> RecoverAsync(IReadOnlySet<string>? only, CancellationToken cancellationToken)
     {
         var (_, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
         var retried = false;
@@ -76,7 +82,7 @@ internal sealed partial class EngineManagementService
                     checkpoint("recovery.intent", storage);
                     if (await FinishDatabaseCleanupAsync(storage, cancellationToken, intent: storage).ConfigureAwait(false) is Unavailable)
                     {
-                        return;
+                        return false;
                     }
 
                     if (await ReadCatalogAsync(async transaction =>
@@ -98,6 +104,7 @@ internal sealed partial class EngineManagementService
         }
 
         await AuditFilesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)

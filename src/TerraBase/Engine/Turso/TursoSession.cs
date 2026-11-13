@@ -165,14 +165,11 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
             throw new SqliteException("unable to open database file: it does not exist", 14);
         }
 
-        connection.Open();
         if (new FileInfo(path).Length == 0)
         {
-            connection.Dispose();
-            File.Delete(path);
-            File.Delete(path + "-wal");
-            throw new SqliteException("unable to open database file: it does not exist", 14);
+            throw new SqliteException("unable to open database file: the published file is empty", 14);
         }
+        connection.Open();
     }
 
     public async Task<T> ExecuteAsync<T>(TursoRunner io, Func<T> execute, CancellationToken cancellationToken)

@@ -311,6 +311,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _rewriteSteps = meter.CreateHistogram<double>("terrabase.storage.rewrite_step", "s",
             "Healthy rewrite work by bounded step and database kind.",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
+        _migrationFailures = meter.CreateCounter<long>("terrabase.storage.migration_failures", description: "Tenant files that failed the startup migration pass.");
+        meter.CreateObservableGauge("terrabase.storage.old_format_files", () => _oldFormatPaths.Count,
+            description: "Tenant files still awaiting a successful format migration.");
         _logger = logger;
         _shutdownGrace = configured.ShutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
@@ -770,8 +773,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     public async ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken)
     {
-        await MigrateStorageAsync(cancellationToken).ConfigureAwait(false);
-
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
 
         if (Volatile.Read(ref _system) is { } system)
@@ -789,6 +790,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 TursoDatabaseStore? openingSystem = null;
                 try
                 {
+                    await PrepareStorageMigrationAsync(cancellationToken).ConfigureAwait(false);
                     _ = await Io.WithAdmissionAsync(async () =>
                     {
                         await OpenIntentStoreLockedAsync(cancellationToken).ConfigureAwait(false);
@@ -1499,6 +1501,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             RejectDatabaseLinks(path);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
+            _ = _oldFormatPaths.TryRemove(path, out _);
 
             await Ledger.LoadAsync(store, lifetime.Token).ConfigureAwait(false);
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);

@@ -46,22 +46,29 @@ internal static class StorageMigrations
             return;
         }
 
-        using (var settings = connection.CreateCommand())
+        using var settings = connection.CreateCommand();
+        settings.CommandText = "PRAGMA synchronous;";
+        var synchronous = Convert.ToInt32(settings.ExecuteScalar(), CultureInfo.InvariantCulture);
+        try
         {
             settings.CommandText = "PRAGMA synchronous = FULL;";
             settings.ExecuteNonQuery();
+            foreach (var step in Steps.Where(step => step.From >= from && step.To <= StorageFormat.Version))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                using var transaction = connection.BeginTransaction(deferred: false);
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = step.Statement + $" PRAGMA user_version = {step.To};";
+                command.ExecuteNonQuery();
+                cancellationToken.ThrowIfCancellationRequested();
+                transaction.Commit();
+            }
         }
-
-        foreach (var step in Steps.Where(step => step.From >= from && step.To <= StorageFormat.Version))
+        finally
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            using var transaction = connection.BeginTransaction(deferred: false);
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = step.Statement + $" PRAGMA user_version = {step.To};";
-            command.ExecuteNonQuery();
-            cancellationToken.ThrowIfCancellationRequested();
-            transaction.Commit();
+            settings.CommandText = $"PRAGMA synchronous = {synchronous};";
+            settings.ExecuteNonQuery();
         }
 
         if (FileVersion(connection) != StorageFormat.Version)
