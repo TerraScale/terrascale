@@ -39,6 +39,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         [JsonIgnore] public string OwnerUserId { get; set; } = "";
         public string PlanId { get; set; } = FreePlanId;
         public string BillingStatus { get; set; } = "active";
+        public DateTimeOffset? PaymentGraceUntil { get; set; }
         public bool PaymentMethodValidated { get; set; }
         public long SpendCapCents { get; set; }
         public bool PaidExcess { get; set; }

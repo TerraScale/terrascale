@@ -409,6 +409,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("paid_excess");
 
+                    b.Property<DateTime?>("PaymentGraceUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("payment_grace_until");
+
                     b.Property<bool>("PaymentMethodValidated")
                         .HasColumnType("INTEGER")
                         .HasColumnName("payment_method_validated");
@@ -785,6 +789,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("kind");
 
+                    b.Property<DateTime?>("OverageReportedThrough")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("overage_reported_through");
+
                     b.Property<string>("Plan")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -826,6 +834,11 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("subscription_id");
+
+                    b.Property<string>("TaxLocationStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("tax_location_status");
 
                     b.Property<bool>("TrialUsed")
                         .HasColumnType("INTEGER")

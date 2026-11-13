@@ -284,6 +284,11 @@ namespace TerraScale.Dashboard.Features.Billing
                     throw new IOException("Billing index does not match its customer.");
                 }
 
+                if (@event.Data.Object is Invoice invoice && invoice.Parent?.SubscriptionDetails?.SubscriptionId == binding.SubscriptionId)
+                {
+                    await ApplyPaymentAsync(binding, invoice.Id, @event.Type, @event.Created, cancellationToken);
+                }
+
                 await RefreshAsync(orgId, cancellationToken);
             }
             // Not applied: the endpoint answers 503 so Stripe redelivers it; a redelivery re-reads Stripe's current state.
@@ -388,6 +393,51 @@ namespace TerraScale.Dashboard.Features.Billing
         // one refresh per organization at a time keeps them from exhausting each other's conditional-write retries.
         private readonly SemaphoreSlim[] refreshing = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
 
+        private async Task ApplyPaymentAsync(BillingBinding binding, string invoiceId, string eventType, DateTime created, CancellationToken cancellationToken)
+        {
+            if (eventType is not ("invoice.payment_failed" or "invoice.paid" or "invoice.payment_succeeded"))
+            {
+                return;
+            }
+
+            var client = await ClientAsync(cancellationToken);
+            var subscription = await client.V1.Subscriptions.GetAsync(binding.SubscriptionId, new() { Expand = ["latest_invoice"] }, cancellationToken: cancellationToken);
+            if (subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != binding.OrganizationId ||
+                subscription.LatestInvoiceId != invoiceId || subscription.LatestInvoice is not { Status: "paid" or "open" } invoice)
+            {
+                return;
+            }
+
+            if (invoice.Status != "paid" && eventType != "invoice.payment_failed")
+            {
+                return;
+            }
+
+            while (true)
+            {
+                var stored = await organizations.FindAsync(binding.OrganizationId, cancellationToken) ?? throw new IOException("Billing organization is unavailable.");
+                var org = stored.Erased ? throw new IOException("Dashboard record was erased.") : stored.Organization;
+                var deadline = invoice.Status != "paid"
+                    ? org.PaymentGraceUntil ?? new DateTimeOffset(DateTime.SpecifyKind(created, DateTimeKind.Utc)).AddDays(7)
+                    : (DateTimeOffset?)null;
+                if (org.PaymentGraceUntil == deadline)
+                {
+                    return;
+                }
+
+                org.PaymentGraceUntil = deadline;
+                try
+                {
+                    await organizations.ReplaceAsync(stored, cancellationToken);
+                    return;
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    continue;
+                }
+            }
+        }
+
         internal async Task<bool> RefreshAsync(string orgId, CancellationToken cancellationToken)
         {
             var turn = refreshing[(StringComparer.Ordinal.GetHashCode(orgId) & int.MaxValue) % refreshing.Length];
@@ -447,16 +497,25 @@ namespace TerraScale.Dashboard.Features.Billing
                     // plan changes and cancellation remain effective even while a
                     // later checkout is open or expired.
                     var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId,
-                        new() { Expand = ["items.data.price.product", "default_payment_method", "customer"] }, cancellationToken: cancellationToken);
+                        new() { Expand = ["items.data.price.product", "default_payment_method", "customer.tax"] }, cancellationToken: cancellationToken);
                     if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
                     {
                         throw new IOException("Subscription ownership does not match.");
                     }
 
-                    if (subscription.AutomaticTax?.Enabled != true && subscription.Status is not ("canceled" or "incomplete_expired"))
+                    binding.TaxLocationStatus = subscription.Customer?.Tax?.AutomaticTax ?? "unrecognized_location";
+                    if (binding.TaxLocationStatus is "supported" or "not_collecting" && subscription.AutomaticTax?.Enabled != true && subscription.Status is not ("canceled" or "incomplete_expired"))
                     {
-                        await client.V1.Subscriptions.UpdateAsync(subscription.Id, new()
-                        { AutomaticTax = new() { Enabled = true } }, cancellationToken: cancellationToken);
+                        try
+                        {
+                            await client.V1.Subscriptions.UpdateAsync(subscription.Id, new()
+                            { AutomaticTax = new() { Enabled = true } }, cancellationToken: cancellationToken);
+                        }
+                        catch (StripeException error)
+                        {
+                            logger.DashboardDependencyFailedOn("billing/automatic-tax", error.GetType().Name, error.HttpStatusCode);
+                            binding.TaxLocationStatus = "unrecognized_location";
+                        }
                     }
 
                     var item = subscription.Items.Data.Count == 1 ? subscription.Items.Data[0] : null;
@@ -503,8 +562,19 @@ namespace TerraScale.Dashboard.Features.Billing
                 binding.Status = status;
                 binding.TrialUsed |= status is "active" or "trialing";
                 binding.Revision = checked(binding.Revision + 1);
+                if (status is "past_due" or "unpaid" && PlanCatalog.For(org) is { PriceCents: > 0 })
+                {
+                    org.PaymentGraceUntil ??= time.GetUtcNow().AddDays(7);
+                }
+                paymentValid &= org.PaymentGraceUntil is null;
                 org.PaymentMethodValidated = paymentValid;
-                if (paymentValid)
+                if (org.PaymentGraceUntil is { } deadline && !unmappedPrice && status is not ("canceled" or "incomplete_expired"))
+                {
+                    org.BillingStatus = deadline > time.GetUtcNow() ? "active" : "billing_required";
+                    binding.EffectivePlan = previousEffectivePlan;
+                    binding.EffectiveInterval = previousEffectiveInterval;
+                }
+                else if (paymentValid)
                 {
                     org.PlanId = plan.Id;
                     org.BillingStatus = "active";

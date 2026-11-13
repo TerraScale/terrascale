@@ -83,6 +83,7 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
   expect(checkoutResponse.status()).toBe(200);
   const checkoutSession = await checkoutResponse.json();
   expect(checkoutSession.automatic_tax.enabled, 'Checkout collects automatic tax').toBe(true);
+  expect(checkoutSession.customer_update.address).toBe('auto');
   const subscriptionTax = async () => {
     const response = await page.request.get('https://api.stripe.com/v1/subscriptions/' + checkoutSession.subscription, { headers: stripeHeaders });
     expect(response.status()).toBe(200);
@@ -96,6 +97,66 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
   expect(await subscriptionTax(), 'canonical subscription refresh restores automatic tax').toBe(true);
   expect((await stripeLog()).events.filter((event) => event.object === checkoutSession.subscription).map((event) => [event.type, event.status]))
     .toEqual([['customer.subscription.updated', 200]]);
+
+  const taxLocation = async (location: string) => {
+    const response = await fetch(stripeStandIn + '/subscription-tax', { method: 'POST', body: JSON.stringify({ subscription: checkoutSession.subscription, location }) });
+    expect(response.status).toBe(200);
+  };
+  const taxUpdates = () => stripeLog().then((log) => log.calls.filter((call) => call.method === 'POST' && call.path === '/v1/subscriptions/' + checkoutSession.subscription).length);
+  const beforeInvalidLocation = await taxUpdates();
+  await taxLocation('unrecognized_location');
+  expect(await subscriptionTax(), 'an unusable location leaves automatic tax unchanged').toBe(false);
+  expect(await taxUpdates(), 'an unusable location sends no subscription update').toBe(beforeInvalidLocation);
+  await page.goto('/organization?tab=billing');
+  await expect(page.locator('#billing-tax-location')).toContainText('Complete your billing address in Manage payment');
+  await audit.check('paid owner billing address required');
+  await taxLocation('supported');
+  expect(await subscriptionTax()).toBe(true);
+  const taxFailure = await fetch(stripeStandIn + '/failure', {
+    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + checkoutSession.subscription, status: 400, remaining: 1 }),
+  });
+  expect(taxFailure.status).toBe(200);
+  await taxLocation('supported');
+  expect(await subscriptionTax(), 'a refused tax update does not fail canonical refresh').toBe(false);
+  expect((await stripeLog()).events.filter((event) => event.object === checkoutSession.subscription).every((event) => event.status === 200)).toBe(true);
+  await taxLocation('supported');
+  expect(await subscriptionTax()).toBe(true);
+
+  const payment = async (paid: boolean, created?: number) => {
+    const response = await fetch(stripeStandIn + '/payment', { method: 'POST', body: JSON.stringify({ subscription: checkoutSession.subscription, paid, created }) });
+    expect(response.status).toBe(200);
+    const events = (await stripeLog()).events.filter((event) => event.type === (paid ? 'invoice.paid' : 'invoice.payment_failed'));
+    expect(events.at(-1)?.status).toBe(200);
+  };
+  const failedAt = Math.floor(Date.now() / 1000);
+  const graceDate = new Date((failedAt + 7 * 86400) * 1000).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  await payment(false, failedAt);
+  await page.goto('/organization?tab=billing');
+  await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
+  await expect(page.locator('#billing-payment-grace')).toContainText(graceDate + ' UTC');
+  await expect(page.locator('#organization-payment-grace')).toContainText(graceDate + ' UTC');
+  await audit.check('paid owner seven day payment grace');
+  await payment(false, failedAt + 86400);
+  await page.reload();
+  await expect(page.locator('#billing-payment-grace')).toContainText(graceDate + ' UTC');
+  await payment(true);
+  await page.reload();
+  await expect(page.locator('#billing-payment-grace')).toHaveCount(0);
+  await expect(page.locator('#organization-payment-grace')).toHaveCount(0);
+  await payment(false, failedAt - 8 * 86400);
+  await page.reload();
+  await expect(page.locator('#billing-summary .ts-billing-plan .ts-badge')).toHaveText('Payment required');
+  await expect(page.locator('.ts-org-title-row')).toContainText('No active plan');
+  const createRefused = await page.request.post('/api/v1/dashboard/databases', {
+    form: { _csrf: await page.locator('input[name=_csrf]').first().inputValue(), name: 'grace-expired-' + runId }, maxRedirects: 0,
+  });
+  expect(createRefused.status(), 'the engine enforces the Free database allowance after grace').toBe(409);
+  await audit.check('paid owner expired payment grace');
+  await payment(true);
+  await page.reload();
+  await expect(page.locator('#billing-summary .ts-billing-plan .ts-badge')).toHaveText('Active');
+  await expect(page.locator('#billing-payment-grace')).toHaveCount(0);
+  await expect(page.locator('#billing-tax-location')).toHaveCount(0);
 
   const delivered = (await stripeLog()).events.filter((event) => event.object === session);
   expect(delivered.map((event) => [event.type, event.status]), 'signed events the Stripe stand-in delivered for the checkout').toEqual([['checkout.session.completed', 200]]);

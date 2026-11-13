@@ -21,6 +21,8 @@
     var historyError = Model.History.Error;
 }
 <div class="ts-billing">
+    @if (org.PaymentGraceUntil is { } deadline) { <div class="ts-alert ts-alert-warning" role="status" id="billing-payment-grace"><p class="ts-alert-body">Payment failed. Paid plan grace deadline: @deadline.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture) UTC. Update your payment method in Manage payment.</p></div> }
+    @if (binding is { TaxLocationStatus: not ("" or "supported" or "not_collecting") }) { <div class="ts-alert ts-alert-warning" role="status" id="billing-tax-location"><p class="ts-alert-body">Complete your billing address in Manage payment to calculate tax.</p></div> }
     @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
     @if (Model.PlanChanges.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.PlanChanges.Error</p></div> }
     @if (HttpContext!.Request.Query["payment"] == "canceled") { <div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-title">Checkout canceled</p><p class="ts-alert-body">Review your current plan below. Choose a plan to try again, or cancel the pending checkout before choosing a different plan.</p></div> }

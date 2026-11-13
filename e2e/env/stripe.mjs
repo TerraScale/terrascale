@@ -68,11 +68,16 @@ const api = [
       object: 'checkout.session', id: id('cs_test'), client_reference_id: form.get('client_reference_id'), customer: form.get('customer'),
       metadata: fields(form, 'metadata'), mode: 'subscription', status: 'open', url: null, automatic_tax: { enabled: form.get('automatic_tax[enabled]') === 'true' },
     });
+    session.billing_address_collection = form.get('billing_address_collection');
+    session.customer_update = fields(form, 'customer_update');
     session.url = `https://checkout.stripe.com/c/pay/${session.id}`;
     checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url'), cancel: form.get('cancel_url') });
     return session;
   }, {}, {
     expires_at: within(hour / 2, 24 * hour),
+    billing_address_collection: (value) => value === 'required',
+    'customer_update[address]': (value) => value === 'auto',
+    'customer_update[name]': (value) => value === 'auto',
     'automatic_tax[enabled]': (value) => value === 'true',
     'allowed_payment_method_types[0]': (value) => value === 'card',
     'allowed_payment_method_types[1]': (value) => value === 'link',
@@ -108,7 +113,13 @@ const api = [
     log.refunds.push({ payment: payment.id, subscription: payment.subscription, amount: refund.amount });
     return refund;
   }, { payment_intent: /^pi_\w+$/ }, {}, ['payment_intent', 'charge', 'amount', 'reason']],
-  ['GET', /^\/v1\/invoiceitems$/, () => list([]), { customer: customerId }, {}, ['customer', 'created', 'limit']],
+  ['POST', /^\/v1\/invoiceitems$/, (form) => store({ id: id('ii'), object: 'invoiceitem', customer: form.get('customer'), currency: form.get('currency'), quantity: Number(form.get('quantity')), unit_amount_decimal: form.get('unit_amount_decimal'), description: form.get('description'), metadata: fields(form, 'metadata'), parent: { type: 'subscription_details', subscription_details: { subscription: form.get('subscription') } } }), { customer: customerId }, {}, ['customer', 'subscription', 'currency', 'quantity', 'unit_amount_decimal', 'description', 'metadata']],
+  ['POST', /^\/v1\/invoiceitems\/(ii_\w+)$/, (form, [key]) => {
+    const item = find('ii', key);
+    return item && Object.assign(item, { quantity: Number(form.get('quantity')), description: form.get('description') });
+  }, {}, {}, ['quantity', 'unit_amount_decimal', 'description']],
+  ['DELETE', /^\/v1\/invoiceitems\/(ii_\w+)$/, (form, [key]) => objects.delete(key) ? { id: key, object: 'invoiceitem', deleted: true } : undefined],
+  ['GET', /^\/v1\/invoiceitems$/, (query) => list(owned('ii', query.get('customer'))), { customer: customerId }, {}, ['customer', 'created', 'limit']],
 ];
 
 function complete(session) {
@@ -128,15 +139,16 @@ function complete(session) {
     lines: list([{ period: { end, start } }]), number: `${randomBytes(4).toString('hex').toUpperCase()}-0001`, period_end: start, period_start: start, status: 'paid',
   });
   const subscription = store({
-    id: subscriptionId, customer: session.customer, default_payment_method: method.id, metadata, status: 'active', automatic_tax: structuredClone(session.automatic_tax),
+    object: 'subscription', id: subscriptionId, customer: session.customer, default_payment_method: method.id, latest_invoice: invoice, metadata, status: 'active', automatic_tax: structuredClone(session.automatic_tax),
     items: list([{ current_period_end: end, current_period_start: start, price: structuredClone(price), quantity: 1 }]),
   });
+  objects.get(session.customer).tax = { automatic_tax: 'supported' };
   objects.get(session.customer).address = { city: 'Sao Paulo', country: 'BR', line1: 'Avenida Paulista 1000', line2: null, postal_code: '01310-100', state: 'SP' };
   return Object.assign(session, { status: 'complete', payment_status: 'paid', subscription: subscription.id, url: null });
 }
 
-async function deliver(type, object) {
-  const payload = JSON.stringify({ id: id('evt'), api_version: apiVersion, data: { object }, livemode: false, type });
+async function deliver(type, object, created = now()) {
+  const payload = JSON.stringify({ id: id('evt'), api_version: apiVersion, data: { object }, livemode: false, type, created });
   const timestamp = now();
   const signature = createHmac('sha256', secret('whsec_')).update(`${timestamp}.${payload}`).digest('hex');
   const answer = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': `t=${timestamp},v1=${signature}` }, body: payload });
@@ -180,10 +192,24 @@ async function handle(request, response, body) {
     return reply(response, 200, {});
   }
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/subscription-tax') {
-    const subscription = find('sub', JSON.parse(body).subscription);
+    const { subscription: key, location = 'supported' } = JSON.parse(body);
+    const subscription = find('sub', key);
     if (!subscription) return reply(response, 404, {});
+    objects.get(subscription.customer).tax = { automatic_tax: location };
     subscription.automatic_tax = { enabled: false };
     await deliver('customer.subscription.updated', structuredClone(subscription));
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/payment') {
+    const { subscription: key, paid, created = now() } = JSON.parse(body);
+    const subscription = find('sub', key);
+    if (!subscription) return reply(response, 404, {});
+    const invoice = owned('in', subscription.customer).find((item) => item.parent.subscription_details.subscription === key);
+    subscription.status = paid ? 'active' : 'past_due';
+    invoice.status = paid ? 'paid' : 'open';
+    invoice.object = 'invoice';
+    invoice.amount_remaining = paid ? 0 : invoice.amount_due;
+    await deliver(paid ? 'invoice.paid' : 'invoice.payment_failed', structuredClone(invoice), created);
     return reply(response, 200, {});
   }
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/log') return reply(response, 200, log);

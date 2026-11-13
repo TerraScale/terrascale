@@ -1,3 +1,4 @@
+@using System.Globalization
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
 @{ var org = Model.Shell.Context.Organization; var access = Model.Tab is "members" or "invitations"; }
 <header class="ts-org-header">
@@ -14,6 +15,7 @@
     @if (!access) { <a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@Icons.Render("Plus", 16)<span>Create organization</span></a> }
     else if (Model.CanManage) { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="team-invite">@Icons.Render("UserPlus", 16)<span>Invite</span></button> }
 </header>
+@if (org?.PaymentGraceUntil is { } deadline) { <div class="ts-alert ts-alert-warning" role="status" id="organization-payment-grace"><p class="ts-alert-body">Payment failed. Paid plan grace deadline: @deadline.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture) UTC. <a class="ts-link" href="/organization?tab=billing">Review billing</a></p></div> }
 @* An open create-project dialog shows its own refusal; repeating it behind the dialog said it twice. *@
 @if (Model.Error.Length > 0 && !(Model.OpenCreateProject && Model.Tab == "projects" && Model.CanProvision) && !(access && Model.CanManage && Model.InviteDraft is not null))
 {
