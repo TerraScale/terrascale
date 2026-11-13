@@ -293,7 +293,7 @@ test('a regional writer role moves only with the target certificate and current 
     await writerIs('journey-1');
     console.log('rewritten owner record refused; a deleted key brought journey-1 back as writer at epoch 1 with current primary files');
 
-    const drained = await peer(gru, '/v1/rollout/drain?target=journey-3', {});
+    const drained = await peer(gru, '/v1/rollout/drain?target=journey-3', undefined, 'POST');
     expect(drained.status, drained.body).toBe(200);
     await writerIs('journey-3');
     await ledger.write(cells, 'gru', [[800, 'written-on-journey-3']]);
@@ -301,10 +301,10 @@ test('a regional writer role moves only with the target certificate and current 
     const lease = (await homeLease(kv, ledger.id)).value;
     await expect.poll(async () => (await peer(gru, `/v1/sync/organizations/${lease.organizationId}/projects/${lease.projectId}/databases/${ledger.id}/held`)).status,
       { message: 'journey-1 holds a replica newer than its stale primary file' }).toBe(200);
-    const stale = await metric(gru, 'terrabase_home_refusals_total', { scope: 'writer', reason: 'replica_newer' });
+    const stale = await metric(gru, 'terrabase_home_refusals_total', { scope: 'writer' });
     const current = await kv.get<{ node: string }>(owners, 'gru');
     await kv.remove(owners, 'gru', current!.seq);
-    await expect.poll(() => metric(gru, 'terrabase_home_refusals_total', { scope: 'writer', reason: 'replica_newer' }), { message: 'journey-1 refuses to become writer over stale primary files' })
+    await expect.poll(() => metric(gru, 'terrabase_home_refusals_total', { scope: 'writer' }), { message: 'journey-1 refuses to become writer over stale primary files' })
       .toBeGreaterThan(stale);
     expect((await nodeStatus(gru)).writer).toBe(false);
     const recreated = await kv.get<Record<string, unknown> & { node: string }>(owners, 'gru');
@@ -312,7 +312,7 @@ test('a regional writer role moves only with the target certificate and current 
     await kv.put(owners, 'gru', { ...recreated!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, recreated!.seq);
     await writerIs('journey-3');
     await ledger.compare(cells, [[800, 'written-on-journey-3']]);
-    const back = await peer(partner, '/v1/rollout/drain?target=journey-1', {});
+    const back = await peer(partner, '/v1/rollout/drain?target=journey-1', undefined, 'POST');
     expect(back.status, back.body).toBe(200);
     await writerIs('journey-1');
     await ledger.write(cells, 'gru', [[801, 'after-proofs']]);

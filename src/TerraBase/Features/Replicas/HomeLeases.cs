@@ -686,7 +686,7 @@ internal sealed partial class HomeLeases(
         {
             return;
         }
-        if (home.Home == options.Region)
+        if (home.Home == options.Region || !owners.Writer)
         {
             leaseGate.Lease(id, held: false);
             return;

@@ -29,6 +29,7 @@ internal sealed partial class RegionalHandoff
     private TenantContext? _checkedAfter;
     private bool _checked;
     private long _refusedEpoch;
+    private long _unprovenEpoch;
     private RegionalOwner? _startupOwner;
     private bool _protocolPublished;
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
@@ -299,9 +300,9 @@ internal sealed partial class RegionalHandoff
             await WritePreparedAsync(kv, new RegionalPrepared(owner.Previous ?? owner.Node, owner.Node, owner.Epoch - 1, null), token).ConfigureAwait(false);
             return true;
         }
-        if (_refusedEpoch != owner.Epoch)
+        if (_unprovenEpoch != owner.Epoch)
         {
-            _refusedEpoch = owner.Epoch;
+            _unprovenEpoch = owner.Epoch;
             services.GetRequiredService<HomeLeases>().Refused(HomeRefusal.Unproven, "writer");
             logger.ZLogWarning($"Regional writer refused: the owner record names this node at epoch {owner.Epoch:@Epoch} without a certificate this node wrote in a drain");
         }

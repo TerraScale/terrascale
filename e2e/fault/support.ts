@@ -24,12 +24,12 @@ export const node = (name: string) => nodes.find(candidate => candidate.name ===
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
 
-export async function peer(node: Node, path: string, body?: unknown): Promise<{ status: number; body: string }> {
+export async function peer(node: Node, path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<{ status: number; body: string }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(`http://${node.address}:8081`);
   const payload = body === undefined ? undefined : JSON.stringify(body);
   const stream = session.request({
-    ':path': path, ':method': payload === undefined ? 'GET' : 'POST', 'x-terrabase-peer-credential': credential,
+    ':path': path, ':method': method, 'x-terrabase-peer-credential': credential,
     ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
   });
   stream.setTimeout(60_000, () => stream.destroy(new Error(`peer request ${path} timed out for ${node.name}`)));
