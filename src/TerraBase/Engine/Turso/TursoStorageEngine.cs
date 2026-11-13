@@ -36,7 +36,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private static readonly string[] ReservedRootNames =
         [LockFileName, .. new[] { SystemName, IntentName }.SelectMany(database => Sidecars.Prepend(string.Empty).Select(suffix => database + FileExtension + suffix))];
 
-    private static readonly string[] ScratchDirectories = [".tmp", ".backup", ".import", ".exports"];
+    private static readonly string[] ScratchDirectories = [".tmp", ".backup", ".import", ".exports", KeptFiles.Directory];
     internal DatabaseKeys Encryption { get; }
 
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), TursoDatabaseStore> _stores = new();
@@ -671,6 +671,65 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             {
 
             }
+        }
+    }
+
+    public async ValueTask<IReadOnlyList<string>> SetAsideDatabaseAsync(TenantContext database, string directory, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(directory);
+        var (key, path) = Locate(database);
+        while (true)
+        {
+            Task initialization;
+            await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                RejectDatabaseLinks(path);
+                ThrowIfIntentPending(key);
+                var pending = (Task?)_initializing.GetValueOrDefault(key) ?? _migrating.GetValueOrDefault(key);
+                if (pending is null)
+                {
+                    var moved = await Io.RunAsync(() =>
+                    {
+                        if (_stores.TryRemove(key, out var store))
+                        {
+                            store.Dispose();
+                        }
+
+                        List<string> files = [];
+                        foreach (var source in Sidecars.Prepend(string.Empty).Select(suffix => path + suffix).Where(File.Exists))
+                        {
+                            RejectLink(source);
+                            Directory.CreateDirectory(directory);
+                            var target = Path.Combine(directory, Path.GetFileName(source));
+                            File.Move(source, target);
+                            files.Add(target);
+                        }
+
+                        return files;
+                    }, CancellationToken.None).ConfigureAwait(false);
+                    _ = _publishing.TryRemove(key, out _);
+                    if (moved.Count > 0)
+                    {
+                        _ = await Io.WithAdmissionAsync(async () =>
+                        {
+                            await Ledger.ForgetAsync(database, CancellationToken.None).ConfigureAwait(false);
+                            return true;
+                        }).ConfigureAwait(false);
+                    }
+
+                    return moved;
+                }
+
+                initialization = pending;
+            }
+            finally
+            {
+                ExitCreation();
+            }
+
+            await initialization.WaitAsync(QueryBudget, Time, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
     }
 

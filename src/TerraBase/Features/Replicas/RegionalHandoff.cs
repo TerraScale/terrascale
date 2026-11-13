@@ -18,7 +18,10 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed record RegionalPosition(string Organization, string Project, string Database, string Home, string Revision);
 internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, long Epoch, RegionalCatalogSnapshot? Catalog = null, string? Operation = null);
-internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "");
+internal sealed record UnservedDatabase(string DatabaseId, string Region, string Node, long Epoch, string Cause);
+
+internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "",
+    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null);
 internal sealed record RegionalDrain(string Target);
 
 internal readonly union RegionalDrainResult(Done, Unavailable);
@@ -43,7 +46,8 @@ internal sealed partial class RegionalHandoff(
 
     internal async Task<RegionalStatus> StatusAsync(string? region, CancellationToken cancellationToken) => new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
         owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
-        await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false), _session);
+        await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false), _session,
+        services.GetRequiredService<HomeLeases>().Unserved, services.GetRequiredService<KeptCopies>().List());
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -346,7 +350,7 @@ internal sealed partial class RegionalHandoff(
 
             try
             {
-                _ = await engine.DeleteDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+                _ = await services.GetRequiredService<KeptCopies>().KeepAsync(database, KeepReason.HandoffPrepare, cancellationToken).ConfigureAwait(false);
                 await services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
                 _prepared[position.Database] = position.Revision;
             }

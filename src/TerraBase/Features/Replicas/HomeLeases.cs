@@ -35,6 +35,7 @@ internal enum HomeRefusal
     ReplicaNewer,
     PrimaryMissing,
     Unproven,
+    DrainFailed,
 }
 
 internal interface IHomeWriteLease
@@ -44,7 +45,7 @@ internal interface IHomeWriteLease
 
 internal sealed partial class HomeLeases(
     TerraBaseOptions options, IReplicaCatalog catalog, DatabaseFences fences, HomeLeaseGate leaseGate, RegionReplication replication, IStorageEngine engine,
-    IDatabaseRevisions revisions, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger, RegionalOwners owners)
+    IDatabaseRevisions revisions, IHomeMoveCatalog moves, KeptCopies kept, IMeterFactory meters, ILogger<HomeLeases> logger, RegionalOwners owners)
     : BackgroundService, IHomeWriteLease
 {
     internal const string Bucket = "terrabase-homes";
@@ -54,16 +55,16 @@ internal sealed partial class HomeLeases(
     private static readonly TimeSpan ScanEvery = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan Backoff = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan StartScan = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan AskTimeout = TimeSpan.FromSeconds(2);
     private const int WrongLastSequence = 10071;
 
     private readonly ConcurrentDictionary<string, (HomeLease Lease, ulong Revision)> _homes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ulong> _isolated = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, NodeLease> _nodes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _lapsed = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, UnservedDatabase> _unserved = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ulong> _foreign = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _confirming = new(1, 1);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
-    private readonly HttpClient _http = PeerHttp.Create(credential);
     private NatsConnection? _nats;
     private NatsJSContext? _js;
     private INatsKVStore? _kv;
@@ -71,8 +72,6 @@ internal sealed partial class HomeLeases(
     private ulong? _nodeRevision;
     private Counter<long>? _lapses;
     private Counter<long>? _refusals;
-    private Counter<long>? _reclaims;
-    private Counter<long>? _keptCopies;
     private Counter<long>? _demotions;
 
     private string NodeKey => "node." + options.MachineId;
@@ -92,6 +91,7 @@ internal sealed partial class HomeLeases(
         HomeRefusal.ReplicaNewer => "replica_newer",
         HomeRefusal.PrimaryMissing => "primary_missing",
         HomeRefusal.Unproven => "unproven",
+        HomeRefusal.DrainFailed => "drain_failed",
         _ => throw new UnreachableException(),
     };
 
@@ -111,10 +111,11 @@ internal sealed partial class HomeLeases(
             _js = new NatsJSContext(_nats);
             _lapses = _meter.CreateCounter<long>("terrabase.home.lapses", "{lapse}", "Home leases whose node lapsed while this node watched; the database's home stayed where it was.");
             _refusals = _meter.CreateCounter<long>("terrabase.home.refusals", "{refusal}", "Home or regional writer changes this node refused because their proof was missing.");
-            _reclaims = _meter.CreateCounter<long>("terrabase.home.reclaims", "{reclaim}", "Databases this node took back as home because the recorded home could not serve them.");
-            _keptCopies = _meter.CreateCounter<long>("terrabase.home.kept", "{copy}", "Database files this node kept as a former home because the recorded home has not proven it holds them.");
             _demotions = _meter.CreateCounter<long>("terrabase.home.demotions", "{demotion}", "Databases this node stopped homing after their new home proved it holds their content.");
             _ = _meter.CreateObservableGauge("terrabase.home.leased", () => leaseGate.Leased.Count, "{database}", "Databases whose writes on this node need its home lease.");
+            _ = _meter.CreateObservableGauge("terrabase.home.unserved", () => _unserved.Values.GroupBy(database => database.Region, StringComparer.Ordinal)
+                .Select(region => new Measurement<long>(region.Count(), new KeyValuePair<string, object?>("region", region.Key))), "{database}",
+                "Databases whose home lease names a node that cannot serve them, by the lease's region; nothing serves them until an operator acts.");
             using var scan = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             scan.CancelAfter(StartScan);
             try
@@ -142,7 +143,6 @@ internal sealed partial class HomeLeases(
     public override void Dispose()
     {
         _confirming.Dispose();
-        _http.Dispose();
         _meter.Dispose();
         base.Dispose();
     }
@@ -151,9 +151,7 @@ internal sealed partial class HomeLeases(
 
     internal bool Active => _js is not null;
 
-    internal Action<TenantContext, long>? Reclaimed { get; set; }
-
-    internal void Kept() => _keptCopies?.Add(1);
+    internal IReadOnlyList<UnservedDatabase> Unserved => [.. _unserved.Values.OrderBy(database => database.DatabaseId, StringComparer.Ordinal)];
 
     internal void Refused(HomeRefusal refusal, string scope)
     {
@@ -194,7 +192,7 @@ internal sealed partial class HomeLeases(
                 return false;
             }
 
-            await ConfirmAsync(kv, database, placement, cancellationToken).ConfigureAwait(false);
+            await ConfirmAsync(kv, database, placement, await MovingAsync(cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
             return leaseGate.Holds(id);
         }
         finally
@@ -203,10 +201,26 @@ internal sealed partial class HomeLeases(
         }
     }
 
-    internal async ValueTask<HomeLeaseTaken?> TakeAsync(TenantContext database, string fromRegion, long epoch, DatabaseRevision adopted, CancellationToken cancellationToken)
+    internal async ValueTask<string?> RestoreNodeAsync(TenantContext database, string fromRegion, string? fromNode, CancellationToken cancellationToken)
+    {
+        if (_js is null)
+        {
+            return fromNode ?? "";
+        }
+
+        if (_kv is not { } kv || !Ready)
+        {
+            return null;
+        }
+
+        return await ReadAsync(kv, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is { Value: { } bytes } && Decode(bytes) is { } current
+            && current.Home == fromRegion ? current.Node : fromNode;
+    }
+
+    internal async ValueTask<HomeLeaseTaken?> TakeAsync(TenantContext database, string fromRegion, long epoch, CancellationToken cancellationToken)
     {
         var id = database.DatabaseId!;
-        var taken = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId, epoch, _session, adopted.ToString());
+        var taken = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId, epoch, _session);
         if (fromRegion == options.Region || PlatformDatabase(id)
             || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
             || RegionOnly(placement))
@@ -244,7 +258,7 @@ internal sealed partial class HomeLeases(
                 ? await kv.CreateAsync(HomeKey(id), Encode(taken), cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await kv.UpdateAsync(HomeKey(id), Encode(taken), current.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
             _homes[id] = (taken, revision);
-            leaseGate.Lease(id, held: true);
+            leaseGate.Lease(id, held: false);
             return new HomeLeaseTaken(existing, taken, revision);
         }
         catch (Exception error) when (error is NatsKVWrongLastRevisionException or NatsKVCreateException)
@@ -254,51 +268,146 @@ internal sealed partial class HomeLeases(
         }
     }
 
-    internal async ValueTask<HomeLease?> RestoreAsync(TenantContext database, HomeLeaseTaken taken, CancellationToken cancellationToken)
+    internal async ValueTask<bool> CommitAsync(TenantContext database, HomeLeaseTaken taken, DatabaseRevision adopted, CancellationToken cancellationToken)
     {
         var id = database.DatabaseId!;
-        leaseGate.Unlease(id);
-        if (taken.Previous is not { } previous)
-        {
-            _homes.TryRemove(id, out _);
-            if (_kv is { } empty)
-            {
-                await empty.DeleteAsync(HomeKey(id), new NatsKVDeleteOpts { Revision = taken.Revision }, cancellationToken).ConfigureAwait(false);
-            }
-
-            return null;
-        }
-
-        var restored = previous with { Epoch = taken.Taken.Epoch + 1, Adopted = null };
-        if (_kv is { } kv)
-        {
-            var revision = await kv.UpdateAsync(HomeKey(id), Encode(restored), taken.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
-            _homes[id] = (restored, revision);
-        }
-
-        logger.ZLogWarning($"A home change was rolled back: {previous.Home:@Home} is the home again at epoch {restored.Epoch:@Epoch}");
-        return restored;
-    }
-
-    internal async ValueTask<bool> ProvesAsync(TenantContext database, CancellationToken cancellationToken)
-    {
+        var committed = taken.Taken with { Adopted = adopted.ToString() };
         if (_js is null)
         {
             return true;
         }
 
-        if (_kv is not { } kv || await ReadAsync(kv, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is not { Value: { } bytes }
-            || Decode(bytes) is not { } lease || lease.Node == options.MachineId)
+        if (_kv is not { } kv)
         {
             return false;
         }
 
-        return Proves(lease, await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false));
+        try
+        {
+            var revision = await kv.UpdateAsync(HomeKey(id), Encode(committed), taken.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
+            _homes[id] = (committed, revision);
+            leaseGate.Lease(id, held: true);
+            return true;
+        }
+        catch (NatsKVWrongLastRevisionException)
+        {
+            Refused(HomeRefusal.LeaseChanged, "home");
+            return false;
+        }
+    }
+
+    internal async ValueTask<bool?> CommittedAsync(TenantContext database, long version, CancellationToken cancellationToken)
+    {
+        if (_js is null)
+        {
+            return await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
+                && placement.Home == options.Region && placement.Version >= version;
+        }
+
+        if (_kv is not { } kv || !Ready)
+        {
+            return null;
+        }
+
+        return await ReadAsync(kv, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is { Value: { } bytes } && Decode(bytes) is { } lease
+            && lease.Node == options.MachineId && lease.Epoch >= version && lease.Adopted is not null;
+    }
+
+    internal async ValueTask<HomeLease?> RestoreAsync(TenantContext database, PromotionSource source, long version, CancellationToken cancellationToken)
+    {
+        var id = database.DatabaseId!;
+        leaseGate.Lease(id, held: false);
+        if (_js is null)
+        {
+            return null;
+        }
+
+        if (_kv is not { } kv || !Ready)
+        {
+            throw new IOException("the home lease store is not ready; the rollback is settled again");
+        }
+
+        var entry = await ReadAsync(kv, id, cancellationToken).ConfigureAwait(false);
+        var current = entry?.Value is { } bytes ? Decode(bytes) : null;
+        if (current is not null && current.Node != options.MachineId)
+        {
+            logger.ZLogWarning($"A home change was rolled back without rewriting the lease: it already names {current.Node:@Node} in {current.Home:@Home} at epoch {current.Epoch:@Epoch}");
+            return current;
+        }
+
+        var restored = new HomeLease(database.OrganizationId, database.ProjectId!, id, source.Region, source.Node, Math.Max(current?.Epoch ?? 0, version) + 1, "");
+        try
+        {
+            var revision = entry is null
+                ? await kv.CreateAsync(HomeKey(id), Encode(restored), cancellationToken: cancellationToken).ConfigureAwait(false)
+                : await kv.UpdateAsync(HomeKey(id), Encode(restored), entry.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
+            _homes[id] = (restored, revision);
+        }
+        catch (Exception error) when (error is NatsKVWrongLastRevisionException or NatsKVCreateException)
+        {
+            Refused(HomeRefusal.LeaseChanged, "home");
+            throw new IOException("the home lease changed during the rollback; it is settled again", error);
+        }
+
+        logger.ZLogWarning($"A home change was rolled back: {source.Node:@Node} in {source.Region:@Home} is the home again at epoch {restored.Epoch:@Epoch}");
+        return restored;
+    }
+
+    internal async Task<bool> RemoveIfProvenAsync(TenantContext database, KeepReason unproven, CancellationToken cancellationToken)
+    {
+        var id = database.DatabaseId!;
+        while (engine.HasDatabaseFiles(database, cancellationToken))
+        {
+            NatsKVEntry<byte[]>? proof = null;
+            HomeLease? lease = null;
+            DatabaseRevision? mine = null;
+            if (_js is not null)
+            {
+                proof = _kv is { } kv ? await ReadAsync(kv, id, cancellationToken).ConfigureAwait(false) : null;
+                lease = proof?.Value is { } bytes ? Decode(bytes) : null;
+                mine = await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false);
+                if (lease is null || lease.Node == options.MachineId || !Proves(lease, mine))
+                {
+                    if (await kept.KeepAsync(database, unproven, cancellationToken).ConfigureAwait(false) is not null)
+                    {
+                        leaseGate.Unlease(id);
+                    }
+
+                    return false;
+                }
+
+                if (await ReadAsync(_kv!, id, cancellationToken).ConfigureAwait(false) is not { } again || again.Revision != proof!.Value.Revision)
+                {
+                    continue;
+                }
+            }
+
+            try
+            {
+                fences.Release(id);
+                _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is IOException or InvalidOperationException)
+            {
+                logger.ZLogWarning($"A former home's proven file was not deleted; it stays on disk: {error.GetType().Name:@Error}");
+                return false;
+            }
+
+            leaseGate.Unlease(id);
+            _demotions?.Add(1);
+            logger.ZLogWarning($"This node no longer homes a database: {lease?.Node ?? "the new home":@Node} in {lease?.Home ?? "its region":@Home} proved at lease revision {proof?.Revision ?? 0:@Revision} that it holds {mine?.ToString() ?? "this node's final position":@Position}; the file is deleted");
+            return true;
+        }
+
+        return false;
     }
 
     private static bool Proves(HomeLease lease, DatabaseRevision? mine) =>
         mine is { } final && DatabaseRevision.TryParse(lease.Adopted, out var adopted)
             && adopted.Incarnation == final.Incarnation && DatabaseRevision.Compare(adopted, final) >= 0;
+
+    private async Task<IReadOnlySet<string>> MovingAsync(CancellationToken cancellationToken) =>
+        (await moves.PendingHomeMovesAsync(cancellationToken).ConfigureAwait(false)).Select(marker => marker.DatabaseId).ToHashSet(StringComparer.Ordinal);
 
     internal HomeLease? Find(string database) => _homes.TryGetValue(database, out var entry) ? entry.Lease : null;
 
@@ -357,7 +466,7 @@ internal sealed partial class HomeLeases(
             }
 
             var next = new HomeLease(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region,
-                options.MachineId, (previous?.Epoch ?? 0) + 1, _session);
+                options.MachineId, (previous?.Epoch ?? 0) + 1, _session, previous?.Adopted);
             var value = JsonSerializer.SerializeToUtf8Bytes(next, ReplicasJsonContext.Default.HomeLease);
             var revision = current is null
                 ? await kv.CreateAsync(HomeKey(next.DatabaseId), value, cancellationToken: cancellationToken).ConfigureAwait(false)
@@ -427,6 +536,7 @@ internal sealed partial class HomeLeases(
                 try
                 {
                     await ConfirmAllAsync(kv, cancellationToken).ConfigureAwait(false);
+                    await TrackUnservedAsync(cancellationToken).ConfigureAwait(false);
                     foreach (var home in _homes.Values.Select(entry => entry.Lease).DistinctBy(home => home.Node))
                     {
                         if (home.Node != options.MachineId && !_nodes.ContainsKey(home.Node))
@@ -476,6 +586,7 @@ internal sealed partial class HomeLeases(
             return;
         }
 
+        var moving = await MovingAsync(cancellationToken).ConfigureAwait(false);
         await _confirming.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -501,7 +612,7 @@ internal sealed partial class HomeLeases(
                         continue;
                     }
 
-                    await ConfirmAsync(kv, database, placement, cancellationToken).ConfigureAwait(false);
+                    await ConfirmAsync(kv, database, placement, moving, cancellationToken).ConfigureAwait(false);
                 }
 
                 after = page.Next;
@@ -514,14 +625,14 @@ internal sealed partial class HomeLeases(
         }
     }
 
-    private async Task ConfirmAsync(INatsKVStore kv, TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
+    private async Task ConfirmAsync(INatsKVStore kv, TenantContext database, DatabasePlacement placement, IReadOnlySet<string> moving, CancellationToken cancellationToken)
     {
-        if (!owners.Writer)
+        var id = database.DatabaseId!;
+        if (!owners.Writer || fences.Holds(id) || moving.Contains(id))
         {
             return;
         }
 
-        var id = database.DatabaseId!;
         if (!_isolated.ContainsKey(id) && _homes.TryGetValue(id, out var known) && known.Lease is { Node: var node, Session: var session } && node == options.MachineId && session == _session)
         {
             leaseGate.Lease(id, held: true);
@@ -533,16 +644,7 @@ internal sealed partial class HomeLeases(
             leaseGate.Lease(id, held: false);
         }
 
-        NatsKVEntry<byte[]>? current;
-        try
-        {
-            current = await kv.GetEntryAsync<byte[]>(HomeKey(id), cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception error) when (error is NatsKVKeyNotFoundException or NatsKVKeyDeletedException)
-        {
-            current = null;
-        }
-
+        var current = await ReadAsync(kv, id, cancellationToken).ConfigureAwait(false);
         if (_isolated.TryGetValue(id, out var conflict))
         {
             if (current?.Revision == conflict)
@@ -554,19 +656,32 @@ internal sealed partial class HomeLeases(
         }
 
         var existing = current?.Value is { } bytes ? Decode(bytes) : null;
-        if (existing is not null && existing.Node != options.MachineId && existing.Epoch >= placement.Version)
+        if (existing is not null && existing.Node != options.MachineId)
         {
-            await DemoteAsync(database, existing, cancellationToken).ConfigureAwait(false);
+            if (existing.Epoch >= placement.Version)
+            {
+                await DemoteAsync(database, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            leaseGate.Lease(id, held: false);
+            if (!_foreign.TryGetValue(id, out var seen) || seen != current!.Value.Revision)
+            {
+                _foreign[id] = current!.Value.Revision;
+                Refused(HomeRefusal.Unproven, "home");
+                logger.ZLogWarning($"Home lease not taken over: database {id:@Database} is recorded here at version {placement.Version:@Version}, but its lease names {existing.Node:@Node} in {existing.Home:@Home} at epoch {existing.Epoch:@Epoch}; this node writes neither the lease nor the database without proof");
+            }
+
             return;
         }
 
-        var lease = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId, Math.Max(placement.Version, existing?.Epoch ?? 0), _session);
-        var value = JsonSerializer.SerializeToUtf8Bytes(lease, ReplicasJsonContext.Default.HomeLease);
+        _ = _foreign.TryRemove(id, out _);
+        var lease = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId, Math.Max(placement.Version, existing?.Epoch ?? 0), _session, existing?.Adopted);
         try
         {
             var revision = current is null
-                ? await kv.CreateAsync(HomeKey(id), value, cancellationToken: cancellationToken).ConfigureAwait(false)
-                : await kv.UpdateAsync(HomeKey(id), value, current.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
+                ? await kv.CreateAsync(HomeKey(id), Encode(lease), cancellationToken: cancellationToken).ConfigureAwait(false)
+                : await kv.UpdateAsync(HomeKey(id), Encode(lease), current.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
             _homes[id] = (lease, revision);
             leaseGate.Lease(id, held: true);
         }
@@ -648,9 +763,9 @@ internal sealed partial class HomeLeases(
 
         if (leaseGate.Leased.Contains(home.DatabaseId))
         {
-            if ((recorded is null || recorded.Version <= home.Epoch) && !fences.Held.Contains(home.DatabaseId))
+            if (recorded is null || recorded.Version <= home.Epoch)
             {
-                await DemoteAsync(database, home, cancellationToken).ConfigureAwait(false);
+                await DemoteAsync(database, cancellationToken).ConfigureAwait(false);
             }
         }
         else if (recorded is { } placement && (placement.Home != home.Home || placement.Version < home.Epoch) && placement.Version <= home.Epoch)
@@ -680,130 +795,74 @@ internal sealed partial class HomeLeases(
         }
     }
 
-    private async Task DemoteAsync(TenantContext database, HomeLease home, CancellationToken cancellationToken)
+    private async Task DemoteAsync(TenantContext database, CancellationToken cancellationToken)
     {
         var id = database.DatabaseId!;
-        if (PlatformDatabase(id)
+        if (PlatformDatabase(id) || fences.Holds(id) || _kv is not { } kv
             || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-            || RegionOnly(placement))
+            || RegionOnly(placement)
+            || (await MovingAsync(cancellationToken).ConfigureAwait(false)).Contains(id)
+            || await ReadAsync(kv, id, cancellationToken).ConfigureAwait(false) is not { Value: { } bytes } || Decode(bytes) is not { } home
+            || home.Node == options.MachineId || placement.Version > home.Epoch)
         {
             return;
         }
+
         if (home.Home == options.Region || !owners.Writer)
         {
             leaseGate.Lease(id, held: false);
             return;
         }
 
-        var mine = placement.Home == options.Region ? await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false) : null;
-        var proven = mine is null || Proves(home, mine);
-        if (!proven && placement.Version <= home.Epoch && owners.Find(home.Home) is { } owner && owner.Node != home.Node
-            && await MostCompleteAsync(database, mine!.Value, cancellationToken).ConfigureAwait(false)
-            && await ReclaimAsync(database, placement, home, cancellationToken).ConfigureAwait(false))
-        {
-            return;
-        }
-
         fences.Moved(id, home.Home);
-        leaseGate.Unlease(id);
-        if (placement.Version <= home.Epoch)
+        leaseGate.Lease(id, held: false);
+        if (placement.Home == options.Region)
         {
-            if (placement.Home == options.Region)
+            _ = await moves.FollowHomeLeaseAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
+            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement.Home: var recordedHome }
+                || recordedHome == options.Region)
             {
-                _ = await moves.FollowHomeLeaseAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
-                if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement.Home: var recordedHome }
-                    || recordedHome == options.Region)
-                {
-                    return;
-                }
-            }
-            else
-            {
-                await catalog.UpdatePlacementAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
+                return;
             }
         }
-
-        if (mine is { } final && proven)
+        else
         {
-            try
-            {
-                fences.Release(id);
-                _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception error) when (error is IOException or InvalidOperationException)
-            {
-                logger.ZLogWarning($"A demoted home's file was not deleted; the orphan sweep removes it: {error.GetType().Name:@Error}");
-            }
-
-            _demotions?.Add(1);
-            logger.ZLogWarning($"This node no longer homes a database: {home.Node:@Node} in {home.Home:@Home} proved it holds {final.ToString():@Revision} at epoch {home.Epoch:@Epoch}; it follows as a replica");
-        }
-        else if (mine is { } kept)
-        {
-            fences.Release(id);
-            _keptCopies?.Add(1);
-            logger.ZLogWarning($"Old home kept its copy: database {id:@Database} is recorded on {home.Node:@Node} in {home.Home:@Home} at epoch {home.Epoch:@Epoch}, which has not proven it holds {kept.ToString():@Revision}; the file is not deleted and this node follows as a replica");
+            await catalog.UpdatePlacementAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
         }
 
+        fences.Release(id);
+        _ = await RemoveIfProvenAsync(database, KeepReason.LeaseUnproven, cancellationToken).ConfigureAwait(false);
         replication.WakeCatalog(home.Home);
     }
 
-    private async Task<bool> MostCompleteAsync(TenantContext database, DatabaseRevision mine, CancellationToken cancellationToken)
+    private async Task TrackUnservedAsync(CancellationToken cancellationToken)
     {
-        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
-        var answers = await Task.WhenAll(nodes.Where(node => node.Name != options.MachineId)
-            .Select(node => HeldAsync(node.InternalListener(options.InternalPort), database, cancellationToken))).ConfigureAwait(false);
-        var same = answers.Where(answer => answer is { Incarnation: var incarnation } && incarnation == mine.Incarnation).Select(answer => answer!.Value).ToList();
-        return same.Count > 0 && same.All(held => DatabaseRevision.Compare(held, mine) <= 0);
-    }
-
-    private async Task<DatabaseRevision?> HeldAsync(Uri peer, TenantContext database, CancellationToken cancellationToken)
-    {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(AskTimeout);
-        try
+        foreach (var (id, (lease, _)) in _homes)
         {
-            using var response = await _http.GetAsync(new Uri(peer, ReplicaRoutes.DatabasePath(database, "held")), timeout.Token).ConfigureAwait(false);
-            return response.IsSuccessStatusCode
-                && await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.HeldRevisionAnswer, timeout.Token).ConfigureAwait(false) is { Revision: var text }
-                && DatabaseRevision.TryParse(text, out var held) ? held : null;
-        }
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or JsonException && !cancellationToken.IsCancellationRequested)
-        {
-            return null;
-        }
-    }
+            var database = new TenantContext(lease.OrganizationId, PlanTier.Hobby, lease.ProjectId, id);
+            var cause = PlatformDatabase(id) || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord ? null
+                : !_nodes.ContainsKey(lease.Node) ? "lapsed"
+                : owners.Find(lease.Home) is { } owner && owner.Node != lease.Node ? "not_writer"
+                : null;
+            if (cause is null)
+            {
+                if (_unserved.TryRemove(id, out var was))
+                {
+                    logger.ZLogWarning($"Database {id:@Database} is served again: its lease names {lease.Node:@Node} in {lease.Home:@Home} at epoch {lease.Epoch:@Epoch} (it was unserved: {was.Cause:@Cause})");
+                }
 
-    private async Task<bool> ReclaimAsync(TenantContext database, DatabasePlacement placement, HomeLease recorded, CancellationToken cancellationToken)
-    {
-        var id = database.DatabaseId!;
-        if (_kv is not { } kv || !owners.Writer
-            || await ReadAsync(kv, id, cancellationToken).ConfigureAwait(false) is not { Value: { } bytes } current || Decode(bytes) != recorded)
-        {
-            return false;
-        }
+                continue;
+            }
 
-        var lease = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId, recorded.Epoch + 1, _session);
-        ulong revision;
-        try
-        {
-            revision = await kv.UpdateAsync(HomeKey(id), Encode(lease), current.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-        catch (NatsKVWrongLastRevisionException)
-        {
-            return false;
-        }
+            var unserved = new UnservedDatabase(id, lease.Home, lease.Node, lease.Epoch, cause);
+            if (_unserved.TryGetValue(id, out var known) && known == unserved)
+            {
+                continue;
+            }
 
-        _homes[id] = (lease, revision);
-        _ = await moves.FollowHomeLeaseAsync(database, Moved(placement, lease), cancellationToken).ConfigureAwait(false);
-        fences.Lift(id);
-        leaseGate.Lease(id, held: true);
-        _reclaims?.Add(1);
-        logger.ZLogWarning($"This node took a database back as home: {recorded.Node:@Node} held its lease at epoch {recorded.Epoch:@Epoch} but is not the writer of {recorded.Home:@Region}, so it served nothing, and no replica is ahead of this node's copy; it is served again at epoch {lease.Epoch:@Epoch}");
-        replication.WakeCatalog(recorded.Home);
-        Reclaimed?.Invoke(database, lease.Epoch);
-
-        return true;
+            _unserved[id] = unserved;
+            logger.ZLogWarning($"Database {id:@Database} is unserved: its lease names {lease.Node:@Node} in {lease.Home:@Home} at epoch {lease.Epoch:@Epoch}, which cannot serve it ({cause:@Cause}); nothing else serves it as home until an operator acts");
+        }
     }
 
     private static DatabasePlacement Moved(DatabasePlacement placement, HomeLease home) => placement.AllRegions

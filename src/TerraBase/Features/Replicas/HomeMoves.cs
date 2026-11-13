@@ -17,7 +17,7 @@ using ZLogger;
 namespace TerraBase.Features.Replicas;
 
 public sealed record HomePromoteRequest(string MoveId, string FromRegion, long Version, IReadOnlyList<string> ReplicaRegions, bool AllRegions,
-    string? Name = null, DatabaseIdentity? Identity = null);
+    string? Name = null, DatabaseIdentity? Identity = null, string? FromNode = null);
 
 public sealed record HomeAbortRequest(string MoveId, long Version);
 
@@ -30,7 +30,7 @@ internal readonly union PromoteResult(HomePromoteAnswer, Conflict, Unavailable);
 internal sealed class HomeMoves(
     TerraBaseOptions options, IHomeMoveCatalog moves, IReplicaCatalog catalog, IReplicaPeers peers, ITenantDirectory tenants, ReplicaNames names, IDatabaseReplicas replicas, RegionReplication replication,
     IStorageEngine engine, IDatabaseRevisions revisions, IWalBackup imports, DatabaseFences fences, Regions.IRegionCatalog regions, HomeApply.IHomeApply apply, HomeLeases leases, HomeLeaseGate leaseGate, HomePush.HomePush pushes,
-    RegionalOwners owners, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<HomeMoves> logger)
+    KeptCopies kept, RegionalOwners owners, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<HomeMoves> logger)
     : BackgroundService
 {
     internal static readonly Unavailable ReplicaNotReady = new("the target region's replica could not catch up; nothing changed, retry", "replica_not_ready");
@@ -49,7 +49,6 @@ internal sealed class HomeMoves(
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         _pause = _meter.CreateHistogram<double>("terrabase.placement.move.pause", "ms", "Time writes of a database paused while its home moved.");
-        leases.Reclaimed = Reclaimed;
         return base.StartAsync(cancellationToken);
     }
 
@@ -129,7 +128,7 @@ internal sealed class HomeMoves(
             var placement = record?.Placement;
             IReadOnlyList<string> next = placement is null ? [options.Region]
                 : [.. placement.Replicas.Where(region => region != marker.Target).Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-            var promotion = await PromoteAsync(peer, marker, new HomePromoteRequest(marker.MoveId, options.Region, marker.Version, next, placement?.AllRegions ?? false, record?.Name, record?.Identity))
+            var promotion = await PromoteAsync(peer, marker, new HomePromoteRequest(marker.MoveId, options.Region, marker.Version, next, placement?.AllRegions ?? false, record?.Name, record?.Identity, options.MachineId))
                 .ConfigureAwait(false);
             promoted = promotion switch
             {
@@ -193,45 +192,17 @@ internal sealed class HomeMoves(
         var result = await moves.CompleteHomeMoveAsync(marker, CancellationToken.None).ConfigureAwait(false);
         if (result is ManagedDatabase)
         {
-            await RemoveProvenAsync(marker.Database, marker.Target).ConfigureAwait(false);
+            await RemoveProvenAsync(marker.Database).ConfigureAwait(false);
             replication.WakeCatalog(marker.Target);
         }
 
         return result;
     }
 
-    private async Task RemoveProvenAsync(TenantContext database, string home)
+    private async Task RemoveProvenAsync(TenantContext database)
     {
         fences.Release(database.DatabaseId!);
-        if (!await leases.ProvesAsync(database, CancellationToken.None).ConfigureAwait(false))
-        {
-            leases.Kept();
-            logger.ZLogWarning($"Old home kept its copy: the new home in {home:@Home} has not proven it holds this node's final position; nothing is deleted");
-            return;
-        }
-
-        try
-        {
-            _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception error) when (error is IOException or InvalidOperationException)
-        {
-            logger.ZLogWarning($"A moved database's old home file was not deleted; the orphan sweep removes it: {error.GetType().Name:@Error}");
-        }
-    }
-
-    private void Reclaimed(TenantContext database, long epoch) => _ = DrainReclaimedAsync(database, epoch);
-
-    private async Task DrainReclaimedAsync(TenantContext database, long epoch)
-    {
-        try
-        {
-            await DrainAsync(database, epoch).ConfigureAwait(false);
-        }
-        catch (Exception error) when (error is not OperationCanceledException)
-        {
-            logger.ZLogWarning(error, $"A reclaimed home did not drain the pushes addressed to the recorded home");
-        }
+        _ = await leases.RemoveIfProvenAsync(database, KeepReason.MoveUnproven, CancellationToken.None).ConfigureAwait(false);
     }
 
     private async Task<PromoteResult> PromoteAsync(ReplicaPeer peer, HomeMoveMarker marker, HomePromoteRequest request)
@@ -298,6 +269,19 @@ internal sealed class HomeMoves(
                 return new Conflict("this move was abandoned", "move_aborted");
             }
 
+            if (fences.Promoting(database.DatabaseId!) is { } pending)
+            {
+                switch (await SettlePromotionAsync(database, pending).ConfigureAwait(false))
+                {
+                    case null:
+                        return Unresolved;
+                    case true when pending.Version >= request.Version:
+                        return new HomePromoteAnswer(true);
+                    case true or false:
+                        break;
+                }
+            }
+
             if (!owners.Writer)
             {
                 leases.Refused(HomeRefusal.NotWriter, "home");
@@ -311,13 +295,7 @@ internal sealed class HomeMoves(
 
             if (placement.Home == options.Region)
             {
-                if (placement.Version >= request.Version)
-                {
-                    await DrainAsync(database, request.Version).ConfigureAwait(false);
-                    return new HomePromoteAnswer(true);
-                }
-
-                return new HomePromoteAnswer(false);
+                return new HomePromoteAnswer(placement.Version >= request.Version);
             }
 
             if (placement.Home != request.FromRegion || placement.Version >= request.Version)
@@ -345,8 +323,7 @@ internal sealed class HomeMoves(
             }
 
             IReadOnlyList<string> next = [.. request.ReplicaRegions.Where(region => region != options.Region)];
-            return await AdoptAsync(database, request.FromRegion, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), request.Name, request.Identity, cancellationToken)
-                .ConfigureAwait(false);
+            return await AdoptAsync(database, request, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -354,9 +331,10 @@ internal sealed class HomeMoves(
         }
     }
 
-    private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, string? name, DatabaseIdentity? identity, CancellationToken cancellationToken)
+    private async Task<PromoteResult> AdoptAsync(TenantContext database, HomePromoteRequest request, DatabasePlacement placement, CancellationToken cancellationToken)
     {
-        if (await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var previous })
+        var (fromRegion, name, identity) = (request.FromRegion, request.Name, request.Identity);
+        if (await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is not TenantDatabaseRecord)
         {
             return new Conflict("this region does not record the database", "move_aborted");
         }
@@ -388,6 +366,13 @@ internal sealed class HomeMoves(
             return new Conflict("the replica holds no pull", "move_aborted");
         }
 
+        if (await leases.RestoreNodeAsync(database, fromRegion, request.FromNode, CancellationToken.None).ConfigureAwait(false) is not { } fromNode)
+        {
+            return new Conflict("the previous home's node is not known, so a rollback could not name it; nothing changed", "move_aborted");
+        }
+
+        var id = database.DatabaseId!;
+        var source = new PromotionSource(fromRegion, fromNode, placement.Version);
         string? detached = null;
         try
         {
@@ -397,46 +382,50 @@ internal sealed class HomeMoves(
                 return new Conflict("the replica holds no pull", "move_aborted");
             }
 
-            fences.Lift(database.DatabaseId!);
+            fences.Promote(id, source);
             if (leases.Active)
             {
-                leaseGate.Lease(database.DatabaseId!, held: false);
+                leaseGate.Lease(id, held: false);
             }
 
+            _ = await kept.KeepAsync(database, KeepReason.MoveTarget, CancellationToken.None).ConfigureAwait(false);
             await imports.ImportDatabaseAsync(database, detached, CancellationToken.None).ConfigureAwait(false);
             detached = null;
-            if (await leases.TakeAsync(database, fromRegion, placement.Version, adopted, CancellationToken.None).ConfigureAwait(false) is not { } lease)
+            if (await leases.TakeAsync(database, fromRegion, placement.Version, CancellationToken.None).ConfigureAwait(false) is not { } lease)
             {
-                leaseGate.Unlease(database.DatabaseId!);
-                _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
-                return new Conflict("another region holds the database's home lease", "move_aborted");
+                await RollBackAsync(database, source).ConfigureAwait(false);
+                return new Conflict("another region holds the database's home lease; the previous home is still the home", "move_aborted");
             }
 
             if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None, name, identity).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
             {
-                leases.Refused(HomeRefusal.PlacementRefused, "home");
-                await RollBackAsync(database, lease, previous).ConfigureAwait(false);
-                return new Conflict("the catalog did not take the new placement; the previous home is still the home", "move_aborted");
+                return await RefuseAsync(HomeRefusal.PlacementRefused, "the catalog did not take the new placement").ConfigureAwait(false);
             }
 
-            try
+            if (!await PrepareAsync(database).ConfigureAwait(false))
             {
-                await apply.PrepareAsync(database, CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception error) when (error is not OperationCanceledException)
-            {
-                leases.Refused(HomeRefusal.PrepareFailed, "home");
-                logger.ZLogWarning(error, $"A new home could not prepare; the move is rolled back");
-                await RollBackAsync(database, lease, previous).ConfigureAwait(false);
-                return new Conflict("the new home could not prepare; the previous home is still the home", "move_aborted");
+                return await RefuseAsync(HomeRefusal.PrepareFailed, "the new home could not prepare").ConfigureAwait(false);
             }
 
-            await DrainAsync(database, placement.Version).ConfigureAwait(false);
+            if (await DrainAsync(database, placement.Version).ConfigureAwait(false) is not { } drained)
+            {
+                return await RefuseAsync(HomeRefusal.DrainFailed, "the new home could not apply the pushes addressed to the previous home").ConfigureAwait(false);
+            }
+
+            if (!await leases.CommitAsync(database, lease, adopted, CancellationToken.None).ConfigureAwait(false))
+            {
+                return await RefuseAsync(HomeRefusal.LeaseChanged, "the home lease changed before the commit").ConfigureAwait(false);
+            }
+
+            fences.Lift(id);
+            logger.ZLogInformation($"A home move committed: this node is the home at epoch {placement.Version:@Epoch}, holding {adopted.ToString():@Adopted}; it serves writes from now on");
+            await pushes.PublishDrainedAsync(database, drained, CancellationToken.None).ConfigureAwait(false);
             return new HomePromoteAnswer(true);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            logger.ZLogWarning(error, $"Promoting a replica to home failed; it follows its home again");
+            logger.ZLogWarning(error, $"Promoting a replica to home failed; the move is settled from its commit point");
+            await SettleAfterFailureAsync(database).ConfigureAwait(false);
             return new Unavailable("the replica could not become the home");
         }
         finally
@@ -446,16 +435,92 @@ internal sealed class HomeMoves(
                 TursoReplicas.DeleteDetached(detached);
             }
         }
+
+        async Task<PromoteResult> RefuseAsync(HomeRefusal refusal, string reason)
+        {
+            leases.Refused(refusal, "home");
+            logger.ZLogWarning($"A home move stopped before its commit point: {reason:@Reason}; the previous home resumes and this node keeps its imported copy");
+            await RollBackAsync(database, source).ConfigureAwait(false);
+            return new Conflict($"{reason}; the previous home is still the home", "move_aborted");
+        }
     }
 
-    private async Task RollBackAsync(TenantContext database, HomeLeaseTaken lease, DatabasePlacement previous)
+    private async Task<bool> PrepareAsync(TenantContext database)
     {
-        var restored = await leases.RestoreAsync(database, lease, CancellationToken.None).ConfigureAwait(false);
-        _ = await moves.FollowHomeLeaseAsync(database, previous with { Version = restored?.Epoch ?? lease.Taken.Epoch + 1 }, CancellationToken.None).ConfigureAwait(false);
-        _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await apply.PreparePromotingAsync(database, CancellationToken.None).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            logger.ZLogWarning(error, $"A new home could not prepare home apply");
+            return false;
+        }
     }
 
-    private async Task DrainAsync(TenantContext database, long fence)
+    private async Task SettleAfterFailureAsync(TenantContext database)
+    {
+        if (fences.Promoting(database.DatabaseId!) is not { } pending)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = await SettlePromotionAsync(database, pending).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            logger.ZLogWarning(error, $"A failed promotion stays fenced; it is settled when the previous home asks again");
+        }
+    }
+
+    private async Task<bool?> SettlePromotionAsync(TenantContext database, PromotionSource source)
+    {
+        switch (await leases.CommittedAsync(database, source.Version, CancellationToken.None).ConfigureAwait(false))
+        {
+            case true:
+                fences.Lift(database.DatabaseId!);
+                logger.ZLogWarning($"A home move that reached its commit point before this node stopped is finished: this node is the home at epoch {source.Version:@Epoch}");
+                return true;
+            case false:
+                await RollBackAsync(database, source).ConfigureAwait(false);
+                return false;
+            default:
+                return null;
+        }
+    }
+
+    private async Task RollBackAsync(TenantContext database, PromotionSource source)
+    {
+        var id = database.DatabaseId!;
+        leaseGate.Lease(id, held: false);
+        _ = await kept.KeepAsync(database, KeepReason.MoveRolledBack, CancellationToken.None).ConfigureAwait(false);
+        var restored = await leases.RestoreAsync(database, source, source.Version, CancellationToken.None).ConfigureAwait(false);
+        if (await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement } && placement.Home == options.Region)
+        {
+            var version = Math.Max(restored?.Epoch ?? 0, placement.Version + 1);
+            IReadOnlyList<string> others = [.. placement.Replicas.Append(options.Region).Where(region => region != source.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+            var previous = placement.AllRegions ? new DatabasePlacement(source.Region, [], version, AllRegions: true) : new DatabasePlacement(source.Region, others, version);
+            if (await moves.FollowHomeLeaseAsync(database, previous, CancellationToken.None).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
+            {
+                throw new IOException("the catalog did not take the previous home back; the rollback is settled again");
+            }
+        }
+
+        fences.Lift(id);
+        if (!engine.HasDatabaseFiles(database, CancellationToken.None))
+        {
+            leaseGate.Unlease(id);
+        }
+
+        replication.Resume(database);
+        replication.WakeCatalog(source.Region);
+        logger.ZLogWarning($"A home move was rolled back before its commit point: {source.Node:@Node} in {source.Region:@Region} is the home again; this node acknowledged no write as home and kept its imported copy");
+    }
+
+    private async Task<IReadOnlyList<HomePush.DrainedPush>?> DrainAsync(TenantContext database, long fence)
     {
         var backoff = new Backoff(TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(5));
         for (var attempt = 0; attempt < 60; attempt++)
@@ -463,8 +528,8 @@ internal sealed class HomeMoves(
             try
             {
                 var drained = await pushes.DrainOriginsAsync(database, fence, CancellationToken.None).ConfigureAwait(false);
-                logger.ZLogInformation($"A new home applied {drained} pushed transactions addressed to its former home");
-                return;
+                logger.ZLogInformation($"A new home applied {drained.Count} pushed transactions addressed to its former home before its commit point");
+                return drained;
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
@@ -473,20 +538,32 @@ internal sealed class HomeMoves(
             }
         }
 
-        throw new IOException("the new home could not drain retained origin pushes");
+        return null;
     }
 
-    public async Task<HomePromoteAnswer> AbortAsync(TenantContext database, HomeAbortRequest request, CancellationToken cancellationToken)
+    public async Task<PromoteResult> AbortAsync(TenantContext database, HomeAbortRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var gate = _locks.GetOrAdd(database.DatabaseId!, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (fences.Promoting(database.DatabaseId!) is { } pending)
+            {
+                switch (await SettlePromotionAsync(database, pending).ConfigureAwait(false))
+                {
+                    case null:
+                        return Unresolved;
+                    case true when pending.Version >= request.Version:
+                        return new HomePromoteAnswer(true);
+                    case true or false:
+                        break;
+                }
+            }
+
             if (await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
                 && placement.Home == options.Region && placement.Version >= request.Version)
             {
-                await DrainAsync(database, request.Version).ConfigureAwait(false);
                 return new HomePromoteAnswer(true);
             }
 
@@ -584,7 +661,7 @@ internal sealed class HomeMoves(
                     return;
                 case TenantDatabaseRecord { Placement.Home: var home }:
                     fences.Moved(id, home);
-                    await RemoveProvenAsync(database, home).ConfigureAwait(false);
+                    await RemoveProvenAsync(database).ConfigureAwait(false);
                     return;
                 default:
                     return;

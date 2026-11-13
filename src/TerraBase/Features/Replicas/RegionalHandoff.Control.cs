@@ -31,10 +31,14 @@ internal sealed partial class RegionalHandoff
     private TenantContext? _checkedAfter;
     private bool _checked;
     private long _refusedEpoch;
+    private long _recheckAt;
+    private string? _refusal;
     private long _unprovenEpoch;
     private RegionalOwner? _startupOwner;
     private bool _protocolPublished;
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan RecheckEvery = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan CatchUpBudget = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ActivationBudget = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AttemptBudget = TimeSpan.FromSeconds(2);
 
@@ -313,13 +317,14 @@ internal sealed partial class RegionalHandoff
 
     private async Task<bool> LocalDataCurrentAsync(RegionalOwner owner, IReplicaCatalog catalog, CancellationToken token)
     {
-        if (_refusedEpoch == owner.Epoch)
+        if (_refusedEpoch == owner.Epoch && gate.Time.GetTimestamp() < _recheckAt)
         {
             return false;
         }
 
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
         var revisions = services.GetRequiredService<IDatabaseRevisions>();
+        var replication = services.GetRequiredService<RegionReplication>();
         do
         {
             if (await catalog.ListHomedAsync(options.Region, _checkedAfter, token).ConfigureAwait(false) is not TenantDatabasePage page)
@@ -328,15 +333,14 @@ internal sealed partial class RegionalHandoff
             }
             foreach (var database in page.Databases)
             {
-                if (!PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && replicas.HeldRevision(database) is { } replica)
+                if (!PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && await HeldAsync(database).ConfigureAwait(false) is { } replica)
                 {
                     var primary = await revisions.CurrentRevisionAsync(database, token).ConfigureAwait(false);
                     if (primary is not { } held || held.Incarnation != replica.Incarnation || DatabaseRevision.Compare(replica, held) > 0)
                     {
-                        _refusedEpoch = owner.Epoch;
                         var refusal = primary is null ? HomeRefusal.PrimaryMissing : HomeRefusal.ReplicaNewer;
-                        services.GetRequiredService<HomeLeases>().Refused(refusal, "writer");
-                        logger.ZLogWarning($"Regional writer refused at epoch {owner.Epoch:@Epoch}: database {database.DatabaseId:@Database} has a local replica at {replica.ToString():@Replica} that its primary file does not cover, at {primary?.ToString() ?? "none":@Primary}; this node stays a non-writer");
+                        Refuse(refusal, $"{refusal}:{database.DatabaseId}:{replica}:{primary}",
+                            $"database {database.DatabaseId} has a local replica at {replica} that its primary file does not cover, at {primary?.ToString() ?? "none"}");
                         return false;
                     }
                 }
@@ -346,7 +350,44 @@ internal sealed partial class RegionalHandoff
         }
         while (_checkedAfter is not null);
         _checked = true;
+        _refusal = null;
         return true;
+
+        async Task<DatabaseRevision?> HeldAsync(TenantContext database)
+        {
+            if (replicas.HeldRevision(database) is { } open)
+            {
+                return open;
+            }
+
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+            budget.CancelAfter(CatchUpBudget);
+            try
+            {
+                _ = await replication.CatchUpAsync(database, budget.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            {
+                logger.ZLogWarning($"The activation check could not catch up database {database.DatabaseId:@Database}'s local replica within {CatchUpBudget.TotalSeconds:@Seconds} s; it compares the position the replica holds, if any");
+            }
+
+            return replicas.HeldRevision(database);
+        }
+
+        void Refuse(HomeRefusal refusal, string state, string detail)
+        {
+            _refusedEpoch = owner.Epoch;
+            _recheckAt = gate.Time.GetTimestamp() + (long)(RecheckEvery.TotalSeconds * gate.Time.TimestampFrequency);
+            _checkedAfter = null;
+            if (_refusal == state)
+            {
+                return;
+            }
+
+            _refusal = state;
+            services.GetRequiredService<HomeLeases>().Refused(refusal, "writer");
+            logger.ZLogWarning($"Regional writer refused at epoch {owner.Epoch:@Epoch}: {detail:@Detail}; this node stays a non-writer and checks again in {RecheckEvery.TotalSeconds:@Seconds} s");
+        }
     }
 
     private async Task<DrainReservation> BeginDrainAsync(INatsKVStore kv, string target, DrainProgress progress, CancellationToken token)

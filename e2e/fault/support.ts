@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect } from 'node:http2';
 import { createConnection } from 'node:net';
@@ -17,7 +18,9 @@ export const nodes = [
   { name: 'journey-4', region: 'fra', address: '127.0.0.4', port: 8380, metrics: 9391, service: 'terrabase-fra-2' },
 ] as const;
 export type Node = typeof nodes[number];
-type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean };
+export type KeptCopy = { id: string; organizationId: string; projectId: string; databaseId: string; revision?: string | null; reason: string; keptAt: string; files: string[]; bytes: number };
+export type Unserved = { databaseId: string; region: string; node: string; epoch: number; cause: string };
+type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; unserved?: Unserved[] | null; kept?: KeptCopy[] | null };
 export type Row = [number, string];
 export type HomeLease = { organizationId: string; projectId: string; databaseId: string; home: string; node: string; epoch: number; session: string; adopted?: string | null };
 export const node = (name: string) => nodes.find(candidate => candidate.name === name)!;
@@ -50,6 +53,24 @@ export async function nodeStatus(node: Node): Promise<NodeStatus> {
   const answer = await peer(node, '/v1/rollout/status');
   expect(answer.status).toBe(200);
   return JSON.parse(answer.body) as NodeStatus;
+}
+
+export async function keptCopies(node: Node, id: string): Promise<KeptCopy[]> {
+  return ((await nodeStatus(node)).kept ?? []).filter(copy => copy.databaseId === id);
+}
+
+export function keptHash(node: Node, copy: KeptCopy): string {
+  const hash = createHash('sha256');
+  for (const file of copy.files) hash.update(readFileSync(join(stateDir, node.service, '.kept', copy.id, file)));
+  return hash.digest('hex');
+}
+
+export function holdsFile(node: Node, lease: { organizationId: string; projectId: string; databaseId: string }): boolean {
+  return existsSync(join(stateDir, node.service, lease.organizationId, lease.projectId, `${lease.databaseId}.db`));
+}
+
+export function promoting(node: Node, id: string): boolean {
+  return existsSync(join(stateDir, node.service, '.fences', 'promoting', id));
 }
 
 export async function metric(node: Node, name: string, labels: Record<string, string> = {}): Promise<number> {
@@ -134,6 +155,10 @@ export class Kv {
     expect(answer.error, JSON.stringify(answer)).toBeUndefined();
   }
 
+  async publish(subject: string, payload: unknown, headers: Record<string, string>): Promise<Record<string, unknown>> {
+    return this.request(subject, payload, headers);
+  }
+
   async remove(bucket: string, key: string, after: number): Promise<void> {
     const answer = await this.request(`$KV.${bucket}.${key}`, {}, { 'KV-Operation': 'DEL', 'Nats-Expected-Last-Subject-Sequence': String(after) });
     expect(answer.error, JSON.stringify(answer)).toBeUndefined();
@@ -163,6 +188,7 @@ export class Ledger {
   readonly acknowledged: Row[] = [];
   readonly submitted: Row[] = [];
   readonly failed: Row[] = [];
+  readonly refused: Row[] = [];
   readonly path: string;
 
   constructor(readonly id: string) {
@@ -174,6 +200,7 @@ export class Ledger {
     if (event === 'submitted') this.submitted.push(...rows);
     if (event === 'acknowledged') this.acknowledged.push(...rows);
     if (event === 'failed') this.failed.push(...rows);
+    if (event === 'refused') this.refused.push(...rows);
   }
 
   async direct(node: Node, token: string, rows: Row[]): Promise<boolean> {
@@ -188,12 +215,24 @@ export class Ledger {
         this.record('acknowledged', rows, node.region);
         return true;
       }
+      this.record(response.status === 200 ? 'failed' : 'refused', rows, node.region);
+      return false;
     } catch {
       this.record('failed', rows, node.region);
       return false;
     }
-    this.record('failed', rows, node.region);
-    return false;
+  }
+
+  async refusal(node: Node, token: string, rows: Row[]): Promise<{ status: number; code?: string }> {
+    this.record('submitted', rows, node.region);
+    const response = await fetch(`http://127.0.0.1:${node.port}${database(this.id)}/sql/execute`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ statements: [{ sql: this.statement(rows) }] }), signal: AbortSignal.timeout(45_000),
+    });
+    const body = await response.json() as { error?: { code: string }; results?: { error?: { code: string } }[] };
+    const answer = { status: response.status, code: body.error?.code ?? body.results?.[0]?.error?.code };
+    this.record(response.status === 200 && !answer.code ? 'acknowledged' : 'refused', rows, node.region);
+    return answer;
   }
 
   async readNode(node: Node, token: string): Promise<Row[]> {

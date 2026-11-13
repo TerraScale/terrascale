@@ -48,6 +48,8 @@ internal sealed record LocalCommit(string? Id, HomeApplyResult? Home);
 
 internal sealed class LocalOutcomeUnknownException(string message, Exception inner) : Exception(message, inner);
 
+internal sealed record DrainedPush(string Region, HomeApplyResult Result, ulong? Sequence);
+
 internal class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
     IInRegionAck partner, RegionalOwners owners, IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger)
@@ -279,11 +281,11 @@ internal class HomePush(
         Interlocked.Exchange(ref _progress, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
     }
 
-    internal async Task<int> DrainOriginsAsync(TenantContext database, long fence, CancellationToken cancellationToken)
+    internal async Task<IReadOnlyList<DrainedPush>> DrainOriginsAsync(TenantContext database, long fence, CancellationToken cancellationToken)
     {
-        if (_js is not { } js || _nats is not { } nats)
+        if (_js is not { } js)
         {
-            return 0;
+            return [];
         }
 
         var scans = new List<INatsJSConsumer>();
@@ -296,7 +298,7 @@ internal class HomePush(
             }, cancellationToken).ConfigureAwait(false));
         }
 
-        var applied = 0;
+        List<DrainedPush> applied = [];
         while (true)
         {
             var read = 0;
@@ -316,17 +318,9 @@ internal class HomePush(
                         throw new IOException("a retained origin push could not be decoded during promotion");
                     }
 
-                    var result = await apply.ApplyAsync(database, transaction, cancellationToken).ConfigureAwait(false)
+                    var result = await apply.ApplyPromotingAsync(database, transaction, cancellationToken).ConfigureAwait(false)
                         ?? throw new StorageBusyException();
-                    await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
-                        JsonSerializer.SerializeToUtf8Bytes(result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
-                    _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
-                    if (message.Metadata is { } metadata)
-                    {
-                        Progressed(transaction.Region!, database, metadata.Sequence.Stream);
-                    }
-
-                    applied++;
+                    applied.Add(new DrainedPush(transaction.Region!, result, message.Metadata?.Sequence.Stream));
                 }
             }
 
@@ -337,6 +331,25 @@ internal class HomePush(
         }
 
         return applied;
+    }
+
+    internal async Task PublishDrainedAsync(TenantContext database, IReadOnlyList<DrainedPush> drained, CancellationToken cancellationToken)
+    {
+        if (_nats is not { } nats)
+        {
+            return;
+        }
+
+        foreach (var push in drained)
+        {
+            await nats.PublishAsync(PushNames.Applied(push.Region, database),
+                JsonSerializer.SerializeToUtf8Bytes(push.Result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
+            _applies?.Add(1, new KeyValuePair<string, object?>("state", push.Result.State));
+            if (push.Sequence is { } sequence)
+            {
+                Progressed(push.Region, database, sequence);
+            }
+        }
     }
 
     private static long Epoch(NatsHeaders? headers) =>

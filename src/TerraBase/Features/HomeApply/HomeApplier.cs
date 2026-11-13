@@ -32,7 +32,17 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         ConflictTable.Ddl,
     ];
 
-    public async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken)
+    public ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken) =>
+        ApplyAsync(database, transaction, promotion: false, cancellationToken);
+
+    public ValueTask<HomeApplyResult?> ApplyPromotingAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken) =>
+        ApplyAsync(database, transaction, promotion: true, cancellationToken);
+
+    private ValueTask<IStorageTransaction?> BeginAsync(TenantContext database, bool promotion, CancellationToken cancellationToken) => promotion
+        ? engine.BeginPromotionTransactionAsync(database, cancellationToken)
+        : engine.BeginTransactionAsync(database, write: true, cancellationToken);
+
+    private async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, bool promotion, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(transaction);
@@ -45,7 +55,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         IStorageTransaction? applying;
         try
         {
-            applying = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+            applying = await BeginAsync(database, promotion, cancellationToken).ConfigureAwait(false);
         }
         catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
         {
@@ -108,7 +118,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
 
         try
         {
-            return await RevertAsync(database, transaction, rejection, cancellationToken).ConfigureAwait(false);
+            return await RevertAsync(database, transaction, rejection, promotion, cancellationToken).ConfigureAwait(false);
         }
         catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
         {
@@ -140,7 +150,14 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             throw new StorageBusyException();
         }
 
-        var preparing = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+        await EnsureTablesAsync(database, promotion: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask PreparePromotingAsync(TenantContext database, CancellationToken cancellationToken) => EnsureTablesAsync(database, promotion: true, cancellationToken);
+
+    private async ValueTask EnsureTablesAsync(TenantContext database, bool promotion, CancellationToken cancellationToken)
+    {
+        var preparing = await BeginAsync(database, promotion, cancellationToken).ConfigureAwait(false);
         if (preparing is null)
         {
             return;
@@ -260,9 +277,9 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         return ApplySql.KeyText(values);
     }
 
-    private async ValueTask<HomeApplyResult> RevertAsync(TenantContext database, RegionTransaction transaction, Rejection rejection, CancellationToken cancellationToken)
+    private async ValueTask<HomeApplyResult> RevertAsync(TenantContext database, RegionTransaction transaction, Rejection rejection, bool promotion, CancellationToken cancellationToken)
     {
-        var recording = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false)
+        var recording = await BeginAsync(database, promotion, cancellationToken).ConfigureAwait(false)
             ?? throw new StorageBusyException();
         await using (recording.ConfigureAwait(false))
         {
