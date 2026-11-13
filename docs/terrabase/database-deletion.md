@@ -34,6 +34,16 @@ progress returns 409 `move_in_progress`; deletion, restore or purge outside the 
 region returns 409 `wrong_region`. Other regions drop their copies when deletion
 is accepted, and are re-seeded after restore.
 
+A regional writer handoff includes retained home databases in its certified positions.
+The incoming writer imports their files before completing the handoff. Retained page
+pulls require the internal listener, a valid peer credential and a known peer in the
+same region. Clients and other regions cannot pull a retained database.
+
+Restore returns 503 with Retry-After while retained files are unavailable. Purge also
+refuses missing retained files: it preserves the retained record, keys and backups,
+increments terrabase.purge.errors with reason retained_files_missing and logs the
+database ID. Maintenance can purge after the files return.
+
 After the deadline, maintenance commits permanent purge authority before deleting
 the retained data and destroying backup keys. Backup retention and orphan-file
 cleanup preserve deleted databases during the window. Branches remain independent.

@@ -173,6 +173,10 @@ internal sealed partial class EngineManagementService
                 DeletedDatabaseRecord => throw new UnreachableException(),
             };
         }
+        if (RetainedFilesUnavailable(retained) is { } missing)
+        {
+            return missing;
+        }
         var result = await DeleteRecordedAsync(retained.Storage, async (transaction, token) =>
         {
             if (await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, token).ConfigureAwait(false) is not TenantContext)
@@ -181,6 +185,10 @@ internal sealed partial class EngineManagementService
             }
             var current = await GetAsync(transaction, DeletedDatabases.Kind, databaseId, ManagementJsonContext.Default.DeletedDatabaseRecord, token).ConfigureAwait(false);
             if (current is null || current.DeletedAt != retained.DeletedAt || !DatabasePurge.SameDatabase(current.Storage, retained.Storage))
+            {
+                return false;
+            }
+            if (RetainedFilesUnavailable(current) is not null)
             {
                 return false;
             }
@@ -237,6 +245,10 @@ internal sealed partial class EngineManagementService
     }
     private async ValueTask<RecordedDeletion> PurgeDeletedRecordAsync(DeletedDatabaseRecord record, CancellationToken cancellationToken)
     {
+        if (RetainedFilesUnavailable(record) is { } missing)
+        {
+            return missing;
+        }
         var result = await DeleteRecordedAsync(record.Storage, async (transaction, token) =>
         {
             var current = await GetAsync(transaction, DeletedDatabases.Kind, record.Database.Id, ManagementJsonContext.Default.DeletedDatabaseRecord, token).ConfigureAwait(false);
@@ -246,6 +258,10 @@ internal sealed partial class EngineManagementService
                 return false;
             }
 
+            if (RetainedFilesUnavailable(current) is not null)
+            {
+                return false;
+            }
             _ = await UnregisterRecordAsync(transaction, record.Storage, record.Database, token, customerDeletion: true).ConfigureAwait(false);
             await RemoveDeletedAsync(transaction, record, token).ConfigureAwait(false);
             return true;
@@ -255,6 +271,17 @@ internal sealed partial class EngineManagementService
             _ = await shredding.Value.DestroyAsync(record.Storage, DateTimeOffset.MaxValue, cancellationToken).ConfigureAwait(false);
         }
         return result;
+    }
+
+    private Unavailable? RetainedFilesUnavailable(DeletedDatabaseRecord record)
+    {
+        if (engine.HasDatabaseFiles(record.Storage, CancellationToken.None))
+        {
+            return null;
+        }
+        _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "retained_files_missing"));
+        logger.ZLogWarning($"Retained database {record.Database.Id:@Database} has no local files; purge preserves its keys and backups");
+        return new Unavailable("the retained database files are unavailable");
     }
 
 }
