@@ -17,18 +17,21 @@ and moving the home are in [placement](placement.md).
 - **Home-only operations.** Database-scoped Management requests other than reading, updating and deleting the record
   are checked against the home region (`DatabaseRegions.ElsewhereAsync`).
 
-## Wrong region
+## Requests outside placement
 
-`UseTerraBaseDatabasePlacement` checks every client-listener request that names a project and a database. When this
-region holds the database's record and the placement does not include this region, it answers `421 wrong_region` with:
+`UseTerraBaseDatabasePlacement` checks client requests that name a project and database. When a region keeps a
+routing record but no longer holds a copy, it proxies the request over the private mesh to the current writer.
+The same applies to regions that have never held a copy. REST requests retain their method, body, query and bearer
+credential. WebSocket sessions relay frames for the session's lifetime, including browser authentication frames.
+The destination enforces the credential's project, database and scopes.
 
-- `X-TerraBase-Database-Home`: the home region;
-- `X-TerraBase-Database-Regions`: the serving regions, home first;
-- `Cache-Control: no-store`;
-- `ts-replay: region=<regions>` behind the edge ([ts-orch.md](ts-orch.md#ts-replay)).
+The response carries the destination's `X-TerraBase-Region`. An unavailable destination answers `503 unavailable`;
+a write sent without an answer retains `503 write_outcome_unknown`. These paths do not return `wrong_region`.
+A placement change while opening a socket requires a reconnect; an active SQL transaction interrupted by a writer
+change returns `serialization_conflict`.
 
-A region's catalog holds the databases homed there ([SQL catalog](sql-catalog.md#regions)). A region without the record
-forwards the request to the database's home instead (below).
+The catalog and replication still record the writer separately from the other members. Operations restricted to
+the writer can still return placement guidance when called at a region that holds a copy.
 
 ## Forwarding to the home
 
@@ -41,7 +44,7 @@ mesh.
   there over HTTP/2 with the peer credential and `X-TerraBase-Forwarded-For` (the client address the edge reported). The
   home serves it as a client-listener request: the same token checks, IP allowlists, quotas and metering, once, at the home.
   `X-TerraBase-Region` names the home. A forwarded request is never forwarded again. When the home cannot be reached the
-  answer is `421 wrong_region` with `X-TerraBase-Database-Home` and the home's regional host; a write the home was sent
+  answer is `503 unavailable`; a write the home was sent
   but never answered is `503 write_outcome_unknown` instead ([unanswered forwards](sql/write-routing.md#unanswered-forwards)). Listing a project's
   databases is forwarded to a region that holds the project when this one does not.
 - **Enrollment.** A create that enrolls a project (its first database) sends the same project→organization binding to every
@@ -58,7 +61,7 @@ mesh.
   over the mesh (RFC 8441 on the internal listener) with the client's subprotocols, headers and address, then accepts the
   client and pumps frames both ways for the socket's whole life. The home serves it exactly as a socket that reached it
   directly — the same token, IP-allowlist and scope checks, once, at the home. When the home cannot be reached the answer
-  is `421 wrong_region` with `X-TerraBase-Database-Home`, like a forwarded request. Inside a region, the serving peer
+  is `503 unavailable`, like a forwarded request. Inside a region, the serving peer
   relays sockets to the regional writer the same way ([regional writer](regional-rollout-handoff.md#requests-that-reach-the-serving-peer)).
 - **Replica regions.** A Postgres or WebSocket session that reaches a replica region of its database is not relayed: it
   reads from the replica and runs writes and transactions on a session at the home

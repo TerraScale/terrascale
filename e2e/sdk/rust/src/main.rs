@@ -1052,13 +1052,11 @@ impl Runner {
             if updated.placement_version <= added.placement_version { return Err("writer did not raise placement version".into()); }
             let after = regional.database(&created.id).get_database_regions().await.map_err(|error| error.to_string())?;
             same(json!(after.regions.iter().map(|row| (&row.region, &row.role)).collect::<Vec<_>>()), &json!([["fra", "writer"]]), "moved status")?;
-            match db.get_database_regions().await {
-                Err(error) if error.status() == Some(421) && error.code() == Some("wrong_region") => (),
-                other => return Err(format!("nonmember endpoint: {other:?}")),
-            }
-            let rows = regional.database(&created.id).sql().query("SELECT value FROM placement_rows", &[]).await.map_err(|error| error.to_string())?;
+            let proxied = db.get_database_regions().await.map_err(|error| error.to_string())?;
+            same(json!(proxied.regions.iter().map(|row| &row.region).collect::<Vec<_>>()), &json!(["fra"]), "proxied nonmember endpoint")?;
+            let rows = db.sql().query("SELECT value FROM placement_rows", &[]).await.map_err(|error| error.to_string())?;
             same(records(&rows), &json!([[1]]), "data survived placement")?;
-            println!("rust placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region");
+            println!("rust placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, nonmember endpoint proxies reads");
             Ok(())
         }.await;
         let placed = if moved { &regional } else { &self.client };

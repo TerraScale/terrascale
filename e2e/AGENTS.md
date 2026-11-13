@@ -134,7 +134,7 @@ and deletes the account. Its third test signs up nobody: it sends a closure, the
 `X-TerraBase-Closure-Scope: region` and the check of the dashboard's platform project to fra's internal listener, for
 both versions, and each answers 409 `platform_project_protected`.
 
-`placement/regions.spec.ts` R16 removes gru from a database's regions and reads gru's data directory
+`placement/regions.spec.ts` R16 removes gru from a database's regions, verifies requests through gru are proxied, and reads gru's data directory
 (`$E2E_STATE/terrabase`, through `stateDir`) to see that no file named after the database is left there, then that
 the files are back once gru is added again. R17 removes a follower, verifies its routing record learns a rename, and adds it again with current data. R18 deletes a database at its home while its follower is removed, then checks the removed follower forgets it. R19 starts a real, unprimed node in the home region with NATS disconnected and verifies direct placement requests return 503 not_writer for both live and absent ids, while the writer returns 200 and 404 respectively.
 
@@ -486,10 +486,9 @@ With the two-region stack running, `bash env/local.sh exec npx playwright test p
 runs group B and both placement operations in each SDK. `E2E_REGIONS=2` makes only the `placement.*` needs markers
 runnable in the runners and in `support/sdk.ts`; the backup requirement stays separate.
 Each runner creates with gru/fra, adds fra to gru, repeats the identical fra-only request for at most 90 seconds,
-reads status, proves the retained data and the removed endpoint's 421, and deletes its database through fra.
+reads status, proves the retained data through the removed endpoint's proxy, and deletes its database through fra.
 The two-region group B books an upper bound of 110 requests to cover the bounded repeat loop; the metrics check
-still refuses tenant_busy and verifies that every operation ran. The local edge does not implement production's
-421 replay, so the runners explicitly use fra after verifying wrong_region.
+still refuses tenant_busy and verifies that every operation ran. The removed endpoint proxies the status and data requests to fra without a client redirect.
 
 ## Social provider stand-in
 

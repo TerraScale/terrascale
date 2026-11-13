@@ -104,7 +104,7 @@ Region A is the home and region B the target. A coordinates; B's replica becomes
 The epoch of a database is its placement version: B is home at version `v + 1` only after A stopped writing at `v`, and a
 region accepts a placement only when it is newer than the one it holds.
 
-A request through a region that is no longer a member answers `421 wrong_region`, naming the current home in `X-TerraBase-Database-Home`. Its former replica can serve reads until the local catalog observes the removal ([removing a region](#removing-a-region)).
+A request through a region that is no longer a member is proxied to the current writer. Its former replica can serve reads until the local catalog observes the removal ([removing a region](#removing-a-region)).
 
 ## Removing a region
 
@@ -120,12 +120,12 @@ A region leaves a database's set when a placement request no longer names it. Th
 
 R keeps its record of the database, with the placement that no longer names R, as the routing record of that database. It serves nothing from it:
 
-- a REST request that names the database (management `GET`, regions, SQL) answers `421 wrong_region` with `X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions`, as before for every request but the management `GET`, which answered R's record with `200`;
+- a REST request that names the database (management `GET`, regions, SQL) is proxied to the writer, preserving its method, query, body and credential;
 - Postgres and WebSocket sessions and shape requests are relayed to the writer, as before ([forwarding to the home](cross-region.md#forwarding-to-the-home));
 - the project's database listing leaves out the record of a region that the record's own placement does not name, so the database is listed once, with the name and placement its writer records;
 - file and bucket requests of the project do not depend on a database's placement and answer as before.
 
-A region that never held the database holds no record and passes REST requests on to the writer instead ([forwarding to the home](cross-region.md#forwarding-to-the-home)). The record is what makes a removed region refuse them.
+A region that never held the database holds no record and passes REST requests on to the writer instead ([forwarding to the home](cross-region.md#forwarding-to-the-home)). The retained record lets a removed region route directly to the writer.
 
 Removing a region is not a deletion of the database: R writes no retired id, no purge record, no cleanup intent and no backup sweep, and sends nothing to any region. It deletes only its own replica files.
 
@@ -133,7 +133,7 @@ An unanswered or rejected removed-record refresh is counted and never stops foll
 
 ### Adding the region again
 
-H lists the database for R again and R's next pass, at most 30 seconds later, takes the placement that names it. Before it writes that placement R deletes the replica's files again, so a copy whose erasure was interrupted is never continued: the follower starts from an empty replica and pulls every page. Nothing refuses the request that adds R. Until R's pass has run, requests through R still answer `421 wrong_region`, and R's row in `GET …/regions` shows no pull.
+H lists the database for R again and R's next pass, at most 30 seconds later, takes the placement that names it. Before it writes that placement R deletes the replica's files again, so a copy whose erasure was interrupted is never continued: the follower starts from an empty replica and pulls every page. Nothing refuses the request that adds R. Until R's pass has run, requests through R are still proxied to the writer, and R's row in `GET …/regions` shows no pull.
 
 ### What stays in a removed region
 
@@ -146,7 +146,7 @@ H lists the database for R again and R's next pass, at most 30 seconds later, ta
 
 No message and no stored format changes: the pass uses the `…/placement` request of the earlier release.
 
-- A removed region on the earlier release answers as before: `421 wrong_region` from its record, and the record itself to a management `GET` and in the listing. From its first request after the upgrade it refuses the `GET` and is left out of listings, and its first pass brings every record left by an earlier removal up to date or forgets it.
+- A removed region on the earlier release answers as before: `421 wrong_region` from its record, and the record itself to a management `GET` and in the listing. After the upgrade it proxies database-scoped requests and its removed record is left out of listings, and its first pass brings every record left by an earlier removal up to date or forgets it.
 - A node of this release leaves a record out of the listing when the region that sent it is not in that record's placement, so a listing through an upgraded region is correct while a removed region still runs the earlier release.
 - A writer on the earlier release can answer `404` without checking its own writer lease; the caller retains its before-and-after writer check during a rolling upgrade.
 
@@ -156,9 +156,9 @@ A node keeps a fence per database it no longer homes, checked after a write tran
 
 - **Paused:** during the move, write transactions wait; a write that passed the fence just before the pause and takes
   the writer during it fails with `serialization_conflict` (retry).
-  The HTTP `409` refusal occurs before the transaction begins and applies no writes; retrying the same row ids is safe while waiting for `421 wrong_region` from the former writer.
+  The HTTP `409` refusal occurs before the transaction begins and applies no writes; retrying the same row ids is safe; once removal is observed the former writer proxies new requests.
 - **Moved:** waiting writes, and later writes on sessions opened before the move (WebSocket, Postgres), fail with
-  `421 wrong_region` (SQL code `wrong_region`, SQLSTATE `08004`) naming the new home. They were never committed.
+  `409 serialization_conflict` (SQLSTATE `40001`). They were never committed.
 - **Unresolved:** after a restart with a move marker, or when A could not learn the promote outcome, writes fail with
   `tenant_busy` (retry) until A settles the move with B.
 

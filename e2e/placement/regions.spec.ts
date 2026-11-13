@@ -7,7 +7,7 @@ import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse, type Page } from '@playwright/test';
 import { test, authenticatedCells, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
-import { dash, production, stateDir } from '../support/stack';
+import { auth, dash, production, stateDir } from '../support/stack';
 import { Audit, auditedContext } from '../support/audit';
 import { journey, saveCookies, saveSecret } from '../support/state';
 import { confirmWithPassword, onboard, signUp, verify } from '../support/hosted';
@@ -24,11 +24,6 @@ type Progress = { regions: Observation[] };
 async function answer(response: APIResponse, code: number, documented: string): Promise<void> {
   expect(response.status(), response.status() === code ? documented : `${documented}: ${await response.text()}`).toBe(code);
   if (code >= 400) expect((await response.json()).error.code, documented).toBe(documented);
-}
-
-async function refused(response: APIResponse, label: string): Promise<void> {
-  await answer(response, 421, 'wrong_region');
-  expect(response.headers()['x-terrabase-database-home'], `${label} names the writer`).toBe('fra');
 }
 
 function files(directory: string, id: string): string[] {
@@ -116,7 +111,7 @@ test('R2 add a region and read a row committed before the addition', async ({ ce
   }
 });
 
-test('R3 replace the writer when both regions are members', async ({ cells }) => {
+test('R3 replace the writer and proxy REST and WebSocket through a removed region', async ({ cells, request, page }) => {
   const created = await create(cells, ['gru', 'fra']);
   try {
     await seed(cells, created.id);
@@ -124,11 +119,42 @@ test('R3 replace the writer when both regions are members', async ({ cells }) =>
     await move(cells, created.id, 'R3', 60_000);
     await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (4)');
     await expect.poll(async () => {
-      const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: 'SELECT value FROM placement_rows' }] } });
-      if (response.status() === 421) await answer(response, 421, 'wrong_region');
-      else await answer(response, 200, '200 during catalog propagation');
-      return response.status();
-    }, { message: '421 wrong_region from a non-member listener', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
+      const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] } });
+      await answer(response, 200, '200 proxied through a non-member listener');
+      expect((await response.json()).results[0].rows).toEqual([[1], [2], [3], [4]]);
+      return response.headers()['x-terrabase-region'];
+    }, { message: 'the non-member listener proxies to fra', timeout: 45_000, intervals: [250, 500, 1000] }).toBe('fra');
+    const current = journey();
+    const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
+      form: {
+        grant_type: 'client_credentials',
+        client_id: current.apiKey.slice(0, 26),
+        client_secret: current.apiKey,
+        project: current.projectId,
+        scope: 'sql:read sql:write',
+      },
+    }));
+    saveSecret('placement-socket-token', grant.access_token);
+    const result = await page.evaluate(({ url, token }) => new Promise<{ rows: number[][] }>((resolve, reject) => {
+      const socket = new WebSocket(url, 'terrascale.sql.v1');
+      socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'auth', token }));
+      socket.onerror = () => reject(new Error('proxied WebSocket connection failed'));
+      socket.onmessage = message => {
+        const answer = JSON.parse(String(message.data));
+        if (answer.type === 'error') {
+          socket.close();
+          reject(new Error(JSON.stringify(answer.error)));
+        } else if (answer.id === 1) {
+          socket.send(JSON.stringify({ id: 2, type: 'execute', statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] }));
+        } else if (answer.id === 2) {
+          socket.close();
+          resolve({ rows: answer.results[0].rows });
+        }
+      };
+      socket.onclose = () => reject(new Error('proxied WebSocket closed before answering'));
+    }), { url: `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`, token: grant.access_token });
+    expect(result.rows).toEqual([[1], [2], [3], [4]]);
+    console.log('R3 nonmember REST: 200 from fra, rows [[1],[2],[3],[4]]; WebSocket auth-frame query: same rows');
   } finally {
     await removeDatabase(cells, created.id);
   }
@@ -174,8 +200,7 @@ test('R5 replace the writer under twenty acknowledged commits per second', async
         } else if (response.status() === 409) {
           await answer(response, 409, 'serialization_conflict');
         } else {
-          await answer(response, 421, 'wrong_region');
-          return;
+          await answer(response, 200, '200 write through the former writer');
         }
         await delay(Math.max(0, next - Date.now()));
       }
@@ -193,9 +218,8 @@ test('R5 replace the writer under twenty acknowledged commits per second', async
       }
     })().catch(error => { backgroundErrors.push(error); });
     await move(cells, created.id, 'R5', Math.max(1, deadline - Date.now()));
-    await writer;
     stop = true;
-    await sampling;
+    await Promise.all([writer, sampling]);
     const result = await sql(cells, replica, created.id, 'SELECT value FROM placement_rows ORDER BY value');
     const found = result.results[0].rows.map(row => row[0]);
     console.log(`R5 writer statuses: ${JSON.stringify(statuses)}; acknowledged: ${acknowledged.length}; found: ${found.length}`);
@@ -204,7 +228,8 @@ test('R5 replace the writer under twenty acknowledged commits per second', async
     expect(new Set(found).size).toBe(found.length);
     expect(lags.length, 'fra lag samples').toBeGreaterThan(0);
     if (backgroundErrors.length > 0) throw new AggregateError(backgroundErrors, 'R5 writer or lag sampling failed');
-    expect(statuses.at(-1), '421 wrong_region terminates writes through the former writer').toBe(421);
+    await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (0)');
+    expect((await sql(cells, replica, created.id, 'SELECT value FROM placement_rows WHERE value = 0')).results[0].rows).toEqual([[0]]);
   } finally {
     stop = true;
     await Promise.all([writer, sampling]);
@@ -651,7 +676,7 @@ multiple('R15 an observed intermediate home rename still converges after a swap'
   }
 });
 
-test('R16 a removed region refuses every request, erases its copy and takes the database back', async ({ cells }) => {
+test('R16 a removed region proxies requests, erases its copy and takes the database back', async ({ cells }) => {
   const created = await create(cells, ['gru', 'fra']);
   const execute = (region: string, statement: string) => cells.post(`${region}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: statement }] } });
   const rows = async (region: string) => (await sql(cells, region, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows;
@@ -667,14 +692,13 @@ test('R16 a removed region refuses every request, erases its copy and takes the 
 
     await expect.poll(async () => {
       const response = await execute(home, 'SELECT value FROM placement_rows ORDER BY value');
-      if (response.status() === 421) await refused(response, 'read through gru');
-      else await answer(response, 200, '200 during catalog propagation');
-      return response.status();
-    }, { message: 'gru observes that it was removed', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
-    await refused(await cells.get(`${home}${database(created.id)}`), 'management GET through gru');
-    await refused(await cells.get(`${home}${database(created.id)}/regions`), 'regions through gru');
-    await refused(await execute(home, 'SELECT value FROM placement_rows'), 'read through gru');
-    await refused(await execute(home, 'INSERT INTO placement_rows VALUES (99)'), 'write through gru');
+      await answer(response, 200, '200 proxied read through gru');
+      return response.headers()['x-terrabase-region'];
+    }, { message: 'gru proxies to the retained region', timeout: 45_000, intervals: [250, 500, 1000] }).toBe('fra');
+    expect(await json(await cells.get(`${home}${database(created.id)}`))).toMatchObject({ id: created.id, name: renamed, regions: ['fra'] });
+    expect((await progress(cells, created.id)).regions.map(row => row.region)).toEqual(['fra']);
+    expect(await rows(home)).toEqual([[1], [2], [3], [4]]);
+    await answer(await execute(home, 'INSERT INTO placement_rows VALUES (99)'), 200, '200 proxied write through gru');
     const listed = await json<{ items: { id: string; name: string; regions: string[] }[] }>(await cells.get(`${home}${project()}/databases`));
     expect(listed.items.filter(item => item.id === created.id), 'the listing through gru shows the writer\'s record').toMatchObject([{ name: renamed, regions: ['fra'] }]);
     await expect.poll(() => files('terrabase', created.id),
@@ -683,18 +707,13 @@ test('R16 a removed region refuses every request, erases its copy and takes the 
     expect(await json(await cells.get(`${replica}${database(created.id)}`))).toMatchObject({ id: created.id, name: renamed, regions: ['fra'] });
     expect((await progress(cells, created.id, replica)).regions.map(row => row.region)).toEqual(['fra']);
     await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (5)');
-    expect(await rows(replica)).toEqual([[1], [2], [3], [4], [5]]);
+    expect(await rows(replica)).toEqual([[1], [2], [3], [4], [5], [99]]);
 
     const added = await patch(cells, created.id, ['fra', 'gru']);
     await answer(added, 200, '200 database updated with writer retained');
     expect((await added.json()).regions).toEqual(['fra', 'gru']);
-    await expect.poll(async () => {
-      const response = await execute(home, 'SELECT value FROM placement_rows ORDER BY value');
-      if (response.status() === 421) await refused(response, 'read through gru before it takes the database back');
-      return response.status();
-    }, { message: 'gru takes the database back', timeout: 45_000, intervals: [250, 500, 1000] }).not.toBe(421);
     await replicated(cells, home, created.id, 5);
-    expect(await rows(home)).toEqual([[1], [2], [3], [4], [5]]);
+    expect(await rows(home)).toEqual([[1], [2], [3], [4], [5], [99]]);
     expect(files('terrabase', created.id), 'gru holds a copy again').not.toEqual([]);
     expect(await json(await cells.get(`${home}${database(created.id)}`))).toMatchObject({ id: created.id, regions: ['fra', 'gru'] });
   } finally {
@@ -711,8 +730,8 @@ test('R17 a removed follower retains routing and rejoins with the current name a
     await replicated(cells, replica, created.id, 3);
     await answer(await patch(cells, created.id, ['gru']), 200, '200 follower removed');
     await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (4)');
-    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
-      { message: 'the removed follower refuses its stale record', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
+    await expect.poll(async () => (await json<{ regions: string[] }>(await cells.get(`${replica}${database(created.id)}`))).regions,
+      { message: 'the removed follower proxies to the retained region', timeout: 45_000, intervals: [250, 500, 1000] }).toEqual(['gru']);
     await rename(cells, home, created.id, renamed, journey().projectId);
     await expect.poll(() => files('terrabase-fra', created.id),
       { message: 'the removed follower erases its replica', timeout: 45_000, intervals: [250, 500, 1000] }).toEqual([]);
@@ -738,8 +757,8 @@ test('R18 deletion at the home retires a database while its follower is removed'
     await observed(cells, created.id);
     await replicated(cells, replica, created.id, 3);
     await answer(await patch(cells, created.id, ['gru']), 200, '200 follower removed');
-    await expect.poll(async () => (await cells.get(`${replica}${database(created.id)}`)).status(),
-      { message: 'the follower observes its removal before deletion', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(421);
+    await expect.poll(() => files('terrabase-fra', created.id),
+      { message: 'the follower erases its copy before deletion', timeout: 45_000, intervals: [250, 500, 1000] }).toEqual([]);
     expect(await json(await cells.get(`${home}${database(created.id)}`))).toMatchObject({ id: created.id, regions: ['gru'] });
     await answer(await cells.delete(`${home}${database(created.id)}`), 204, '204 deleted at the home');
     deleted = true;

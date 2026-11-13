@@ -172,10 +172,10 @@ const operations = {
       check(updated.placementVersion > added.placementVersion, 'writer change raises placement version');
       const after = await placed.database(created.id).regions.regions();
       same(after.regions.map(row => [row.region, row.role]), [['fra', 'writer']], 'moved status');
-      const error = await refused(() => client.database(created.id).regions.regions());
-      same([error.status, error.code], [421, 'wrong_region'], 'nonmember endpoint');
-      same(cells(await placed.database(created.id).query('SELECT value FROM placement_rows')), [[1]], 'data survived placement');
-      console.log('js placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region');
+      const proxied = await client.database(created.id).regions.regions();
+      same(proxied.regions.map(row => row.region), ['fra'], 'proxied nonmember endpoint');
+      same(cells(await client.database(created.id).query('SELECT value FROM placement_rows')), [[1]], 'data survived placement');
+      console.log('js placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, nonmember endpoint proxies reads');
     } finally { await placed.deleteDatabase(project, created.id); }
   },
   async 'sql.execute.positional'(op) {
