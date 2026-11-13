@@ -12,7 +12,7 @@ internal sealed class ListDeletedDatabasesEndpoint(IManagementService management
         Get(ProjectApiRoute.Project + "/deleted-databases");
         Name("listDeletedDatabases");
         Summary("Lists databases in the seven-day deleted state");
-        Description("Requires a project token without a database restriction. Each deleted item includes deletedAt and purgeAt. Data, backups and keys are retained until purgeAt. Call the region that accepted deletion. " + ManagementRoute.PageDescription);
+        Description("Requires a project token without a database restriction. Each deleted item includes deletedAt and purgeAt. Data, backups and keys are retained until purgeAt unless explicitly purged or the project or account is deleted. Retained storage counts against the organization quota until purge. Call the region that accepted deletion. " + ManagementRoute.PageDescription);
         Tags("Databases");
         Produces<ManagementPage<DeletedDatabaseBody>>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

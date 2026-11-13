@@ -99,8 +99,7 @@ internal sealed partial class EngineManagementService
                 return ManagementErrors.NotFound;
             }
 
-            if (await AnyAsync(transaction, DeletedDatabases.Project(project.Id), cancellationToken).ConfigureAwait(false)
-                || await CatalogTables.HasDatabasesAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false)
+            if (await CatalogTables.HasDatabasesAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false)
                 || await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(project.Id), cancellationToken).ConfigureAwait(false)
                 || await AnyAsync(transaction, ProjectBackupDestinations.Kind(project.Id), cancellationToken).ConfigureAwait(false)
                 || await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(project.Id), cancellationToken).ConfigureAwait(false))
@@ -108,6 +107,9 @@ internal sealed partial class EngineManagementService
                 return ManagementErrors.NotEmpty;
             }
 
+            while (!await EraseRetainedDatabasesAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false))
+            {
+            }
             await CatalogTables.DeleteProjectAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteKindsAsync(SystemCatalog.ProjectState(project.Id), cancellationToken).ConfigureAwait(false);
             return new Done();

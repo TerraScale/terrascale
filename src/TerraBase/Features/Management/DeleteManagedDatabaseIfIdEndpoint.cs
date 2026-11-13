@@ -17,7 +17,7 @@ internal sealed class DeleteManagedDatabaseIfIdEndpoint(IManagementService manag
         Metadata(AnchoredRevocation.Instance);
         Name("deleteDatabaseIfId");
         Summary("Deletes a database only if its immutable identity matches");
-        Description("expectedId must be a canonical uppercase ULID matching the database ID resolved from the name for this request. A mismatch answers 409 database_identity_mismatch before deletion. A matching deletion enters the seven-day deleted state. Data, backups and keys are retained until purgeAt. Restore by immutable ID through deleted-databases. Branches remain independent. " + ProjectApiRoute.IdentityDescription);
+        Description("expectedId must be a canonical uppercase ULID matching the database ID resolved from the name for this request. A mismatch answers 409 database_identity_mismatch before deletion. A matching deletion enters the seven-day deleted state. Data, backups and keys are retained until purgeAt and storage counts against the organization quota until purge. Restore or permanently purge by immutable ID through deleted-databases. Outside placement returns 421 wrong_region; a move in progress returns 409 move_in_progress and deletion outside the home region returns 409 wrong_region. Other regions drop their copies at deletion and are re-seeded after restore. Branches remain independent. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Metadata(new OpenApiParameter
         {

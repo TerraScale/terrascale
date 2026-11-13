@@ -13,7 +13,6 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        await PurgeDeletedDatabasesAsync(cancellationToken).ConfigureAwait(false);
         await ConvergePurgesAsync(cancellationToken).ConfigureAwait(false);
         await ConvergeClosuresAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -67,6 +66,8 @@ internal sealed partial class EngineManagementService
 
             after = page.Next;
         }
+
+        await PurgeDeletedDatabasesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask DropLocalAsync(TenantContext database, CancellationToken cancellationToken)

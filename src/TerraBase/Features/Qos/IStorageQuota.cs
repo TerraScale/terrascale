@@ -92,7 +92,7 @@ public sealed class StorageQuotaGroupLease : IDisposable
     public async ValueTask<StorageQuotaCheck> CheckAsync(string organizationId, long delta, CancellationToken cancellationToken)
     {
         var limit = _limits[organizationId];
-        if (delta <= 0 || limit == long.MaxValue)
+        if (delta < 0 || limit == long.MaxValue)
         {
             return new Done();
         }

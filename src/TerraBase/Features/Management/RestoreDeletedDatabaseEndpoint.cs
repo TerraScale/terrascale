@@ -12,7 +12,7 @@ internal sealed class RestoreDeletedDatabaseEndpoint(IManagementService manageme
         Post(ProjectApiRoute.Project + "/deleted-databases/{deletedDatabase}/restore");
         Name("restoreDeletedDatabase");
         Summary("Restores a deleted database before its seven-day deadline");
-        Description("Requires a project token without a database restriction. Deleted databases retain their data and backups until purgeAt. Restore by immutable ID in the region that accepted deletion; a reused name or exhausted database allowance returns 409. Restoration clears the previous TTL.");
+        Description("Requires a project token without a database restriction. Deleted databases retain their data and backups until purgeAt. Restore by immutable ID in the region that accepted deletion; a reused name, exhausted database allowance, exceeded organization storage quota, or existing permanent purge returns 409. Retained storage counts against the quota until purge. Other regions are re-seeded after restore. Restoration clears the previous TTL.");
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

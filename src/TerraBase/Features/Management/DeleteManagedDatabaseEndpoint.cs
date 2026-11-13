@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using NoContent = Microsoft.AspNetCore.Http.HttpResults.NoContent;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -16,7 +17,7 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
         Metadata(AnchoredRevocation.Instance);
         Name("deleteDatabase");
         Summary("Moves a database to the seven-day deleted state");
-        Description("The database is unreachable and is listed under deleted-databases for seven days. Restore it there by immutable ID before purgeAt. Data, backups and keys are retained until then; permanent cleanup begins after that deadline. Branches are independent. Platform databases are protected. " + ProjectApiRoute.IdentityDescription);
+        Description("The database is unreachable and is listed under deleted-databases for seven days. Restore it there by immutable ID before purgeAt. Data, backups and keys are retained until then; storage remains counted against the organization quota until purge. Permanent cleanup begins after that deadline or an explicit DELETE of the deleted-database resource. A call outside placement returns 421 wrong_region; a move in progress or deletion outside the home region returns 409. Other regions drop their copies at deletion and are re-seeded after restore. Branches are independent. Platform databases are protected. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
@@ -47,11 +48,16 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
 
         return await management.DeleteDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), context.RouteValue("project"), context.RouteValue("database"), cancellationToken) switch
         {
-            Done => TypedResults.NoContent(),
+            Done => Retained(context),
             NotFound error => ManagementRoute.DatabaseNotFound(error),
             Forbidden error => ErrorResponse.From(error),
             Conflict error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
         };
+    }
+    private static NoContent Retained(HttpContext context)
+    {
+        context.Response.Headers.Append("TerraBase-Storage-Released", "at-purge");
+        return TypedResults.NoContent();
     }
 }

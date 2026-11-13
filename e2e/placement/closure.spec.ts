@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { connect } from 'node:http2';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { APIRequestContext, APIResponse, Page } from '@playwright/test';
 import { test as base, expect, type Audit } from '../support/audit';
 import { csrfToken, stored } from '../support/files';
@@ -57,6 +57,10 @@ test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the
 test.describe.configure({ mode: 'default', timeout: 240_000 });
 
 const api = (projectId: string) => `/v1/projects/${projectId}`;
+function databaseFiles(directory: string, id: string): string[] {
+  return (readdirSync(join(stateDir, directory), { recursive: true }) as string[]).filter(path => basename(path).includes(id));
+}
+
 const named = (prefix: string) => `${prefix}-${randomBytes(6).toString('hex')}`;
 
 async function status(response: APIResponse, expected: number): Promise<void> {
@@ -200,7 +204,7 @@ test('a version 2 closure sent to gru erases the bucket, the file and the databa
   }
 });
 
-test('a project deletion through gru is refused while fra holds a database of the project, fences nothing, and completes once fra is empty', async ({ page, audit, cells }) => {
+test('a project deletion through gru is refused while fra holds a live database, fences nothing, and permanently erases retained databases', async ({ page, audit, cells }) => {
   const current = await owner(page, audit, 'closure-check');
   await page.goto('/organization?tab=billing');
   await page.locator('article.ts-plan', { has: page.locator('#plan-pro') }).getByRole('button', { name: 'Upgrade to Pro', exact: true }).click();
@@ -247,9 +251,18 @@ test('a project deletion through gru is refused while fra holds a database of th
 
     await status(await cell.delete(`${second}${api(projectId)}/databases/${held.id}`), 204);
     heldRemoved = true;
-    await expect.poll(async () => (await deleteProject(page, projectId, projectName)).status(), { message: 'the same call completes once fra is empty', timeout: 60_000 }).toBe(303);
+    for (const [origin, database] of [[first, kept], [second, held]] as const) {
+      const deleted = await json<{ items: { id: string }[] }>(await cell.get(`${origin}${api(projectId)}/deleted-databases`));
+      expect(deleted.items.map(item => item.id), 'deleted rows remain restorable before project deletion').toContain(database.id);
+      expect(databaseFiles(origin === first ? 'terrabase' : 'terrabase-fra', database.id), 'the retained database still has local files').not.toEqual([]);
+    }
+    await expect.poll(async () => (await deleteProject(page, projectId, projectName)).status(), { message: 'explicit project deletion permanently erases retained databases', timeout: 60_000 }).toBe(303);
     await page.goto('/organization?tab=projects');
     await expect(page.locator(`#delete-project-${projectId}`)).toHaveCount(0);
+    for (const [origin, database] of [[first, kept], [second, held]] as const) {
+      await status(await cell.post(`${origin}${api(projectId)}/deleted-databases/${database.id}/restore`), 401);
+      expect(databaseFiles(origin === first ? 'terrabase' : 'terrabase-fra', database.id), 'project deletion erased the retained files').toEqual([]);
+    }
     for (const cellInternal of [firstInternal, secondInternal]) {
       expect(await inspect(cellInternal, projectId, probe), `${cellInternal} holds the fence of the completed deletion`).toMatchObject({ status: 409, body: { error: { code: 'closure_conflict' } } });
     }

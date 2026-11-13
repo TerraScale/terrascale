@@ -77,43 +77,6 @@ test.describe('database deletion', () => {
     expect(query.status()).toBe(200);
   });
 
-  test('a deleted database is unreachable, listed for seven days, and restores its rows', async ({ request }) => {
-    const current = journey();
-    const headers = await placementHeaders(request);
-    const databases = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases`;
-    const created = await request.post(databases, { headers, data: { name: `undo-${current.runId}`, ttlSeconds: 60 } });
-    expect(created.status()).toBe(201);
-    const database = await created.json();
-    const url = `${databases}/${database.id}`;
-    const deletedUrl = `https://api.terrascale.tech/v1/projects/${current.projectId}/deleted-databases`;
-    try {
-      const written = await request.post(`${url}/sql/execute`, {
-        headers,
-        data: { statements: [{ sql: 'CREATE TABLE kept (value TEXT)' }, { sql: "INSERT INTO kept VALUES ('retained')" }] },
-      });
-      expect(written.status()).toBe(200);
-      expect((await request.delete(url, { headers })).status()).toBe(204);
-      expect((await request.get(url, { headers })).status()).toBe(404);
-      expect((await request.post(`${url}/sql/execute`, { headers, data: { statements: [{ sql: 'SELECT * FROM kept' }] } })).status()).toBe(404);
-      const listed = await request.get(`${deletedUrl}?limit=100`, { headers });
-      expect(listed.status()).toBe(200);
-      const retained = (await listed.json()).items.find((item: { id: string }) => item.id === database.id);
-      expect(retained.name).toBe(database.name);
-      expect(Date.parse(retained.purgeAt) - Date.parse(retained.deletedAt)).toBe(7 * 24 * 60 * 60 * 1000);
-      const restored = await request.post(`${deletedUrl}/${database.id}/restore`, { headers });
-      expect(restored.status()).toBe(200);
-      expect(await restored.json()).toMatchObject({ id: database.id, name: database.name, expiresAt: null });
-      const read = await request.post(`${url}/sql/execute`, { headers, data: { statements: [{ sql: 'SELECT value FROM kept' }] } });
-      expect(read.status()).toBe(200);
-      expect((await read.json()).results[0].rows).toEqual([['retained']]);
-      const after = await request.get(`${deletedUrl}?limit=100`, { headers });
-      expect(after.status()).toBe(200);
-      expect((await after.json()).items.some((item: { id: string }) => item.id === database.id)).toBe(false);
-    } finally {
-      await request.delete(url, { headers });
-    }
-  });
-
   test('delete the journey database on its danger page by typing its name', async ({ page, audit }) => {
     const current = journey();
     await page.goto(`/databases/${current.databaseId}/danger`);
@@ -133,6 +96,56 @@ test.describe('database deletion', () => {
     await expect(page.locator('main tr').filter({ hasText: current.databaseName })).toHaveCount(0);
     await audit.check('databases after deletion');
   });
+  test('a deleted database is unreachable, listed for seven days, and restores its rows', async ({ request }) => {
+    const current = journey();
+    const headers = await placementHeaders(request);
+    const databases = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases`;
+    const created = await request.post(databases, { headers, data: { name: `undo-${current.runId}`, ttlSeconds: 3600 } });
+    expect(created.status()).toBe(201);
+    const database = await created.json();
+    const url = `${databases}/${database.id}`;
+    const deletedUrl = `https://api.terrascale.tech/v1/projects/${current.projectId}/deleted-databases`;
+    try {
+      const written = await request.post(`${url}/sql/execute`, {
+        headers,
+        data: { statements: [{ sql: 'CREATE TABLE kept (value TEXT)' }, { sql: "INSERT INTO kept VALUES ('retained')" }] },
+      });
+      expect(written.status()).toBe(200);
+      const deployed = await request.put(`${url}/functions/kept`, {
+        headers, data: { source: 'function handler() { console.log("kept function"); return { kept: true }; }', cron: '* * * * *' },
+      });
+      expect(deployed.status()).toBe(200);
+      expect((await request.post(`${url}/functions/kept/invoke`, { headers, data: {} })).status()).toBe(200);
+      const deleted = await request.delete(url, { headers });
+      expect(deleted.status()).toBe(204);
+      expect(deleted.headers()['terrabase-storage-released']).toBe('at-purge');
+      expect((await request.get(url, { headers })).status()).toBe(404);
+      expect((await request.post(`${url}/functions/kept/invoke`, { headers, data: {} })).status()).toBe(404);
+      expect((await request.post(`${url}/sql/execute`, { headers, data: { statements: [{ sql: 'SELECT * FROM kept' }] } })).status()).toBe(404);
+      const listed = await request.get(`${deletedUrl}?limit=100`, { headers });
+      expect(listed.status()).toBe(200);
+      const retained = (await listed.json()).items.find((item: { id: string }) => item.id === database.id);
+      expect(retained.name).toBe(database.name);
+      expect(Date.parse(retained.purgeAt) - Date.parse(retained.deletedAt)).toBe(7 * 24 * 60 * 60 * 1000);
+      const restored = await request.post(`${deletedUrl}/${database.id}/restore`, { headers });
+      expect(restored.status()).toBe(200);
+      expect(await restored.json()).toMatchObject({ id: database.id, name: database.name, expiresAt: null });
+      const read = await request.post(`${url}/sql/execute`, { headers, data: { statements: [{ sql: 'SELECT value FROM kept' }] } });
+      expect(read.status()).toBe(200);
+      expect((await read.json()).results[0].rows).toEqual([['retained']]);
+      expect((await request.post(`${url}/functions/kept/invoke`, { headers, data: {} })).status()).toBe(200);
+      const after = await request.get(`${deletedUrl}?limit=100`, { headers });
+      expect(after.status()).toBe(200);
+      expect((await after.json()).items.some((item: { id: string }) => item.id === database.id)).toBe(false);
+      expect((await request.delete(url, { headers })).status()).toBe(204);
+      expect((await request.delete(`${deletedUrl}/${database.id}`, { headers })).status()).toBe(204);
+      expect((await request.post(`${deletedUrl}/${database.id}/restore`, { headers })).status()).toBe(404);
+    } finally {
+      await request.delete(url, { headers });
+      await request.delete(`${deletedUrl}/${database.id}`, { headers });
+    }
+  });
+
   test('the dashboard creates, renames and deletes a database outside its own region', async ({ remoteDatabase }) => {
     await remoteDatabase();
   });

@@ -238,8 +238,7 @@ internal sealed partial class EngineManagementService
         ProjectClosure.IsClosedAsync(transaction, projectId, cancellationToken);
 
     private static async ValueTask<bool> IsProjectEmptyAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
-        !await AnyAsync(transaction, DeletedDatabases.Project(projectId), cancellationToken).ConfigureAwait(false)
-        && !await CatalogTables.HasDatabasesAsync(transaction, projectId, cancellationToken).ConfigureAwait(false)
+        !await CatalogTables.HasDatabasesAsync(transaction, projectId, cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, ProjectBackupDestinations.Kind(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);
@@ -255,6 +254,7 @@ internal sealed partial class EngineManagementService
         var empty = record.FormatVersion == 2
             ? await EraseProjectBatchAsync(transaction, record, cancellationToken).ConfigureAwait(false)
             : await IsProjectEmptyAsync(transaction, record.ProjectId, cancellationToken).ConfigureAwait(false)
+                && await EraseRetainedDatabasesAsync(transaction, record.ProjectId, cancellationToken).ConfigureAwait(false)
                 && await VerifyProjectPurgesAsync(transaction, record.ProjectId, cancellationToken).ConfigureAwait(false);
         if (current is not null && current.EvidenceVersion == 2 && current.Empty == empty && current.ClosureId == record.ClosureId && current.FormatVersion == record.FormatVersion)
         {
