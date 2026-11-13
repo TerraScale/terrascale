@@ -209,13 +209,13 @@ test('history lost while the backup store is unreachable is one hole each time, 
       { message: 'a later discard moves the open hole to the new start of the change log' }).toBeGreaterThan(twoHoles[1]!.to);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 2);
 
-    const restart = restartAfterKill(writer);
-    await restart(async () => {
+    const restart = restartAfterKill(writer, true, undefined, async () => {
       expect(await probe(writer, '/readyz')).toBe(503);
       expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(1);
       await backupStore('up');
       outage = false;
     });
+    await restart();
     await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
     await tokenReady(writer, cells, database(created.id));
     expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(0);
