@@ -9,25 +9,61 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed class UsageOverageReporter(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
     {
+        public Task RunCurrentAsync(CancellationToken cancellationToken) => RunMonthAsync(null, cancellationToken);
+
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            try { await RunCurrentAsync(cancellationToken); }
+            catch (Exception error) when (IsReportingFailure(error, cancellationToken))
+            {
+                logger.UsageOverageReportingIsUnavailableRetrying(error.GetType().Name);
+            }
             var now = clock.GetUtcNow();
             var current = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            var earliest = await db.Billing.AsNoTracking()
-                .Where(row => row.Kind == "stripe" && row.State != "deleting" && row.SubscriptionId != "" && row.ErasureId == null)
-                .OrderBy(row => row.OverageReportedThrough ?? row.StartedAt)
-                .Select(row => (DateTimeOffset?)(row.OverageReportedThrough ?? row.StartedAt)).FirstOrDefaultAsync(cancellationToken);
-            if (earliest is { } start)
+            var bindings = await db.Billing.AsNoTracking()
+                .Where(row => row.Kind == "stripe" && row.State != "deleting" && row.SubscriptionId != "" && row.ErasureId == null &&
+                    (row.Status == "active" || row.Status == "trialing" || row.Status == "past_due") &&
+                    (row.EffectivePlan == "starter" || row.EffectivePlan == "pro" || row.EffectivePlan == "team"))
+                .ToListAsync(cancellationToken);
+            DateTimeOffset? earliest = null;
+            foreach (var binding in bindings)
             {
-                for (var month = new DateTimeOffset(start.Year, start.Month, 1, 0, 0, 0, TimeSpan.Zero); month < current; month = month.AddMonths(1))
+                try
                 {
-                    await RunMonthAsync(month, cancellationToken);
+                    var currentBinding = binding;
+                    while (!await BillingMonth.RecordAsync(storage, currentBinding, now, cancellationToken))
+                    {
+                        currentBinding = await storage.BindingRowAsync(binding.OrganizationId, cancellationToken) ?? throw new IOException("Billing state is unavailable.");
+                    }
                 }
+                catch (Exception error) when (IsReportingFailure(error, cancellationToken))
+                {
+                    logger.UsageOverageCouldNotBeReported(error.GetType().Name);
+                }
+
+                var first = binding.OverageReportedThrough?.AddMonths(1) ?? new DateTimeOffset(binding.StartedAt.Year, binding.StartedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
+                var started = new DateTimeOffset(binding.StartedAt.Year, binding.StartedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
+                first = first < started ? started : first;
+                earliest = earliest is null || first < earliest ? first : earliest;
             }
 
-            await RunMonthAsync(null, cancellationToken);
+            if (earliest is { } start)
+            {
+                for (var month = start; month < current; month = month.AddMonths(1))
+                {
+                    try { await RunMonthAsync(month, cancellationToken); }
+                    catch (Exception error) when (IsReportingFailure(error, cancellationToken))
+                    {
+                        logger.UsageOverageReportingIsUnavailableRetrying(error.GetType().Name);
+                    }
+                }
+            }
         }
+
+        private static bool IsReportingFailure(Exception error, CancellationToken cancellationToken) =>
+            error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException ||
+            error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
 
         private async Task RunMonthAsync(DateTimeOffset? requestedMonth, CancellationToken cancellationToken)
         {
@@ -45,7 +81,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
                     var byteHours = page.StorageContract == AllowanceNotifications.StorageContract ? item.StorageByteHours : null;
                     try { await ReportAsync(item.OrganizationId, units, byteHours, month, cancellationToken); }
-                    catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                    catch (Exception error) when (IsReportingFailure(error, cancellationToken))
                     {
                         logger.UsageOverageCouldNotBeReported(error.GetType().Name);
                     }
@@ -86,21 +122,42 @@ namespace TerraScale.Dashboard.Features.Billing
                 return;
             }
 
-            await billing.ReportOverageAsync(binding, StripeBilling.OperationUnits(plan), OperationUnitOverage.Units(plan, units), month, cancellationToken);
-            if (storageByteHours is { } byteHours)
+            var complete = month.AddMonths(1) <= clock.GetUtcNow();
+            if (complete)
             {
-                await billing.ReportOverageAsync(binding, StripeBilling.Storage(plan), StorageOverage.MegabyteMonths(plan, byteHours, month), month, cancellationToken);
-            }
-            else
-            {
-                throw new IOException("Storage metering is unavailable; the overage month remains pending.");
+                await using var db = await storage.CreateDbContextAsync(cancellationToken);
+                var recorded = await db.BillingMonths.AsNoTracking().SingleOrDefaultAsync(item => item.OrganizationId == organizationId && item.Month == month, cancellationToken);
+                if (recorded is null || recorded.SubscriptionId != binding.SubscriptionId)
+                {
+                    billing.RecordSkippedOverageMonth(organizationId, month, "missing_plan");
+                    await AdvanceAsync(binding, month, firstMonth, cancellationToken);
+                    return;
+                }
+
+                plan = PlanCatalog.For(recorded.Plan);
             }
 
-            if (month.AddMonths(1) > clock.GetUtcNow())
+            if (storageByteHours is not { } byteHours)
             {
+                if (complete)
+                {
+                    billing.RecordSkippedOverageMonth(organizationId, month, "missing_storage_contract");
+                    await AdvanceAsync(binding, month, firstMonth, cancellationToken);
+                }
                 return;
             }
 
+            await billing.ReportOverageAsync(binding, StripeBilling.OperationUnits(plan), OperationUnitOverage.Units(plan, units), month, cancellationToken);
+            await billing.ReportOverageAsync(binding, StripeBilling.Storage(plan), StorageOverage.MegabyteMonths(plan, byteHours, month), month, cancellationToken);
+            if (complete)
+            {
+                await AdvanceAsync(binding, month, firstMonth, cancellationToken);
+            }
+        }
+
+        private async Task AdvanceAsync(BillingBinding binding, DateTimeOffset month, DateTimeOffset firstMonth, CancellationToken cancellationToken)
+        {
+            var organizationId = binding.OrganizationId;
             while (true)
             {
                 var fresh = await storage.BindingRowAsync(organizationId, cancellationToken) ?? throw new IOException("Billing state is unavailable.");
@@ -110,6 +167,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
 
                 var expected = fresh.OverageReportedThrough?.AddMonths(1) ?? firstMonth;
+                expected = expected < firstMonth ? firstMonth : expected;
                 if (expected != month || fresh.SubscriptionId != binding.SubscriptionId || fresh.State == "deleting")
                 {
                     return;
@@ -128,10 +186,23 @@ namespace TerraScale.Dashboard.Features.Billing
     {
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromDays(1), clock);
+            using var timer = new PeriodicTimer(TimeSpan.FromHours(1), clock);
+            DateOnly? lastDaily = null;
             do
             {
-                try { await reporter.RunOnceAsync(stoppingToken); }
+                try
+                {
+                    var today = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
+                    if (lastDaily != today)
+                    {
+                        await reporter.RunOnceAsync(stoppingToken);
+                        lastDaily = today;
+                    }
+                    else
+                    {
+                        await reporter.RunCurrentAsync(stoppingToken);
+                    }
+                }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
                 catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException or OperationCanceledException)
                 {

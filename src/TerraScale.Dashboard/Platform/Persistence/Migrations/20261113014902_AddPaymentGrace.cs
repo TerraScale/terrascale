@@ -16,6 +16,8 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 table: "organizations",
                 type: "TEXT",
                 nullable: true);
+
+            migrationBuilder.Sql("UPDATE organizations SET payment_grace_until = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE billing_status = 'billing_required'");
         }
 
         /// <inheritdoc />

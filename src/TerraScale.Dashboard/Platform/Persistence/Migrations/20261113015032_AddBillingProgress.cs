@@ -23,6 +23,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 type: "TEXT",
                 nullable: false,
                 defaultValue: "");
+
+            migrationBuilder.AddColumn<DateTime>(name: "effective_plan_since", table: "billing", type: "TEXT", nullable: true);
+
+            migrationBuilder.Sql("UPDATE billing SET overage_reported_through = strftime('%Y-%m-%d %H:%M:%f', 'now', 'start of month', '-2 months') WHERE kind = 'stripe' AND subscription_id <> ''");
         }
 
         /// <inheritdoc />
@@ -31,6 +35,8 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
             migrationBuilder.DropColumn(
                 name: "overage_reported_through",
                 table: "billing");
+
+            migrationBuilder.DropColumn(name: "effective_plan_since", table: "billing");
 
             migrationBuilder.DropColumn(
                 name: "tax_location_status",

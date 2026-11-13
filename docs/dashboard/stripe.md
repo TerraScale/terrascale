@@ -143,13 +143,32 @@ and `terrascale_org=<organization id>`, a quantity in operation units and a
 `unit_amount_decimal` of 0.0005 cents. Items that are already invoiced are
 final. One pending item holds the rest of the month: the reporter creates it
 with an idempotency key, updates its quantity, and deletes it when nothing
-remains to bill. Invoiced quantities never go down. Stripe holds the record, so
-the dashboard stores no overage state. The billing page shows "Usage this
+remains to bill. Invoiced quantities never go down. Stripe holds the invoice-item record;
+the dashboard stores a completed-month watermark and a plan record for each
+completed month. The billing page shows "Usage this
 period" from the same items.
 
-Units used after the last hourly run of a month are never billed, which favors
-the customer. Annual subscriptions (Starter) collect pending overage items at
-their next renewal invoice.
+A daily pass records completed months at the last known plan in force before
+the month ended, before reporting them. Plan changes preserve those records.
+A missing historical plan skips that month, advances the watermark and emits
+a counter and an organization/month log entry. No plan is inferred retrospectively.
+The deployment migration excludes every month before the latest complete one;
+that month also needs a known plan before any charge can be created. Resubscribing
+starts a new watermark. Current-month reconciliation remains hourly, and a failed
+month does not stop other months. A missing storage contract skips the completed
+month without creating a partial charge. Annual subscriptions collect overage
+items monthly.
+
+Failed payments retain the paid plan for seven days, rounded up to the end of
+the deadline's UTC day. The notice includes its UTC time. A current active,
+trialing, cancelled or expired-incomplete subscription clears stale grace.
+Accounts already restricted at deployment retain an expired deadline.
+
+New checkouts collect automatic tax and put the automatic-tax policy on their
+subscription metadata. Refresh can restore tax only for those subscriptions.
+Existing subscriptions retain their tax policy. A refused update is recorded
+separately from an unusable billing address and does not display an address
+notice or interrupt refresh.
 
 ## Internal billing
 

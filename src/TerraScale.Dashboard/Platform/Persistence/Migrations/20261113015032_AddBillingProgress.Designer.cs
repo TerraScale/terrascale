@@ -769,6 +769,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("effective_interval");
 
+                    b.Property<DateTime?>("EffectivePlanSince")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("effective_plan_since");
+
                     b.Property<string>("EffectivePlan")
                         .IsRequired()
                         .HasColumnType("TEXT")

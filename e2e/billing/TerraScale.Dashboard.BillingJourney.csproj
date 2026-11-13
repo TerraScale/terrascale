@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>BillingJourney</AssemblyName>
+    <IsDashboardArea>true</IsDashboardArea>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Stripe.net" />
+    <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
+  </ItemGroup>
+</Project>

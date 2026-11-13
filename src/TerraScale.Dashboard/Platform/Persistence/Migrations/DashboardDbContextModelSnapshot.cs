@@ -766,6 +766,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("effective_interval");
 
+                    b.Property<DateTime?>("EffectivePlanSince")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("effective_plan_since");
+
                     b.Property<string>("EffectivePlan")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -869,6 +873,29 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                             t.HasCheckConstraint("ck_billing_kind", "kind IN ('stripe', 'internal') AND state IN ('reserved', 'active', 'deleting')");
 
                             t.HasCheckConstraint("ck_billing_revision", "revision >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingMonth", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+                    b.Property<DateTime>("Month")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("month");
+                    b.Property<string>("Plan")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan");
+                    b.Property<string>("SubscriptionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_id");
+                    b.HasKey("OrganizationId", "Month");
+                    b.ToTable("billing_months", t =>
+                        {
+                            t.HasCheckConstraint("ck_billing_months_plan", "length(subscription_id) > 0 AND length(plan) > 0");
                         });
                 });
 
@@ -2120,6 +2147,15 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     b.HasOne("TerraScale.Dashboard.Common.Accounts.OrganizationRow", null)
                         .WithOne()
                         .HasForeignKey("TerraScale.Dashboard.Features.Billing.BillingBinding", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingMonth", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

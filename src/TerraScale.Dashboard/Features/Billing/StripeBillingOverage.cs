@@ -7,6 +7,12 @@ namespace TerraScale.Dashboard.Features.Billing
 
     public sealed partial class StripeBilling
     {
+        internal void RecordSkippedOverageMonth(string organizationId, DateTimeOffset month, string reason)
+        {
+            telemetry.ReportSkippedOverageMonth();
+            logger.UsageOverageMonthSkipped(organizationId, month, reason);
+        }
+
         internal static OverageKind OperationUnits(BillingPlan plan) => new(OperationUnitOverage.Kind, OperationUnitOverage.UnitAmountCents,
             (quantity, month) => string.Create(CultureInfo.InvariantCulture, $"Operation units over the {plan.Name} allowance, {month:MMMM yyyy}: {quantity:N0} × {OperationUnitOverage.Rate}"));
 

@@ -36,6 +36,7 @@ public sealed class BillingBinding : IBillingRow
     public bool TrialUsed { get; set; }
     public DateTimeOffset? OverageReportedThrough { get; set; }
     public string TaxLocationStatus { get; set; } = "";
+    public DateTimeOffset? EffectivePlanSince { get; set; }
     public long Revision { get; set; }
 
     public BillingBinding Copy()
@@ -63,6 +64,7 @@ public sealed class BillingBinding : IBillingRow
             builder.Property(row => row.StartedAt).HasConversion(BillingColumns.Utc);
             builder.Property(row => row.RenewalAt).HasConversion(BillingColumns.OptionalUtc);
             builder.Property(row => row.OverageReportedThrough).HasConversion(BillingColumns.OptionalUtc);
+            builder.Property(row => row.EffectivePlanSince).HasConversion(BillingColumns.OptionalUtc);
             builder.Property(row => row.InternalReservation).HasConversion(
                 reservation => reservation == null ? null : JsonSerializer.Serialize(reservation, BillingRowJson.Default.InternalBillingReservation),
                 json => json == null ? null : JsonSerializer.Deserialize(json, BillingRowJson.Default.InternalBillingReservation));

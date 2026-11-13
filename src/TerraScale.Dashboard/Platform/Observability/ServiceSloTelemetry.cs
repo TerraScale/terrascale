@@ -27,6 +27,12 @@ namespace TerraScale.Dashboard.Platform.Observability
         private long failingDeletionEntries;
         private long organizationCreationFailures;
         private long organizationMetadataFailures;
+        private long skippedOverageMonths;
+
+        public void ReportSkippedOverageMonth()
+        {
+            Interlocked.Increment(ref skippedOverageMonths);
+        }
 
         public void ReportOrganizationCreationFailure()
         {
@@ -148,6 +154,8 @@ namespace TerraScale.Dashboard.Platform.Observability
                 "# TYPE terrascale_organization_checkout_failures_total counter\n" +
                 "terrascale_organization_checkout_failures_total{phase=\"creating\"} " + Interlocked.Read(ref organizationCreationFailures).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "terrascale_organization_checkout_failures_total{phase=\"metadata\"} " + Interlocked.Read(ref organizationMetadataFailures).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_overage_skipped_months_total counter\n" +
+                "terrascale_billing_overage_skipped_months_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref skippedOverageMonths).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "# TYPE terrascale_deletion_cleanup_failing_entries gauge\n" +
                 "terrascale_deletion_cleanup_failing_entries{service=\"ts-dashboard\"} " + Interlocked.Read(ref failingDeletionEntries).ToString(CultureInfo.InvariantCulture) + "\n");
         }
