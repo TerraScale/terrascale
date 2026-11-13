@@ -468,7 +468,7 @@ internal sealed partial class EngineManagementService
         var found = await ReadAsync<ForgetTargetCheck>(async transaction =>
             !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                 ? UnreadableCatalog
-                : await ElsewhereAsync(transaction).ConfigureAwait(false) is { } elsewhere ? new ForgetTarget(elsewhere.Storage) : ManagementErrors.NotFound,
+                : await ElsewhereAsync(transaction).ConfigureAwait(false) is { } elsewhere ? new ForgetTarget(elsewhere.Storage, elsewhere.Record.Home(options.Region)) : ManagementErrors.NotFound,
             static error => error, cancellationToken).ConfigureAwait(false);
         if (found is not ForgetTarget target)
         {
@@ -480,6 +480,12 @@ internal sealed partial class EngineManagementService
             };
         }
 
+        var home = await regionPeers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        var retained = await remote.RetentionAsync(home.Single(peer => peer.Region == target.Home).Address, target.Storage, cancellationToken).ConfigureAwait(false);
+        if (retained is null)
+        {
+            return new Unavailable("the home region could not confirm the deletion disposition");
+        }
         ForgetDatabaseResult disposition = new DatabaseForgotten(Forgotten: false);
         var deleted = await DeleteRecordedAsync(target.Storage, async (transaction, token) =>
         {
@@ -494,7 +500,7 @@ internal sealed partial class EngineManagementService
                 return false;
             }
 
-            _ = await UnregisterRecordAsync(transaction, current.Storage, current.Record, token).ConfigureAwait(false);
+            _ = await UnregisterRecordAsync(transaction, current.Storage, current.Record, token, retireIdentity: !retained.Value).ConfigureAwait(false);
             return true;
         }, cancellationToken).ConfigureAwait(false);
         return deleted switch
@@ -504,7 +510,7 @@ internal sealed partial class EngineManagementService
         };
     }
 
-    private sealed record ForgetTarget(TenantContext Storage);
+    private sealed record ForgetTarget(TenantContext Storage, string Home);
     private readonly union ForgetTargetCheck(ForgetTarget, NotFound, Unavailable);
 
     public async ValueTask<FindDatabaseRecordResult> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken)

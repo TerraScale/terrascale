@@ -245,11 +245,14 @@ internal static class CatalogTables
         }
     }
 
-    public static async ValueTask<bool> DeleteDatabaseAsync(IStorageTransaction transaction, string id, CancellationToken cancellationToken)
+    public static async ValueTask<bool> DeleteDatabaseAsync(IStorageTransaction transaction, string id, CancellationToken cancellationToken, bool retireIdentity = true)
     {
         _ = await ExecuteAsync(transaction, Sql("DELETE FROM catalog_database_replicas WHERE database_id = ?", id), cancellationToken).ConfigureAwait(false);
         await DatabaseTtl.WriteAsync(transaction, id, null, cancellationToken).ConfigureAwait(false);
-        await RetireAsync(transaction, id, cancellationToken).ConfigureAwait(false);
+        if (retireIdentity)
+        {
+            await RetireAsync(transaction, id, cancellationToken).ConfigureAwait(false);
+        }
         return await ExecuteAsync(transaction, Sql("DELETE FROM catalog_databases WHERE id = ?", id), cancellationToken).ConfigureAwait(false) > 0;
     }
 

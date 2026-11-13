@@ -131,7 +131,8 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 State = "active",
                 TrialUsed = true,
                 RenewalAt = pending.RenewalAt is { } renewal ? RowSync.At(renewal) : null,
-                ReturnPath = "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organization.Id)
+                ReturnPath = "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organization.Id),
+                OverageStartsAt = new(RowSync.At(pending.CreatedAt).Year, RowSync.At(pending.CreatedAt).Month, 1, 0, 0, 0, TimeSpan.Zero)
             };
             if (stored is null)
             {
@@ -307,6 +308,7 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             Status = root.Status,
             PlanId = root.PlanId,
             BillingStatus = root.BillingStatus,
+            PaymentGraceUntil = root.PaymentGraceUntil is { } deadline ? RowSync.At(deadline) : null,
             PaymentMethodValidated = root.PaymentMethodValidated,
             SpendCapCents = root.SpendCapCents,
             PaidExcess = root.PaidExcess,
@@ -364,6 +366,7 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             Status = organization.Status,
             PlanId = organization.PlanId,
             BillingStatus = organization.BillingStatus,
+            PaymentGraceUntil = organization.PaymentGraceUntil?.UtcDateTime,
             PaymentMethodValidated = organization.PaymentMethodValidated,
             SpendCapCents = organization.SpendCapCents,
             PaidExcess = organization.PaidExcess,

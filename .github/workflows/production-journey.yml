@@ -58,7 +58,8 @@ jobs:
             | select(.name | IN($names[])) | select(.conclusion == "success") | .steps[]?
             | select(.name | IN($steps[])) | select(.conclusion == "success")] | length' <<< "$jobs")
           if [ "$released" -eq 0 ]; then
-            echo "Run $RUN_ID has no successful release job; the deploy job's alert and summary carry any failure"
+            echo "skipped: no successful release" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "journey=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if jq -e '.jobs[] | select(.name == "main-auth" or .name == "Publish and release") | select(.conclusion == "success")
@@ -163,6 +164,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      contents: read
       issues: write
     concurrency:
       group: production-journey-alert
@@ -176,6 +178,9 @@ jobs:
       COMMIT: ${{ needs.release.outputs.commit }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: needs.journey.outputs.report == 'true'
         with:
@@ -249,6 +254,7 @@ jobs:
               fi
             fi
           } > issue.md
+          python3 e2e/env/redact.py issue.md
           if [ "$(wc -c < issue.md)" -gt 60000 ]; then
             head -c 60000 issue.md | sed '$d' > capped.md
             if [ $(($(grep -c '^````$' capped.md) % 2)) -eq 1 ]; then echo '````' >> capped.md; fi
@@ -257,7 +263,9 @@ jobs:
           fi
           cat issue.md
           if [ -n "$changed" ]; then
-            echo "Production changed during the run ($changed): this run neither opens, updates nor closes the issue; the run of the newer release follows." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Production changed during the run ($changed): this run neither opens, updates nor closes the issue; the run of the newer release follows." > changed.md
+            python3 e2e/env/redact.py changed.md
+            tee -a "$GITHUB_STEP_SUMMARY" < changed.md
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Open, update or close the issue
@@ -273,6 +281,7 @@ jobs:
             gh issue create --title "$TITLE" --body-file issue.md
           else
             jq -rs 'min_by(.number).body // "" | gsub("\r"; "")' open.json > replaced.md
+            python3 e2e/env/redact.py replaced.md
             gh issue edit "$open" --body-file issue.md
             tests() { sed -n '/^Failed tests:$/,/^$/s/^- //p' "$1" | sort; }
             causes() { sed -n 's/^Cause: //p' "$1" | sort; }
@@ -286,6 +295,7 @@ jobs:
             } > change.md
             if [ -s change.md ]; then
               { echo "$RUN changed the result; the issue body now holds it."; echo; cat change.md; } > comment.md
+              python3 e2e/env/redact.py comment.md
               gh issue comment "$open" --body-file comment.md
             fi
           fi

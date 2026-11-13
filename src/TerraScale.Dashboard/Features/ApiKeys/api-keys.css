@@ -264,26 +264,125 @@ dialog.ts-apikeys-secret-dialog {
   width: min(32rem, calc(100vw - 2 * var(--ts-s4)));
 }
 
-.ts-apikeys-secret-field {
+dialog.ts-apikeys-secret-dialog .ts-dialog-content {
+  gap: var(--ts-s4);
+}
+
+dialog.ts-apikeys-secret-dialog .ts-dialog-content > * {
+  min-width: 0;
+}
+
+.ts-apikeys-secret-head {
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  gap: var(--ts-s4);
+}
+
+.ts-apikeys-secret-badge {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--ts-s10);
+  height: var(--ts-s10);
+  border-radius: var(--ts-radius-pill);
+  background: color-mix(in oklab, var(--ts-success) var(--ts-tint-badge), transparent);
+  color: var(--ts-success);
+}
+
+.ts-apikeys-secret-sub,
+.ts-apikeys-secret-note {
+  margin: 0;
+  color: var(--ts-ink-2);
+}
+
+.ts-apikeys-secret-sub {
+  font-size: var(--ts-fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.ts-apikeys-secret-note {
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-apikeys-secret-chips {
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--ts-s2);
 }
 
-.ts-apikeys-secret-field > .ts-apikeys-secret-value {
-  flex: 1 1 auto;
+.ts-apikeys-secret-chip {
+  padding: 2px var(--ts-s2);
   border: 1px solid var(--ts-line-strong);
-  border-radius: var(--ts-radius);
-  background: var(--ts-surface);
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-sm);
-  line-height: 1.5;
+  border-radius: var(--ts-radius-pill);
+  color: var(--ts-ink-2);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+  line-height: 1.4;
 }
 
-.ts-apikeys-secret-field > .ts-apikeys-copy {
-  align-self: start;
+.ts-apikeys-secret-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  min-width: 0;
+  padding: 0 4px 0 var(--ts-s3);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: 8px;
+  background: var(--ts-surface);
+}
+
+.ts-apikeys-secret-row.ts-apikeys-secret-open {
   height: auto;
-  min-height: var(--ts-control-h-sm);
+  align-items: flex-start;
+  padding-top: var(--ts-s2);
+  padding-bottom: var(--ts-s2);
+}
+
+.ts-apikeys-secret-mask,
+.ts-apikeys-secret-row > .ts-apikeys-secret-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-apikeys-secret-mask {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.ts-apikeys-secret-bullets::before {
+  content: "••••••••••••••••";
+}
+
+.ts-apikeys-secret-prefix {
+  color: var(--ts-link);
+}
+
+.ts-apikeys-secret-row:not(.ts-apikeys-secret-open) > .ts-apikeys-secret-value {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+  user-select: none;
+}
+
+.ts-apikeys-secret-row.ts-apikeys-secret-open > .ts-apikeys-secret-mask {
+  display: none;
+}
+
+.ts-apikeys-secret-row.ts-apikeys-secret-open > .ts-apikeys-secret-value {
+  line-height: 1.6;
+  white-space: normal;
+  word-break: break-all;
 }
 
 .ts-apikeys-copy > .ts-apikeys-copy-done,
@@ -293,15 +392,23 @@ dialog.ts-apikeys-secret-dialog {
 
 .ts-apikeys-copy.ts-apikeys-copied > .ts-apikeys-copy-done {
   display: inline-flex;
-  color: var(--ts-success);
-}
-
-.ts-apikeys-secret-notice {
-  color: var(--ts-ink-2);
 }
 
 .ts-apikeys-copy-status:empty {
   display: none;
+}
+
+.ts-apikeys-copy-status:not(:empty) {
+  margin: 0;
+  color: var(--ts-danger);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-apikeys-secret-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3);
 }
 
 @media (max-width: 540px) {
@@ -325,12 +432,12 @@ dialog.ts-apikeys-secret-dialog {
     gap: var(--ts-s1);
   }
 
-  .ts-apikeys-secret-field {
+  .ts-apikeys-secret-foot {
     flex-direction: column;
+    align-items: stretch;
   }
 
-  .ts-apikeys-secret-field > .ts-apikeys-copy {
-    align-self: stretch;
-    justify-content: center;
+  .ts-apikeys-secret-foot > .ts-btn {
+    align-self: flex-end;
   }
 }

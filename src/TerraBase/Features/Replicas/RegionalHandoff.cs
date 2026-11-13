@@ -18,7 +18,7 @@ using ZLogger;
 namespace TerraBase.Features.Replicas;
 
 internal sealed record RegionalPosition(string Organization, string Project, string Database, string Home, string Revision);
-internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, long Epoch, RegionalCatalogSnapshot? Catalog = null, string? Operation = null);
+internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, long Epoch, RegionalCatalogSnapshot? Catalog = null, string? Operation = null, RetainedManifest? Retained = null);
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "");
 internal sealed record RegionalDrain(string Target);
 
@@ -37,6 +37,7 @@ internal sealed partial class RegionalHandoff(
     private long _activeEpoch;
     private long _activatingEpoch;
     private TenantContext? _activationAfter;
+    private string? _activationRetainedAfter;
     private INatsKVStore? _kv;
     private NatsConnection? _nats;
     private RegionalWriterLease? _writerLease;
@@ -142,6 +143,7 @@ internal sealed partial class RegionalHandoff(
         {
             _activatingEpoch = owner.Epoch;
             _activationAfter = null;
+            _activationRetainedAfter = null;
         }
         do
         {
@@ -164,9 +166,28 @@ internal sealed partial class RegionalHandoff(
             _activationAfter = page.Next;
         }
         while (true);
+        do
+        {
+            var retained = await RegionalRetention.RecordsAsync(services.GetRequiredService<IStorageEngine>(), _activationRetainedAfter, cancellationToken).ConfigureAwait(false);
+            foreach (var stored in retained.Records)
+            {
+                var record = RegionalRetention.Read(stored);
+                if (!await leases.TakeRetainedRegionalAsync(record, source, cancellationToken).ConfigureAwait(false))
+                {
+                    return false;
+                }
+                _activationRetainedAfter = stored.Id;
+            }
+            if (!retained.HasMore)
+            {
+                break;
+            }
+        }
+        while (true);
         _activeEpoch = owner.Epoch;
         _activatingEpoch = 0;
         _activationAfter = null;
+        _activationRetainedAfter = null;
         return true;
     }
 
@@ -321,6 +342,10 @@ internal sealed partial class RegionalHandoff(
             }
         }
 
+        if (request.Retained is not null && !await ReceiveRetainedAsync(request, cancellationToken).ConfigureAwait(false))
+        {
+            return Refuse("retained manifest or certified positions did not verify");
+        }
         await services.GetRequiredService<HomePush.HomePush>().RebuildForPromotionAsync(cancellationToken).ConfigureAwait(false);
         if (!await PreparingAsync(request, cancellationToken).ConfigureAwait(false))
         {
