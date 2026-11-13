@@ -48,7 +48,7 @@ internal sealed class CallerTokens(CallerRegistry registry, IMemoryBudget budget
         {
             return null;
         }
-        if (jwt.Alg != "ES256" || jwt.Typ != "ts-caller+jwt" || !registry.Keys.TryGetValue(jwt.Kid, out var key))
+        if (jwt.Alg != "ES256" || jwt.Typ != "ts-caller+jwt" || string.IsNullOrEmpty(jwt.Kid) || !registry.Keys.TryGetValue(jwt.Kid, out var key))
         {
             return null;
         }

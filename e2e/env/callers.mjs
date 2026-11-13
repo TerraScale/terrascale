@@ -8,13 +8,16 @@ writeFileSync(join(state, 'caller-key.pem'), privateKey.export({ type: 'pkcs8', 
 writeFileSync(join(state, 'callers.json'), JSON.stringify({
   version: 1,
   callers: [{
-    kid: 'journey.local.1', caller: 'journey', kind: 'service', jwk: publicKey.export({ format: 'jwk' }),
+    kid: 'ts-auth.local.1', caller: 'ts-auth', kind: 'service', jwk: publicKey.export({ format: 'jwk' }),
     grants: ['data:00000000000000000000000002'], notAfter: new Date(Date.now() + 86400000).toISOString(),
   }, {
-    kid: 'journey-catalog.local.1', caller: 'journey-catalog', kind: 'service', jwk: publicKey.export({ format: 'jwk' }),
+    kid: 'dashboard.local.1', caller: 'dashboard', kind: 'service', jwk: publicKey.export({ format: 'jwk' }),
     grants: ['catalog.read'], notAfter: new Date(Date.now() + 86400000).toISOString(),
   }, {
-    kid: 'op.journey.1', caller: 'op:journey', kind: 'operator', jwk: publicKey.export({ format: 'jwk' }),
+    kid: 'ts-auth.local.0', caller: 'ts-auth', kind: 'service', jwk: publicKey.export({ format: 'jwk' }),
+    grants: ['data:00000000000000000000000002'], notAfter: new Date(Date.now() - 86400000).toISOString(),
+  }, {
+    kid: 'op:journey.local.1', caller: 'op:journey', kind: 'operator', jwk: publicKey.export({ format: 'jwk' }),
     grants: ['platform.read'], notAfter: new Date(Date.now() + 86400000).toISOString(),
   }],
 }), { mode: 0o600 });

@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Net;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -128,6 +129,7 @@ builder.Services.AddTerraBaseRpc();
 try
 {
     await using var app = builder.Build();
+    callers.Observe(app.Services.GetRequiredService<IMeterFactory>(), app.Services.GetRequiredService<TimeProvider>());
     try
     {
         _ = app.Services.GetRequiredService<IStorageEngine>();

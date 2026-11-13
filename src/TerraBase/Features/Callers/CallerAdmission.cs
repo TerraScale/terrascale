@@ -22,17 +22,17 @@ internal sealed class CallerAdmission(CallerTokens tokens, InternalCredential pe
         if (caller is null)
         {
             var matches = peer.Matches(context);
-            var credential = !matches ? "unmatched" : context.Request.Headers.ContainsKey(CallerTokens.Header) ? "caller_rejected"
+            var credential = context.Request.Headers.ContainsKey(CallerTokens.Header) ? "caller_rejected" : !matches ? "unmatched"
                 : capability is not null || ReferenceEquals(listener, ListenerMetadata.Client) || ReferenceEquals(listener, ListenerMetadata.Management)
                     || context.Request.Headers.ContainsKey(OperatorHandler.UserHeader) ? "legacy" : "peer";
-            Count(credential, "peer");
+            Count(context, credential, "peer");
             if (!matches)
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             }
             return matches;
         }
-        Count("caller", caller.Key.Caller);
+        Count(context, "caller", caller.Key.Caller);
         context.Features.Set(caller);
         var allowed = !forwarded && !context.Request.Headers.ContainsKey(HomeForwarding.ForwardedForHeader) && Allows(context, caller, capability, listener);
         if (!allowed)
@@ -82,6 +82,12 @@ internal sealed class CallerAdmission(CallerTokens tokens, InternalCredential pe
                 && (caller.Grants.Contains("platform.read") || caller.Grants.Contains("platform.write")));
     }
 
-    private void Count(string credential, string caller) => _requests.Add(1,
-        new KeyValuePair<string, object?>("credential", credential), new KeyValuePair<string, object?>("caller", caller));
+    private void Count(HttpContext context, string credential, string caller)
+    {
+        if (context.Features.Get<HttpContext>() is null)
+        {
+            _requests.Add(1, new KeyValuePair<string, object?>("credential", credential),
+                new KeyValuePair<string, object?>("caller", caller));
+        }
+    }
 }

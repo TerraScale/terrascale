@@ -9,6 +9,10 @@ test('service caller grants and transition counters', async () => {
   const { stdout } = await promisify(execFile)(process.execPath, [join(e2eRoot, 'env/caller-probe.mjs'), stateDir]);
   expect(stdout).toContain('valid caller own project: 200 rows=[[29]]');
   expect(stdout).toContain('unknown kid with peer: 200');
+  expect(stdout).toContain('null kid with peer: 200');
+  expect(stdout).toContain('missing kid alone: 401');
+  expect(stdout).toContain('empty kid alone: 401');
+  expect(stdout).toContain('expired registry entry skipped; expired=1; soonest live expiry matches registry');
   expect(stdout).toContain('terrabase_operator_legacy_grants_total{kind="data"}: increased');
   console.log(stdout);
 });

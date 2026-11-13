@@ -5,9 +5,13 @@ The internal HTTP/2 listener accepts a signed assertion in
 
 Set `TERRABASE_CALLERS_FILE` to a version 1 JSON registry containing a `callers`
 array. Each entry has `kid`, `caller`, `kind`, a public P-256 `jwk`, `grants`,
-and a UTC `notAfter`. Invalid entries stop startup with exit code 2. Registry
-changes take effect when TerraBase restarts. An unset registry permits existing
+and a UTC `notAfter`. Malformed entries stop startup with exit code 2.
+Expired entries are validated and skipped; their tokens are rejected as unknown
+keys. Registry changes take effect when TerraBase restarts. An unset registry permits existing
 peer authentication to continue.
+
+Service caller names are `ts-auth`, `dashboard`, and `edge`. Key ids use
+`<caller>.<cell>.<n>`, for example `dashboard.gru.1`.
 
 Assertions use ES256, type `ts-caller+jwt`, and the registry key id. Their issuer
 matches the caller name, their audience is `terrabase`, and they include
@@ -28,11 +32,19 @@ A request without a valid assertion can still authenticate using the existing
 peer credential. An invalid assertion without a valid peer credential answers
 401; an authenticated caller outside its grants answers 403.
 A user bearer on a client or management route retains its own authorization.
+The gRPC bridge sends bearer calls through the client listener without the caller
+header, preserving usage metering, placement and regional forwarding. Forwarding
+never copies the caller header. Authentication counts each gRPC call once, at
+the outer request; the replay still checks route grants.
 
 Metrics use the `TerraScale.TerraBase` meter:
 
 - `terrabase.internal.authentication.requests`, with `credential` and `caller`.
 - `terrabase.operator.legacy_grants`, with `kind=data|act_as`.
+- `terrabase.caller.keys.expired`: expired registry entries, including keys that
+  expire after startup.
+- `terrabase.caller.keys.soonest_expiry`: earliest live key expiry as Unix seconds,
+  or zero when no live keys remain. Alert before this timestamp and on expired entries.
 
 Verification outcomes distinguish `peer`, `caller`, `legacy`,
 `caller_rejected`, and `unmatched`. Caller labels come from the registry,
