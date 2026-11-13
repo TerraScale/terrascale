@@ -98,6 +98,16 @@ internal sealed partial class TursoStorageEngine : IDatabaseRevisions
             ? await store.CurrentRevisionAsync(cancellationToken).ConfigureAwait(false)
             : null;
 
+    public async ValueTask<bool> AdoptReplicaRevisionAsync(TenantContext database, DatabaseRevision revision, CancellationToken cancellationToken)
+    {
+        if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not TursoDatabaseStore store)
+        {
+            return false;
+        }
+        await store.AdoptReplicaRevisionAsync(revision, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     public async ValueTask RecordReplicaPullAsync(TenantContext database, string region, RevisionPullResult offered, CancellationToken cancellationToken)
     {
         if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is TursoDatabaseStore store)

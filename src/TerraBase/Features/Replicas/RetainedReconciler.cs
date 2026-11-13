@@ -309,7 +309,13 @@ internal sealed class RetainedReconciler(
         }
         _ = await engine.DeleteDatabaseAsync(database, token).ConfigureAwait(false);
         await services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, token).ConfigureAwait(false);
-        return true;
+        var revisions = services.GetRequiredService<IDatabaseRevisions>();
+        if (!await revisions.AdoptReplicaRevisionAsync(database, actual, token).ConfigureAwait(false))
+        {
+            return false;
+        }
+        var imported = await revisions.CurrentRevisionAsync(database, token).ConfigureAwait(false);
+        return imported is { } held && held.Incarnation == expected.Incarnation && DatabaseRevision.Compare(held, expected) >= 0;
     }
 
     public override void Dispose()

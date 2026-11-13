@@ -99,6 +99,17 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         }
     }
 
+    internal void AdoptReplica(SqliteConnection writer, DatabaseRevision revision)
+    {
+        lock (_gate)
+        {
+            ThrowIfFenced();
+            _attached = null;
+            _manifest = new RevisionManifest(revision.Incarnation, checked(revision.Generation + 1), null, null, [], []);
+            Attach(writer);
+        }
+    }
+
     internal void Catch(SqliteConnection writer)
     {
         if (!IsAttachedTo(writer))
