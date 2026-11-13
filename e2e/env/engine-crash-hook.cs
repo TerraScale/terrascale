@@ -172,6 +172,21 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                         await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
                         continue;
                     }
+                    if (parts[0] == "migration-refused")
+                    {
+                        var file = Path.Combine(Environment.GetEnvironmentVariable("TERRABASE_DATA_DIRECTORY")!, parts[1], parts[2], parts[3] + ".db");
+                        try
+                        {
+                            await (Task<bool>)engine.GetType().GetMethod("MigrateTenantAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                                .Invoke(engine, [tenant, file, cancellationToken])!;
+                            throw new InvalidOperationException("a refused copy admitted migration");
+                        }
+                        catch (Exception error) when (error.GetType().Name is "StorageCopyFaultedException" or "StorageProofPendingException")
+                        {
+                            await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        }
+                        continue;
+                    }
                     if (parts[0] == "pending")
                     {
                         var ledger = engine.GetType().GetProperty("Ledger", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
@@ -203,8 +218,30 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                     {
                         var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
                         var ledger = engine.GetType().GetProperty("Ledger", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
-                        await (ValueTask)ledger.GetType().GetMethod("RecordAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                            .Invoke(ledger, [tenant, store.Incarnation, "the crash probe recorded proven damage"])!;
+                        IAsyncDisposable? read = null;
+                        if (ledger.GetType().GetMethod("BeginReadAsync", BindingFlags.Instance | BindingFlags.NonPublic) is { } begin)
+                        {
+                            var pending = (Task)begin.Invoke(ledger, [tenant, cancellationToken])!;
+                            await pending;
+                            read = (IAsyncDisposable)pending.GetType().GetProperty("Result")!.GetValue(pending)!;
+                        }
+                        try
+                        {
+                            await (ValueTask)ledger.GetType().GetMethod("RecordAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                                .Invoke(ledger, [tenant, store.Incarnation, "the crash probe recorded proven damage"])!;
+                            if (read is not null && !((CancellationToken)read.GetType().GetProperty("Token", BindingFlags.Instance | BindingFlags.NonPublic)!
+                                .GetValue(read)!).IsCancellationRequested)
+                            {
+                                throw new InvalidOperationException("a fault did not cancel the direct copy reader");
+                            }
+                        }
+                        finally
+                        {
+                            if (read is not null)
+                            {
+                                await read.DisposeAsync();
+                            }
+                        }
                     }
                     else if (parts[0] is "populate" or "backlog")
                     {

@@ -42,6 +42,54 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         }
     }
 
+    private readonly Dictionary<Key, CancellationTokenSource> _readers = [];
+
+    internal async Task<CopyRead> BeginReadAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        var system = await SystemAsync(cancellationToken).ConfigureAwait(false);
+        var key = Key.Of(database);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfPending(database);
+            if (FailedClosed is not null || await ReadRowAsync(system, key, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                throw new StorageCopyFaultedException("Storage requires recovery.");
+            }
+            var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Refused);
+            if (!_readers.TryAdd(key, source))
+            {
+                source.Dispose();
+                throw new InvalidOperationException("a direct copy reader already owns this database");
+            }
+            return new CopyRead(this, key, source);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal sealed class CopyRead(StorageFaultLedger ledger, Key key, CancellationTokenSource source) : IAsyncDisposable
+    {
+        internal CancellationToken Token => source.Token;
+        public ValueTask DisposeAsync() => new(ledger.EndReadAsync(key, source));
+    }
+
+    private async Task EndReadAsync(Key key, CancellationTokenSource source)
+    {
+        await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            _ = _readers.Remove(key);
+            source.Dispose();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     internal async Task ThrowIfUnavailableAsync(TenantContext database, CancellationToken cancellationToken)
     {
         var system = await SystemAsync(cancellationToken).ConfigureAwait(false);
@@ -133,6 +181,10 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
                 return;
             }
 
+            if (_readers.TryGetValue(key, out var reader))
+            {
+                reader.Cancel();
+            }
             if (engine.OpenStore(key) is { } store)
             {
                 store.FaultRow = row;
@@ -201,10 +253,22 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
     {
         try
         {
-
-            if (store.FaultRow is null && !store.IsClosed && engine.IntentStore is { } journal)
+            await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
             {
-                await WriteIntentAsync(journal, Key.Of(store.Tenant!), store.Incarnation, CancellationToken.None, Faulting).ConfigureAwait(false);
+                if (store.FaultRow is null && !store.IsClosed && engine.IntentStore is { } journal)
+                {
+                    var key = Key.Of(store.Tenant!);
+                    if (_readers.TryGetValue(key, out var reader))
+                    {
+                        reader.Cancel();
+                    }
+                    await WriteIntentAsync(journal, key, store.Incarnation, CancellationToken.None, Faulting).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _gate.Release();
             }
         }
         catch (Exception error)

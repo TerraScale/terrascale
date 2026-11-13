@@ -353,6 +353,19 @@ def recovered(identities):
 
 
 def boundary_cases(selected=None):
+    if selected in (None, "migration"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "migration-refused"})["id"]
+        hook("fault", identity)
+        end()
+        before = files(identity)
+        start()
+        hook("migration-refused", identity)
+        unavailable(identity, "copy_faulted")
+        assert files(identity) == before
+        end()
+        print("faulted unopened copy: direct migration refused without reading or changing its files", flush=True)
+
     if selected in (None, "marker"):
         start()
         identity = request("POST", f"/v1/projects/{project}/databases", {"name": "recording-marker"})["id"]
@@ -409,6 +422,7 @@ def boundary_cases(selected=None):
         assert f"injected integrity exception {code}" in proof_log, proof_log
         assert counts == [0, 1], (counts, [line for line in proof_log.splitlines() if "proof" in line or "injected" in line])
         unavailable(identity, "recovery_pending")
+        hook("migration-refused", identity)
         assert gauge("terrabase_storage_proof_pending") == 1
         metrics = subprocess.check_output(["curl", "-fsS", f"http://127.0.0.1:{ports[2]}/metrics"], text=True)
         assert 'reason="integrity_engine_corruption"' in metrics, metrics
