@@ -23,6 +23,9 @@ async function runSql(page: Page, sql: string): Promise<void> {
   await page.waitForLoadState('load');
 }
 
+test.describe('SQL workspace draft', () => {
+  test.describe.configure({ mode: 'default' });
+
 test('SQL editor creates a table, inserts and selects; a saved query reopens; the Tables tab lists the rows', async ({ page, audit }) => {
   const current = journey();
   const table = unique('editor').replaceAll('-', '_');
@@ -61,25 +64,6 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
   await expect(page.locator('main').getByText('Grace', { exact: true })).toBeVisible();
   await expect(page.locator('main').getByText('Ada', { exact: true })).toBeVisible();
   await audit.check('table rows');
-});
-
-test('the SQL editor suggests CREATE TABLE while typing create', async ({ page }) => {
-  const current = journey();
-  await page.goto(`/databases/${current.databaseId}/sql`);
-  await shell(page, current);
-  const editor = page.locator('#sql-editor ts-code-editor');
-  await expect(editor).toHaveAttribute('data-ready', '');
-  await editor.locator('.monaco-editor').click();
-  await page.keyboard.press('ControlOrMeta+A');
-  await page.keyboard.press('Delete');
-  await expect(page.locator('#sql')).toHaveValue('');
-  await page.keyboard.type('create');
-  const createTable = page.locator('.suggest-widget .monaco-list-row').filter({
-    has: page.locator('.monaco-highlighted-label', { hasText: /^CREATE TABLE$/ }),
-  });
-  await expect(createTable).toBeVisible();
-  await createTable.click();
-  await expect(page.locator('#sql')).toHaveValue(/^CREATE TABLE/);
 });
 
 test('the new table form creates a table and opens the statement in the editor', async ({ page, audit }) => {
@@ -124,10 +108,31 @@ test('the new table form creates a table and opens the statement in the editor',
   await audit.check('table created from the form');
   await page.getByRole('button', { name: 'New table', exact: true }).click();
   const duplicate = page.locator('#create-table');
+  audit.expectStatus(/\/api\/v1\/dashboard\/data\/sql\/tables(?:\?|$)/, 400);
   await duplicate.locator('#create-table-name').fill(table);
   await duplicate.getByRole('button', { name: 'Create table', exact: true }).click();
   await expect(duplicate.locator('[role="alert"]')).toBeVisible();
   await expect(duplicate.locator('[role="alert"]')).toContainText(/\w/);
+});
+});
+
+test('the SQL editor suggests CREATE TABLE while typing create', async ({ page }) => {
+  const current = journey();
+  await page.goto(`/databases/${current.databaseId}/sql`);
+  await shell(page, current);
+  const editor = page.locator('#sql-editor ts-code-editor');
+  await expect(editor).toHaveAttribute('data-ready', '');
+  await editor.locator('.monaco-editor').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.press('Delete');
+  await expect(page.locator('#sql')).toHaveValue('');
+  await page.keyboard.type('create');
+  const createTable = page.locator('.suggest-widget .monaco-list-row').filter({
+    has: page.locator('.monaco-highlighted-label', { hasText: /^CREATE TABLE$/ }),
+  });
+  await expect(createTable).toBeVisible();
+  await createTable.click();
+  await expect(page.locator('#sql')).toHaveValue(/^CREATE TABLE/);
 });
 
 test('an API key is shown once and rotates twice during grace without another click before revocation', async ({ page, audit }) => {

@@ -98,8 +98,12 @@ namespace TerraScale.Dashboard.Features.Data
             }
 
             var sql = Statement(draft);
-            var error = SqlValidation.Error(sql);
-            return new(draft, error);
+            if (Encoding.UTF8.GetByteCount(sql) > 16 * 1024)
+            {
+                return new(draft, "The table definition is over 16 KiB; shorten the defaults or use fewer columns.");
+            }
+
+            return new(draft, SqlValidation.Error(sql));
         }
 
         public static string Statement(CreateTableDraft draft)
