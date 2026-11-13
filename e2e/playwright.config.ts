@@ -22,6 +22,7 @@ export default defineConfig({
   globalTimeout: production ? 25 * 60_000 : 0,
   expect: { timeout: 20_000 },
   reporter: production ? [['list'], ['json', { outputFile: 'production-report/report.json' }]] : [['list'], ['html', { open: 'never' }]],
+  globalSetup: './support/client-address.ts',
   globalTeardown: './support/teardown.ts',
   use: {
     baseURL: dash,

@@ -2,13 +2,13 @@ import { createTsAuthClient } from '../../sdk/js/src/ts-auth.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { connect } from 'node:http2';
-import { request } from '@playwright/test';
+import { authRows } from '../support/auth-storage';
+import { request } from '../support/client-address';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { prepareAuthManagement, closeAuthManagement, stepUp } from '../support/auth-management';
-import { createProjectOwner } from '../support/project-owner';
+import { createDedicatedProjectOwner } from '../support/project-owner';
 import { hostedReady } from '../support/hosted';
-import { auth, dash, stateDir, onLocalStack } from '../support/stack';
+import { auth, dash, onLocalStack } from '../support/stack';
 import { saveCookies, saveSecret } from '../support/state';
 
 const median = (samples: number[]) => [...samples].sort((left, right) => left - right)[Math.floor(samples.length / 2)];
@@ -17,32 +17,9 @@ const djangoHash = 'pbkdf2_sha256$600000$seasalt$OAXyhAQ/4ZDA9V5RMExt3C1OwQdUpLZ
 const django52Hash = 'pbkdf2_sha256$1000000$seasalt$r1uLUxoxpP2Ued/qxvmje7UH9PUJBkRrvf9gGPL7Cps=';
 const nested = (depth: number): Record<string, unknown> => Array.from({ length: depth - 1 }).reduce<Record<string, unknown>>(value => ({ child: value }), { value: true });
 
-async function authRows(sql: string, args: string[]): Promise<unknown[][]> {
-  const peer = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
-  const connection = connect('http://127.0.0.1:8081');
-  try {
-    return await new Promise((resolve, reject) => {
-      const query = connection.request({ ':method': 'POST',
-        ':path': '/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute',
-        'content-type': 'application/json', 'X-TerraBase-Peer-Credential': peer });
-      let response = '';
-      query.setEncoding('utf8');
-      query.on('error', reject);
-      query.on('data', chunk => { response += chunk; });
-      query.on('end', () => {
-        const result = JSON.parse(response);
-        if (result.error) reject(new Error(result.error.code));
-        else resolve(result.results[0].rows);
-      });
-      query.end(JSON.stringify({ statements: [{ sql, args }] }));
-    });
-  } finally {
-    connection.close();
-  }
-}
 
 test('SDK profiles and imported passwords work on hosted pages and OIDC', async ({ browser }, info) => {
-  const account = await createProjectOwner(browser, info);
+  const account = await createDedicatedProjectOwner(browser, info, 'Profiles owner');
   const { current, page, audit } = account;
   const management = await prepareAuthManagement(page, 'profiles', current);
   const sdk = createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' }).projects;
@@ -217,10 +194,16 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
       await expect(userPage.locator('#account-profile-name')).toHaveText('Grace Hopper');
       await userAudit.check('imported bcrypt user on hosted account page');
       await userPage.screenshot({ path: join(shots, 'hosted-profile-dark-after.png'), fullPage: true });
+      await expect.poll(async () => {
+        const ready = await userPage.request.get(auth + '/readyz');
+        expect(ready.status()).toBe(200);
+        return Date.parse(ready.headers().date) % 60_000;
+      }, { message: 'profile budget probe starts with fifteen seconds left in its fixed minute' }).toBeLessThan(45_000);
       const self = await userPage.request.patch(root + '/me/profile', {
         headers: { Origin: auth }, data: { first_name: 'Amazing', unsafe_metadata: { locale: 'en' } },
       });
       expect(self.status()).toBe(200);
+      const profileWindow = Math.floor(Date.parse(self.headers().date) / 60_000);
       expect(await self.json()).toMatchObject({ first_name: 'Amazing', unsafe_metadata: { locale: 'en' } });
       expect(await self.json()).not.toHaveProperty('private_metadata');
       const forbidden = await userPage.request.patch(root + '/me/profile', {
@@ -245,10 +228,13 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
         expect(await authRows("SELECT version, (SELECT COUNT(*) FROM webhook_outbox WHERE user_id = users.id AND event_type = 'user.updated') FROM users WHERE instance_id = ? AND id = ?", [current.projectId, importedId!])).toEqual(before);
       });
       const limited = await userPage.request.patch(root + '/me/profile', { headers: { Origin: auth }, data: {} });
+      expect(Math.floor(Date.parse(limited.headers().date) / 60_000)).toBe(profileWindow);
       expect(limited.status()).toBe(429);
       expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
+      console.log('profile fixed-minute budget: 20 requests charged; attempt 21 refused');
       const authorization = await userPage.request.get(authorize.href, { maxRedirects: 0 });
-      expect(authorization.status()).toBe(302);
+      const authorizationPage = await authorization.text();
+      expect(authorization.status(), authorizationPage.match(/<(?:title|h1)[^>]*>[^<]*/g)?.join('; ')).toBe(302);
       const code = new URL(authorization.headers().location).searchParams.get('code')!;
       saveSecret('profile-code', code);
       const token = await userPage.request.post(`${auth}/${current.projectId}/oauth/token`, {
@@ -280,6 +266,6 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
     if (clientId) await sdk.deleteClient(management.ownerToken, current.projectId, clientId);
     for (const id of [createdId, importedId, ...extraIds]) if (id) await sdk.deleteUser(management.writeKey, current.projectId, id);
     await closeAuthManagement(page, management, current);
-    await account.close();
+    await account.remove();
   }
 });

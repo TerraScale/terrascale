@@ -201,6 +201,15 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
     {
         var user = await users.FindByEmailAsync(this.Tenant, email, cancellationToken);
         var valid = PasswordPolicy.Verifiable(password) && await passwords.VerifyAsync(this.Tenant, password, user?.PasswordHash, cancellationToken);
+        if (valid && user?.PasswordHash is { } hash && ImportedPasswords.NeedsUpgrade(hash))
+        {
+            user = await profiles.UpgradePasswordAsync(user, password, cancellationToken);
+            if (user is null)
+            {
+                return null;
+            }
+        }
+
         var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
         if (!await context.RequestServices.GetRequiredService<AccountProtection>()
             .PasswordAttemptAsync(this.Tenant, email, user, valid, AuthEmails.Locale(context.Request), cancellationToken) || user is null)
@@ -208,8 +217,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
             return null;
         }
 
-        return user.PasswordHash is { } hash && ImportedPasswords.NeedsUpgrade(hash)
-            ? await profiles.UpgradePasswordAsync(user, password, cancellationToken) : user;
+        return user;
     }
 
     // The first bytes of an IPv6 address, the rest zeroed.

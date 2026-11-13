@@ -14,8 +14,7 @@ type ProjectOwner = AuthOwner & { email: string; apiKey: string };
 const identityFile = join(stateDir, 'auth-features.journey.json');
 const sessionFile = join(stateDir, 'auth-features.session.json');
 
-export async function provisionProjectOwner(browser: Browser, info: TestInfo): Promise<void> {
-  const label = 'Auth features owner';
+export async function createDedicatedProjectOwner(browser: Browser, info: TestInfo, label: string) {
   const runId = randomBytes(6).toString('hex');
   const email = await newAddress(label.toLowerCase().replaceAll(' ', '-') + '-' + runId);
   const password = randomBytes(24).toString('base64url');
@@ -39,11 +38,31 @@ export async function provisionProjectOwner(browser: Browser, info: TestInfo): P
   const apiKey = (await page.locator('.ts-apikeys-secret-value').innerText()).trim();
   saveSecret(label + '-api-key', apiKey);
   const current = { runId, email, password, projectId, organizationId, apiKey };
-  writeFileSync(identityFile, JSON.stringify(current), { mode: 0o600 });
-  await context.storageState({ path: sessionFile });
-  await audit.check('auth feature owner provisioned');
-  await saveCookies(context);
-  await context.close();
+  await audit.check(label + ' provisioned');
+  const close = async () => {
+    await saveCookies(context);
+    await context.close();
+  };
+  const remove = async () => {
+    try {
+      const token = await signInToken(page.request, 'dedicated-owner-cleanup');
+      const proof = await stepUp(page.request, token, 'delete_account', password);
+      const deleted = await page.request.delete(auth + '/v1/terrascale/account', {
+        headers: { Authorization: 'Bearer ' + token, 'X-TerraScale-Step-Up-Proof': proof },
+      });
+      expect(deleted.status()).toBe(204);
+    } finally {
+      await close();
+    }
+  };
+  return { current, context, page, audit, close, remove };
+}
+
+export async function provisionProjectOwner(browser: Browser, info: TestInfo): Promise<void> {
+  const account = await createDedicatedProjectOwner(browser, info, 'Auth features owner');
+  writeFileSync(identityFile, JSON.stringify(account.current), { mode: 0o600 });
+  await account.context.storageState({ path: sessionFile });
+  await account.close();
 }
 
 export async function createProjectOwner(browser: Browser, info: TestInfo) {

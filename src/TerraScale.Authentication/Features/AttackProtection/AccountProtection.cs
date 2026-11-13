@@ -41,7 +41,9 @@ public sealed class AccountProtection(AuthData data, ProjectAuthSettings project
             var updated = new AccountLockRecord(tenant, subject, user?.Id, failures,
                 locked ? current!.Value.LockedUntil : unlock is null ? null : now.AddMinutes(30),
                 locked ? current!.Value.UnlockHash : unlock is null ? null : Tokens.Sha256Hex(unlock), now);
-            var write = current is null ? Change.Insert(updated) : Change.Update(current, updated);
+            var write = current is null ? Change.Insert(updated)
+                : valid && current is { Value: { Failures: 0, LockedUntil: null } } ? Change.Assert(current)
+                : Change.Update(current, updated);
             if (!await data.SaveAsync(user is null ? [write] : [Change.Assert(user), write], cancellationToken))
             {
                 continue;

@@ -1,6 +1,6 @@
 import { availableParallelism } from 'node:os';
 import type { Browser } from '@playwright/test';
-import { request } from '@playwright/test';
+import { request } from './client-address';
 import { createTsAuthClient } from '../../sdk/js/src/ts-auth.js';
 import { auditedContext, expect } from './audit';
 import { prepareAuthManagement, closeAuthManagement } from './auth-management';
