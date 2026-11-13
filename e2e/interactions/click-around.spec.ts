@@ -69,6 +69,9 @@ test('the SQL editor suggests CREATE TABLE while typing create', async ({ page }
   const editor = page.locator('#sql-editor ts-code-editor');
   await expect(editor).toHaveAttribute('data-ready', '');
   await editor.locator('.monaco-editor').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.press('Delete');
+  await expect(page.locator('#sql')).toHaveValue('');
   await page.keyboard.type('create');
   const createTable = page.locator('.suggest-widget .monaco-list-row').filter({
     has: page.locator('.monaco-highlighted-label', { hasText: /^CREATE TABLE$/ }),
