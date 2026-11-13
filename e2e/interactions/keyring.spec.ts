@@ -49,6 +49,8 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
         TERRABASE_MASTER_KEYS_FILE: ringFile,
         TERRABASE_PEER_SECRET: peer,
         TERRABASE_DATA_DIRECTORY: data,
+        TERRABASE_MEMORY_BUDGET: '67108864',
+        TERRABASE_STORAGE_THREADS: '1',
         TERRABASE_PORT: '18380',
         TERRABASE_INTERNAL_PORT: '18381',
         TERRABASE_POSTGRES_PORT: '18382',
@@ -121,6 +123,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
       child = spawn('dotnet', [resolve(original)], {
         env: { ...environment, DOTNET_ENVIRONMENT: 'Development', DOTNET_PROCESSOR_COUNT: '4',
           TERRABASE_MASTER_KEY: k0.toString('base64'), TERRABASE_PEER_SECRET: peer, TERRABASE_DATA_DIRECTORY: data,
+          TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
           TERRABASE_PORT: '18380', TERRABASE_INTERNAL_PORT: '18381', TERRABASE_POSTGRES_PORT: '18382', TERRABASE_METRICS_PORT: '18383' },
         stdio: ['ignore', output, output],
       });
