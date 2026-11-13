@@ -56,6 +56,7 @@ test('promotion preserves active wrappers and verifies old-key replacements befo
   async function stop(child: ChildProcess): Promise<void> {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = once(child, 'exit');
+      child.stdin?.end();
       child.kill('SIGTERM');
       await exited;
     }
