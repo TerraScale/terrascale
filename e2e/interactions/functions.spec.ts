@@ -129,6 +129,6 @@ test('create, deploy, test run, edit and redeploy a function from the editor', a
   await page.getByRole('button', { name: 'Deploy function', exact: true }).click();
   await page.waitForURL((url) => url.searchParams.get('function') === name && url.searchParams.get('deployed') === '1');
   await expect(page.locator('#function-source')).toHaveValue(edited);
-  await expect(page.getByText('Cron */5 * * * * UTC', { exact: true })).toBeVisible();
+  await expect(page.getByRole('definition').filter({ hasText: 'Cron */5 * * * * UTC' })).toBeVisible();
   console.log('Functions editor: invalid JavaScript stays in the editor, deploy, test run, invalid JSON, edit and redeploy with cron.');
 });
