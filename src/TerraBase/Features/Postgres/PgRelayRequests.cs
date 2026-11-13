@@ -10,16 +10,19 @@ internal sealed class PgRelayRequests(IMemoryBudget memory, TenantContext tenant
     [Flags]
     private enum Effect { Read = 0, Write = 1, Begin = 2, End = 4, Commit = 8, Unknown = Write | Begin | End | Commit }
 
-    private sealed class Entry(IMemoryReservation reservation)
+    private sealed class Entry(string name, IMemoryReservation reservation)
     {
+        public string Name { get; } = name;
         public IMemoryReservation Reservation { get; } = reservation;
         public Effect Effect { get; set; }
         public long Version { get; set; }
+        public int References { get; set; } = 1;
     }
 
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Entry> _statements = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Entry> _portals = new(StringComparer.Ordinal);
+    private readonly HashSet<Entry> _retained = [];
     private int _transactions = 1;
 
     public (bool Commits, Action<bool>? Completed) Sent(char kind, byte[] body, (bool Transaction, bool Pending) state)
@@ -71,15 +74,24 @@ internal sealed class PgRelayRequests(IMemoryBudget memory, TenantContext tenant
                         return (false, null);
                     }
 
+                    var storedName = entry.Name;
                     var version = entry.Version;
+                    entry.References++;
                     return (false, success =>
                     {
                         lock (_gate)
                         {
-                            if (success && entries.TryGetValue(closing, out var current) && current == entry && current.Version == version)
+                            try
                             {
-                                entries.Remove(closing);
-                                entry.Reservation.Dispose();
+                                if (success && entries.TryGetValue(storedName, out var current) && current == entry && current.Version == version)
+                                {
+                                    entries.Remove(storedName);
+                                    Release(entry);
+                                }
+                            }
+                            finally
+                            {
+                                Release(entry);
                             }
                         }
                     }
@@ -94,11 +106,12 @@ internal sealed class PgRelayRequests(IMemoryBudget memory, TenantContext tenant
     {
         lock (_gate)
         {
-            foreach (var entry in _statements.Values.Concat(_portals.Values))
+            foreach (var entry in _retained)
             {
                 entry.Reservation.Dispose();
             }
 
+            _retained.Clear();
             _statements.Clear();
             _portals.Clear();
         }
@@ -114,31 +127,49 @@ internal sealed class PgRelayRequests(IMemoryBudget memory, TenantContext tenant
                 throw new InvalidDataException("too many relay statements or portals");
             }
 
-            entry = new Entry(memory.TryReserve(128 + 2L * name.Length, tenant) ?? throw new QosMemoryException());
+            entry = new Entry(name, memory.TryReserve(128 + 2L * name.Length, tenant) ?? throw new QosMemoryException());
             entries.Add(name, entry);
+            _retained.Add(entry);
         }
 
+        var storedName = entry.Name;
         var previous = entry.Effect;
         entry.Effect |= effect;
         var version = ++entry.Version;
+        entry.References++;
         return success =>
         {
             lock (_gate)
             {
-                if (entries.TryGetValue(name, out var current) && current == entry && current.Version == version)
+                try
                 {
-                    if (!success && !existed)
+                    if (entries.TryGetValue(storedName, out var current) && current == entry && current.Version == version)
                     {
-                        entries.Remove(name);
-                        entry.Reservation.Dispose();
+                        if (!success && !existed)
+                        {
+                            entries.Remove(storedName);
+                            Release(entry);
+                        }
+                        else
+                        {
+                            entry.Effect = success ? effect : previous;
+                        }
                     }
-                    else
-                    {
-                        entry.Effect = success ? effect : previous;
-                    }
+                }
+                finally
+                {
+                    Release(entry);
                 }
             }
         };
+    }
+
+    private void Release(Entry entry)
+    {
+        if (--entry.References == 0 && _retained.Remove(entry))
+        {
+            entry.Reservation.Dispose();
+        }
     }
 
     private bool Execute(Effect effect)

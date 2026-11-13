@@ -53,6 +53,10 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
             _answer.Dispose();
             _waiting?.Dispose();
             _waiting = null;
+            while (_pending.TryDequeue(out var pending))
+            {
+                pending.Completed?.Invoke(false);
+            }
         }
     }
 
@@ -79,6 +83,7 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
             {
                 if (_pending.Count >= 256)
                 {
+                    completed?.Invoke(false);
                     throw new InvalidDataException("too many pending relay messages");
                 }
 
@@ -89,6 +94,10 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
                 }
 
                 _pending.Enqueue((reply, time.GetTimestamp(), commits, id, completed));
+            }
+            else
+            {
+                completed?.Invoke(false);
             }
         }
     }

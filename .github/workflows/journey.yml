@@ -139,7 +139,7 @@ jobs:
           - shard: phone and flows
             projects: --project pages-mobile --project hosted --project interactions --project invitation
           - shard: session limits
-            projects: --project placement placement/session-limits.spec.ts --workers 1
+            projects: placement/session-limits.spec.ts --project placement --workers 1
             regions: 2
           - shard: multi-region faults
             projects: --project fault
