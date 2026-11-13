@@ -581,7 +581,7 @@ jobs:
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           bash scripts/ci/fetch-ts-orch.sh "${RUNNER_TEMP}/ts-orch"
           status=0
-          for i in $(jq -r 'keys[]' "${RUNNER_TEMP}/ts-orch/regions.json"); do
+          for i in $(jq -r 'to_entries | sort_by(.value.region == "gru", .value.region != "sjc", .value.region) | .[].key' "${RUNNER_TEMP}/ts-orch/regions.json"); do
             jq -c "[.[$i]]" "${RUNNER_TEMP}/ts-orch/regions.json" > "${RUNNER_TEMP}/region.json"
             echo "Region $(jq -r '.[0].region' "${RUNNER_TEMP}/region.json")" | tee -a "$GITHUB_STEP_SUMMARY"
             out=$("${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service terrabase \
@@ -589,6 +589,7 @@ jobs:
             tee -a "$GITHUB_STEP_SUMMARY" <<< "$out"
             # A superseded release exits 0 without this digest: require this region's own done state.
             tail -1 <<< "$out" | jq -e '.state == "done" and (.error // "") == ""' > /dev/null || status=1
+            [ "$status" -eq 0 ] || break
           done
           exit "$status"
 
