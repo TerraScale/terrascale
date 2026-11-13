@@ -14,7 +14,7 @@ test('machine credentials restrict scope and audience and interactive tokens ide
         const response = await page.request.post(auth + '/v1/' + current.projectId + '/users/' + management.user + '/' + action, {
           headers: { Authorization: 'Bearer ' + management.writeKey },
         });
-        expect(response.status()).toBe(204);
+        expect(response.status()).toBe(200);
       }
     } finally {
       await closeAuthManagement(page, management, current);
