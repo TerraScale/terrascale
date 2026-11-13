@@ -251,6 +251,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             while (true)
             {
                 WebSocketReceiveResult read;
+                bool? answered = null;
                 using var deadline = input is null ? new SessionMessageDeadline(time, null, executing: true) : state.Wait();
                 var closing = Task.CompletedTask;
                 var expiry = deadline.Token.Register(() => closing = ExpireAsync());
@@ -310,7 +311,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                         else
                         {
                             using var answer = JsonDocument.Parse(message.GetBuffer().AsMemory(0, (int)message.Length));
-                            state.Answered('R', answer.RootElement.TryGetProperty("transaction", out var transaction) && transaction.GetBoolean());
+                            answered = answer.RootElement.TryGetProperty("transaction", out var transaction) && transaction.GetBoolean();
                         }
                     }
                 }
@@ -359,6 +360,10 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                     using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     sending.CancelAfter(QosSessions.MessageTimeout);
                     await to.SendAsync(message.GetBuffer().AsMemory(0, (int)message.Length), read.MessageType, true, sending.Token).ConfigureAwait(false);
+                    if (answered is { } transaction)
+                    {
+                        state.Answered('R', transaction);
+                    }
                 }
                 catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException or InvalidDataException or JsonException)
                 {
