@@ -1,3 +1,6 @@
+using TerraBase.Primitives;
+using ZLogger;
+
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoStorageEngine
@@ -48,6 +51,10 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
+    private const string RetainedKeySuffix = "retained-key";
+
+    private long _retainedKeys;
+
     private readonly List<(StorageFaultLedger.Key Key, string Path)> _deletions = [];
 
     private bool CompleteDeletions()
@@ -87,9 +94,9 @@ internal sealed partial class TursoStorageEngine
                 && (IsId(database) || database is SystemName or IntentName) && IsId(nonce))
             {
                 var target = Path.Combine(directory, database + FileExtension);
-                if (!File.Exists(target) && !File.Exists(target + "-wal"))
+                if (!File.Exists(target) && !File.Exists(target + "-wal") && File.Exists(target + DatabaseKeys.Suffix))
                 {
-                    DeleteFileIfPresent(target + DatabaseKeys.Suffix);
+                    RetainKey(directory, database, target + DatabaseKeys.Suffix);
                 }
                 DeleteFiles(Path.Combine(directory, name));
                 changed = true;
@@ -101,7 +108,7 @@ internal sealed partial class TursoStorageEngine
                 RejectDatabaseLinks(path);
                 if (OrphanKey(directory, name, path))
                 {
-                    DeleteFileIfPresent(path + DatabaseKeys.Suffix);
+                    RetainKey(directory, name[..^FileExtension.Length], path + DatabaseKeys.Suffix);
                     changed = true;
                 }
                 else if (!File.Exists(path) && File.Exists(path + DeletionMarker))
@@ -122,5 +129,15 @@ internal sealed partial class TursoStorageEngine
         {
             DirectorySync(directory);
         }
+
+        _retainedKeys += Directory.EnumerateFiles(directory, $".*.*.{RetainedKeySuffix}").LongCount();
+    }
+
+    private void RetainKey(string directory, string database, string key)
+    {
+        RejectLink(key);
+        var retained = Path.Combine(directory, $".{database}.{EntityIds.New()}.{RetainedKeySuffix}");
+        File.Move(key, retained, overwrite: false);
+        _logger.ZLogWarning($"Retained database key {Path.GetFileName(key):@Key} without its main file or write-ahead log as {Path.GetFileName(retained):@Retained}; it stays until an operator removes it");
     }
 }
