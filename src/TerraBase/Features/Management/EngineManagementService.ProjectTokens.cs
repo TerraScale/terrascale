@@ -45,7 +45,10 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             }
 
             mapping = read;
-            Cache(_projectMappings, key, sequence, mapping);
+            if (mapping is { Registered: true, Organization: not null })
+            {
+                Cache(_projectMappings, key, sequence, mapping);
+            }
         }
 
         if (mapping.Organization is not null || createIn is not { } organizationId)

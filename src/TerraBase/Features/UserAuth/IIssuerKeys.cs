@@ -9,7 +9,7 @@ public interface IIssuerKeys
 {
     IReadOnlyList<SecurityKey>? Keys { get; }
 
-    ValueTask<RefreshIssuerKeysResult> RefreshAsync(CancellationToken cancellationToken);
+    ValueTask<RefreshIssuerKeysResult> RefreshAsync(string? keyId, CancellationToken cancellationToken);
 
     ValueTask<IReadOnlyList<SecurityKey>?> JoinAsync(CancellationToken cancellationToken);
 }
