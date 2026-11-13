@@ -150,6 +150,7 @@ internal sealed partial class RegionalHandoff(
             _activationRetainedAfter = null;
             _checkedAfter = null;
             _checked = false;
+            _pageCaughtUp = false;
         }
         if (!_checked && !await LocalDataCurrentAsync(owner, catalog, cancellationToken).ConfigureAwait(false))
         {

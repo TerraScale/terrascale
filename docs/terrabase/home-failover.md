@@ -237,8 +237,9 @@ and fenced. The claimant serves the database when it is its region's writer; oth
   unserved: this build has no path that serves it again.
 - Kept copies are never removed automatically, including those of a database a user deleted; each one is disk the
   operator reclaims. A regional drain back to a former writer sets aside that node's earlier primary files.
-- The activation check cannot compare a replica whose follower could not reach its source within the 5 s it gives each
-  page of homed databases (their replicas catch up together, 16 at a time).
+- The activation check cannot compare a replica whose follower could not reach its source within the 1 s it gives each
+  page of homed databases (their replicas catch up together, 16 at a time, once per page, so that one activation
+  attempt of 2 s can finish).
 - Setting a file aside renames the database file first and then each sidecar; a crash between two renames leaves a
   sidecar at the old path.
 - The applied notices a target held for drained pushes are not sent when the target stops between its commit point and

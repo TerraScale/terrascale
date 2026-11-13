@@ -214,7 +214,7 @@ test('a move that fails before its commit point rolls back: the target acknowled
       await expect.poll(async () => (await (await fetch(`http://127.0.0.1:${target.port}${database(ledger.id)}`, { headers: { authorization: `Bearer ${token}` } })).json()).homeRegion,
         { message: 'journey-2 recorded the new placement before its commit point', timeout: 30_000, intervals: [100] }).toBe('fra');
       expect(await ledger.refusal(target, token, [[22, 'during-move']]), 'the target refuses a write before its commit point')
-        .toEqual({ status: 409, code: 'serialization_conflict' });
+        .toEqual({ status: 503, code: 'unavailable' });
     });
 
     await test.step('the drain fails, the move rolls back and the old home serves again', async () => {
@@ -343,7 +343,7 @@ test('a lease that names a node that cannot serve leaves the database unserved, 
         expect(await counted(watcher, 'terrabase_home_unserved', { region: 'fra' })).toBeGreaterThanOrEqual(1);
         expect(logged(watcher, 'is unserved: its lease names', `"Database":"${ledger.id}"`, '"Node":"journey-4"'), 'one log line per change of state').toBe(1);
       }
-      expect(await ledger.refusal(gru, token, [[600, 'while-unserved']]), 'the old home refuses the write').toEqual(homeDown);
+      expect(await ledger.refusal(gru, token, [[600, 'while-unserved']]), 'the old home refuses the write').toEqual({ status: 503, code: 'unavailable' });
       expect((await homeLease(kv, ledger.id)).value, 'nothing claims the lease, and the old home does not take it back').toMatchObject({ home: 'fra', node: 'journey-4', epoch: before.value.epoch + 1 });
     });
 

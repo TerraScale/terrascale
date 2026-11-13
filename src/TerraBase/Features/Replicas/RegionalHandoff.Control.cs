@@ -34,11 +34,12 @@ internal sealed partial class RegionalHandoff
     private long _recheckAt;
     private string? _refusal;
     private long _unprovenEpoch;
+    private bool _pageCaughtUp;
     private RegionalOwner? _startupOwner;
     private bool _protocolPublished;
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RecheckEvery = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan CatchUpBudget = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan CatchUpBudget = TimeSpan.FromSeconds(1);
     private const int CatchUpParallelism = 16;
     private static readonly TimeSpan ActivationBudget = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AttemptBudget = TimeSpan.FromSeconds(2);
@@ -332,8 +333,13 @@ internal sealed partial class RegionalHandoff
             {
                 return false;
             }
-            await CatchUpAsync([.. page.Databases.Where(database => !PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && replicas.HeldRevision(database) is null)])
-                .ConfigureAwait(false);
+            if (!_pageCaughtUp)
+            {
+                _pageCaughtUp = true;
+                await CatchUpAsync([.. page.Databases.Where(database => !PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && replicas.HeldRevision(database) is null)])
+                    .ConfigureAwait(false);
+            }
+
             foreach (var database in page.Databases)
             {
                 if (!PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && replicas.HeldRevision(database) is { } replica)
@@ -350,6 +356,7 @@ internal sealed partial class RegionalHandoff
                 _checkedAfter = database;
             }
             _checkedAfter = page.Next;
+            _pageCaughtUp = false;
         }
         while (_checkedAfter is not null);
         _checked = true;
@@ -388,6 +395,7 @@ internal sealed partial class RegionalHandoff
             _refusedEpoch = owner.Epoch;
             _recheckAt = gate.Time.GetTimestamp() + (long)(RecheckEvery.TotalSeconds * gate.Time.TimestampFrequency);
             _checkedAfter = null;
+            _pageCaughtUp = false;
             if (_refusal == state)
             {
                 return;
