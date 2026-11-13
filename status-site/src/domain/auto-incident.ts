@@ -1,18 +1,3 @@
-/* Automatic incidents. After every probe round the coordinator steps this
-   state machine with each component's measured state:
-
-   - a component unhealthy long enough opens an incident (down or partially
-     down after a minute, degraded after ten), investigating;
-   - a worse state raises the incident's impact;
-   - passing checks move it to monitoring, and five healthy minutes resolve
-     it; failing again sends it back to investigating;
-   - five minutes in which the monitor itself cannot measure the component
-     (such as a spent canary quota) close it: an outage nothing confirms is
-     not shown, and the page lists the monitoring issue instead.
-
-   Components in maintenance never open incidents, and an incident an
-   operator has edited is theirs: the machine lets go of it. */
-
 import { STATE_LABELS, worst, type IncidentImpact, type IncidentStatus, type TimelineState } from "./status";
 
 type Unhealthy = "degraded" | "partial_outage" | "major_outage";
@@ -27,8 +12,6 @@ export interface Tracker {
   healthySince: number | null;
   /** Last failure detail posted; absent in trackers saved before detail updates. */
   detail?: string;
-  /** Since when the monitor itself has been unable to measure the component. */
-  unmeasuredSince?: number;
 }
 
 export interface Observation {
@@ -39,8 +22,6 @@ export interface Observation {
   detail: string;
   /** A maintenance window covers the component. */
   suppressed: boolean;
-  /** Why the monitor itself could not measure it, e.g. "Canary quota exhausted". */
-  monitorFault?: string | null;
 }
 
 export type Action =
@@ -117,23 +98,6 @@ export function step(
     if (tracker?.incidentId && options.touched.has(tracker.incidentId)) {
       delete next[id];
       continue;
-    }
-    if (observation.state === "none" && observation.monitorFault && tracker?.incidentId) {
-      const since = tracker.unmeasuredSince ?? now;
-      if (now - since >= RESOLVE_AFTER) {
-        delete next[id];
-        actions.push({
-          type: "resolve",
-          incidentId: tracker.incidentId,
-          body: `Our monitors cannot measure ${observation.name} right now (${observation.monitorFault}), so this outage is not confirmed. This incident is closed and the monitoring issue is listed on this page.`,
-        });
-      } else
-        next[id] = { ...tracker, unmeasuredSince: since, healthySince: tracker.healthySince === null ? null : now };
-      continue;
-    }
-    if (tracker?.unmeasuredSince !== undefined) {
-      const { unmeasuredSince: _, ...measured } = tracker;
-      tracker = next[id] = measured;
     }
     if (observation.state === "none") {
       // An unmeasured round is not a healthy one: a recovery being
