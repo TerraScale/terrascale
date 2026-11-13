@@ -39,13 +39,14 @@ namespace TerraScale.TerraBase.Rpc.Functions
             return true;
         }
 
-#pragma warning disable CS1591
+        /// <inheritdoc />
         public async UnaryResult<TerraBaseFunctionInfo> DeployAsync(string projectId, string database, string name, TerraBaseFunctionDeploy request)
         {
             var answer = await api.SendAsync(Context, "PUT", Item(projectId, database, name), RestApi.Json(request, Json.TerraBaseFunctionDeploy));
             return RestApi.Read(answer, Json.TerraBaseFunctionInfo);
         }
 
+        /// <inheritdoc />
         public async UnaryResult<TerraBaseFunctionCall> InvokeAsync(string projectId, string database, string name, string body)
         {
             var answer = await api.SendAsync(Context, "POST", Item(projectId, database, name) + "/invoke", Encoding.UTF8.GetBytes(body), "application/json");
@@ -53,7 +54,6 @@ namespace TerraScale.TerraBase.Rpc.Functions
             var contentType = answer.Headers.TryGetValue("Content-Type", out var values) ? values.ToString() : null;
             return new TerraBaseFunctionCall(answer.Status, contentType, Encoding.UTF8.GetString(answer.Body.Span));
         }
-#pragma warning restore CS1591
 
         private static string Item(string projectId, string database, string name)
         {
