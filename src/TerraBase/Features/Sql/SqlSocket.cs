@@ -254,10 +254,10 @@ internal sealed class SqlSocket(
         }
 
         var partial = false;
-        using var idle = new CancellationTokenSource(_session is { IsAutocommit: false } ? Timeout.InfiniteTimeSpan : QosSessions.IdleTimeout, time);
+        var transaction = _session?.TransactionRemaining;
+        using var idle = new CancellationTokenSource(transaction ?? QosSessions.IdleTimeout, time);
         var closing = Task.CompletedTask;
-        var expired = idle.Token.Register(() => closing = CloseAsync(WebSocketCloseStatus.PolicyViolation,
-            partial ? "incomplete message timeout exceeded" : "session idle timeout exceeded"));
+        var expired = idle.Token.Register(() => closing = ExpireAsync());
         var input = context.Features.GetRequiredFeature<SqlSocketInput>();
         input.Started = StartMessage;
         using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closed.Token);
@@ -335,6 +335,18 @@ internal sealed class SqlSocket(
             input.Started = null;
             await expired.DisposeAsync().ConfigureAwait(false);
             await closing.ConfigureAwait(false);
+        }
+
+        async Task ExpireAsync()
+        {
+            _closed.CancelAfter(Shutdown.DrainBudget);
+            if (transaction is not null)
+            {
+                await SendErrorAsync(null, new SqlBatchFailure(SqlErrors.TransactionExpired, 0), _closed.Token).ConfigureAwait(false);
+            }
+
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, transaction is not null ? SqlErrors.TransactionExpired.Message
+                : partial ? "incomplete message timeout exceeded" : "session idle timeout exceeded").ConfigureAwait(false);
         }
 
         void StartMessage()

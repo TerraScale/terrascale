@@ -1,6 +1,4 @@
 import { connect } from 'node:net';
-import { request as upgrade } from 'node:http';
-import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Socket } from 'node:net';
 import { once } from 'node:events';
@@ -8,8 +6,11 @@ import { readFileSync } from 'node:fs';
 import { connect as peer } from 'node:http2';
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
+import { frame, rawSqlSocket } from '../support/sql-socket';
 import { auth, onLocalStack, stateDir } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
+
+test.describe.configure({ mode: 'default' });
 
 const api = 'https://api.terrascale.tech';
 const path = () => `/v1/projects/${journey().projectId}/databases/${journey().databaseId}`;
@@ -64,7 +65,7 @@ async function postgres() {
       if (packet.type === 'R' && packet.body.readInt32BE() === 3) {
         socket.write(message('p', Buffer.from(current.apiKey + '\0')));
       }
-      if (packet.type === 'Z') admitted(true);
+      if (packet.type === 'Z') { admitted(true); results.emit('ready'); }
       if (packet.type === 'D') results.emit('row', packet.body.subarray(6).toString());
       if (packet.type === 'E') {
         errors.push(...packet.body.toString().split('\0').filter(Boolean));
@@ -77,6 +78,11 @@ async function postgres() {
   socket.write(Buffer.concat([prefix, parameters]));
   return {
     socket, connected, closed,
+    begin: async () => {
+      const ready = once(results, 'ready');
+      socket.write(message('Q', Buffer.from('BEGIN\0')));
+      await ready;
+    },
     query: async () => {
       const row = once(results, 'row');
       socket.write(message('Q', Buffer.from('SELECT 42\0')));
@@ -98,55 +104,13 @@ async function websocket(credential: string) {
   return { socket, closed, reply };
 }
 
-function frame(opcode: number, payload: Buffer): Buffer {
-  expect(payload.length).toBeLessThan(126);
-  const mask = randomBytes(4);
-  const masked = Buffer.from(payload);
-  for (let i = 0; i < masked.length; i++) masked[i] ^= mask[i % 4];
-  return Buffer.concat([Buffer.from([128 | opcode, 128 | payload.length]), mask, masked]);
-}
-
 async function partialWebsocket(credential: string) {
-  const request = upgrade('http://127.0.0.1:8080' + path() + '/sql/ws', {
-    headers: {
-      connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13',
-      'sec-websocket-key': randomBytes(16).toString('base64'), 'sec-websocket-protocol': 'terrascale.sql.v1',
-      authorization: 'Bearer ' + credential,
-    },
-  });
-  request.on('response', response => request.destroy(new Error('upgrade refused with ' + response.statusCode)));
-  const upgraded = once(request, 'upgrade');
-  request.end();
-  const [response, socket, head] = await upgraded;
-  expect(response.statusCode).toBe(101);
-  const events = new EventEmitter();
-  const closed = once(events, 'closed').then(([event]) => event as { code: number; reason: string });
-  let buffered = Buffer.alloc(0);
-  socket.on('data', (chunk: Buffer) => {
-    buffered = Buffer.concat([buffered, chunk]);
-    while (buffered.length >= 2) {
-      const short = buffered[1] & 127;
-      const prefix = short === 126 ? 4 : short === 127 ? 10 : 2;
-      if (buffered.length < prefix) return;
-      const length = short === 126 ? buffered.readUInt16BE(2) : short === 127 ? Number(buffered.readBigUInt64BE(2)) : short;
-      if (buffered.length < prefix + length) return;
-      const opcode = buffered[0] & 15;
-      const payload = buffered.subarray(prefix, prefix + length);
-      buffered = buffered.subarray(prefix + length);
-      if (opcode === 1) events.emit('message', JSON.parse(payload.toString()));
-      if (opcode === 8) {
-        socket.destroy();
-        events.emit('closed', { code: payload.readUInt16BE(), reason: payload.subarray(2).toString() });
-      }
-    }
-  });
-  socket.on('error', (error: Error) => events.emit('error', error));
-  socket.on('close', () => events.emit('closed', { code: 1006, reason: 'transport closed' }));
-  const result = once(events, 'message');
-  if (head.length > 0) socket.unshift(head);
-  socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT 1' }] }))));
+  const raw = await rawSqlSocket('http://127.0.0.1:8080' + path() + '/sql/ws', credential);
+  const result = once(raw.events, 'message');
+  raw.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT 1' }] }))));
   expect((await result)[0].results[0].rows).toEqual([[1]]);
-  return { socket: socket as Socket, closed };
+  const closed = raw.closing.then(event => { raw.socket.destroy(); return event; });
+  return { ...raw, closed };
 }
 
 async function openSockets(count: number, credentials: readonly string[], clients: Awaited<ReturnType<typeof websocket>>[]) {
@@ -286,4 +250,62 @@ test('data-modifying WITH requires write scope and read-only WITH returns data',
   } finally {
     expect((await execute(full, `DROP TABLE ${table}`)).status()).toBe(200);
   }
+});
+
+test('transaction silence and partial input close both protocols with the transaction timeout', async ({ request }) => {
+  await onLocalStack(async () => {
+    const credential = await token(request, 'sql:read sql:write');
+    for (const partial of [false, true]) {
+      const pg = await postgres();
+      const ws = await rawSqlSocket('http://127.0.0.1:8080' + path() + '/sql/ws', credential);
+      try {
+        expect(await pg.connected).toBe(true);
+        const result = once(ws.events, 'message');
+        const started = performance.now();
+        ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'begin' }))));
+        await pg.begin();
+        expect((await result)[0]).toMatchObject({ type: 'result', transaction: true });
+        const error = once(ws.events, 'message');
+        if (partial) {
+          pg.socket.write(Buffer.from('Q'));
+          ws.socket.write(Buffer.from([1]));
+        }
+        const [pgErrors, wsError, close] = await Promise.all([pg.closed, error, ws.closing]);
+        expect(performance.now() - started).toBeLessThan(8000);
+        expect(pgErrors).toContain('C57014');
+        expect(pgErrors).toContain('Mthe transaction expired: it was open for more than 5 seconds and was rolled back');
+        expect(wsError[0]).toMatchObject({ type: 'error', error: { code: 'query_canceled', sqlstate: '57014' } });
+        expect(close).toEqual({ code: 1008, reason: 'the transaction expired: it was open for more than 5 seconds and was rolled back' });
+      } finally {
+        pg.socket.destroy();
+        ws.socket.destroy();
+        await Promise.all([pg.closed, ws.closed]);
+      }
+    }
+  });
+});
+
+test('a prohibited 64-bit frame length fails the connection and leaves SQL available', async ({ request }) => {
+  await onLocalStack(async () => {
+    const credential = await token(request, 'sql:read sql:write');
+    const ws = await rawSqlSocket('http://127.0.0.1:8080' + path() + '/sql/ws', credential);
+    try {
+      ws.socket.write(Buffer.from([0x81, 0xff, ...Array(8).fill(0xff), 0, 0, 0, 0]));
+      const close = await ws.closing;
+      expect(close.code).toBe(1002);
+    } finally {
+      ws.socket.destroy();
+      await ws.closed;
+    }
+    const healthy = await websocket(credential);
+    try {
+      expect(healthy.reply.type).toBe('result');
+      const result = once(healthy.socket, 'message');
+      healthy.socket.send(JSON.stringify({ id: 2, type: 'execute', statements: [{ sql: 'SELECT 42' }] }));
+      expect(JSON.parse(((await result)[0] as MessageEvent<string>).data).results[0].rows).toEqual([[42]]);
+    } finally {
+      healthy.socket.close();
+      await healthy.closed;
+    }
+  });
 });

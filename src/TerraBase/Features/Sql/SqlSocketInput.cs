@@ -5,6 +5,7 @@ namespace TerraBase.Features.Sql;
 internal sealed class SqlSocketInput
 {
     private int _header;
+    private bool _invalid;
     private int _extended;
     private ulong _remaining;
     private bool _masked;
@@ -49,7 +50,7 @@ internal sealed class SqlSocketInput
 
     private void Inspect(ReadOnlySpan<byte> bytes)
     {
-        while (!bytes.IsEmpty)
+        while (!_invalid && !bytes.IsEmpty)
         {
             if (_header == 0)
             {
@@ -72,15 +73,22 @@ internal sealed class SqlSocketInput
                 _header = _extended > 0 ? 2 : 3;
                 if (_extended == 0)
                 {
-                    _remaining += _masked ? 4UL : 0;
+                    _remaining = checked(_remaining + (_masked ? 4UL : 0));
                 }
             }
             else if (_header == 2)
             {
-                _remaining = (_remaining << 8) | bytes[0];
+                if (_extended == 8 && (bytes[0] & 128) != 0)
+                {
+                    _invalid = true;
+                    Started = null;
+                    return;
+                }
+
+                _remaining = checked((_remaining << 8) | bytes[0]);
                 if (--_extended == 0)
                 {
-                    _remaining += _masked ? 4UL : 0;
+                    _remaining = checked(_remaining + (_masked ? 4UL : 0));
                     _header = 3;
                 }
             }

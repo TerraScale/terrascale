@@ -216,7 +216,7 @@ internal sealed class SqlSession(
         : UnknownDatabase;
     private static readonly SqlError TooManyChanges = SqlErrors.TooBig("a transaction changes at most 1024 rows and grows the database by at most 8 MiB");
     internal static readonly SqlError TooManyRows = SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");
-    private static readonly SqlError Expired = new(SqlErrors.QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
+    private static readonly SqlError Expired = SqlErrors.TransactionExpired;
     private static readonly SqlError Aborted = new(SqlErrors.TransactionRolledBack, "the transaction was rolled back after a failed statement; end it with ROLLBACK");
 
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -224,6 +224,7 @@ internal sealed class SqlSession(
     private long? _scriptStarted;
     private long _requestExecution;
     private bool _inTransaction;
+    private long _opened;
     private bool _readOnlyTransaction;
     private Pinned? _pinned;
     private IStorageTransaction? _running;
@@ -234,6 +235,8 @@ internal sealed class SqlSession(
     private string? _publishId;
 
     public bool IsAutocommit => !_inTransaction;
+
+    public TimeSpan? TransactionRemaining => _inTransaction ? SqlLimits.Remaining(time, _opened) : null;
 
     public void KeepCommitted() => _committed ??= [];
 
@@ -506,7 +509,7 @@ internal sealed class SqlSession(
             case SqlStatementKind.Noop:
                 return Empty;
             case SqlStatementKind.Begin:
-                (_inTransaction, _readOnlyTransaction) = (true, plan.ReadOnly);
+                (_inTransaction, _readOnlyTransaction, _opened) = (true, plan.ReadOnly, time.GetTimestamp());
                 return Empty;
             case SqlStatementKind.Commit:
                 return await CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -991,8 +994,8 @@ internal sealed class SqlSession(
         }
 
         var generation = ++_generation;
-        var timer = time.CreateTimer(_ => _ = ExpireLaterAsync(generation), null, SqlLimits.MaxTransactionTime, Timeout.InfiniteTimeSpan);
-        _pinned = new Pinned(transaction, lease, write, time.GetTimestamp(), baseline, timer, new Tally(), []);
+        var timer = time.CreateTimer(_ => _ = ExpireLaterAsync(generation), null, TransactionRemaining ?? SqlLimits.MaxTransactionTime, Timeout.InfiniteTimeSpan);
+        _pinned = new Pinned(transaction, lease, write, _inTransaction ? _opened : time.GetTimestamp(), baseline, timer, new Tally(), []);
         return (_pinned, null);
     }
 
@@ -1020,7 +1023,7 @@ internal sealed class SqlSession(
 
     private async ValueTask ExpireIfDueAsync()
     {
-        if (_pinned is { } pinned && _lost is null && time.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime)
+        if (_lost is null && (TransactionRemaining == TimeSpan.Zero || (_pinned is { } pinned && time.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime)))
         {
             await LoseAsync(Expired).ConfigureAwait(false);
         }

@@ -108,9 +108,35 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         });
         context.Features.GetRequiredFeature<RegionalIngress.Lease>().Dispose();
 
-        var toHome = PumpAsync(client, upstream, cancellationToken);
-        var toClient = PumpAsync(upstream, client, cancellationToken);
-        await Task.WhenAll(toHome, toClient).ConfigureAwait(false);
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        await using var aborting = shutdown.Token.Register(() =>
+        {
+            client.Abort();
+            upstream.Abort();
+        }).ConfigureAwait(false);
+        var closing = 0;
+        var toHome = PumpAsync(client, upstream, BeginClose, shutdown.Token);
+        var toClient = PumpAsync(upstream, client, BeginClose, shutdown.Token);
+        try
+        {
+            await Task.WhenAny(toHome, toClient).ConfigureAwait(false);
+            BeginClose();
+            await Task.WhenAll(toHome, toClient).ConfigureAwait(false);
+        }
+        finally
+        {
+            client.Abort();
+            upstream.Abort();
+            await Task.WhenAll(toHome, toClient).ConfigureAwait(false);
+        }
+
+        void BeginClose()
+        {
+            if (Interlocked.Exchange(ref closing, 1) == 0)
+            {
+                shutdown.CancelAfter(Shutdown.DrainBudget);
+            }
+        }
     }
 
     private static string RefusalCode(HttpStatusCode status) => status switch
@@ -132,7 +158,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         _ => "the home refused the session",
     };
 
-    private static async Task PumpAsync(WebSocket from, WebSocket to, CancellationToken cancellationToken)
+    private static async Task PumpAsync(WebSocket from, WebSocket to, Action beginClose, CancellationToken cancellationToken)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
         try
@@ -144,14 +170,15 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                 {
                     read = await from.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
                 }
-                catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException)
+                catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException)
                 {
                     break;
                 }
 
                 if (read.MessageType == WebSocketMessageType.Close)
                 {
-                    await CloseAsync(to, read.CloseStatus ?? WebSocketCloseStatus.NormalClosure, read.CloseStatusDescription).ConfigureAwait(false);
+                    beginClose();
+                    await CloseAsync(to, read.CloseStatus ?? WebSocketCloseStatus.NormalClosure, read.CloseStatusDescription, cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -165,7 +192,8 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                 }
             }
 
-            await CloseAsync(to, WebSocketCloseStatus.EndpointUnavailable, "the relayed session ended").ConfigureAwait(false);
+            beginClose();
+            await CloseAsync(to, WebSocketCloseStatus.EndpointUnavailable, "the relayed session ended", cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -173,17 +201,18 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
     }
 
-    private static async Task CloseAsync(WebSocket socket, WebSocketCloseStatus status, string? description)
+    private static async Task CloseAsync(WebSocket socket, WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
     {
         try
         {
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
-                await socket.CloseAsync(status, description, CancellationToken.None).ConfigureAwait(false);
+                await socket.CloseOutputAsync(status, description, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException or ObjectDisposedException or ConnectionResetException)
         {
+            socket.Abort();
         }
     }
 }

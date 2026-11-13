@@ -12,7 +12,7 @@ internal sealed class ReplicaSqlSession(
 {
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly SqlError ReadOnlyWrite = new(SqlErrors.ReadOnlyTransaction, "a READ ONLY transaction cannot write");
-    private static readonly SqlError Expired = new(SqlErrors.QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
+    private static readonly SqlError Expired = SqlErrors.TransactionExpired;
     private static readonly SqlError ReadThenWrite = new(SqlErrors.SerializationConflict,
         "the transaction read in this region and then wrote: retry it, and the retry runs at the database's home");
 
@@ -30,6 +30,10 @@ internal sealed class ReplicaSqlSession(
     private long _position = -1;
 
     public bool IsAutocommit => !_readOnlyTransaction && (_home?.IsAutocommit ?? true);
+
+    public TimeSpan? TransactionRemaining => _readOnlyTransaction
+        ? SqlLimits.Remaining(transactionTime, _opened)
+        : _home?.TransactionRemaining;
 
     public WriteRoute? LastRoute { get; private set; }
 

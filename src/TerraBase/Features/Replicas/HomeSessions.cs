@@ -102,7 +102,7 @@ internal static class HomeSessionFrames
 }
 
 internal sealed class HomeSessions(
-    TerraBaseOptions options, IReplicaPeers peers, InternalCredential credential, IMemoryBudget memory, HomePush.ILocalWrites local) : IDisposable
+    TerraBaseOptions options, IReplicaPeers peers, InternalCredential credential, IMemoryBudget memory, HomePush.ILocalWrites local, TimeProvider time) : IDisposable
 {
     internal const string Path = "/v1/internal/sql/session";
 
@@ -133,7 +133,7 @@ internal sealed class HomeSessions(
             }
 
             var downstream = PipeReader.Create(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
-            var session = new HomeSqlSession(request, response, upstream.Writer, downstream, stop, memory, database, unreachable, local);
+            var session = new HomeSqlSession(request, response, upstream.Writer, downstream, stop, memory, database, unreachable, local, time);
             switch (await session.ReceiveAsync(cancellationToken).ConfigureAwait(false))
             {
                 case HomeSessionAnswer { Error: { } refused }:
@@ -204,15 +204,19 @@ internal readonly union HomeSessionOutcome(HomeSqlSession, SqlError);
 
 internal sealed class HomeSqlSession(
     HttpRequestMessage request, HttpResponseMessage response, PipeWriter upstream, PipeReader downstream, CancellationTokenSource stop,
-    IMemoryBudget memory, TenantContext database, SqlError unreachable, HomePush.ILocalWrites local) : ISqlSession
+    IMemoryBudget memory, TenantContext database, SqlError unreachable, HomePush.ILocalWrites local, TimeProvider time) : ISqlSession
 {
     private static readonly IReadOnlyDictionary<string, SqlValue> NoNamed = new Dictionary<string, SqlValue>();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _autocommit = true;
+    private long _opened;
+    private long _started;
     private bool _broken;
     private int _disposed;
 
     public bool IsAutocommit => _autocommit;
+
+    public TimeSpan? TransactionRemaining => _autocommit ? null : SqlLimits.Remaining(time, _opened);
 
     public bool IsBroken => _broken;
 
@@ -291,6 +295,11 @@ internal sealed class HomeSqlSession(
         var answer = await HomeSessionFrames.ReadAsync(downstream, ReplicasJsonContext.Default.HomeSessionAnswer, memory, database, cancellationToken).ConfigureAwait(false);
         if (answer is not null)
         {
+            if (_autocommit && !answer.Autocommit)
+            {
+                _opened = _started;
+            }
+
             _autocommit = answer.Autocommit;
         }
 
@@ -327,6 +336,7 @@ internal sealed class HomeSqlSession(
             {
                 using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 bounded.CancelAfter(SqlLimits.ForwardedRequestTime);
+                _started = time.GetTimestamp();
                 await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database) }, ReplicasJsonContext.Default.HomeSessionCall,
                     bounded.Token).ConfigureAwait(false);
                 var answer = await ReceiveAsync(bounded.Token).ConfigureAwait(false) ?? Break();

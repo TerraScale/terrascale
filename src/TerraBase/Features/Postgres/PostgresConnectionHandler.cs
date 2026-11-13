@@ -447,7 +447,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         {
             (byte type, byte[] body, IMemoryReservation reservation) messageRead;
             var partial = false;
-            using (var deadline = new CancellationTokenSource(session.Sql.IsAutocommit ? QosSessions.IdleTimeout : Timeout.InfiniteTimeSpan, Time))
+            var transaction = session.Sql.TransactionRemaining;
+            using (var deadline = new CancellationTokenSource(transaction ?? QosSessions.IdleTimeout, Time))
             using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token))
             {
                 try
@@ -469,7 +470,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 }
                 catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    output.Error("57P05", partial ? "incomplete message timeout exceeded" : "session idle timeout exceeded", fatal: true);
+                    output.Error(transaction is not null ? SqlErrors.Sqlstate(SqlErrors.TransactionExpired.Code) : "57P05",
+                        transaction is not null ? SqlErrors.TransactionExpired.Message : partial ? "incomplete message timeout exceeded" : "session idle timeout exceeded", fatal: true);
                     await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                     return;
                 }

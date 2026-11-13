@@ -61,6 +61,8 @@ internal interface ISqlSession : IAsyncDisposable
 {
     bool IsAutocommit { get; }
 
+    TimeSpan? TransactionRemaining { get; }
+
     void BeginRequest();
 
     ValueTask<SqlOutcome> ExecuteAsync(SqlPlannedCommand planned, CancellationToken cancellationToken);

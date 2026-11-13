@@ -23,6 +23,7 @@ internal static partial class SqlErrors
     public const string TooLarge = "too_large";
     public const string QueryCanceled = "query_canceled";
     public const string WriteOutcomeUnknown = "write_outcome_unknown";
+    public static readonly SqlError TransactionExpired = new(QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
     public const string TransactionRolledBack = "transaction_rolled_back";
     public const string TransactionAborted = "transaction_aborted";
     public const string ReadOnlyTransaction = "read_only_transaction";

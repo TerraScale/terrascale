@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Qos;
@@ -9,9 +11,18 @@ internal sealed class QosSessions
     public static readonly TimeSpan MessageTimeout = TimeSpan.FromSeconds(30);
 
     private const int MaxSessions = 4096;
+    private const int MaxRelays = MaxSessions / 2;
+    private int _relays;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, int> _counts = [];
     private int _active;
+
+    public QosSessions(IMeterFactory meters)
+    {
+        _relaysMetric = meters.Create(Telemetry.MeterName).CreateUpDownCounter<long>("terrabase.qos.relay.sessions");
+    }
+
+    private readonly UpDownCounter<long> _relaysMetric;
 
     public IDisposable? TryEnter(TenantContext tenant)
     {
@@ -33,12 +44,14 @@ internal sealed class QosSessions
     {
         lock (_gate)
         {
-            if (_active >= MaxSessions)
+            if (_active >= MaxSessions || _relays >= MaxRelays)
             {
                 return null;
             }
 
             _active++;
+            _relays++;
+            _relaysMetric.Add(1);
             return new Lease(this, null);
         }
     }
@@ -50,6 +63,8 @@ internal sealed class QosSessions
             _active--;
             if (organization is null)
             {
+                _relays--;
+                _relaysMetric.Add(-1);
                 return;
             }
 
