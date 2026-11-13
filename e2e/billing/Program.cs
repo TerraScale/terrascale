@@ -132,7 +132,7 @@ async Task AssertGraceAsync(BillingBinding binding, bool retained, string status
     var row = await organizations.FindAsync(binding.OrganizationId, cancellationToken) ?? throw new IOException("Organization missing.");
     if (row.Organization.PlanId != OrganizationRecord.StarterPlanId || row.Organization.BillingStatus != status || (row.Organization.PaymentGraceUntil is not null) != retained)
     {
-        throw new InvalidOperationException("Payment grace entitlement mismatch.");
+        throw new InvalidOperationException($"Payment grace entitlement mismatch: plan {row.Organization.PlanId}, status {row.Organization.BillingStatus}, grace retained {row.Organization.PaymentGraceUntil is not null}; expected plan {OrganizationRecord.StarterPlanId}, status {status}, grace retained {retained}.");
     }
 }
 
@@ -243,7 +243,7 @@ try
     Console.WriteLine("billing grace journey: expired grace with provider paid -> clear grace, retain plan");
     await ControlAsync("/payment", new PaymentInput(binding.SubscriptionId, false, false));
     await SetGraceAsync(binding);
-    await ControlAsync("/failure", new FailureInput("GET", "/v1/subscriptions/" + binding.SubscriptionId, 400, 3, true));
+    await ControlAsync("/failure", new FailureInput("GET", "/v1/subscriptions/" + binding.SubscriptionId, 400, null, true));
     await billing.ResolveExpiredGraceAsync(binding.OrganizationId, cancellationToken);
     await AssertGraceAsync(binding, true, "active");
     Console.WriteLine("billing grace journey: provider unreachable -> retain plan and grace");
@@ -266,7 +266,7 @@ try
     Console.WriteLine("billing grace journey: existing payment failure at migration -> failure day + 7 days, UTC day end");
 
     await ControlAsync("/payment", new PaymentInput(binding.SubscriptionId, true, false));
-    await ControlAsync("/failure", new FailureInput("POST", "/v1/subscriptions/" + binding.SubscriptionId, 400, 3, true));
+    await ControlAsync("/failure", new FailureInput("POST", "/v1/subscriptions/" + binding.SubscriptionId, 400, null, true));
     await ControlAsync("/subscription-tax", new TaxInput(binding.SubscriptionId, "supported", "new"));
     await AssertGraceAsync(binding, false, "active");
     using (var response = await control.GetAsync("/subscription-tax-state?subscription=" + binding.SubscriptionId, cancellationToken))
@@ -276,6 +276,7 @@ try
         if (tax.Enabled) { throw new InvalidOperationException("The transport failure must leave tax repair pending after entitlement commits."); }
     }
     Console.WriteLine("billing tax journey: tax repair transport failure -> entitlement restored and grace cleared");
+    await ControlAsync("/failure", new FailureInput("POST", "/v1/subscriptions/" + binding.SubscriptionId, 400, 0, false));
     var eventId = "evt_receipt_" + AccountService.NewId();
     await EventAsync(binding, eventId);
     var version = (await BindingAsync(binding.OrganizationId)).Version;
@@ -317,7 +318,7 @@ internal sealed record ItemTotals(int Count, long Quantity);
 internal sealed partial class BillingJson : JsonSerializerContext;
 
 internal sealed record EmptyInput;
-internal sealed record FailureInput(string Method, string Path, int Status, int Remaining, bool Transport);
+internal sealed record FailureInput(string Method, string Path, int Status, int? Remaining, bool Transport);
 internal sealed record PaymentInput(string Subscription, bool Paid, bool Deliver);
 internal sealed record TaxState(int Updates, bool Enabled);
 internal sealed record TaxInput(string Subscription, string Location, string Policy);

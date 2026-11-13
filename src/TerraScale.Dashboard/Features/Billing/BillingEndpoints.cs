@@ -47,7 +47,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var invoicesRead = billing.InvoicesAsync(shell.Context, cancellationToken);
             var detailsRead = billing.DetailsAsync(shell.Context, cancellationToken);
             var overageRead = page.Binding is { Kind: "stripe", SubscriptionId.Length: > 0 } subscribed && PlanCatalog.For(shell.Context.Organization) is { PriceCents: > 0 }
-                ? reporter.OperationUnitOverageAsync(subscribed, now, cancellationToken) : Task.FromResult(0L);
+                ? reporter.OperationUnitOverageAsync(subscribed, cancellationToken) : Task.FromResult(0L);
             BillingCard? paymentMethod = null;
             var paymentMethodUnavailable = false;
             try { paymentMethod = await paymentMethodRead; }

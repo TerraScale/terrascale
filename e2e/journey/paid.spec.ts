@@ -205,13 +205,17 @@ test('paid owner billing recovery, UTC deadline and subscription tax policy', as
   await page.reload();
   await expect(page.locator('#billing-payment-grace')).toContainText(graceDate + ' UTC');
   const transportFailure = await fetch(stripeStandIn + '/failure', {
-    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + checkoutSession.subscription, status: 400, remaining: 3, transport: true }),
+    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + checkoutSession.subscription, status: 400, remaining: null, transport: true }),
   });
   expect(transportFailure.status).toBe(200);
   const paidWithoutEvent = await fetch(stripeStandIn + '/payment', { method: 'POST', body: JSON.stringify({ subscription: checkoutSession.subscription, paid: true, deliver: false }) });
   expect(paidWithoutEvent.status).toBe(200);
   await taxLocation('supported', 'new');
   expect(await subscriptionTax(), 'tax transport failure leaves repair for a later refresh').toBe(false);
+  const transportRecovered = await fetch(stripeStandIn + '/failure', {
+    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + checkoutSession.subscription, status: 400, remaining: 0 }),
+  });
+  expect(transportRecovered.status).toBe(200);
   const alreadyPaidFailure = await fetch(stripeStandIn + '/payment', {
     method: 'POST', body: JSON.stringify({ subscription: checkoutSession.subscription, paid: true, eventType: 'invoice.payment_failed' }),
   });

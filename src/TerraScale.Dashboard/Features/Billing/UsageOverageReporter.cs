@@ -12,13 +12,13 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed class UsageOverageReporter(IDbContextFactory<DashboardDbContext> storage, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
     {
-        public async Task<long> OperationUnitOverageAsync(BillingBinding binding, DateTimeOffset now, CancellationToken cancellationToken)
+        public async Task<long> OperationUnitOverageAsync(BillingBinding binding, CancellationToken cancellationToken)
         {
             string? after = null;
             do
             {
                 var page = await usage.ReadAsync(after, null, cancellationToken);
-                AllowanceNotifications.ValidatedMonth(page, after, now, null);
+                AllowanceNotifications.ValidatedMonth(page, after, clock.GetUtcNow(), null);
                 var item = page.Items.FirstOrDefault(item => item.OrganizationId == binding.OrganizationId);
                 if (item is not null)
                 {

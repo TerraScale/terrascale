@@ -276,8 +276,8 @@ async function handle(request, response, body) {
   const unfiltered = Object.entries(route?.[3] ?? {}).find(([key, value]) => !value.test(parameters.get(key) ?? ''))?.[0];
   if (unfiltered) return unexpected(response, request, url, `filter ${unfiltered}`);
   const failure = failures.get(request.method + ' ' + url.pathname);
-  if (failure?.remaining > 0) {
-    failure.remaining -= 1;
+  if (failure && (failure.remaining === null || failure.remaining > 0)) {
+    if (failure.remaining !== null) failure.remaining -= 1;
     log.calls.push({ method: request.method, path: url.pathname, status: failure.status });
     if (failure.transport) { response.destroy(); return; }
     return reply(response, failure.status, { error: { type: 'invalid_request_error', code: failure.status === 404 ? 'resource_missing' : undefined, message: 'Journey Stripe failure.' } });
