@@ -235,6 +235,8 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<RenameDatabaseEndpoint>(),
                 EndpointRegistration.Create<FunctionsPageEndpoint>(),
                 EndpointRegistration.Create<DeleteFunctionEndpoint>(),
+                EndpointRegistration.Create<DeployFunctionEndpoint>(),
+                EndpointRegistration.Create<InvokeFunctionEndpoint>(),
                 EndpointRegistration.Create<HomePageEndpoint>(),
                 EndpointRegistration.Create<HomeRegionsEndpoint>(),
                 EndpointRegistration.Create<DatabaseLogsPageEndpoint>(),
@@ -319,7 +321,9 @@ namespace TerraScale.Dashboard
                 context.Items["nonce"] = nonce;
                 var path = context.Request.Path.Value ?? "";
                 var editorStyles = path.StartsWith("/api/v1/dashboard/data/", StringComparison.Ordinal) ||
-                    path.StartsWith("/databases/", StringComparison.Ordinal) && path.EndsWith("/sql", StringComparison.Ordinal);
+                    path.StartsWith("/databases/", StringComparison.Ordinal) && path.EndsWith("/sql", StringComparison.Ordinal) ||
+                    path.StartsWith("/api/v1/dashboard/functions/", StringComparison.Ordinal) ||
+                    path.StartsWith("/databases/", StringComparison.Ordinal) && path.EndsWith("/functions", StringComparison.Ordinal);
                 var reference = context.Request.Path.StartsWithSegments("/reference");
                 var fileStorage = path == "/storage" || path.StartsWith("/api/v1/dashboard/storage/", StringComparison.Ordinal);
                 var fileOrigins = fileStorage ? " https://*.r2.cloudflarestorage.com" : "";

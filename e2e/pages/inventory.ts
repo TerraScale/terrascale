@@ -107,7 +107,7 @@ const databaseTabs: [string, string, Identity][] = [
 ];
 
 const tabStates: Record<string, PagePattern['query']> = {
-  functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/ },
+  functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/, edit: /^(new|1)?$/ },
   sql: { result: optionalId, savedQueryId: optionalId },
   tables: { table: /^[A-Za-z0-9_]*$/ },
 };
