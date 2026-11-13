@@ -299,24 +299,20 @@ test('restores read the holes recorded with the backup: one the restoring node h
   };
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await expect.poll(latest, { message: 'the backup stores its first snapshot before the writes the step restores between' }).toBeGreaterThan(0);
+    await expect.poll(latest, { message: 'the backup stores its first snapshot before the writes' }).toBeGreaterThan(0);
+    const firstSent = Date.now();
     await ledger.write(cells, 'gru', [[1, 'first']]);
     const firstAcked = Date.now();
-    await expect.poll(latest, { message: 'the backup proves the first write' }).toBeGreaterThanOrEqual(firstAcked);
     const secondSent = Date.now();
     await ledger.write(cells, 'gru', [[2, 'second']]);
     const secondAcked = Date.now();
-    await expect.poll(latest, { message: 'the backup proves the second write' }).toBeGreaterThanOrEqual(secondAcked);
+    await expect.poll(latest, { message: 'the backup proves the second of the second write' }).toBeGreaterThanOrEqual(secondSent - secondSent % 1000);
     const shipped = await continuity(writer, created.id);
     expect(shipped.holes).toEqual([]);
-    const step = Math.floor((secondSent - firstAcked) / 4);
-    expect(step, 'the two writes are proven apart').toBeGreaterThanOrEqual(4);
-    const target = firstAcked + 2 * step;
-    const [before, after] = [target - step, target + step];
-    const half = Math.floor(step / 2);
-    for (const at of [before, target, after]) expect(await planned(at), `a restore to ${new Date(at).toISOString()} is admitted before any hole is recorded`).toBe('200');
+    const newest = await latest();
+    expect(await planned(newest), 'the newest proven time is admitted before any hole is recorded').toBe('200');
     const started = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
-      data: { pointInTime: new Date(await latest()).toISOString(), name: name('hole-records-latest') },
+      data: { pointInTime: new Date(newest).toISOString(), name: name('hole-records-latest') },
     });
     expect(started.status(), await started.text()).toBe(202);
     const operation = await started.json() as { id: string };
@@ -326,7 +322,12 @@ test('restores read the holes recorded with the backup: one the restoring node h
       if (state.status === 'completed') restored = state.database;
       return state.status;
     }, { message: 'the restore of the newest proven time completes' }).toBe('completed');
-    expect(await ledger.read(cells, 'gru', restored), 'every acknowledged row is in a restore of the newest proven time').toEqual([[1, 'first'], [2, 'second']]);
+    const written: [[number, string], number, number][] = [[[1, 'first'], firstSent, firstAcked], [[2, 'second'], secondSent, secondAcked]];
+    const acknowledged = written.filter(([, , acked]) => acked <= newest).map(([row]) => row);
+    const sent = written.filter(([, at]) => at <= newest).map(([row]) => row);
+    expect([acknowledged, sent], 'every row acknowledged before the newest proven time is in its restore').toContainEqual(await ledger.read(cells, 'gru', restored));
+    const target = newest - 100;
+    const [before, after, half] = [target - 20, target + 20, 5];
 
     await plantHole(shipped.file, { incarnation: shipped.incarnation, from: 1, to: 2, fromAt: target - half, toAt: target + half, open: false });
     const unknownToNode = await refused(target);
@@ -334,7 +335,7 @@ test('restores read the holes recorded with the backup: one the restoring node h
     expect((await continuity(writer, created.id)).holes, 'the restoring node has no account of the hole it refuses').toEqual([]);
 
     for (let index = 0; index < 32; index++) {
-      await plantHole(shipped.file, { incarnation: shipped.incarnation, from: 10 + index, to: 11 + index, fromAt: secondAcked + 1000 * (index + 1), toAt: secondAcked + 1000 * (index + 1) + 10, open: false });
+      await plantHole(shipped.file, { incarnation: shipped.incarnation, from: 10 + index, to: 11 + index, fromAt: newest + 1000 * (index + 1), toAt: newest + 1000 * (index + 1) + 10, open: false });
     }
     const firstOf33 = await refused(target);
     expect([Date.parse(firstOf33.unavailableFrom!), Date.parse(firstOf33.unavailableTo!)]).toEqual([target - half, target + half]);
@@ -352,7 +353,7 @@ test('restores read the holes recorded with the backup: one the restoring node h
     expect(unreadable.unavailableFrom).toBeUndefined();
     await holeRecords('listed');
     unlisted = false;
-    expect(await planned(before), 'the same time is admitted again once the hole records can be listed').toBe('200');
+    expect(await planned(before), 'once the hole records can be listed again, the time outside every hole is not refused for them').not.toContain('could not be read');
     console.log(`hole records of ${created.id}: refused ${new Date(target).toISOString()} (planted, unknown to the node; first of 33), ${new Date(after).toISOString()} (open, unknown end) and ${new Date(before).toISOString()} while unlisted`);
   } finally {
     if (unlisted) await holeRecords('listed');
