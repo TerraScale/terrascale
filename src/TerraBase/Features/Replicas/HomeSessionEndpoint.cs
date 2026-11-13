@@ -14,11 +14,13 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Replicas;
 
 internal sealed class HomeSessionEndpoint(
-    ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local, QosSessions sessions)
+    ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local, QosSessions sessions,
+    TimeProvider time)
     : EndpointWithoutRequest<IResult>
 {
     private static readonly SqlError NotHere = new(SqlErrors.WrongRegion, "this region is not the database's home for that replica region");
     private static readonly SqlError Unsettled = new(SqlErrors.Unavailable, "the region's earlier writes have not reached the home yet; retry");
+    private static readonly SqlError Idle = new(SqlErrors.Unavailable, "the session to the database's home timed out waiting for a call; retry");
 
     public override void Configure()
     {
@@ -61,7 +63,7 @@ internal sealed class HomeSessionEndpoint(
         {
             using var opening = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             opening.CancelAfter(QosSessions.MessageTimeout);
-            var open = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionOpen, memory, tenant: null, opening.Token).ConfigureAwait(false);
+            var open = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionOpen, memory, tenant: null, deadline: null, opening.Token).ConfigureAwait(false);
             if (open is null)
             {
                 return Results.Empty;
@@ -123,23 +125,24 @@ internal sealed class HomeSessionEndpoint(
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
         {
-            using (var opening = session.TransactionDeadline.Bound(SqlLimits.MaxRequestTime, cancellationToken))
-            {
-                await AnswerAsync(output, new HomeSessionAnswer(true), opening.Token).ConfigureAwait(false);
-            }
+            await AnswerAsync(output, new HomeSessionAnswer(true), cancellationToken).ConfigureAwait(false);
             while (true)
             {
-                using var waiting = session.TransactionDeadline.Bound(QosSessions.IdleTimeout, cancellationToken);
+                var transaction = session.TransactionRemaining is null ? null : session.TransactionDeadline;
                 HomeSessionCall? call;
-                try
+                using (var deadline = new SessionMessageDeadline(time, transaction))
+                using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token))
                 {
-                    call = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionCall, memory, database, waiting.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    using var drain = new CancellationTokenSource(Shutdown.DrainBudget);
-                    await AnswerAsync(output, new HomeSessionAnswer(true, SqlErrors.TransactionExpired), drain.Token).ConfigureAwait(false);
-                    return;
+                    try
+                    {
+                        call = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionCall, memory, database, deadline, waiting.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                    {
+                        using var drain = new CancellationTokenSource(Shutdown.DrainBudget);
+                        await AnswerAsync(output, new HomeSessionAnswer(true, transaction is not null ? SqlErrors.TransactionExpired : Idle), drain.Token).ConfigureAwait(false);
+                        return;
+                    }
                 }
 
                 if (call is null)
@@ -157,7 +160,7 @@ internal sealed class HomeSessionEndpoint(
                 HomeSessionAnswer answer;
                 if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, requestToken).ConfigureAwait(false))
                 {
-                    await AnswerAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), requestToken).ConfigureAwait(false);
+                    await AnswerAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -201,7 +204,7 @@ internal sealed class HomeSessionEndpoint(
                     }
                 }
 
-                await AnswerAsync(output, answer, requestToken).ConfigureAwait(false);
+                await AnswerAsync(output, answer, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -258,6 +261,10 @@ internal sealed class HomeSessionEndpoint(
         return new HomeSessionAnswer(session.IsAutocommit, Result: new HomeSessionResult(result.Columns, result.Rows, result.RowsAffected, result.LastInsertRowid));
     }
 
-    private static ValueTask AnswerAsync(PipeWriter output, HomeSessionAnswer answer, CancellationToken cancellationToken) =>
-        HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, cancellationToken);
+    private static async ValueTask AnswerAsync(PipeWriter output, HomeSessionAnswer answer, CancellationToken cancellationToken)
+    {
+        using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        sending.CancelAfter(QosSessions.MessageTimeout);
+        await HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, sending.Token).ConfigureAwait(false);
+    }
 }

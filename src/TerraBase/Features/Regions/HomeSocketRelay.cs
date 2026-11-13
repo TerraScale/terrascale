@@ -26,7 +26,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(home);
         context.ReleaseRequestLease();
-        using var preauthentication = sessions.TryPreauthenticate(IpAllowlists.ClientOf(context));
+        using var preauthentication = sessions.TryPreauthenticate(IpAllowlists.ClientOf(context), SqlSocket.AuthDeadline, cancellationToken);
         var offered = context.WebSockets.WebSocketRequestedProtocols.Contains(SqlSocketEndpoint.Protocol, StringComparer.Ordinal);
         using var client = await context.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext
         {
@@ -44,12 +44,10 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
 
         byte[]? authFrame = null;
         TenantContext? tenant;
-        using (var authenticating = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
-            authenticating.CancelAfter(SqlSocket.AuthDeadline);
-            context.RequestAborted = authenticating.Token;
+            context.RequestAborted = preauthentication.Token;
             var authClosing = Task.CompletedTask;
-            await using var expiry = authenticating.Token.Register(() => authClosing = ExpireAuthenticationAsync()).ConfigureAwait(false);
+            await using var expiry = preauthentication.Token.Register(() => authClosing = ExpireAuthenticationAsync()).ConfigureAwait(false);
             try
             {
                 if (context.User.Identity?.IsAuthenticated != true)
@@ -88,10 +86,9 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                     authFrame = bytes[..length];
                 }
 
-                tenant = await TenantAsync(context, authenticating.Token).ConfigureAwait(false);
+                tenant = await TenantAsync(context, preauthentication.Token).ConfigureAwait(false);
             }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested && authenticating.IsCancellationRequested
-                && error is OperationCanceledException or WebSocketException)
+            catch (Exception error) when (preauthentication.Expired && error is OperationCanceledException or WebSocketException)
             {
                 await authClosing.ConfigureAwait(false);
                 return;
@@ -105,7 +102,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             async Task ExpireAuthenticationAsync()
             {
                 shutdown.CancelAfter(Shutdown.DrainBudget);
-                await CloseAsync(client, WebSocketCloseStatus.PolicyViolation, "no auth frame within 5 seconds", shutdown.Token).ConfigureAwait(false);
+                await CloseAsync(client, WebSocketCloseStatus.PolicyViolation, SqlSocket.AuthExpired, shutdown.Token).ConfigureAwait(false);
             }
         }
 

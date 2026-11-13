@@ -52,16 +52,19 @@ internal sealed class ReplicaSqlSession(
     public ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken) =>
         ExecuteAsync(plan, command, admit: null, cancellationToken);
 
-    public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken) =>
+        BoundAsync(token => ExecuteCoreAsync(plan, command, admit, token), static error => error, cancellationToken);
+
+    private async ValueTask<T> BoundAsync<T>(Func<CancellationToken, ValueTask<T>> run, Func<SqlError, T> failed, CancellationToken cancellationToken)
     {
-        using var bounded = TransactionDeadline.Bound(SqlLimits.MaxRequestTime, cancellationToken);
+        using var bounded = TransactionDeadline.Bound(cancellationToken);
         try
         {
-            var outcome = await ExecuteCoreAsync(plan, command, admit, bounded.Token).ConfigureAwait(false);
-            if (TransactionDeadline.Remaining == TimeSpan.Zero)
+            var outcome = await run(bounded.Token).ConfigureAwait(false);
+            if (!IsAutocommit && TransactionDeadline.Expired)
             {
                 await DisposeAsync().ConfigureAwait(false);
-                return Expired;
+                return failed(Expired);
             }
 
             if (IsAutocommit)
@@ -74,7 +77,7 @@ internal sealed class ReplicaSqlSession(
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             await DisposeAsync().ConfigureAwait(false);
-            return TransactionDeadline.Remaining == TimeSpan.Zero ? Expired : SqlErrors.Deadline;
+            return failed(TransactionDeadline.Expired ? Expired : SqlErrors.Deadline);
         }
     }
 
@@ -120,7 +123,10 @@ internal sealed class ReplicaSqlSession(
         }
     }
 
-    public async ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken)
+    public ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken) =>
+        BoundAsync(token => TryBatchCoreAsync(commands, token), static error => (SqlBatchOutcome?)new SqlBatchFailure(error, 0), cancellationToken);
+
+    private async ValueTask<SqlBatchOutcome?> TryBatchCoreAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken)
     {
         if (_readOnlyTransaction)
         {
@@ -143,7 +149,7 @@ internal sealed class ReplicaSqlSession(
             case (_, { } error):
                 return new SqlBatchFailure(error, 0);
             case (HomeSqlSession remote, _):
-                var outcome = await remote.BatchAsync([.. commands.Select(command => command.Command)], cancellationToken).ConfigureAwait(false);
+                var outcome = await remote.BatchAsync(commands, cancellationToken).ConfigureAwait(false);
                 _ = await MarkAsync(Empty).ConfigureAwait(false);
                 return outcome;
             default:
@@ -151,45 +157,18 @@ internal sealed class ReplicaSqlSession(
         }
     }
 
-    public async ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken) =>
-        await OpenHomeAsync(cancellationToken).ConfigureAwait(false) switch
+    public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken) =>
+        ExecuteScriptAsync(sql, SqlSession.MaxStatements, cancellationToken);
+
+    public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken) =>
+        BoundAsync(async token => await OpenHomeAsync(token).ConfigureAwait(false) switch
         {
             (_, { } error) => error,
-            (var home, _) => await MarkAsync(await home!.ExecuteScriptAsync(sql, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false),
-        };
+            (var home, _) => await MarkAsync(await home!.ExecuteScriptAsync(sql, maxStatements, token).ConfigureAwait(false)).ConfigureAwait(false),
+        }, static error => error, cancellationToken);
 
-    public async ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken) =>
-        await OpenHomeAsync(cancellationToken).ConfigureAwait(false) switch
-        {
-            (_, { } error) => error,
-            (var home, _) => await MarkAsync(await home!.ExecuteScriptAsync(sql, maxStatements, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false),
-        };
-
-    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
-    {
-        using var bounded = TransactionDeadline.Bound(SqlLimits.MaxRequestTime, cancellationToken);
-        try
-        {
-            var outcome = await DescribeCoreAsync(plan, command, bounded.Token).ConfigureAwait(false);
-            if (TransactionDeadline.Remaining == TimeSpan.Zero)
-            {
-                await DisposeAsync().ConfigureAwait(false);
-                return Expired;
-            }
-
-            if (IsAutocommit)
-            {
-                TransactionDeadline.Clear();
-            }
-
-            return outcome;
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            await DisposeAsync().ConfigureAwait(false);
-            return TransactionDeadline.Remaining == TimeSpan.Zero ? Expired : SqlErrors.Deadline;
-        }
-    }
+    public ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken) =>
+        BoundAsync(token => DescribeCoreAsync(plan, command, token), static error => (SqlDescribeOutcome)error, cancellationToken);
 
     private async ValueTask<SqlDescribeOutcome> DescribeCoreAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
@@ -296,7 +275,7 @@ internal sealed class ReplicaSqlSession(
             return SqlErrors.InFailedTransaction;
         }
 
-        if (!_expired && TransactionDeadline.Remaining == TimeSpan.Zero)
+        if (!_expired && TransactionDeadline.Expired)
         {
             _expired = true;
             await DropSnapshotAsync().ConfigureAwait(false);

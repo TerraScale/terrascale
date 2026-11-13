@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Net;
 using System.Text;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 
@@ -95,7 +96,7 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
             }
 
             stop.CancelAfter(Timeout.InfiniteTimeSpan);
-            await downstream.CopyToAsync(output.AsStream(leaveOpen: true), stop.Token).ConfigureAwait(false);
+            await RelayAsync(downstream, output, stop.Token).ConfigureAwait(false);
         }
         catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !closed.IsCancellationRequested)
         {
@@ -106,6 +107,35 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
             await stop.CancelAsync().ConfigureAwait(false);
             input.CancelPendingRead();
             await upstream.DrainAsync().ConfigureAwait(false);
+        }
+    }
+
+    private static async Task RelayAsync(Stream downstream, PipeWriter output, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var buffer = output.GetMemory();
+            var read = await downstream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                return;
+            }
+
+            output.Advance(read);
+            using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            sending.CancelAfter(QosSessions.MessageTimeout);
+            try
+            {
+                var flushed = await output.FlushAsync(sending.Token).ConfigureAwait(false);
+                if (flushed.IsCompleted)
+                {
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
         }
     }
 

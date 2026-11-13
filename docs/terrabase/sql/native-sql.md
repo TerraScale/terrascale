@@ -70,6 +70,7 @@ SELECT terrascale_expect_changes(changes(), 1);
 | `read_only_transaction`, `transaction_state` | 25006, 25000 |
 | `quota_exceeded`, `tenant_busy` | 53100, 53300 |
 | `unauthorized`, `unavailable` | 28000, 57P03 |
+| `write_outcome_unknown` | 08007 |
 
 The served [API reference](../api-reference.md) includes HTTP statuses and the complete response schemas.
 

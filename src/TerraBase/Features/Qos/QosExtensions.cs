@@ -76,10 +76,9 @@ internal static class QosExtensions
             Done or Unavailable => null,
         };
 
+        var retryAfter = 1;
         var admission = context.RequestServices.GetRequiredService<IQosAdmission>();
-        var (admitted, retryAfter) = tenant is not null
-            ? await admission.EnterAsync(tenant, context.RequestAborted).ConfigureAwait(false) : ((IDisposable?)null, 1);
-        using var lease = admitted;
+        using var lease = tenant is not null ? admission.TryEnter(tenant, out retryAfter) : null;
         if (tenant is not null && lease is null)
         {
             context.Response.Headers.RetryAfter = retryAfter.ToString(CultureInfo.InvariantCulture);

@@ -200,7 +200,7 @@ internal sealed class SqlSession(
     TenantContext database, bool canWrite, IHomeApply apply, DatabaseFences fences)
     : ISqlSession
 {
-    private const int MaxStatements = 256;
+    internal const int MaxStatements = 256;
     internal const int MaxRows = 10_000;
     internal const long MaxBytes = 8 * 1024 * 1024;
     private const long MaxChangedRows = 1024;
@@ -268,7 +268,7 @@ internal sealed class SqlSession(
             try
             {
                 var outcome = await ExecuteLockedAsync(plan, command, admit, first: false, bounded.Token).ConfigureAwait(false);
-                if (TransactionDeadline.Remaining == TimeSpan.Zero)
+                if (_inTransaction && TransactionDeadline.Expired)
                 {
                     await LoseAsync(Expired).ConfigureAwait(false);
                     return Expired;
@@ -289,7 +289,7 @@ internal sealed class SqlSession(
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             await DisposeAsync().ConfigureAwait(false);
-            return TransactionDeadline.Remaining == TimeSpan.Zero ? Expired : SqlErrors.Deadline;
+            return TransactionDeadline.Expired ? Expired : SqlErrors.Deadline;
         }
     }
 
@@ -313,7 +313,7 @@ internal sealed class SqlSession(
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             await DisposeAsync().ConfigureAwait(false);
-            return TransactionDeadline.Remaining == TimeSpan.Zero ? Expired : SqlErrors.Deadline;
+            return TransactionDeadline.Expired ? Expired : SqlErrors.Deadline;
         }
     }
 
@@ -401,7 +401,7 @@ internal sealed class SqlSession(
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             await DisposeAsync().ConfigureAwait(false);
-            return TransactionDeadline.Remaining == TimeSpan.Zero ? Expired : SqlErrors.Deadline;
+            return TransactionDeadline.Expired ? Expired : SqlErrors.Deadline;
         }
     }
 
@@ -757,7 +757,7 @@ internal sealed class SqlSession(
     }
 
     private SqlError LostReason() =>
-        _expiring == _generation || TransactionDeadline.Remaining == TimeSpan.Zero ? Expired : Aborted;
+        _expiring == _generation || TransactionDeadline.Expired ? Expired : Aborted;
 
     private async ValueTask<(SqlOutcome Outcome, bool Ended)> RunAsync(
         IStorageTransaction transaction, SqlStatementPlan plan, SqlCommand command, Tally tally, Func<SqlResult, SqlError?>? admit, bool first,
@@ -931,7 +931,16 @@ internal sealed class SqlSession(
                 return SqlErrors.Deadline;
             }
 
-            _ = await ChargedAsync(() => transaction.CommitAsync(cancellationToken)).ConfigureAwait(false);
+            using (var dispatched = TransactionDeadline.Dispatch())
+            {
+                if (dispatched is null)
+                {
+                    return Expired;
+                }
+
+                _ = await ChargedAsync(() => transaction.CommitAsync(CancellationToken.None)).ConfigureAwait(false);
+            }
+
             if (captured is { Count: > 0 })
             {
                 _committed!.Add(captured);
@@ -1043,8 +1052,8 @@ internal sealed class SqlSession(
         }
 
         var generation = ++_generation;
-        var timer = time.CreateTimer(_ => _ = ExpireLaterAsync(generation), null, TransactionRemaining ?? SqlLimits.MaxTransactionTime, Timeout.InfiniteTimeSpan);
-        _pinned = new Pinned(transaction, lease, write, baseline, timer, new Tally(), []);
+        var expiry = TransactionDeadline.Token.Register(() => _ = ExpireLaterAsync(generation));
+        _pinned = new Pinned(transaction, lease, write, baseline, expiry, new Tally(), []);
         return (_pinned, null);
     }
 
@@ -1072,7 +1081,7 @@ internal sealed class SqlSession(
 
     private async ValueTask ExpireIfDueAsync()
     {
-        if (_lost is null && TransactionDeadline.Remaining == TimeSpan.Zero)
+        if (_lost is null && TransactionDeadline.Expired)
         {
             await LoseAsync(Expired).ConfigureAwait(false);
         }
@@ -1093,7 +1102,7 @@ internal sealed class SqlSession(
 
         _pinned = null;
         _generation++;
-        await pinned.Timer.DisposeAsync().ConfigureAwait(false);
+        await pinned.Expiry.DisposeAsync().ConfigureAwait(false);
         try
         {
             await pinned.Transaction.DisposeAsync().ConfigureAwait(false);
@@ -1217,7 +1226,7 @@ internal sealed class SqlSession(
     };
 
     private sealed record Pinned(
-        IStorageTransaction Transaction, StorageQuotaLease? Lease, bool Write, long Baseline, ITimer Timer, Tally Tally,
+        IStorageTransaction Transaction, StorageQuotaLease? Lease, bool Write, long Baseline, CancellationTokenRegistration Expiry, Tally Tally,
         List<(string Name, TallySnapshot Snapshot)> Savepoints);
 
     private sealed record TallySnapshot(long Rows, bool Wrote, Dictionary<string, int> Operations);

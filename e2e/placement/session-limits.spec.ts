@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { once } from 'node:events';
 import { expect } from '@playwright/test';
 import { rawSqlSocket, frame, scheduleStatement } from '../support/sql-socket';
-import { holdPeerStream } from '../support/peer-stream-fault';
-import { postgres } from '../support/postgres-wire';
+import { holdPeerStream, holdPeerReplies } from '../support/peer-stream-fault';
+import { postgres, stalledPostgres, message } from '../support/postgres-wire';
 import { auditedContext, Audit } from '../support/audit';
 import { newAddress } from '../support/inbox';
 import { signUp, verify, onboard, confirmWithPassword } from '../support/hosted';
@@ -34,7 +34,7 @@ test('a relayed session finishes a bounded close and releases its process slot',
       const ws = await rawSqlSocket(url);
       try {
         const close = await ws.closing;
-        expect(close).toEqual({ code: 1008, reason: 'no auth frame within 5 seconds' });
+        expect(close).toEqual({ code: 1008, reason: 'authentication did not finish within 5 seconds' });
         expect(await active()).toBe(0);
         const started = performance.now();
         await ws.closed;
@@ -266,6 +266,77 @@ test('a Postgres relay with an unresponsive real peer drains before returning it
     pg?.socket.destroy();
     if (pg) await pg.closed;
     await fault.close();
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('a commit whose answer arrives after the transaction deadline is reported as committed', async ({ cells, request }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('late-commit'), homeRegion: 'gru', replicaRegions: ['fra'] },
+  }), 201);
+  const token = await credential(request);
+  const peersPath = join(stateDir, 'peers');
+  const peers = readFileSync(peersPath, 'utf8');
+  const fault = await holdPeerReplies('127.0.0.5', 8081, 'http://127.0.0.1:8081', '/v1/internal/sql/session');
+  let ws: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
+  let release: NodeJS.Timeout | undefined;
+  try {
+    await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
+    await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (1)');
+    await replicated(cells, replica, created.id, 1);
+    writeFileSync(peersPath, peers.replace('journey-1 gru 127.0.0.1', 'journey-1 gru 127.0.0.5'));
+    ws = await rawSqlSocket('http://127.0.0.1:8180' + database(created.id) + '/sql/ws', token);
+    const replies: { type: string; error?: { message: string } }[] = [];
+    ws.events.on('message', reply => replies.push(reply));
+    const opened = once(fault.events, 'opened');
+    const began = performance.now();
+    expect((await execute(ws, 'BEGIN')).transaction).toBe(true);
+    expect(await execute(ws, 'INSERT INTO placement_rows VALUES (2)')).toMatchObject({ type: 'result', transaction: true });
+    await opened;
+    fault.hold();
+    const held = once(fault.events, 'held');
+    const answer = once(ws.events, 'message');
+    ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 3, type: 'commit' }))));
+    await held;
+    release = setTimeout(fault.release, Math.max(0, began + 6500 - performance.now()));
+    expect((await answer)[0]).toMatchObject({ id: 3, type: 'result', transaction: false });
+    expect(performance.now() - began).toBeGreaterThan(5000);
+    expect(replies.filter(reply => reply.error?.message.includes('rolled back'))).toEqual([]);
+    const read = await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value');
+    expect(read.results[0].rows).toEqual([[1], [2]]);
+  } finally {
+    clearTimeout(release);
+    fault.release();
+    writeFileSync(peersPath, peers);
+    ws?.socket.destroy();
+    if (ws) await ws.closed;
+    await fault.close();
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('a Postgres relay whose client stops reading returns its admission', async ({ cells, request }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('postgres-unread'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  const active = async () => {
+    const response = await request.get('http://127.0.0.1:9191/metrics');
+    expect(response.status()).toBe(200);
+    const metric = (await response.text()).split('\n').find(line => /^terrabase_qos_active_sessions(?:\{| )/.test(line));
+    expect(metric).toBeDefined();
+    return Number(metric!.split(' ').at(-1));
+  };
+  let pg: Awaited<ReturnType<typeof stalledPostgres>> | undefined;
+  try {
+    const prior = await active();
+    const query = message('Q', Buffer.from('WITH RECURSIVE r(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM r WHERE x<2000) SELECT x, hex(zeroblob(1500)) FROM r\0'));
+    pg = await stalledPostgres(6532, created.id, Buffer.concat(Array.from({ length: 16 }, () => query)));
+    await expect.poll(active, { message: 'the relay holds an admission while its client is connected' }).toBe(prior + 1);
+    await expect.poll(active, { message: 'the relay whose client stopped reading returns its admission', timeout: 45_000, intervals: [250, 500, 1000] })
+      .toBe(prior);
+  } finally {
+    pg?.socket.destroy();
+    if (pg) await pg.closed;
     await removeDatabase(cells, created.id);
   }
 });

@@ -45,6 +45,9 @@ internal sealed class SqlSocket(
     private const string WriterMoving = "the region's writer is moving; reconnect";
 
     public static readonly TimeSpan AuthDeadline = TimeSpan.FromSeconds(5);
+    public const string AuthExpired = "authentication did not finish within 5 seconds";
+
+    private static readonly SqlError SessionLimit = new(SqlErrors.TenantBusy, "organization session limit exceeded");
 
     private static readonly SqlError AuthFirst = new(SqlErrors.Unauthorized, "the first frame is {\"type\":\"auth\",\"token\":\"…\"}");
     private static readonly SqlError UnknownDatabase = new(SqlErrors.Unauthorized, "the database does not exist or the credential does not reach it");
@@ -84,16 +87,24 @@ internal sealed class SqlSocket(
         await using var cutOff = _revoked.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the credential was revoked")).ConfigureAwait(false);
         using var admitting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, fence);
         (_database, _canWrite, _fence, _admitting) = (database, canWrite, fence, admitting.Token);
+        using var preauthentication = sessions.TryPreauthenticate(IpAllowlists.ClientOf(context), AuthDeadline, cancellationToken);
+        if (preauthentication is null)
+        {
+            await RefuseAsync(null, SessionLimit, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         var frameAuth = _database is null;
-        if (frameAuth && !await AuthenticateAsync(cancellationToken).ConfigureAwait(false))
+        if (frameAuth && !await AuthenticateAsync(preauthentication, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
 
         using var lease = sessions.TryEnter(Database);
+        preauthentication.Dispose();
         if (lease is null)
         {
-            await RefuseAsync(_authId, new SqlError(SqlErrors.TenantBusy, "organization session limit exceeded"), cancellationToken).ConfigureAwait(false);
+            await RefuseAsync(_authId, SessionLimit, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -133,15 +144,24 @@ internal sealed class SqlSocket(
                 }
 
                 await _frame.WaitAsync(cancellationToken).ConfigureAwait(false);
+                using var operation = Session.TransactionDeadline.Bound(cancellationToken);
+                var aborted = context.RequestAborted;
+                context.RequestAborted = operation.Token;
                 try
                 {
-                    if (!await AnswerAsync(frame.Value.Bytes.AsMemory(0, frame.Value.Length), cancellationToken).ConfigureAwait(false))
+                    if (!await AnswerAsync(frame.Value.Bytes.AsMemory(0, frame.Value.Length), operation.Token).ConfigureAwait(false))
                     {
                         return;
                     }
                 }
+                catch (OperationCanceledException) when (Session.TransactionDeadline.Expired && !cancellationToken.IsCancellationRequested)
+                {
+                    await ExpireTransactionAsync().ConfigureAwait(false);
+                    return;
+                }
                 finally
                 {
+                    context.RequestAborted = aborted;
                     _frame.Release();
                 }
             }
@@ -153,23 +173,37 @@ internal sealed class SqlSocket(
         }
     }
 
-    private async ValueTask<bool> AuthenticateAsync(CancellationToken cancellationToken)
+    private async ValueTask<bool> AuthenticateAsync(SessionPreauthentication preauthentication, CancellationToken cancellationToken)
     {
-        (byte[] Bytes, int Length, IMemoryReservation Reservation)? frame;
-        using (var deadline = new CancellationTokenSource(AuthDeadline))
-        await using (deadline.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "no auth frame within 5 seconds")).ConfigureAwait(false))
+        var aborted = context.RequestAborted;
+        context.RequestAborted = preauthentication.Token;
+        await using var expiry = preauthentication.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, AuthExpired)).ConfigureAwait(false);
+        try
         {
-            frame = await ReceiveAsync(FirstBufferBytes, cancellationToken).ConfigureAwait(false);
-            if (frame is null || _closing)
-            {
-                if (frame is { } late)
-                {
-                    ArrayPool<byte>.Shared.Return(late.Bytes);
-                    late.Reservation.Dispose();
-                }
+            return await ValidateAsync(preauthentication.Token, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (preauthentication.Expired)
+        {
+            return false;
+        }
+        finally
+        {
+            context.RequestAborted = aborted;
+        }
+    }
 
-                return false;
+    private async ValueTask<bool> ValidateAsync(CancellationToken validating, CancellationToken cancellationToken)
+    {
+        var frame = await ReceiveAsync(FirstBufferBytes, validating).ConfigureAwait(false);
+        if (frame is null || _closing)
+        {
+            if (frame is { } late)
+            {
+                ArrayPool<byte>.Shared.Return(late.Bytes);
+                late.Reservation.Dispose();
             }
+
+            return false;
         }
 
         SqlSocketRequest? request;
@@ -209,7 +243,7 @@ internal sealed class SqlSocket(
         }
 
         _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded;
-        switch (await CheckTenantAsync(cancellationToken).ConfigureAwait(false))
+        switch (await CheckTenantAsync(validating).ConfigureAwait(false))
         {
             case TenantContext found:
                 _database = found;
@@ -253,7 +287,7 @@ internal sealed class SqlSocket(
             return null;
         }
 
-        var transaction = _session?.TransactionRemaining;
+        var transaction = _session?.TransactionRemaining is null ? null : _session.TransactionDeadline;
         using var idle = new SessionMessageDeadline(time, transaction);
         var closing = Task.CompletedTask;
         var expired = idle.Token.Register(() => closing = ExpireAsync());
@@ -333,14 +367,15 @@ internal sealed class SqlSocket(
 
         async Task ExpireAsync()
         {
-            _closed.CancelAfter(Shutdown.DrainBudget);
             if (transaction is not null)
             {
-                await SendErrorAsync(null, new SqlBatchFailure(SqlErrors.TransactionExpired, 0), _closed.Token).ConfigureAwait(false);
+                await ExpireTransactionAsync().ConfigureAwait(false);
+                return;
             }
 
-            await CloseAsync(WebSocketCloseStatus.PolicyViolation, transaction is not null ? SqlErrors.TransactionExpired.Message
-                : idle.IsPartial ? "incomplete message timeout exceeded" : "session idle timeout exceeded").ConfigureAwait(false);
+            _closed.CancelAfter(Shutdown.DrainBudget);
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, idle.IsPartial ? "incomplete message timeout exceeded" : "session idle timeout exceeded")
+                .ConfigureAwait(false);
         }
 
         void Release()
@@ -430,11 +465,19 @@ internal sealed class SqlSocket(
         }
     }
 
+    private async Task ExpireTransactionAsync()
+    {
+        _closed.CancelAfter(Shutdown.DrainBudget);
+        await SendErrorAsync(null, new SqlBatchFailure(SqlErrors.TransactionExpired, 0), _closed.Token).ConfigureAwait(false);
+        await CloseAsync(WebSocketCloseStatus.PolicyViolation, SqlErrors.TransactionExpired.Message).ConfigureAwait(false);
+    }
+
     private async ValueTask<RegionalIngress.Lease?> AdmitAsync(long? id, CancellationToken cancellationToken)
     {
+        using var admitting = CancellationTokenSource.CreateLinkedTokenSource(_admitting, cancellationToken);
         try
         {
-            return await ingress.EnterAsync(parkWhileHeld: true, _admitting).ConfigureAwait(false);
+            return await ingress.EnterAsync(parkWhileHeld: true, admitting.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_fence.IsCancellationRequested)
         {

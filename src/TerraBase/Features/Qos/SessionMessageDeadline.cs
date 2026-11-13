@@ -1,30 +1,40 @@
+using TerraBase.Features.Sql;
+
 namespace TerraBase.Features.Qos;
 
-internal sealed class SessionMessageDeadline(TimeProvider time, TimeSpan? transaction) : IDisposable
+internal sealed class SessionMessageDeadline : IDisposable
 {
-    private readonly long _waiting = time.GetTimestamp();
+    private readonly TimeProvider _time;
+    private readonly CancellationTokenSource _stop;
+    private readonly CancellationTokenSource? _transaction;
     private long? _started;
     private long _bytes;
-    private readonly CancellationTokenSource _stop = new(transaction ?? QosSessions.IdleTimeout, time);
 
-    public CancellationToken Token => _stop.Token;
-    public bool IsCancellationRequested => _stop.IsCancellationRequested;
+    public SessionMessageDeadline(TimeProvider time, SqlTransactionDeadline? transaction)
+    {
+        _time = time;
+        _stop = new CancellationTokenSource(transaction is null ? QosSessions.IdleTimeout : Timeout.InfiniteTimeSpan, time);
+        _transaction = transaction?.Bound(_stop.Token);
+    }
+
+    public CancellationToken Token => (_transaction ?? _stop).Token;
+
+    public bool IsCancellationRequested => Token.IsCancellationRequested;
+
     public bool IsPartial => _started is not null;
 
     public void Progress(int bytes, long? started = null)
     {
-        _started ??= started ?? time.GetTimestamp();
+        _started ??= started ?? _time.GetTimestamp();
         _bytes += bytes;
         var remaining = QosSessions.MessageTimeout + TimeSpan.FromSeconds((double)_bytes / QosSessions.MinimumMessageBytesPerSecond)
-            - time.GetElapsedTime(_started.Value);
-        if (transaction is { } budget)
-        {
-            var left = budget - time.GetElapsedTime(_waiting);
-            remaining = left < remaining ? left : remaining;
-        }
-
+            - _time.GetElapsedTime(_started.Value);
         _stop.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
     }
 
-    public void Dispose() => _stop.Dispose();
+    public void Dispose()
+    {
+        _transaction?.Dispose();
+        _stop.Dispose();
+    }
 }

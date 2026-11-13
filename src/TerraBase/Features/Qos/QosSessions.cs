@@ -63,7 +63,7 @@ internal sealed class QosSessions
         }
     }
 
-    public IDisposable? TryPreauthenticate(IPAddress? address)
+    public SessionPreauthentication? TryPreauthenticate(IPAddress? address, TimeSpan deadline, CancellationToken cancellationToken)
     {
         address = (address ?? IPAddress.None).MapToIPv6();
         lock (_gate)
@@ -76,8 +76,9 @@ internal sealed class QosSessions
             }
 
             _preauthentication[address] = count + 1;
-            return new Lease(() => LeavePreauthentication(address));
         }
+
+        return new SessionPreauthentication(new Lease(() => LeavePreauthentication(address)), deadline, cancellationToken);
     }
 
     private void LeavePreauthentication(IPAddress address)

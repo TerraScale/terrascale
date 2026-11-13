@@ -479,7 +479,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `write_outcome_unknown`
 
-503 — a write committed or may have committed: its durable copy in another region was not confirmed in time, or the region you called forwarded it to the database's writer and got no answer. Read what the write would have produced before repeating it. Retry: not blindly.
+503, SQLSTATE 08007 — a write committed or may have committed: its durable copy in another region was not confirmed in time, or the region you called forwarded it, or a SQL session's commit, to the database's writer and got no answer. Read what the write would have produced before repeating it, above all for a non-idempotent write. Retry: not blindly.
 
 ### `wrong_region`
 

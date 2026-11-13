@@ -1,22 +1,21 @@
 using System.Diagnostics.Metrics;
-using System.Threading.RateLimiting;
 using TerraBase.Features.Platform;
-using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Qos;
 
-internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQosAdmission, IDisposable
+internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQosAdmission
 {
     private const int MaxTenants = 4096;
-    private static readonly QosPolicy PlatformPolicy = QosPolicy.For(PlanTier.Enterprise) with { RequestsPerSecond = 0, Burst = 0 };
-    private readonly ConcurrencyLimiter _platform = new(new ConcurrencyLimiterOptions
+    private static readonly QosPolicy PlatformPolicy = QosPolicy.For(PlanTier.Enterprise) with
     {
-        PermitLimit = PlatformPolicy.Concurrency,
-        QueueLimit = PlatformPolicy.Concurrency,
-        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-    });
+        RequestsPerSecond = 0,
+        Burst = 0,
+        Concurrency = 0,
+        EngineSeconds = 0,
+        EngineBurst = 0,
+    };
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Lane> _lanes = [];
     private readonly Counter<long> _rejected = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.qos.rejected");
@@ -98,53 +97,6 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
         }
     }
 
-    public async ValueTask<(IDisposable? Lease, int RetryAfter)> EnterAsync(TenantContext tenant, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(tenant);
-        if (!PlatformDatabases.IsPlatform(tenant.OrganizationId))
-        {
-            var immediate = TryEnter(tenant, out var retry);
-            return (immediate, retry);
-        }
-
-        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        waiting.CancelAfter(SqlLimits.MaxRequestTime);
-        RateLimitLease capacity;
-        try
-        {
-            capacity = await _platform.AcquireAsync(1, waiting.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            return (null, 1);
-        }
-
-        if (!capacity.IsAcquired)
-        {
-            capacity.Dispose();
-            return (null, 1);
-        }
-
-        try
-        {
-            var admitted = TryEnter(tenant, out var retry);
-            if (admitted is null)
-            {
-                capacity.Dispose();
-                return (null, retry);
-            }
-
-            return (new PlatformLease(admitted, capacity), retry);
-        }
-        catch
-        {
-            capacity.Dispose();
-            throw;
-        }
-    }
-
-    public void Dispose() => _platform.Dispose();
-
     public void ChargeEngine(TenantContext tenant, TimeSpan spent)
     {
         ArgumentNullException.ThrowIfNull(tenant);
@@ -190,22 +142,6 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
 
     private void Record(TenantContext tenant, long started) => _duration.Record(Math.Max(0, time.GetElapsedTime(started).TotalSeconds),
         new("plan", tenant.Plan.JsonName), new("tenant_bucket", Bucket(tenant)));
-
-    private sealed class PlatformLease(IDisposable admission, RateLimitLease capacity) : IDisposable
-    {
-        private IDisposable? _admission = admission;
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _admission, null) is { } admitted)
-            {
-                using (capacity)
-                {
-                    admitted.Dispose();
-                }
-            }
-        }
-    }
 
     private sealed class Lane
     {

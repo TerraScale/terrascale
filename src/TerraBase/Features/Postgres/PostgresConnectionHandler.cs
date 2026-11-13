@@ -40,6 +40,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     private static readonly ReadOnlyDictionary<string, SqlValue> NoNamed = ReadOnlyDictionary<string, SqlValue>.Empty;
 
+    private static readonly PgError Expired = new(SqlErrors.Sqlstate(SqlErrors.TransactionExpired.Code), SqlErrors.TransactionExpired.Message, Fatal: true);
+
     private readonly union Access(Authorized, PgError, RelayAccess);
 
     private sealed record RelayAccess(HomeNode Home, TenantContext Tenant);
@@ -69,34 +71,24 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         try
         {
             Relay? relay;
-            using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(closed))
+            var client = peer;
+            if (edge && !relayed)
             {
-                handshake.CancelAfter(HandshakeTimeout);
-                var admission = services.GetRequiredService<QosSessions>();
-                using var incoming = admission.TryPreauthenticate(peer);
-                if (incoming is null)
+                using var proxy = CancellationTokenSource.CreateLinkedTokenSource(closed);
+                proxy.CancelAfter(HandshakeTimeout);
+                client = await ReadProxyHeaderAsync(input, peer, proxy.Token).ConfigureAwait(false);
+            }
+
+            using (var preauthentication = services.GetRequiredService<QosSessions>().TryPreauthenticate(client, HandshakeTimeout, closed))
+            {
+                if (preauthentication is null)
                 {
                     output.Error("53300", "organization session limit exceeded", fatal: true);
-                    await output.FlushAsync(handshake.Token).ConfigureAwait(false);
+                    await output.FlushAsync(closed).ConfigureAwait(false);
                     return;
                 }
 
-                var client = edge && !relayed ? await ReadProxyHeaderAsync(input, peer, handshake.Token).ConfigureAwait(false) : peer;
-                var sameAddress = Equals(client?.MapToIPv6(), peer?.MapToIPv6());
-                if (!sameAddress)
-                {
-                    incoming.Dispose();
-                }
-
-                using var addressed = sameAddress ? null : admission.TryPreauthenticate(client);
-                if (!sameAddress && addressed is null)
-                {
-                    output.Error("53300", "organization session limit exceeded", fatal: true);
-                    await output.FlushAsync(handshake.Token).ConfigureAwait(false);
-                    return;
-                }
-
-                (session, relay) = await StartAsync(input, output, client, edge, relayed, handshake.Token).ConfigureAwait(false);
+                (session, relay) = await StartAsync(input, output, client, edge, relayed, preauthentication.Token).ConfigureAwait(false);
             }
 
             if (relay is not null)
@@ -477,7 +469,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         while (true)
         {
             (byte type, byte[] body, IMemoryReservation reservation) messageRead;
-            var transaction = session.Sql.TransactionRemaining;
+            var transaction = session.Sql.TransactionRemaining is null ? null : session.Sql.TransactionDeadline;
             using (var deadline = new SessionMessageDeadline(Time, transaction))
             using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token))
             {
@@ -747,12 +739,15 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     (statement.Columns, statement.Described) = (columns, true);
                     if (statement.Statement.Kind == PgKind.Sql && Array.Exists(statement.Oids, oid => oid == 0))
                     {
-                        _ = await GuardAsync(session, async (database, token) =>
+                        if (await GuardAsync(session, async (database, token) =>
                         {
                             PostgresStatements.InferParameters(statement.Statement, statement.Oids,
                                 await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false));
                             return Array.Empty<PgResult>();
-                        }, cancellationToken).ConfigureAwait(false);
+                        }, cancellationToken).ConfigureAwait(false) is PgError { Fatal: true } inferring)
+                        {
+                            return inferring;
+                        }
                     }
 
                     output.Begin('t');
@@ -1021,7 +1016,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private async ValueTask<PgOutcome> AdmitAsync(Session session, Func<TenantContext, CancellationToken, ValueTask<PgOutcome>> run,
         Action<TenantContext> authorized, CancellationToken cancellationToken)
     {
-        using var running = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var running = session.Sql.TransactionDeadline.Bound(cancellationToken);
         session.Track(running);
         IDatabaseStore? store = null;
         try
@@ -1051,9 +1046,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             using var scope = QosContext.Enter(tenant, Memory, admission);
             using var statement = CancellationTokenSource.CreateLinkedTokenSource(running.Token, store?.Refused ?? CancellationToken.None);
-            var result = await run(database, statement.Token).ConfigureAwait(false);
+            var outcome = await run(database, statement.Token).ConfigureAwait(false);
             _ = await engine.OpenDatabaseAsync(database, running.Token).ConfigureAwait(false);
-            return result;
+            return session.Sql.TransactionDeadline.Expired ? Expired : outcome;
         }
         catch (OperationCanceledException) when (store?.Refused.IsCancellationRequested == true)
         {
@@ -1061,7 +1056,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         catch (OperationCanceledException) when (running.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            return new PgError("57014", "canceling statement due to user request");
+            return session.Sql.TransactionDeadline.Expired ? Expired : new PgError("57014", "canceling statement due to user request");
         }
         catch (StorageCopyFaultedException)
         {

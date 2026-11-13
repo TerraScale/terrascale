@@ -63,3 +63,38 @@ export async function postgres(port = 6432, database = journey().databaseId) {
     },
   };
 }
+
+export async function stalledPostgres(port: number, database: string, pipelined: Buffer) {
+  const current = journey();
+  const socket = connect(port, '127.0.0.1');
+  await once(socket, 'connect');
+  const parameters = Buffer.from(`user\0any\0database\0${current.projectId}/${database}\0\0`);
+  const prefix = Buffer.alloc(8);
+  prefix.writeInt32BE(parameters.length + 8);
+  prefix.writeInt32BE(196608, 4);
+  const closed = new Promise<void>(resolve => socket.once('close', () => resolve()));
+  await new Promise<void>((resolve, reject) => {
+    let buffered = Buffer.alloc(0);
+    const received = (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length >= 5 && buffered.length >= 1 + buffered.readInt32BE(1)) {
+        const length = buffered.readInt32BE(1);
+        const type = String.fromCharCode(buffered[0]);
+        const body = buffered.subarray(5, length + 1);
+        buffered = buffered.subarray(length + 1);
+        if (type === 'R' && body.readInt32BE() === 3) socket.write(message('p', Buffer.from(current.apiKey + '\0')));
+        if (type === 'E' || type === 'Z') {
+          socket.off('data', received);
+          socket.pause();
+          if (type === 'E') reject(new Error(body.toString()));
+          else resolve();
+          return;
+        }
+      }
+    };
+    socket.on('data', received);
+    socket.write(Buffer.concat([prefix, parameters]));
+  });
+  socket.write(pipelined);
+  return { socket, closed };
+}

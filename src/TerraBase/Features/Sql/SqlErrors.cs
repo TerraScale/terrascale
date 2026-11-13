@@ -23,6 +23,8 @@ internal static partial class SqlErrors
     public const string TooLarge = "too_large";
     public const string QueryCanceled = "query_canceled";
     public const string WriteOutcomeUnknown = "write_outcome_unknown";
+    public static SqlError OutcomeUnknown(string home) => new(WriteOutcomeUnknown,
+        $"the commit was sent to the database's home region {home} and its answer was lost, so it may have committed; read back what it would have written before retrying it");
     public static readonly SqlError TransactionExpired = new(QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
     public const string TransactionRolledBack = "transaction_rolled_back";
     public const string TransactionAborted = "transaction_aborted";
@@ -36,6 +38,7 @@ internal static partial class SqlErrors
     public const string RecoveryPending = "recovery_pending";
     public const string Unauthorized = "unauthorized";
     public const string WrongRegion = "wrong_region";
+    public const string WriteOutcomeUnknown = "write_outcome_unknown";
     public const string InternalError = "internal_error";
 
     public static string Sqlstate(string code) => code switch
@@ -65,6 +68,7 @@ internal static partial class SqlErrors
         Unavailable or CopyFaulted or RecoveryPending => "57P03",
         Unauthorized => "28000",
         WrongRegion => "08004",
+        WriteOutcomeUnknown => "08007",
         InternalError => "XX000",
         _ => "0A000",
     };
