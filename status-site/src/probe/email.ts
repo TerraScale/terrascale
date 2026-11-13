@@ -52,6 +52,7 @@ class InboxError extends CanaryError {}
 interface Message {
   id: string;
   subject?: string;
+  createdAt?: string;
 }
 
 const members = <T>(body: unknown): T[] =>
@@ -135,15 +136,15 @@ export async function runEmailProbe(
     const { inbox, token } = await openInbox(next, fetcher);
     next.inbox = inbox;
     const auth = { headers: { authorization: `Bearer ${token}` } };
-    // Arrival is timed on our own clock: the inbox's timestamps are neither
-    // precise nor in step with it.
     const arrived = async (): Promise<boolean> => {
       const { marker, sentAt } = next.pending!;
       const found = members<Message>(await inboxCall("/messages", auth, fetcher)).find((message) =>
         message.subject?.includes(marker),
       );
       if (!found) return false;
-      next.last = { ok: true, ms: Date.now() - sentAt, error: null };
+      const receivedAt = Date.parse(found.createdAt ?? "");
+      if (!Number.isFinite(receivedAt)) throw new InboxError("Inbox invalid receipt timestamp");
+      next.last = { ok: true, ms: Math.max(0, receivedAt - sentAt), error: null };
       delete next.pending;
       await inboxCall(`/messages/${found.id}`, { ...auth, method: "DELETE" }, fetcher, [204]).catch(() => {});
       return true;

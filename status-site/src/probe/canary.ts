@@ -31,7 +31,6 @@ export interface CanaryConfig {
 }
 
 export interface CanaryResult {
-  /** Null when monitoring could not authenticate, so no service check ran. */
   ok: boolean | null;
   /** The slowest TerraBase request; null when the canary failed. */
   latencyMs: number | null;
@@ -124,7 +123,7 @@ export class CanaryError extends Error {
 /** The monitor itself could not run the check: no evidence either way. */
 export class CanaryMonitorError extends CanaryError {}
 
-export class CanaryCredentialError extends CanaryMonitorError {
+export class CanaryCredentialError extends CanaryError {
   constructor() {
     super(CANARY_CREDENTIAL_INVALID);
   }
@@ -356,8 +355,6 @@ async function exchangeToken(
     fetcher,
     [200],
   ).catch((error: unknown) => {
-    // Only the grant rejection identifies the monitor's credential. A 401
-    // from TerraBase after a successful grant remains a service failure.
     if (error instanceof CanaryError && error.status === 401) throw new CanaryCredentialError();
     // Named, so a slow or refusing ts-auth is not read as a TerraBase failure.
     if (error instanceof CanaryError) throw new CanaryError(`Token exchange: ${error.message}`, error.status);

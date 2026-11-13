@@ -117,7 +117,6 @@ export const stateAttr = (state: TimelineState | PageStatus): string =>
     component whose every endpoint it found so (see src/probe/terrabase.ts). */
 export const NOT_CONFIGURED = "Not configured";
 
-/** The monitor cannot authenticate; this is no evidence of service health. */
 export const CANARY_CREDENTIAL_INVALID = "Canary credential invalid";
 
 /** The monitor's own Free-plan operation allowance is spent, so TerraBase
@@ -128,11 +127,7 @@ export const CANARY_QUOTA_EXHAUSTED = "Canary quota exhausted";
 export const EMAIL_INBOX_UNAVAILABLE = "Probe inbox unavailable";
 
 /** Notes of checks the monitor itself could not run. */
-const MONITOR_FAULTS: ReadonlySet<string> = new Set([
-  CANARY_CREDENTIAL_INVALID,
-  CANARY_QUOTA_EXHAUSTED,
-  EMAIL_INBOX_UNAVAILABLE,
-]);
+const MONITOR_FAULTS: ReadonlySet<string> = new Set([CANARY_QUOTA_EXHAUSTED, EMAIL_INBOX_UNAVAILABLE]);
 
 export const isMonitorFault = (note: string | null | undefined): note is string =>
   typeof note === "string" && MONITOR_FAULTS.has(note);
