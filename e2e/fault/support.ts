@@ -201,6 +201,18 @@ export function logLength(node: Node): number {
   return readFileSync(join(stateDir, 'logs', `${node.service}.log`)).length;
 }
 
-export function logLines(node: Node, from: number, text: string): string[] {
-  return readFileSync(join(stateDir, 'logs', `${node.service}.log`)).subarray(from).toString().split('\n').filter(line => line.includes(text));
+export type LogEvent = { msg: string; File?: string; From?: number; To?: number; Start?: number; Oldest?: number | null };
+
+export function logEvents(node: Node, from: number, file: string): LogEvent[] {
+  return readFileSync(join(stateDir, 'logs', `${node.service}.log`)).subarray(from).toString().split('\n')
+    .flatMap(line => {
+      const at = line.indexOf('{');
+      if (at < 0) return [];
+      try {
+        return [JSON.parse(line.slice(at)) as LogEvent];
+      } catch {
+        return [];
+      }
+    })
+    .filter(event => event.File?.startsWith(file) === true);
 }

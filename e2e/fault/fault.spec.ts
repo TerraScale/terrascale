@@ -2,7 +2,7 @@ import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
 import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
-import { backupStore, crashWrite, endpoint, Ledger, logLength, logLines, metric, probe, regions, restartAfterKill, topology } from './support';
+import { backupStore, crashWrite, endpoint, Ledger, logEvents, logLength, metric, probe, regions, restartAfterKill, topology } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -120,18 +120,17 @@ test('history lost while the backup store is unreachable is one hole, survives a
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
     await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the discarded history becomes exactly one hole' }).toBe(holes + 1);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(1);
-    const events = logLines(writer, logStart, `/${created.id}/nodes/`);
-    const recorded = events.flatMap(line => /lost its history from position (\d+) to (\d+) before it was stored/.exec(line) ?? []);
-    expect(recorded, events.join('\n')).toHaveLength(3);
-    const [cursor, start] = [Number(recorded[1]), Number(recorded[2])];
-    const discards = events.slice(0, events.findIndex(line => line.includes('lost its history')))
-      .map(line => /its history now starts at position (\d+), oldest retained change (\d+)/.exec(line)).filter(match => match !== null);
-    expect(discards.length, events.join('\n')).toBeGreaterThan(0);
+    const events = logEvents(writer, logStart, `v1/`).filter(event => event.File!.includes(`/${created.id}/nodes/`));
+    const recorded = events.filter(event => event.msg.includes('lost its history'));
+    expect(recorded, JSON.stringify(events)).toHaveLength(1);
+    const { From: cursor, To: start } = recorded[0]!;
+    const discards = events.slice(0, events.indexOf(recorded[0]!)).filter(event => event.msg.includes('history now starts at'));
+    expect(discards.length, JSON.stringify(events)).toBeGreaterThan(0);
     const discarded = discards[discards.length - 1]!;
-    expect(Number(discarded[1])).toBe(Number(discarded[2]));
-    expect(start).toBe(Number(discarded[1]));
-    expect(cursor).toBeLessThan(start);
-    expect(events.filter(line => line.includes('differs from its oldest retained change'))).toEqual([]);
+    expect(discarded.Oldest).toBe(discarded.Start);
+    expect(start).toBe(discarded.Start);
+    expect(cursor!).toBeLessThan(start!);
+    expect(events.filter(event => event.msg.includes('differs from its oldest retained change'))).toEqual([]);
     expect(await probe(writer, '/backupz')).toBe(503);
     expect(await probe(writer, '/readyz')).toBe(200);
 

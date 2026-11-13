@@ -4,7 +4,6 @@ using TerraBase.Features.Catalog;
 using TerraBase.Features.HomePush;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Replicas;
-using TerraBase.Features.UserAuth;
 using HomePushService = TerraBase.Features.HomePush.HomePush;
 
 namespace TerraBase.Features.Health;
@@ -17,12 +16,11 @@ public interface INodeReadiness
 internal sealed class NodeReadiness(
     IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate, PlatformSeedProgress platform,
     RegionalOwners owners, TerraBaseOptions options,
-    HomePushService push, HomeLeases leases, IIssuerKeys issuerKeys) : INodeReadiness
+    HomePushService push, HomeLeases leases) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
         if (!gate.IsOpen || !platform.Ready || lifetime.ApplicationStopping.IsCancellationRequested
-            || options.AuthIssuer is not null && issuerKeys.Keys is null
             || options is { NatsUrl: not null, PeersFile: not null }
                 && (owners.Find(options.Region) is null || !push.Started || !leases.Ready))
         {

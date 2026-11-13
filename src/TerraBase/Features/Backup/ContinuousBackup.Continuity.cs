@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using TerraBase.Engine;
@@ -75,7 +74,7 @@ internal sealed partial class ContinuousBackup
         file.BacklogCommittedAt = retained.PendingAt;
         if (retained.Oldest is { } oldest && oldest != retained.Start)
         {
-            _logger.ZLogError($"Continuous backup of {file.Prefix:@File} found its change log's recorded start {retained.Start} differs from its oldest retained change {oldest}; the later of the two decides holes");
+            _logger.ZLogError($"Continuous backup of {file.Prefix:@File} found its change log's recorded start {retained.Start:@Start} differs from its oldest retained change {oldest:@Oldest}; the later of the two decides holes");
         }
 
         if (account is null)
@@ -102,7 +101,7 @@ internal sealed partial class ContinuousBackup
             var hole = new BackupHole(stored.Cursor.Position, retained.Anchor, Millisecond(stored.PlatformAt ?? stored.ShippedAt), retained.AnchorAt, Open: true);
             await RestartAsync(file, account with { Stored = null, Upload = null, Holes = account.Holes + 1, LastHole = hole }, null, cancellationToken).ConfigureAwait(false);
             _holesRecorded.Add(1);
-            _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} lost its history from position {hole.From} to {hole.To} before it was stored; hole {account.Holes + 1} is recorded and a new generation starts");
+            _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} lost its history from position {hole.From:@From} to {hole.To:@To} before it was stored; hole {account.Holes + 1:@Holes} is recorded and a new generation starts");
             return false;
         }
 
@@ -181,7 +180,7 @@ internal sealed partial class ContinuousBackup
         if (bytes > limit)
         {
             var history = await retention.DiscardAsync(cancellationToken).ConfigureAwait(false);
-            _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} discarded change log not yet stored ({bytes} bytes over the cap); its history now starts at position {history.Start}, oldest retained change {history.Oldest?.ToString(CultureInfo.InvariantCulture) ?? "none":@Oldest}");
+            _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} discarded change log not yet stored ({bytes} bytes over the cap); its history now starts at position {history.Start:@Start}, oldest retained change {history.Oldest:@Oldest}");
         }
     }
 
