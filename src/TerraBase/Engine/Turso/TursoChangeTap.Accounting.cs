@@ -19,7 +19,7 @@ internal sealed partial class TursoChangeTap
     }
 
     public async ValueTask<CdcRetained> RetainedAsync(CdcCursor? stored, CancellationToken cancellationToken) =>
-        await AdmittedAsync(async () => await _io.RunAsync(() =>
+        await AdmittedAsync(async cancellationToken => await _io.RunAsync(() =>
         {
             Execute("BEGIN;");
             try
@@ -40,7 +40,7 @@ internal sealed partial class TursoChangeTap
             {
                 Execute("ROLLBACK;");
             }
-        }, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<long> CommittedAsync(CancellationToken cancellationToken)
     {

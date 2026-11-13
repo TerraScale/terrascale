@@ -47,13 +47,13 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
     }
 
     public async ValueTask<long> RetainedBytesAsync(CancellationToken cancellationToken) =>
-        await AdmittedAsync(async () => await _io.RunAsync(() =>
+        await AdmittedAsync(async cancellationToken => await _io.RunAsync(() =>
         {
             using var command = _reader.CreateCommand();
             command.CommandText = "SELECT coalesce(sum(coalesce(octet_length(before), 0) + coalesce(octet_length(after), 0) + 32), 0) FROM turso_cdc WHERE change_id > $anchor;";
             command.Parameters.Add(new TursoParameter("$anchor", Volatile.Read(ref _storedAnchor)));
             return (long)command.ExecuteScalar()!;
-        }, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask AcknowledgeAsync(long position, CancellationToken cancellationToken)
     {
