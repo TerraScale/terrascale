@@ -107,20 +107,8 @@ internal sealed class Keyring(KeyringSettings settings, KeyRewrapFaults faults) 
         try
         {
             var wrapped = Wrap(key);
-            var verified = Unwrap(wrapped);
-            try
-            {
-                if (!CryptographicOperations.FixedTimeEquals(key, verified))
-                {
-                    throw new InvalidDataException("rewrapped data key verification failed");
-                }
-                faults.Verified(item);
-                return wrapped;
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(verified);
-            }
+            faults.Verified(item);
+            return wrapped;
         }
         catch (Exception error) when (error is InvalidDataException or CryptographicException)
         {
@@ -142,6 +130,19 @@ internal sealed class Keyring(KeyringSettings settings, KeyRewrapFaults faults) 
         var versioned = ActiveId != "k0";
         aes.Encrypt(wrapped.AsSpan(0, NonceBytes), key, wrapped.AsSpan(NonceBytes, KeyBytes), wrapped.AsSpan(NonceBytes + KeyBytes),
             versioned ? Encoding.ASCII.GetBytes("v2." + ActiveId) : []);
-        return versioned ? $"v2.{ActiveId}.{Convert.ToBase64String(wrapped)}" : Convert.ToBase64String(wrapped);
+        var record = versioned ? $"v2.{ActiveId}.{Convert.ToBase64String(wrapped)}" : Convert.ToBase64String(wrapped);
+        var verified = Unwrap(record);
+        try
+        {
+            if (!CryptographicOperations.FixedTimeEquals(key, verified))
+            {
+                throw new InvalidDataException("wrapped data key verification failed");
+            }
+            return record;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(verified);
+        }
     }
 }

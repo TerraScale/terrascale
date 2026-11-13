@@ -23,7 +23,7 @@ internal sealed class KeyRewrap(
     {
         _meter.CreateObservableGauge("terrabase.keys.wrapped", Observe, description: "Wrapped items per key id; unreadable items block retirement.");
         _meter.CreateObservableGauge("terrabase.keys.last_complete", () => Interlocked.Read(ref _lastComplete), "s",
-            "Unix time of the last complete inventory, including unreadable items; zero until the first completion.");
+            "Unix time of the last complete writer inventory, including unreadable items; zero until the first writer completion.");
         _meter.CreateObservableGauge("terrabase.keys.oldest_snapshot_age", ObserveSnapshots, "s",
             "Age of the oldest retained platform snapshot embedding each key id; zero means none, minus one means unknown.");
         if (keyring.KeyIds.Count == 1)
@@ -39,6 +39,7 @@ internal sealed class KeyRewrap(
             Volatile.Write(ref _snapshotAges, null);
             try
             {
+                var writer = owners.Writer;
                 var inventory = new KeyInventory(logger, _logged, faults);
                 foreach (var id in keyring.KeyIds)
                 {
@@ -48,7 +49,7 @@ internal sealed class KeyRewrap(
                 {
                     await source.RewrapAsync(inventory, cancellationToken).ConfigureAwait(false);
                 }
-                if (owners.Writer && custody is not null)
+                if (writer && custody is not null)
                 {
                     await foreach (var item in custody.Store.ListAsync("v1/keys/", null, cancellationToken).ConfigureAwait(false))
                     {
@@ -74,15 +75,19 @@ internal sealed class KeyRewrap(
                     }
                 }
                 IReadOnlyDictionary<string, double> ages = keyring.KeyIds.ToDictionary(id => id, _ => -1d, StringComparer.Ordinal);
-                if (owners.Writer)
+                if (writer)
                 {
                     await credentials.RunAsync(inventory, cancellationToken).ConfigureAwait(false);
                     ages = await snapshots.RunAsync(inventory, cancellationToken).ConfigureAwait(false);
                 }
                 Interlocked.Exchange(ref _unreadable, inventory.UnreadableCount);
                 Volatile.Write(ref _snapshotAges, ages);
-                Volatile.Write(ref _counts, inventory.Counts);
-                Interlocked.Exchange(ref _lastComplete, time.GetUtcNow().ToUnixTimeSeconds());
+                Volatile.Write(ref _counts, writer ? inventory.Counts
+                    : keyring.KeyIds.ToDictionary(id => id, _ => -1L, StringComparer.Ordinal));
+                if (writer)
+                {
+                    Interlocked.Exchange(ref _lastComplete, time.GetUtcNow().ToUnixTimeSeconds());
+                }
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {

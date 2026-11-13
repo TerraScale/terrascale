@@ -36,6 +36,7 @@ internal sealed partial class TursoReplicas(
     internal const string KeyHeader = "TERRABASE-REPLICA-KEY-2\n";
     private const string PreviousKeyHeader = "TERRABASE-REPLICA-KEY-1\n";
     private static readonly Lock KeyRecords = new();
+    private static readonly HashSet<string> ActiveDetached = new(StringComparer.Ordinal);
     private const int MaxIdleConnections = 4;
     private const int MaxReadRows = 10_000;
 
@@ -151,6 +152,10 @@ internal sealed partial class TursoReplicas(
                     }
                 }
                 var detached = Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db");
+                if (ActiveDetached.Contains(detached))
+                {
+                    throw new IOException("a promotion already holds the detached replica");
+                }
                 DeleteDetached(detached);
                 DatabaseKeys.RejectLink(path);
                 File.Move(path, detached);
@@ -166,12 +171,36 @@ internal sealed partial class TursoReplicas(
                 }
                 DirectorySync.Sync(Path.GetDirectoryName(detached)!);
                 _ = DeleteFiles(path, keepDetached: true);
+                ActiveDetached.Add(detached);
                 return detached;
             }
         }, cancellationToken).ConfigureAwait(false);
     }
 
     internal static void DeleteDetached(string detached)
+    {
+        lock (KeyRecords)
+        {
+            if (!ActiveDetached.Contains(detached))
+            {
+                DeleteDetachedFiles(detached);
+            }
+        }
+    }
+
+    public void CompleteDetach(string detached)
+    {
+        lock (KeyRecords)
+        {
+            if (ActiveDetached.Contains(detached))
+            {
+                DeleteDetachedFiles(detached);
+                ActiveDetached.Remove(detached);
+            }
+        }
+    }
+
+    private static void DeleteDetachedFiles(string detached)
     {
         if (!Directory.Exists(Path.GetDirectoryName(detached)))
         {

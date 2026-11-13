@@ -5,7 +5,6 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Configuration;
-using TerraBase.Engine.Turso;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
@@ -400,7 +399,6 @@ internal sealed class HomeMoves(
             }
 
             await imports.ImportDatabaseAsync(database, detached, CancellationToken.None).ConfigureAwait(false);
-            detached = null;
             if (!await leases.TakeAsync(database, fromRegion, placement.Version, failedHome, CancellationToken.None).ConfigureAwait(false))
             {
                 leaseGate.Unlease(database.DatabaseId!);
@@ -432,7 +430,7 @@ internal sealed class HomeMoves(
         {
             if (detached is not null)
             {
-                TursoReplicas.DeleteDetached(detached);
+                replicas.CompleteDetach(detached);
             }
         }
     }

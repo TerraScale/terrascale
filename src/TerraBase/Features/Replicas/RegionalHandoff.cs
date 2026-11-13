@@ -349,6 +349,10 @@ internal sealed partial class RegionalHandoff(
                 replication.Resume(database);
                 throw;
             }
+            finally
+            {
+                replicas.CompleteDetach(detached);
+            }
         }
 
         await services.GetRequiredService<HomePush.HomePush>().RebuildForPromotionAsync(cancellationToken).ConfigureAwait(false);

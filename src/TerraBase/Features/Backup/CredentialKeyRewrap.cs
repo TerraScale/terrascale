@@ -2,13 +2,12 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
-using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.Backup;
 
-internal sealed class CredentialKeyRewrap(SystemCatalog catalog, RegionalOwners owners, IKeyring keyring)
+internal sealed class CredentialKeyRewrap(SystemCatalog catalog, IKeyring keyring)
 {
     internal async Task RunAsync(KeyInventory inventory, CancellationToken cancellationToken)
     {
@@ -55,7 +54,7 @@ internal sealed class CredentialKeyRewrap(SystemCatalog catalog, RegionalOwners 
                     try
                     {
                         var id = keyring.KeyId(wrapped);
-                        if (owners.Writer && keyring.NeedsRewrap(wrapped))
+                        if (keyring.NeedsRewrap(wrapped))
                         {
                             id = await catalog.WriteDurableAsync(async transaction =>
                             {

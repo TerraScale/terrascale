@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:https';
 import { join, resolve } from 'node:path';
@@ -146,6 +146,25 @@ try {
   const snapshotReads = passRequests.filter(request => request.method === 'GET' && request.range === 'bytes=0-2097151');
   assert.equal(rootListings.length, 1, 'only the independent shred sweep lists the custody root');
   assert.equal(snapshotReads.length, 0, 'single-key inventory made no snapshot reads');
+  await internal(peer, 'http://127.0.0.1:18381', 'PUT', '/v1/management/organizations/' + scope.organization + '/plan', { plan: 'pro' });
+  const created = await internal(peer, 'http://127.0.0.1:18381', 'POST', projectPath + '/databases', { name: 'created-by-upgrade' });
+  const createdKey = join(data, scope.organization, scope.project, created.id + '.db.key');
+  const createdBytes = readFileSync(createdKey);
+  assert.equal(createdBytes.toString('ascii').split('\n')[0], 'TERRABASE-DB-KEY-1');
+  assert.equal(Buffer.from(createdBytes.toString('ascii').split('\n')[1], 'base64').length, 60);
+  const sqlPath = projectPath + '/databases/' + created.id + '/sql/execute';
+  await internal(peer, 'http://127.0.0.1:18381', 'POST', sqlPath, { statements: [{ sql: 'CREATE TABLE compatibility(value INTEGER)' }, { sql: 'INSERT INTO compatibility VALUES(42)' }] }, false);
+  await until('new custody wrapper', child, async () =>
+    (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).some(path => path.includes('/' + created.id + '/')));
+  const createdCustody = (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).filter(path => path.includes('/' + created.id + '/'));
+  const createdObjects = new Map();
+  for (const path of createdCustody) {
+    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assert.equal(bytes.length, 80);
+    assert.equal(Buffer.from(bytes.toString('ascii'), 'base64').length, 60);
+    createdObjects.set(path, sha(bytes));
+  }
   for (const [path, hash] of keyFiles) assert.equal(sha(readFileSync(path)), hash, 'key file byte identity');
   await stop(child);
   for (const [path, hash] of custody) {
@@ -156,7 +175,26 @@ try {
   console.log('one key: maintenance skipped; extra custody root listings=0 (shred sweep=1), snapshot range reads=0; wrapped=-1 last_complete=0 snapshot_age=-1; existing wrappers byte-identical');
   child = node(baseline, 'k0');
   await ready(child);
+  const opened = await internal(peer, 'http://127.0.0.1:18381', 'POST', sqlPath, { statements: [{ sql: 'SELECT value FROM compatibility' }] }, false);
+  assert.deepEqual(opened.results[0].rows, [[42]]);
   await stop(child);
+  assert.equal(readFileSync(createdKey).equals(createdBytes), true, "new single-key sidecar byte identity");
+  for (const [path, hash] of createdObjects) {
+    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
+    assert.equal(sha(Buffer.from(await response.arrayBuffer())), hash);
+  }
+  const previousInput = join(profile, 'previous.json');
+  const previousWrappers = [];
+  for (const path of createdCustody) {
+    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
+    previousWrappers.push(await response.text());
+  }
+  writeFileSync(previousInput, JSON.stringify({ baseline, master, wrappers: previousWrappers }), { mode: 0o600 });
+  const previous = startProcess('dotnet', [process.env.E2E_KEYRING_DRIVER, 'previous', previousInput], 'previous-wrapper-reader', clean);
+  const [previousCode] = await once(previous, 'exit');
+  children.delete(previous);
+  assert.equal(previousCode, 0, 'origin/main ordinary unwrap opened every new custody wrapper');
+  console.log('one key creation: origin/main opened new database sidecar and custody wrappers unchanged; SQL row=42');
   console.log('rollback: origin/main opened the same directory after the single-key upgrade');
   const leftover = join(data, '_system.db.key.rewrapping');
   writeFileSync(leftover, readFileSync(join(data, '_system.db.key')), { mode: 0o600 });
@@ -196,12 +234,16 @@ try {
   writeFileSync(databaseKey + '.rewrapping', readFileSync(databaseKey), { mode: 0o600 });
   const promoteKey = databaseKey.replace('.db.key', '.promote.db.key');
   writeFileSync(promoteKey, readFileSync(databaseKey), { mode: 0o600 });
+  const unrelatedPromote = createdKey.replace('.db.key', '.promote.db.key');
+  writeFileSync(unrelatedPromote, readFileSync(createdKey), { mode: 0o600 });
   await internal(peer, 'http://127.0.0.1:18381', 'DELETE', projectPath + '/databases/' + database.id);
   assert.equal(existsSync(databaseKey), false);
   assert.equal(existsSync(databaseKey + '.rewrapping'), false);
   assert.equal(existsSync(promoteKey), false);
+  assert.equal(existsSync(unrelatedPromote), true, 'deletion retained another database detached key');
+  rmSync(unrelatedPromote);
   console.log('two keys: local files, custody and current/historical credentials rewrapped and authenticated; retained k0 snapshot age>0');
-  console.log('leftovers: next multi-key pass removed .rewrapping; database deletion removed .rewrapping and .promote.db.key');
+  console.log('leftovers: next multi-key pass removed .rewrapping; database deletion removed only its own .rewrapping and .promote.db.key');
   await stop(child);
   const firstLog = await (await fetch('http://127.0.0.1:8028/log')).json();
   assert.deepEqual(firstLog.unexpected, [], 'first scenario had no unexpected object-store requests');
@@ -214,7 +256,7 @@ try {
     + '; export default defineConfig(' + JSON.stringify({ testDir: join(root, 'e2e'), testMatch: ['interactions/keyring.spec.ts', 'keyring/promotion.spec.ts'],
       timeout: 90000, expect: { timeout: 20000 }, retries: 0, workers: 1, reporter: 'list', outputDir: join(profile, 'journey-results') }) + ');');
   const journey = spawn(join(root, 'e2e/node_modules/.bin/playwright'), ['test', '--config', config], {
-    env: { ...clean, E2E_STATE: join(profile, 'journey'), E2E_KEYRING_BASELINE: baseline }, stdio: 'inherit',
+    env: { ...clean, E2E_STATE: join(profile, 'journey'), E2E_KEYRING_BASELINE: baseline, E2E_KEYRING_DRIVER: process.env.E2E_KEYRING_DRIVER }, stdio: 'inherit',
   });
   children.add(journey);
   const [code] = await once(journey, 'exit');

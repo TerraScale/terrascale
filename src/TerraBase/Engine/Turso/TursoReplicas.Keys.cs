@@ -17,6 +17,10 @@ internal sealed partial class TursoReplicas : IWrappedKeyFiles
             {
                 try
                 {
+                    if (ActiveDetached.Contains(file[..^DatabaseKeys.Suffix.Length]))
+                    {
+                        continue;
+                    }
                     WrappedKeyFile.RemoveLeftover(file);
                     DatabaseKeys.RejectLink(file);
                     if (file.EndsWith(".promote.db.key", StringComparison.Ordinal))

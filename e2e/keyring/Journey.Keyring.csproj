@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>TerraBase.LiveRestoreDrill</AssemblyName>
+    <LangVersion>preview</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(KeyringServiceDirectory)/*.dll" Exclude="$(KeyringServiceDirectory)/TerraBase.LiveRestoreDrill.dll" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Content Include="$(KeyringServiceDirectory)/**/*" Exclude="$(KeyringServiceDirectory)/**/*.dll"
+             Link="%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="RequireKeyringService" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(KeyringServiceDirectory)/terrabase.dll')" Text="Build the service and pass KeyringServiceDirectory." />
+  </Target>
+</Project>

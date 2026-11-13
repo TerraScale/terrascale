@@ -372,8 +372,17 @@ opens), on an active-id change
 through restart, and hourly thereafter. It atomically replaces only sidecars needing a different
 key, syncs the parent directory after each rename, conditionally replaces shared custody objects,
 and updates current and historical customer credential wrappers only when they must change.
-Only the catalog writer performs the shared custody, credential and snapshot work; local
-key files are scanned on every node. Other nodes report snapshot ages as unknown (-1).
+The catalog writer role is read once at the start of each pass and that decision controls
+all shared custody, credential and snapshot work; local key files are scanned on every node.
+A pass starting on a non-writer publishes wrapper counts and snapshot ages as unknown (-1)
+and does not advance last-complete, even if the node becomes writer during the pass.
+Role changes cannot overwrite newer shared records: custody replacements use ETags and
+credential replacements reread the wrapper inside a durable catalog transaction.
+Every first wrapper is also opened through the ordinary id-selecting path and compared in
+constant time before a database sidecar, replica record, custody object or credential record
+can be published. A failed round trip clears the generated plaintext and fails creation
+before publishing anything. With the original key this adds only an in-memory check;
+the serialized wrapper and sidecar formats are unchanged.
 Before any replacement is written, the new wrapper is opened and its plaintext compared with
 the original in constant time; temporary plaintext is cleared. Verification failures retain
 the original, log one line per item and contribute to the unreadable gauge, including promotion
@@ -382,11 +391,19 @@ The creation lock is taken per local file; a scan never holds it across the whol
 Interrupted passes resume from remaining old wrappers. Custody replacements require the ETag
 read with the wrapper, so deletion or another rotation cannot be overwritten. Promotion copies
 an active-key wrapper unchanged; an old-key wrapper is verified before use. The destination
-file and directory are synced before the source key record is deleted. Detached
-`*.promote.db.key` files in the replica directory and `*.key.rewrapping` files are crash leftovers,
-removed under the key-file lock at the next multi-key pass, even when their original file is
-absent. Database deletion removes both kinds immediately; promotion also discards its previous
-detached files. Leftovers are not counted as live wrappers; cleanup failures are unreadable items.
+file and directory are synced before the source key record is deleted. Promotion registers
+its detached database path under the key-record lock before releasing that lock. Maintenance
+and database deletion skip every active detached path, including its key and temporary sidecars.
+The registration remains until import and the caller's promotion work finish or definitively
+fail; cleanup removes the detached files before releasing the registration.
+Neither startup path resumes imports from detached filenames: home-move recovery settles
+markers, and regional preparation starts from replica records, not detached files. Thus after
+a crash there is no detached-file resume to race with the first inventory, which waits for
+the catalog to open. Unregistered `*.promote.db.key` files in the replica directory and
+`*.key.rewrapping` files are removed under the key-file lock at the next multi-key pass,
+even when their original file is absent. Database deletion removes only its own unregistered
+detached files and temporary wrappers; promotion also discards its own previous leftovers.
+Leftovers are not counted as live wrappers; cleanup failures are unreadable items.
 With one key, the next pass is skipped, so deletion or a later multi-key pass removes leftovers.
 
 `terrabase.keys.wrapped{key_id}` counts local database and replica sidecars, custody keys, and
@@ -395,10 +412,12 @@ skipped, logged once per item during the process lifetime (up to 65536 distinct 
 counted separately as `terrabase.keys.wrapped{status="unreadable"}`. They never prevent later
 items from being processed. A complete pass may include unreadable items; retirement requires
 that count to be zero. An inventory that cannot finish publishes no wrapper counts.
-`terrabase.keys.last_complete` is the Unix timestamp of the last complete pass, initially zero;
-a stale timestamp exposes a node whose passes keep failing. Require fresh complete inventories
-on every node with the same active id, the old key at zero, and unreadable at zero. Shared items
-are counted only by catalog writers; local copies are per node, so do not sum them as unique objects.
+`terrabase.keys.last_complete` is the Unix timestamp of the last complete writer pass, initially zero;
+a stale timestamp exposes a writer whose passes keep failing. Require fresh complete inventories
+on catalog writers with the same active id, the old key at zero, and unreadable at zero.
+Independently inventory local sidecars on non-writers, whose aggregate gauges remain unknown.
+Shared items are counted only by catalog writers; local copies are per node, so do not sum
+them as unique objects.
 
 The wrapper count **does not cover snapshot bundles or volume backups**: a bundle embeds its
 original database key file, and a historical catalog also embeds its credential wrappers.
@@ -419,7 +438,8 @@ not when rotation begins. Retain the key for the longest retention any plan allo
 30 days), plus the bucket snapshot window (currently 14 days), plus any restore lease that
 extends the lifetime of that material. Extend this bound for longer customer-bucket or volume
 backup retention. A 21-day wait is insufficient. The old key may be removed only after this
-whole period, fresh old-key and unreadable counts are zero everywhere, the oldest-snapshot-age
+whole period, fresh old-key and unreadable counts are zero on every catalog writer,
+local sidecars on every non-writer have been independently verified, the oldest-snapshot-age
 gauge for that key is zero on every catalog writer, no restore lease still needs it, and customer/volume
 backup inventories show no remaining dependency. A zero wrapper count alone never permits retirement.
 

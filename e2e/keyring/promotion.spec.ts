@@ -28,23 +28,25 @@ test('promotion preserves active wrappers and verifies old-key replacements befo
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
     !name.startsWith('TERRABASE_') && !name.startsWith('TS_') && !name.startsWith('AWS_') && name !== 'BUCKET_NAME'));
 
-  function start(region: 'gru' | 'fra', active: 'k0' | 'k1'): ChildProcess {
+  function start(region: 'gru' | 'fra', active: 'k0' | 'k1', binary = join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.dll'), requestFile?: string): ChildProcess {
     const ring = join(directory, region + '-ring.json');
     writeFileSync(ring, JSON.stringify({ active, keys: active === 'k0'
       ? { k0: k0.toString('base64') } : { k0: k0.toString('base64'), k1: k1.toString('base64') } }), { mode: 0o600 });
     const output = openSync(join(directory, region + '-' + active + '.log'), 'w', 0o600);
-    const child = spawn('dotnet', [join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.dll')], {
+    const arguments_ = requestFile ? ['exec', '--depsfile', join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.deps.json'),
+      '--runtimeconfig', join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.runtimeconfig.json'), binary, requestFile] : [binary];
+    const child = spawn('dotnet', arguments_, {
       env: { ...environment, DOTNET_PROCESSOR_COUNT: '4', DOTNET_ENVIRONMENT: 'Production',
         TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
         AWS_ENDPOINT_URL_S3: 'https://journey.backups.terrascale.tech', AWS_REGION: 'auto', BUCKET_NAME: 'journey-backups',
         AWS_ACCESS_KEY_ID: access, AWS_SECRET_ACCESS_KEY: secret,
         TERRABASE_SHAPES_ACCESS_KEY_ID: access, TERRABASE_SHAPES_SECRET_ACCESS_KEY: secret, TERRABASE_SHAPES_CDN_API_TOKEN: peer,
-        TERRABASE_MASTER_KEYS_FILE: ring, TERRABASE_PEER_SECRET: peer,
+        ...(binary === process.env.E2E_KEYRING_BASELINE ? { TERRABASE_MASTER_KEY: k0.toString('base64') } : { TERRABASE_MASTER_KEYS_FILE: ring }), TERRABASE_PEER_SECRET: peer,
         TERRABASE_DATA_DIRECTORY: join(directory, region), TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
         TS_REGION: region, TS_NODE: region === 'gru' ? 'keyring-home' : 'keyring-replica', TS_PEERS_FILE: peers,
         TERRABASE_INTERNAL_PORT: '18481', TERRABASE_PORT: region === 'gru' ? '18480' : '18490',
         TERRABASE_POSTGRES_PORT: region === 'gru' ? '18482' : '18492', TERRABASE_METRICS_PORT: region === 'gru' ? '18483' : '18493',
-      }, stdio: ['ignore', output, output],
+      }, stdio: [requestFile ? 'pipe' : 'ignore', output, output],
     });
     closeSync(output);
     children.add(child);
@@ -130,12 +132,14 @@ test('promotion preserves active wrappers and verifies old-key replacements befo
     const syncPath = (id: unknown) => '/v1/sync/organizations/' + String(organization.id) + '/projects/' + String(project.id) + '/databases/' + String(id);
     const one = await request(home, 'POST', projectPath + '/databases', { name: 'one', homeRegion: 'gru', replicaRegions: ['fra'] });
     const two = await request(home, 'POST', projectPath + '/databases', { name: 'two', homeRegion: 'gru', replicaRegions: ['fra'] });
+    const active = await request(home, 'POST', projectPath + '/databases', { name: 'active', homeRegion: 'gru', replicaRegions: ['fra'] });
+    const crash = await request(home, 'POST', projectPath + '/databases', { name: 'crash', homeRegion: 'gru', replicaRegions: ['fra'] });
     await stop(second);
     second = start('fra', 'k0');
     await ready(18490);
     const replicaKey = (id: unknown) => join(directory, 'fra', '.replicas', String(organization.id), String(project.id), String(id) + '.db.key');
     const promotedKey = (id: unknown) => join(directory, 'fra', String(organization.id), String(project.id), String(id) + '.db.key');
-    for (const database of [one, two]) {
+    for (const database of [one, two, active, crash]) {
       await request(home, 'POST', projectPath + '/databases/' + String(database.id) + '/sql/execute', {
         statements: [{ sql: 'CREATE TABLE keyring_rows(value INTEGER)' }, { sql: 'INSERT INTO keyring_rows VALUES(42)' }],
       }, false);
@@ -149,6 +153,18 @@ test('promotion preserves active wrappers and verifies old-key replacements befo
     }).toMatchObject([{ rows: [[42]] }]);
     const original = readFileSync(replicaKey(one.id), 'ascii').split('\n')[1];
     const oldRecord = readFileSync(replicaKey(two.id));
+    if (process.env.E2E_KEYRING_BASELINE) {
+      await stop(second);
+      second = start('fra', 'k0', process.env.E2E_KEYRING_BASELINE);
+      await ready(18490);
+      await request(replica, 'POST', syncPath(one.id) + '/catch-up', undefined, false);
+      expect((await request(replica, 'POST', projectPath + '/databases/' + String(one.id) + '/sql/execute', sql, false)).results).toMatchObject([{ rows: [[42]] }]);
+      expect(readFileSync(replicaKey(two.id)).equals(oldRecord)).toBe(true);
+      console.log('one key creation: origin/main opened new replica records unchanged and read row=42');
+      await stop(second);
+      second = start('fra', 'k0');
+      await ready(18490);
+    }
     const firstPlacement = await request(home, 'GET', syncPath(one.id) + '/placement', undefined, false);
     const firstObserved = observePromotion(organization.id, project.id, one.id);
     await request(replica, 'POST', syncPath(one.id) + '/catch-up', undefined, false);
@@ -198,6 +214,46 @@ test('promotion preserves active wrappers and verifies old-key replacements befo
     expect((await request(replica, 'POST', projectPath + '/databases/' + String(two.id) + '/sql/execute', sql, false)).results).toMatchObject([{ rows: [[42]] }]);
     console.log('two keys promotion: replica scan and old-key promotion both rewrapped; verified destination opens; source removed');
     console.log('verification refusal: no reachable wrap-corruption input without a product switch; helper failure paths checked by code reading');
+    if (process.env.E2E_KEYRING_DRIVER) {
+      await stop(second);
+      const driverRequest = join(directory, 'lifecycle.json');
+      const detached = (id: unknown) => replicaKey(id).replace('.db.key', '.promote.db');
+      const driverLog = join(directory, 'fra-k1.log');
+      const checkpoint = async (marker: string) => {
+        await expect.poll(() => readFileSync(driverLog, 'utf8').includes(marker)).toBe(true);
+      };
+      writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: active.id }), { mode: 0o600 });
+      second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER, driverRequest);
+      await checkpoint('keyring-driver:detached');
+      await stop(first);
+      expect(existsSync(detached(active.id))).toBe(true);
+      expect(existsSync(detached(active.id) + '.key')).toBe(true);
+      second.stdin!.write('pass\n');
+      await checkpoint('keyring-driver:survived');
+      await checkpoint('keyring-driver:nonwriter wrapped=-1 snapshot_age=-1 last_complete=0; became writer during local scan');
+      expect(existsSync(detached(active.id))).toBe(true);
+      expect(existsSync(detached(active.id) + '.key')).toBe(true);
+      second.stdin!.write('import\n');
+      await checkpoint('keyring-driver:imported row=42');
+      await stop(second);
+      console.log('active promotion: paused after detach with former home stopped; whole multi-key pass preserved both files; import read row=42');
+      console.log('writer transition: started non-writer, became writer during local scan; wrapped=-1 snapshot_age=-1 last_complete=0');
+      first = start('gru', 'k1');
+      await ready(18480);
+      writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: crash.id }), { mode: 0o600 });
+      second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER, driverRequest);
+      await checkpoint('keyring-driver:detached');
+      const exited = once(second, 'exit');
+      second.kill('SIGKILL');
+      await exited;
+      children.delete(second);
+      expect(existsSync(detached(crash.id))).toBe(true);
+      expect(existsSync(detached(crash.id) + '.key')).toBe(true);
+      second = start('fra', 'k1');
+      await ready(18490);
+      await expect.poll(() => existsSync(detached(crash.id)) || existsSync(detached(crash.id) + '.key')).toBe(false);
+      console.log('crash promotion: killed after detach; restart multi-key pass removed the unregistered database and key');
+    }
   } finally {
     for (const observer of observers) observer.close();
     for (const child of children) await stop(child);
