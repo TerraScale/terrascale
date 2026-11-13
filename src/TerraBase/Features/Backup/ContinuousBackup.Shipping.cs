@@ -106,18 +106,7 @@ internal sealed partial class ContinuousBackup
                 await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             }
 
-            WalRead read;
-            var appended = file.Pending.Length;
-            try
-            {
-                read = await ReadPendingAsync(file, cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                file.Pending.SetLength(appended);
-                throw;
-            }
-
+            var read = await ReadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             if (!read.Continuous)
             {
                 file.Rebase = "log_unplaceable";
@@ -199,29 +188,60 @@ internal sealed partial class ContinuousBackup
         var allowance = await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false);
         var growth = allowance / 4;
         IDisposable? claim = _disk.Reserve(SealedPendingBytes(growth));
-        var before = file.Pending.Length;
-        file.Pending.Limit = checked(before + growth);
         try
         {
-            var read = await file.Tap.ReadAsync(file.Pending, cancellationToken).ConfigureAwait(false);
-            if (file.Pending.Length > before)
+            file.Pending.Limit = checked(file.Pending.Length + growth);
+            var (read, grew) = await AdvanceAsync(file, (pending, token) => file.Tap.ReadAsync(pending, token), cancellationToken).ConfigureAwait(false);
+            if (grew)
             {
-                file.PendingCursor = await ((ICdcBackupRetention)file.Tap).CursorAsync(cancellationToken).ConfigureAwait(false);
                 file.PendingClaims.Add(claim);
                 claim = null;
             }
 
             return read;
         }
+        finally
+        {
+            claim?.Dispose();
+        }
+    }
+
+    private async Task<(T Result, bool Grew)> AdvanceAsync<T>(ShippedFile file, Func<Stream, CancellationToken, ValueTask<T>> read, CancellationToken cancellationToken)
+    {
+        var retention = (ICdcBackupRetention)file.Tap;
+        var cursor = retention.Cursor;
+        var before = file.Pending.Length;
+        try
+        {
+            var result = await read(file.Pending, cancellationToken).ConfigureAwait(false);
+            var grew = file.Pending.Length > before;
+            if (grew || retention.Position != cursor.Position)
+            {
+                file.PendingCursor = retention.Cursor;
+            }
+
+            return (result, grew);
+        }
         catch
         {
             file.Pending.SetLength(before);
             file.Pending.Position = before;
+            Rewind(file, retention, cursor);
             throw;
         }
-        finally
+    }
+
+    private void Rewind(ShippedFile file, ICdcBackupRetention retention, CdcCursor cursor)
+    {
+        try
         {
-            claim?.Dispose();
+            retention.Rewind(cursor);
+        }
+        catch (InvalidOperationException error)
+        {
+            file.Clear();
+            file.Resumed = false;
+            _logger.ZLogWarning(error, $"Continuous backup of {file.Prefix:@File} could not return its change tap to position {cursor.Position:@Position}; it drops its unstored log and resumes from its stored cursor");
         }
     }
 

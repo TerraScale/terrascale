@@ -62,6 +62,8 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     private Dictionary<long, (string Type, string Name)> _schema = [];
 
+    private string? _incarnation;
+
     private (long First, long Latest, bool Ordered)? _open;
 
     private TursoChangeTap(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, TursoConnection reader, int lineage)
@@ -425,6 +427,8 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
     {
         using (var newest = connection.CreateCommand())
         {
+            newest.CommandText = TursoStatements.Incarnation;
+            _incarnation = newest.ExecuteScalar() as string;
             newest.CommandText = TursoStatements.NewestChange;
             _anchor = (long)newest.ExecuteScalar()!;
             if (publish)

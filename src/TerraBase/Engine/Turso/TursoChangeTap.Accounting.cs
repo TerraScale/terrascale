@@ -4,10 +4,19 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoChangeTap
 {
-    public async ValueTask<CdcCursor> CursorAsync(CancellationToken cancellationToken) =>
-        await AdmittedAsync(async () => await _io.RunAsync(() => new CdcCursor(_anchor,
-            (string)Scalar(TursoStatements.Incarnation, 0)!,
-            [.. _schema.Select(item => new CdcSchema(item.Key, item.Value.Type, item.Value.Name))]), cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+    public CdcCursor Cursor => new(_anchor, _incarnation ?? throw new InvalidOperationException("the backup tap has no incarnation"),
+        [.. _schema.Select(item => new CdcSchema(item.Key, item.Value.Type, item.Value.Name))]);
+
+    public void Rewind(CdcCursor cursor)
+    {
+        ObjectDisposedException.ThrowIf(Ended, this);
+        if (cursor.Incarnation != _incarnation || cursor.Position < _durableAnchor || cursor.Position > _anchor)
+        {
+            throw new InvalidOperationException("the backup tap returns only to a cursor it passed and has not acknowledged");
+        }
+
+        (_anchor, _schema) = (cursor.Position, cursor.Schema.ToDictionary(item => item.RowId, item => (item.Type, item.Name)));
+    }
 
     public async ValueTask<CdcRetained> RetainedAsync(CdcCursor? stored, CancellationToken cancellationToken) =>
         await AdmittedAsync(async () => await _io.RunAsync(() =>
@@ -48,7 +57,7 @@ internal sealed partial class TursoChangeTap
             using var command = writer.Connection.CreateCommand();
             var start = TursoStorageTransaction.HistoryStart(command) ?? throw new InvalidDataException("the change log has no recorded start");
             command.CommandText = TursoStatements.NewestChange;
-            if (start > 1 && start > stored.Position || stored.Position > (long)command.ExecuteScalar()!)
+            if (start > 1 && start > stored.Position || stored.Position > (long)command.ExecuteScalar()! || stored.Incarnation != _incarnation)
             {
                 throw new InvalidOperationException("the backup's stored cursor is outside the retained change log");
             }

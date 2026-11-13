@@ -42,13 +42,8 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         _stopping = lifetime.ApplicationStopping;
         _issuer = options.AuthIssuer;
         _discovery = _issuer is null ? null : _issuer.TrimEnd('/') + "/.well-known/openid-configuration";
-        var meter = meters.Create(Telemetry.MeterName);
-        _fetches = meter.CreateCounter<long>("terrabase.auth.key_fetches", "{fetch}", "ts-auth signing key fetches, by outcome (success or failure).");
-        if (_issuer is not null)
-        {
-            meter.CreateObservableGauge("terrabase.auth.signing_keys_loaded", () => Keys is null ? 0 : 1, unit: null,
-                "1 once this process has loaded the ts-auth keys that verify access tokens; 0 while token requests answer auth_unavailable.");
-        }
+        _fetches = meters.Create(Telemetry.MeterName)
+            .CreateCounter<long>("terrabase.auth.key_fetches", "{fetch}", "ts-auth signing key fetches, by outcome (success or failure).");
     }
 
     public IReadOnlyList<SecurityKey>? Keys => Volatile.Read(ref _keys);
@@ -152,14 +147,7 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         {
             if (!_stopping.IsCancellationRequested)
             {
-                if (Keys is null)
-                {
-                    _logger.ZLogWarning($"Could not fetch ts-auth signing keys from auth-issuer ({error.GetType().Name:@Error}); token requests answer auth_unavailable until they load");
-                }
-                else
-                {
-                    _logger.ZLogWarning($"Could not fetch ts-auth signing keys from auth-issuer ({error.GetType().Name:@Error}); keeping {Keys.Count:@Count} cached keys");
-                }
+                _logger.ZLogWarning($"Could not fetch ts-auth signing keys from auth-issuer ({error.GetType().Name:@Error}); keeping {Keys?.Count ?? 0:@Count} cached keys");
             }
 
             return Fail();

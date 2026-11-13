@@ -70,11 +70,7 @@ unchanged.
   together, and shutdown cancels a fetch in progress.
 - **Cache, refresh and readiness.** Keys are cached in memory.
   - Startup waits up to 10 seconds for the first fetch.
-  - Until a fetch succeeds, a request whose token needs those keys gets `503 auth_unavailable` with
-    `Retry-After: 1` (the WebSocket SQL `auth` frame gets the retryable `unavailable` error, and a Postgres
-    login with an API key FATAL `57P03`), never `401`: a valid token is not reported invalid, and SDKs
-    retry it. A token that fails against loaded keys is still `401`; anonymous requests, peer calls and
-    `tb_` API keys do not use the keys. A background loop retries every 2 seconds.
+  - Until a fetch succeeds, every token gets `401`. A background loop retries every 2 seconds.
     `/readyz` does not wait for the keys (decision 2026-10-10, TS-677): a database is ready when it
     can serve, and ts-auth, which stores its data here, could otherwise never become ready after a
     fresh start.
@@ -84,14 +80,8 @@ unchanged.
     Concurrent requests share it, it runs at most once per 30 seconds, and the token is validated
     once more if the keys changed.
 - **Observability.** Counter `terrabase.auth.key_fetches`, label `outcome` (`success` or
-  `failure`), and gauge `terrabase.auth.signing_keys_loaded` (with auth-issuer set: 1 once keys are
-  loaded, 0 while token requests answer `auth_unavailable`). Alert on
-  `terrabase_auth_signing_keys_loaded == 0` for more than 2 minutes: that node serves no token request. TerraBase's own log messages never contain tokens, the issuer URL or the audiences;
+  `failure`). TerraBase's own log messages never contain tokens, the issuer URL or the audiences;
   fetch failures name the setting (`auth-issuer`) and the failure type only.
-
-Known limit: a node that restarts while the auth service is unreachable cannot verify tokens until
-the auth service answers; an on-disk copy of the verification keys would remove that and is not part of
-this change.
 
 ## Requirements on ts-auth
 

@@ -12,7 +12,9 @@ internal interface ICdcBackupRetention
 {
     long Position { get; }
 
-    ValueTask<CdcCursor> CursorAsync(CancellationToken cancellationToken);
+    CdcCursor Cursor { get; }
+
+    void Rewind(CdcCursor cursor);
 
     ValueTask<CdcRetained> RetainedAsync(CdcCursor? stored, CancellationToken cancellationToken);
 

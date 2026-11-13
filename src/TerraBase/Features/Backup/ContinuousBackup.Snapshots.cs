@@ -69,6 +69,7 @@ internal sealed partial class ContinuousBackup
             await file.StopSideAsync().ConfigureAwait(false);
             file.Clear();
             var captured = await file.Tap.SnapshotAsync(Stream.Null, snapshot, cancellationToken).ConfigureAwait(false);
+            var cursor = ((ICdcBackupRetention)file.Tap).Cursor;
             var at = captured.At;
             var key = BackupLayout.Snapshot(file.Prefix, at, generation, 0);
             var live = !_stopped && at - file.DrilledAt >= DrillInterval
@@ -82,7 +83,6 @@ internal sealed partial class ContinuousBackup
             var (sealedObject, generationKey) = await SealAsync(file, key, bundle, cancellationToken).ConfigureAwait(false);
             await using (sealedObject.ConfigureAwait(false))
             {
-                var cursor = await ((ICdcBackupRetention)file.Tap).CursorAsync(cancellationToken).ConfigureAwait(false);
                 await StorePositionAsync(file, new(cursor, generation, generationKey, 0, at, at, at),
                     key, sealedObject, "snapshot", cancellationToken).ConfigureAwait(false);
             }
@@ -117,8 +117,7 @@ internal sealed partial class ContinuousBackup
             await file.StopSideAsync().ConfigureAwait(false);
             file.PendingClaims.Add(_disk.Reserve(SealedPendingBytes(allowance / 4)));
             file.Pending.Limit = checked(file.Pending.Length + allowance / 4);
-            var captured = await file.Tap.SnapshotAsync(file.Pending, snapshot, cancellationToken).ConfigureAwait(false);
-            file.PendingCursor = await ((ICdcBackupRetention)file.Tap).CursorAsync(cancellationToken).ConfigureAwait(false);
+            var (captured, _) = await AdvanceAsync(file, (pending, token) => file.Tap.SnapshotAsync(pending, snapshot, token), cancellationToken).ConfigureAwait(false);
             var read = captured.Read;
             if (!read.Continuous)
             {
