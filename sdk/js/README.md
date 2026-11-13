@@ -59,7 +59,10 @@ commits when the function resolves and rolls back when it throws.
 
 A refused statement throws `SqlError` with `code` (a `SqlErrorCode` such as `unique_violation`), `sqlstate`
 (`23505`), `statement` (its zero-based index) and `retryable` (true for `serialization_conflict`, `tenant_busy` and
-`unavailable`). A closed socket rejects pending requests with `SqlSocketClosedError` and its `closeCode`.
+`unavailable`). A lost committing reply rejects with `SqlError` code `write_outcome_unknown` (08007);
+every later call rejects with the same error and the session stays closed. A lost open transaction with no
+committing request sent rejects with `transaction_rolled_back` (40000). Other closed sockets reject with
+`SqlSocketClosedError` and its `closeCode`.
 Values are `null`, numbers, strings and `Uint8Array` blobs; integers beyond 2^53 arrive as `ExactDecimal`
 (`BigInt(String(value))`) and go out as `bigint`.
 
@@ -258,8 +261,8 @@ todos.close();
 `shape(table).subscribe()` loads every row of the table, then keeps it current with each committed change. The
 listener runs after the snapshot and after every change, with `rows` keyed by row id (a decimal string) and
 `upToDate` once the shape reached the table's head. Row values decode like SQL results (`Uint8Array` blobs).
-In a replica region, writes made in that region show at once; `provisional` holds the keys of rows whose values the
-database's home has not confirmed yet (such inserts have keys starting with `~`). A write the home rejects disappears
+In a region that holds the database, writes made there show at once; `provisional` holds the keys of rows whose values the
+database's writer has not confirmed yet (such inserts have keys starting with `~`). A write the writer rejects disappears
 from `rows`.
 A schema change of the table restarts the shape from a new snapshot; transient refusals and lost connections retry
 with backoff; authentication, scope and unknown-table errors reject `done`. It needs the data read scope, or an end-user token with a read grant for the selected table.
@@ -451,7 +454,15 @@ and from a rename. Response `regions` are sorted without ordering meaning; integ
 with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
 Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
 `lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+An SDK needs no knowledge of a database's region: it can connect to any region. A region that does not hold the
+database authenticates the client and proxies to a region that holds it, which authenticates again. This adds one
+inter-region round trip (about 170 ms between the current regions) and passes two request admissions, one in each
+region. Completed requests and bytes are attributed to the final destination. A terminal forwarding failure is counted at the receiving region; intermediate placement refusals are not counted. Operation units are recorded where executed.
+
+A writer move closes pinned WebSocket sessions with 1012 and PostgreSQL sessions with 57P01; an open transaction is
+rolled back. Reconnect for later requests. If the proxy leg drops while a statement or commit is in flight, its
+outcome is unknown (`write_outcome_unknown` for REST/WebSocket, SQLSTATE 08007 for PostgreSQL). The proxy never
+replays that request. Check the committed state before deciding whether to send a new write.
 
 Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
@@ -479,3 +490,16 @@ are available in the source SDK. See [user profiles](../../docs/auth/user-profil
 for fields, scope requirements, hash encodings and the next-release API names.
 Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
 User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+
+### SQL session outcome rule
+
+An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
+open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
+autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.
+The SDK returns `write_outcome_unknown` (SQLSTATE `08007`) or its existing commit-uncertain error, retains that
+failure for every later call on the session, and closes the connection. It never reconnects or automatically
+retries an uncertain request. If the client cannot prove no request byte left, it treats the request as sent.
+An execute outside a confirmed transaction, or behind unanswered transaction control, is potentially committing.
+A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
+Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
+through another session before deciding whether to repeat it.

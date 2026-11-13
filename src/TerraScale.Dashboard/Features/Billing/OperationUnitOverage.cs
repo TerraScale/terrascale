@@ -27,16 +27,5 @@ namespace TerraScale.Dashboard.Features.Billing
 
         public static decimal UnitAmountCents => PlanCatalog.StorageGbMonthUsd * 100m / 1_000m;
 
-        public static long MegabyteMonths(BillingPlan plan, long byteHours, DateTimeOffset month)
-        {
-            if (plan.PriceCents <= 0)
-            {
-                return 0;
-            }
-
-            var hours = (long)(month.AddMonths(1) - month).TotalHours;
-            var over = (System.Numerics.BigInteger)byteHours - (System.Numerics.BigInteger)plan.Allowances.StorageBytes * hours;
-            return over <= 0 ? 0 : (long)(over / hours / 1_000_000);
-        }
     }
 }

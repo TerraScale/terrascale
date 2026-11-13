@@ -55,7 +55,7 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
     printf '%s\n' "$nats_token" >> "$state/secrets"
     if [ -n "${GITHUB_ACTIONS:-}" ]; then printf '::add-mask::%s\n' "$nats_token"; fi
     printf '%s' "$nats_token" > "$state/nats-token"
-    printf 'listen: 127.0.0.1:4222\nhttp: 127.0.0.1:8222\nauthorization { token: %s }\njetstream { store_dir: %s/nats }\n' \
+    printf 'listen: 127.0.0.1:4222\nhttp: 127.0.0.1:8222\nauthorization { token: "%s" }\njetstream { store_dir: "%s/nats" }\n' \
       "$nats_token" "$state" > "$state/nats.conf"
     start nats "$E2E_TOOLS/nats-server" --config "$state/nats.conf"
     ready nats curl -fsS --max-time 2 http://127.0.0.1:8222/healthz
@@ -87,6 +87,9 @@ else
     TERRABASE_FILES_S3_SECRET_ACCESS_KEY="$r2_secret_access_key" dotnet "$build/terrabase/terrabase.dll"
   ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz
   node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof"
+  curl -fsS --max-time 2 http://127.0.0.1:9091/metrics > "$state/backup-disabled.metrics"
+  awk '/^terrabase_backup_disabled(\{[^}]*\})? 1$/ {found=1; print} END {exit !found}' "$state/backup-disabled.metrics"
+  [ "$(curl -sS --max-time 2 -o "$state/backup-disabled.json" -w '%{http_code}' http://127.0.0.1:8080/backupz)" = 503 ]
 fi
 
 auth=(TS_AUTH_TERRABASE_URL=http://127.0.0.1:8081 TS_AUTH_LISTEN=http://127.0.0.1:8090 TS_AUTH_METRICS_LISTEN=http://127.0.0.1:9092

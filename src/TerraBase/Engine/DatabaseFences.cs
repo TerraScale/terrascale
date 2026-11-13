@@ -89,7 +89,17 @@ internal sealed class DatabaseFences
 
     public void Unresolved(string database) => Set(database, new Fence(Paused: false, Home: null));
 
-    public void Moved(string database, string home) => Set(database, new Fence(Paused: false, Home: home));
+    private event Action<string>? WriterMoved;
+
+    public IDisposable WatchMoved(string database, string? previousHome, Action moved) => new MoveWatch(this, database, previousHome, moved);
+
+    public void Moving(string database) => WriterMoved?.Invoke(database);
+
+    public void Moved(string database, string home)
+    {
+        Set(database, new Fence(Paused: false, Home: home));
+        WriterMoved?.Invoke(database);
+    }
 
     public void Release(string database)
     {
@@ -168,6 +178,45 @@ internal sealed class DatabaseFences
     private string PromotionPathOf(string database) => EntityIds.IsValid(database)
         ? Path.Combine(_directory, PromotingDirectory, database)
         : throw new ArgumentException("a fence names a database ULID", nameof(database));
+
+    private sealed class MoveWatch : IDisposable
+    {
+        private readonly DatabaseFences _fences;
+        private readonly string _database;
+        private readonly Action _moved;
+        private readonly Lock _gate = new();
+        private bool _disposed;
+
+        public MoveWatch(DatabaseFences fences, string database, string? previousHome, Action moved)
+        {
+            (_fences, _database, _moved) = (fences, database, moved);
+            fences.WriterMoved += Notify;
+            if (fences.MovedTo(database) != previousHome)
+            {
+                Notify(database);
+            }
+        }
+
+        private void Notify(string database)
+        {
+            lock (_gate)
+            {
+                if (!_disposed && database == _database)
+                {
+                    _moved();
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                _disposed = true;
+                _fences.WriterMoved -= Notify;
+            }
+        }
+    }
 
     private sealed record Fence(bool Paused, string? Home, PromotionSource? Promotion = null)
     {

@@ -16,6 +16,11 @@ from terrascale.auth_organizations import OrganizationInvitationRequest, Organiz
 from terrascale.errors import ServiceUnavailableError
 from terrascale.models import CreateProjectUser, ImportProjectUser, UpdateProjectUser
 
+if os.environ.get("E2E_SESSION_FAULT"):
+    from session_fault import session_fault
+    session_fault()
+    sys.exit(0)
+
 spec = json.loads(Path(os.environ["E2E_OPERATIONS"]).read_text(encoding="utf-8"))
 run = os.environ["E2E_RUN_ID"]
 project = os.environ["TERRASCALE_PROJECT_ID"]
@@ -449,10 +454,13 @@ def placement_set(op):
         same(updated.placement_version > added.placement_version, True, "writer change raises placement version")
         after = placed.database(created.id).regions()
         same([(row.region, row.role) for row in after.regions], [("fra", "writer")], "moved status")
-        error = refused(lambda: client.database(created.id).regions())
-        same([error.status, error.code], [421, "wrong_region"], "nonmember endpoint")
-        same(cells(placed.database(created.id).query("SELECT value FROM placement_rows")), [[1]], "data survived placement")
-        print("python placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region")
+        proxied = client.database(created.id).regions()
+        same([row.region for row in proxied.regions], ["fra"], "proxied nonmember endpoint")
+        same(cells(client.database(created.id).query("SELECT value FROM placement_rows")), [[1]], "data survived placement")
+        client.database(created.id).execute("INSERT INTO placement_rows VALUES (2)")
+        same(cells(placed.database(created.id).query("SELECT value FROM placement_rows ORDER BY value")),
+             [[1], [2]], "acknowledged proxied write retained")
+        print("python placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]")
     finally:
         placed.delete_database(created.id)
 

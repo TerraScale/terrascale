@@ -115,7 +115,7 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
     if (currentToken && performance.now() < refreshAt) return currentToken;
     if (!refreshing) refreshing = (async () => {
       const auth = await fetch("https://auth.terrascale.tech/terrascale/oauth/token", {
-        method: "POST", headers: { authorization: `Basic ${Buffer.from(`${credentials.apiKey.slice(0, 26)}:${credentials.apiKey}`).toString("base64")}`, "content-type": "application/x-www-form-urlencoded" },
+        method: "POST", headers: { authorization: `Basic ${Buffer.from(`${(credentials.apiKey.startsWith("sk_") ? credentials.apiKey.slice(3) : credentials.apiKey).slice(0, 26)}:${credentials.apiKey}`).toString("base64")}`, "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ grant_type: "client_credentials", project: credentials.project }), signal: AbortSignal.timeout(30_000),
       });
       if (auth.status !== 200) throw new Error("TOKEN_EXCHANGE_FAILED");

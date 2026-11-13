@@ -2,17 +2,18 @@ import type { APIRequestContext } from '@playwright/test';
 import { deleteAccount } from '../support/account';
 import { test, expect } from '../support/remote-database';
 import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
-import { runOperations, sdks } from '../support/sdk';
+import { runOperations, runSessionFault, sdks } from '../support/sdk';
 import { prepareAuthManagement, closeAuthManagement } from '../support/auth-management';
 import { deleteProjectOwner } from '../support/project-owner';
 import { checkPasswordFairness } from '../support/password-fairness';
 import { shell } from '../support/shell';
 import { onLocalStack } from '../support/stack';
+import { keyId } from '../support/api-key';
 import { journey, saveSecret, setupFinished } from '../support/state';
 
 async function placementHeaders(request: APIRequestContext): Promise<{ Authorization: string }> {
   const current = journey();
-  const basic = Buffer.from(`${current.apiKey.slice(0, 26)}:${current.apiKey}`).toString('base64');
+  const basic = Buffer.from(`${keyId(current.apiKey)}:${current.apiKey}`).toString('base64');
   const answer = await request.post('https://auth.terrascale.tech/terrascale/oauth/token', {
     headers: { Authorization: `Basic ${basic}` },
     form: { grant_type: 'client_credentials', project: current.projectId },
@@ -38,6 +39,27 @@ test('delete the dedicated auth feature owner after all auth flows', async ({ br
 test('a tenant at its hashing cap leaves other tenants normal sign-in capacity', async ({ browser }) => {
   await checkPasswordFairness(browser);
 });
+
+test('SQL sessions retain uncertainty after lost committing replies', async () => {
+  const failures: string[] = [];
+  for (const sdk of sdks) {
+    for (const asynchronous of sdk === 'python' ? [false, true] : [false]) {
+      const modes = ['commit', 'before', 'autocommit', 'batch', 'read'];
+      if (sdk === 'go') modes.push('overtake-commit', 'overtake-rollback', 'overtake-begin', 'overtake-batch', 'sql-error');
+      if (sdk === 'go' || sdk === 'rust') modes.push('retry');
+      if (sdk !== 'js') modes.push('cancel');
+      if (sdk === 'python' && !asynchronous) modes.push('dbapi');
+      for (const mode of modes) {
+        await test.step(`${sdk} ${mode}${asynchronous ? ' async' : ''}`, async () => {
+          try { await runSessionFault(sdk, mode, asynchronous); }
+          catch (error) { failures.push(`${sdk} ${mode}${asynchronous ? ' async' : ''}: ${String(error)}`); }
+        });
+      }
+    }
+  }
+  expect(failures).toEqual([]);
+});
+
 
 test.describe('SDK group A', () => {
   for (const sdk of sdks) {

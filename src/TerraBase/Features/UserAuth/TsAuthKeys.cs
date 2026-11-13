@@ -3,12 +3,13 @@ using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Configuration;
 using TerraBase.Errors;
+using TerraBase.Features.Clock;
 using TerraBase.Hosting;
 using ZLogger;
 
 namespace TerraBase.Features.UserAuth;
 
-internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
+internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
 {
     public const string HttpClientName = "ts-auth";
 
@@ -17,6 +18,8 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
     public static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan StartupRetry = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(10);
+
+    public static readonly TimeSpan MaxKeyAge = TimeSpan.FromHours(24);
 
     public static readonly TimeSpan UnknownKeyInterval = TimeSpan.FromSeconds(30);
 
@@ -28,65 +31,183 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
     private readonly string? _discovery;
     private readonly Counter<long> _fetches;
     private readonly Lock _gate = new();
-    private IReadOnlyList<SecurityKey>? _keys;
-    private Task<IReadOnlyList<SecurityKey>?>? _fetch;
+    private Snapshot? _snapshot;
+    private Task<FetchOutcome>? _fetch;
+    private readonly string _storedPath;
     private Task? _firstFetch;
-    private DateTimeOffset? _lastUnknownKeyRefresh;
+    private readonly ClockTrust _clock;
+    private readonly Counter<long> _storedRejected;
+    private readonly SemaphoreSlim _store = new(1, 1);
+    private readonly Dictionary<string, long> _unknown = new(StringComparer.Ordinal);
+    private long? _cycleStarted;
+    private long _refreshStarted;
+    private bool _followupUsed;
+    private bool _loadedStored;
+    public static readonly TimeSpan HighWaterPeriod = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan FollowupInterval = TimeSpan.FromSeconds(15);
 
     public TsAuthKeys(
-        TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime, ILogger<TsAuthKeys> logger)
+        TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime, ILogger<TsAuthKeys> logger, ClockTrust clock)
     {
+        _clock = clock;
         _http = http;
         _time = time;
         _logger = logger;
         _stopping = lifetime.ApplicationStopping;
         _issuer = options.AuthIssuer;
         _discovery = _issuer is null ? null : _issuer.TrimEnd('/') + "/.well-known/openid-configuration";
-        _fetches = meters.Create(Telemetry.MeterName)
-            .CreateCounter<long>("terrabase.auth.key_fetches", "{fetch}", "ts-auth signing key fetches, by outcome (success or failure).");
+        _storedPath = Path.Combine(options.DataDirectory, "auth-signing-keys.json");
+        var meter = meters.Create(Telemetry.MeterName);
+        _storedRejected = meter.CreateCounter<long>("terrabase.auth.stored_keys_rejected", "{snapshot}", "Stored signing key snapshots rejected, by bounded reason.");
+        _fetches = meter.CreateCounter<long>("terrabase.auth.key_fetches", "{fetch}", "ts-auth signing key fetches, by outcome (success or failure).");
+        if (_issuer is not null)
+        {
+            meter.CreateObservableGauge("terrabase.auth.signing_keys_loaded", () => Keys is null ? 0 : 1, unit: null,
+                "1 while a usable issuer signing key set is loaded; 0 while token verification is unavailable.");
+            meter.CreateObservableGauge("terrabase.auth.signing_keys_age", () => KeyAgeSeconds, "s",
+                "Age of the last successful issuer signing key fetch, including across restarts; -1 before any keys load.");
+        }
     }
 
-    public IReadOnlyList<SecurityKey>? Keys => Volatile.Read(ref _keys);
+    private sealed record Snapshot(IReadOnlyList<SecurityKey> Keys, PublicIssuerKeys Public, DateTimeOffset FetchedAt,
+        DateTimeOffset LastKnownTime, TimeSpan AgeAtLoad, long LoadedAt);
 
-    public async ValueTask<RefreshIssuerKeysResult> RefreshAsync(CancellationToken cancellationToken)
+    private TimeSpan Age(Snapshot snapshot) => snapshot.AgeAtLoad + _time.GetElapsedTime(snapshot.LoadedAt);
+
+    private double KeyAgeSeconds => Volatile.Read(ref _snapshot) is { } snapshot ? Age(snapshot).TotalSeconds : -1;
+
+    public IReadOnlyList<SecurityKey>? Keys => Volatile.Read(ref _snapshot) is { } snapshot
+        && Age(snapshot) < MaxKeyAge ? snapshot.Keys : null;
+
+    private sealed record FetchOutcome(RefreshIssuerKeysResult Result, long StartedAt);
+
+    public async ValueTask<RefreshIssuerKeysResult> RefreshAsync(string? keyId, CancellationToken cancellationToken)
     {
-        Task<IReadOnlyList<SecurityKey>?> fetch;
+        Task<FetchOutcome> fetch;
+        var observed = _time.GetTimestamp();
+        long firstSeenAt;
         lock (_gate)
         {
-            if (_fetch is null || _fetch.IsCompleted)
+            if (_cycleStarted is null || _time.GetElapsedTime(_cycleStarted.Value, observed) >= UnknownKeyInterval)
             {
-                var now = _time.GetUtcNow();
-                if (_issuer is null || (_lastUnknownKeyRefresh is { } last && now - last < UnknownKeyInterval))
-                {
-                    return Keys is { } cached ? cached : new Unavailable("ts-auth signing keys are not loaded");
-                }
-
-                _lastUnknownKeyRefresh = now;
-                _fetch = Task.Run(FetchAsync, CancellationToken.None);
+                _unknown.Clear();
             }
 
-            fetch = _fetch;
+            var identity = ValidatedTokens.KeyOf(keyId ?? string.Empty);
+            if (!_unknown.TryGetValue(identity, out firstSeenAt))
+            {
+                firstSeenAt = observed;
+                if (_unknown.Count < 1024)
+                {
+                    _unknown.Add(identity, firstSeenAt);
+                }
+            }
+
+            fetch = _fetch is { IsCompleted: false } ? _fetch : StartUnknownLocked(firstSeenAt);
         }
 
-        var keys = await fetch.WaitAsync(cancellationToken).ConfigureAwait(false);
-        return keys is not null ? keys : new Unavailable("ts-auth signing keys are not loaded");
+        while (true)
+        {
+            var outcome = await fetch.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (outcome.StartedAt >= firstSeenAt
+                || outcome.Result is IReadOnlyList<SecurityKey> keys && keys.Any(key => key.KeyId == keyId))
+            {
+                return outcome.Result;
+            }
+
+            lock (_gate)
+            {
+                fetch = _fetch is { } latest && !ReferenceEquals(latest, fetch) ? latest : StartUnknownLocked(firstSeenAt);
+            }
+        }
+    }
+
+    private Task<FetchOutcome> StartUnknownLocked(long firstSeenAt)
+    {
+        if (_issuer is null)
+        {
+            return Task.FromResult(new FetchOutcome(new Unavailable(TokenKeysPending.Message), _time.GetTimestamp()));
+        }
+
+        var now = _time.GetTimestamp();
+        var delay = TimeSpan.Zero;
+        if (_cycleStarted is { } cycle && _time.GetElapsedTime(cycle, now) < UnknownKeyInterval)
+        {
+            if (firstSeenAt <= _refreshStarted)
+            {
+                return Task.FromResult(new FetchOutcome(new Unavailable(TokenKeysPending.Message), _time.GetTimestamp()));
+            }
+
+            if (_followupUsed)
+            {
+                delay = UnknownKeyInterval - _time.GetElapsedTime(cycle, now);
+                _cycleStarted = cycle + (long)(UnknownKeyInterval.TotalSeconds * _time.TimestampFrequency);
+                _followupUsed = false;
+            }
+            else
+            {
+                _followupUsed = true;
+                delay = FollowupInterval - _time.GetElapsedTime(_refreshStarted, now);
+            }
+        }
+        else
+        {
+            _cycleStarted = now;
+            _followupUsed = false;
+        }
+
+        _fetch = FetchAfterAsync(delay);
+        return _fetch;
+    }
+
+    private async Task<FetchOutcome> FetchAfterAsync(TimeSpan delay)
+    {
+        await Task.Yield();
+        if (delay > TimeSpan.Zero)
+        {
+            var remaining = Volatile.Read(ref _snapshot) is { } snapshot ? MaxKeyAge - Age(snapshot) : TimeSpan.Zero;
+            delay = remaining < delay ? remaining : delay;
+        }
+
+        if (delay > TimeSpan.Zero)
+        {
+            await Task.Delay(delay, _time, _stopping).ConfigureAwait(false);
+        }
+
+        long started;
+        lock (_gate)
+        {
+            started = _refreshStarted = _time.GetTimestamp();
+            if (_cycleStarted is { } cycle && cycle > _refreshStarted)
+            {
+                _cycleStarted = _refreshStarted;
+            }
+        }
+
+        return new FetchOutcome(await FetchAsync().ConfigureAwait(false), started);
     }
 
     public async ValueTask<IReadOnlyList<SecurityKey>?> JoinAsync(CancellationToken cancellationToken)
     {
-        Task<IReadOnlyList<SecurityKey>?>? fetch;
+        Task<FetchOutcome>? fetch;
         lock (_gate)
         {
             fetch = _fetch;
         }
 
-        return fetch is null || fetch.IsCompleted ? Keys : await fetch.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (fetch is not null && !fetch.IsCompleted)
+        {
+            _ = await fetch.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return Keys;
     }
 
-    public override Task StartAsync(CancellationToken cancellationToken)
+    public override async Task StartAsync(CancellationToken cancellationToken)
     {
+        await LoadStoredAsync(cancellationToken).ConfigureAwait(false);
         _firstFetch = _issuer is null ? null : JoinOrStartFetch();
-        return base.StartAsync(cancellationToken);
+        await base.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -96,28 +217,52 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
             return;
         }
 
-        await _firstFetch.WaitAsync(stoppingToken).ConfigureAwait(false);
-        while (!stoppingToken.IsCancellationRequested)
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), _time);
+        var checkpoint = _time.GetTimestamp();
+        do
         {
-            await Task.Delay(Keys is null ? StartupRetry : RefreshInterval, _time, stoppingToken).ConfigureAwait(false);
-            await JoinOrStartFetch().WaitAsync(stoppingToken).ConfigureAwait(false);
+            if (!_loadedStored && _clock.Trusted)
+            {
+                _loadedStored = true;
+                await ActivateStoredAsync(stoppingToken).ConfigureAwait(false);
+            }
+
+            if (_time.GetElapsedTime(checkpoint) >= HighWaterPeriod)
+            {
+                if (Volatile.Read(ref _snapshot) is { } current)
+                {
+                    await StoreAsync(current, stoppingToken).ConfigureAwait(false);
+                }
+
+                checkpoint = _time.GetTimestamp();
+            }
+
+            var interval = Keys is null ? StartupRetry : RefreshInterval;
+            lock (_gate)
+            {
+                if ((_fetch is null || _fetch.IsCompleted) && _time.GetElapsedTime(_refreshStarted) >= interval)
+                {
+                    _fetch = FetchAfterAsync(TimeSpan.Zero);
+                }
+            }
         }
+        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
     }
 
-    private Task<IReadOnlyList<SecurityKey>?> JoinOrStartFetch()
+    private Task<FetchOutcome> JoinOrStartFetch()
     {
         lock (_gate)
         {
             if (_fetch is null || _fetch.IsCompleted)
             {
-                _fetch = Task.Run(FetchAsync, CancellationToken.None);
+                _fetch = FetchAfterAsync(TimeSpan.Zero);
             }
 
             return _fetch;
         }
     }
 
-    private async Task<IReadOnlyList<SecurityKey>?> FetchAsync()
+    private async Task<RefreshIssuerKeysResult> FetchAsync()
     {
         try
         {
@@ -131,15 +276,22 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
                 return Fail();
             }
 
-            var keySet = new JsonWebKeySet(await GetJsonAsync(client, configuration.JwksUri, cancellation.Token).ConfigureAwait(false));
-            SecurityKey[] keys = [.. keySet.GetSigningKeys().Where(key => key is AsymmetricSecurityKey or JsonWebKey { Kty: "RSA" or "EC" })];
-            if (keys.Length == 0)
+            if (_issuer is null || !Uri.TryCreate(configuration.JwksUri, UriKind.Absolute, out var jwks)
+                || jwks.Scheme != Uri.UriSchemeHttps || jwks.GetLeftPart(UriPartial.Authority) != new Uri(_issuer).GetLeftPart(UriPartial.Authority)
+                || !string.IsNullOrEmpty(jwks.UserInfo))
             {
-                _logger.ZLogError($"The ts-auth key set has no RSA or EC signing key; it was not used");
+                _logger.ZLogError($"The ts-auth key set address is outside auth-issuer; its keys were not used");
                 return Fail();
             }
 
-            Volatile.Write(ref _keys, keys);
+            var keySet = ReadKeySet(await GetJsonAsync(client, configuration.JwksUri, cancellation.Token).ConfigureAwait(false));
+            var keys = SigningKeys(keySet);
+            var loadedAt = _time.GetTimestamp();
+            var fetchedAt = _time.GetUtcNow();
+            var snapshot = new Snapshot(keys, PublicKeys(keySet), fetchedAt, fetchedAt, TimeSpan.Zero, loadedAt);
+            Volatile.Write(ref _snapshot, snapshot);
+            await StoreAsync(snapshot, cancellation.Token).ConfigureAwait(false);
+            _logger.ZLogInformation($"Fetched {keys.Count:@Count} ts-auth public signing keys");
             _fetches.Add(1, new KeyValuePair<string, object?>("outcome", "success"));
             return keys;
         }
@@ -154,10 +306,10 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         }
     }
 
-    private IReadOnlyList<SecurityKey>? Fail()
+    private RefreshIssuerKeysResult Fail()
     {
         _fetches.Add(1, new KeyValuePair<string, object?>("outcome", "failure"));
-        return Keys;
+        return new Unavailable(TokenKeysPending.Message);
     }
 
     private static async Task<string> GetJsonAsync(HttpClient client, string? address, CancellationToken cancellationToken)

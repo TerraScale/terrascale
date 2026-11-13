@@ -56,7 +56,8 @@ sync transaction methods throw like the other sync paths).
   `GetBytes`, `IsNull`). `As<T>(JsonTypeInfo<T>)` and the typed `QueryAsync<T>` map a row through source-generated
   JSON metadata: the row becomes an object keyed by column name and a blob a base64 string.
 - A refused statement throws `TerraBaseSqlException` with `Code` (one of `TerraBaseSqlErrorCodes`, such as
-  `unique_violation`), `Sqlstate` (such as `23505`) and `Statement` (zero-based index). The request rolled back.
+  `unique_violation`), `Sqlstate` (such as `23505`) and `Statement` (zero-based index). A confirmed refusal rolls the request back;
+  `write_outcome_unknown` and `commit_uncertain` require reconciliation because the write may have committed.
   A REST request refused with `serialization_conflict` is resent at most twice; nothing else is resent.
 - Primary keys are ULIDs from `TerraScaleIdGenerator`; tables that take local writes avoid `AUTOINCREMENT`.
 
@@ -84,9 +85,9 @@ every call throws `transaction_aborted` until rollback; commit then rolls back a
 Session errors have a null `StatusCode`. A refused upgrade throws the usual `TerraBaseException` subclass (401, 404,
 421 `TerraBaseWrongRegionException`). The upgrade goes through the caller's `HttpClient` and its handlers with
 the same credential as REST (a credential-free client reaches a private listener over HTTP/2 extended CONNECT), and is
-never resent. When the socket drops, calls in flight fail and the next call reconnects; a
-transaction open at the drop rolled back, so every call but `RollbackAsync` throws `transaction_rolled_back` until the
-caller rolls back.
+never resent. A lost committing reply throws `write_outcome_unknown` (08007), and every later call throws the
+same error. If no committing request was sent, a lost open transaction throws `transaction_rolled_back` until
+`RollbackAsync` clears it; only then can the next call reconnect.
 
 ## Entity Framework Core
 
@@ -318,16 +319,14 @@ Both clients resolve their endpoint per request through `ITerraBaseEndpointResol
 and cancellation token, and every returned origin is validated before credentials
 are sent.
 
-Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Without `Region`, a request
-goes to `BaseAddress` (for example `https://api.terrascale.tech`) and
-carries no routing header; a `TerraBaseSqlClient` with an `ApiKey` and no `BaseAddress`, `EndpointResolver` or
-`AuthAddress` sends it to `https://api.terrascale.tech`. With `Region = "gru"` (a lowercase region id), every request is sent to
-`https://api.terrascale.tech` (unless `BaseAddress`/`EndpointResolver` is set) and pinned with
-`X-TerraScale-Region-Pin: gru`, so no other region serves it. A region that does not serve the request answers `421`,
-surfaced as `TerraBaseWrongRegionException`: `Region` is the region that answered, `HomeRegion` and `Regions` (from
-`X-TerraBase-Database-Home`/`-Regions`) say where to send it. Nothing is retried or redirected automatically: a write is
-sent once. Every `TerraBaseException` carries
-the answering region (`X-TerraBase-Region`) when TerraBase named it.
+Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Use the global API
+origin, `https://api.terrascale.tech`, or configure `BaseAddress`/`EndpointResolver` for another deployment.
+`Region` selects the entry region with `X-TerraScale-Region-Pin`. In the source-only, unreleased server proxy
+contract, a database call reaching a region without a copy is served through one proxy hop by a region that holds
+the database. `Region` has no effect on the serving region of these calls: the proxy removes the pin.
+An unreachable destination or stale forwarded placement returns `503 unavailable`; an uncertain write returns
+`503 write_outcome_unknown`. Every `TerraBaseException` carries the answering region (`X-TerraBase-Region`)
+when TerraBase named it. See [release scope and proxy behavior](../region-proxy.md).
 
 No TerraBase runs in this repository (user rule, 2026-10-11: no repository other
 than the monorepo depends on TerraBase).
@@ -399,7 +398,8 @@ and from a rename. Response `regions` are sorted without ordering meaning; integ
 with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
 Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
 `lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+A removed regional endpoint proxies to a region that holds the database in the unreleased server contract;
+see [source-only proxy behavior](../region-proxy.md). Use the global API origin.
 
 Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
@@ -427,3 +427,16 @@ are available in the source SDK. See [user profiles](../../docs/auth/user-profil
 for fields, scope requirements, hash encodings and the next-release API names.
 Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
 User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+
+### SQL session outcome rule
+
+An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
+open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
+autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.
+The SDK returns `write_outcome_unknown` (SQLSTATE `08007`) or its existing commit-uncertain error, retains that
+failure for every later call on the session, and closes the connection. It never reconnects or automatically
+retries an uncertain request. If the client cannot prove no request byte left, it treats the request as sent.
+An execute outside a confirmed transaction, or behind unanswered transaction control, is potentially committing.
+A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
+Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
+through another session before deciding whether to repeat it.

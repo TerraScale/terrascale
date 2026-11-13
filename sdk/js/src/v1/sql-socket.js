@@ -32,7 +32,7 @@ const maximumStatements = 256;
 const maximumFrameBytes = 1024 * 1024;
 const statusByCode = new Map([
   ["forbidden_scope", 403], ["sql_sandbox", 403], ["serialization_conflict", 409], ["row_conflict", 409], ["too_large", 413], ["quota_exceeded", 429],
-  ["tenant_busy", 429], ["unauthorized", 401], ["unavailable", 503], ["wrong_region", 421], ["internal_error", 500],
+  ["tenant_busy", 429], ["unauthorized", 401], ["write_outcome_unknown", 503], ["unavailable", 503], ["wrong_region", 421], ["internal_error", 500],
 ]);
 
 /**
@@ -51,11 +51,11 @@ const statusByCode = new Map([
 export class V1SqlSocket {
   /** @type {SqlSocketLike} */
   #socket;
-  /** @type {Map<number, { resolve: (value: JsonObject) => void; reject: (error: unknown) => void }>} */
+  /** @type {Map<number, { resolve: (value: JsonObject) => void; reject: (error: unknown) => void; committing: boolean; control: boolean }>} */
   #pending = new Map();
   #nextId = 1;
   #transaction = false;
-  /** @type {SqlSocketClosedError | undefined} */
+  /** @type {SqlSocketClosedError | SqlError | undefined} */
   #closed;
 
   /** @param {SqlSocketLike} socket */
@@ -211,8 +211,13 @@ export class V1SqlSocket {
     if (new TextEncoder().encode(frame).byteLength > maximumFrameBytes)
       return Promise.reject(new TypeError(`A SQL WebSocket frame holds at most ${maximumFrameBytes} bytes.`));
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
-      this.#socket.send(frame);
+      const committing = type === "commit" || type === "execute" && (!this.#transaction || [...this.#pending.values()].some(pending => pending.control));
+      this.#pending.set(id, { resolve, reject, committing, control: ["begin", "commit", "rollback"].includes(type) });
+      try { this.#socket.send(frame); }
+      catch (error) {
+        this.#fail(new SqlSocketClosedError(1006, error instanceof Error ? error.message : "send failed"));
+        this.#socket.close();
+      }
     });
   }
 
@@ -228,23 +233,46 @@ export class V1SqlSocket {
       this.#fail(new SqlSocketClosedError(1002, error instanceof Error ? error.message : "unreadable frame"));
       return;
     }
-    const id = frame.id === null || frame.id === undefined ? this.#pending.keys().next().value : frame.id;
+    const id = frame.id;
     const waiter = typeof id === "number" ? this.#pending.get(id) : undefined;
-    if (waiter === undefined) return;
-    this.#pending.delete(/** @type {number} */ (id));
+    if (waiter === undefined) {
+      if (frame.type === "error") {
+        try { this.#fail(socketError(object(frame.error, "SQL error"))); }
+        catch (error) { this.#fail(new SqlSocketClosedError(1002, error instanceof Error ? error.message : "unreadable answer")); }
+        this.#socket.close();
+      }
+      return;
+    }
     try {
       this.#transaction = boolean(frame.transaction, "SQL transaction flag");
       if (frame.type === "result") waiter.resolve(frame);
-      else if (frame.type === "error") waiter.reject(socketError(object(frame.error, "SQL error")));
+      else if (frame.type === "error") {
+        const error = socketError(object(frame.error, "SQL error"));
+        if (["write_outcome_unknown", "commit_uncertain"].includes(error.code)) {
+          this.#closed = error;
+          this.#fail(error);
+          this.#socket.close();
+        }
+        waiter.reject(error);
+      }
       else malformed("SQL frame type");
+      this.#pending.delete(/** @type {number} */ (id));
     } catch (error) {
-      waiter.reject(error);
+      this.#fail(new SqlSocketClosedError(1002, error instanceof Error ? error.message : "unreadable answer"));
+      this.#socket.close(1002);
     }
   }
 
-  /** @param {SqlSocketClosedError} error */
+  /** @param {SqlSocketClosedError | SqlError} error */
   #fail(error) {
-    this.#closed ??= error;
+    if (this.#closed === undefined) {
+      const committing = [...this.#pending.values()].some(pending => pending.committing);
+      this.#closed = committing
+        ? new SqlError({ status: 503, code: "write_outcome_unknown", sqlstate: "08007", statement: 0, message: "A committing request lost its answer; reconcile before repeating." })
+        : this.#transaction
+          ? new SqlError({ status: 400, code: "transaction_rolled_back", sqlstate: "40000", statement: 0, message: "The connection lost an open transaction before a committing request was sent." })
+          : error;
+    }
     this.#transaction = false;
     const waiters = [...this.#pending.values()];
     this.#pending.clear();

@@ -1052,13 +1052,14 @@ impl Runner {
             if updated.placement_version <= added.placement_version { return Err("writer did not raise placement version".into()); }
             let after = regional.database(&created.id).get_database_regions().await.map_err(|error| error.to_string())?;
             same(json!(after.regions.iter().map(|row| (&row.region, &row.role)).collect::<Vec<_>>()), &json!([["fra", "writer"]]), "moved status")?;
-            match db.get_database_regions().await {
-                Err(error) if error.status() == Some(421) && error.code() == Some("wrong_region") => (),
-                other => return Err(format!("nonmember endpoint: {other:?}")),
-            }
-            let rows = regional.database(&created.id).sql().query("SELECT value FROM placement_rows", &[]).await.map_err(|error| error.to_string())?;
+            let proxied = db.get_database_regions().await.map_err(|error| error.to_string())?;
+            same(json!(proxied.regions.iter().map(|row| &row.region).collect::<Vec<_>>()), &json!(["fra"]), "proxied nonmember endpoint")?;
+            let rows = db.sql().query("SELECT value FROM placement_rows", &[]).await.map_err(|error| error.to_string())?;
             same(records(&rows), &json!([[1]]), "data survived placement")?;
-            println!("rust placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region");
+            db.sql().execute("INSERT INTO placement_rows VALUES (2)", &[]).await.map_err(|error| error.to_string())?;
+            let retained = regional.database(&created.id).sql().query("SELECT value FROM placement_rows ORDER BY value", &[]).await.map_err(|error| error.to_string())?;
+            same(records(&retained), &json!([[1], [2]]), "acknowledged proxied write retained")?;
+            println!("rust placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]");
             Ok(())
         }.await;
         let placed = if moved { &regional } else { &self.client };
@@ -1070,6 +1071,8 @@ impl Runner {
     }
 }
 
+mod session_fault;
+
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1079,6 +1082,15 @@ fn main() {
 }
 
 async fn run() -> i32 {
+    if std::env::var_os("E2E_SESSION_FAULT").is_some() {
+        return match session_fault::run().await {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("{error}");
+                1
+            }
+        };
+    }
     let env = |name: &str| std::env::var(name).unwrap_or_default();
     let spec: Value = serde_json::from_str(
         &std::fs::read_to_string(env("E2E_OPERATIONS")).expect("operations.json"),

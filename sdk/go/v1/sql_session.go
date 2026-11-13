@@ -25,27 +25,33 @@ var ErrSQLSessionClosed = errors.New("terrabase: SQL session is closed")
 // lasts at most 5 seconds. It is safe for concurrent use: calls may overlap
 // and answers are matched by frame id. Nothing is resent.
 //
-// When the socket drops, calls in flight fail and the next call opens a new
-// socket with a fresh credential. If a transaction was open, the server rolled
-// it back: every call except Rollback returns ErrTransactionRolledBack until
-// Rollback, which only clears that local state. After Close the session stays
-// closed.
+// A lost committing answer returns ErrCommitUncertain and closes the session;
+// every later call returns the same error. Without a committing request, a lost
+// open transaction returns ErrTransactionRolledBack until Rollback clears it.
 type SQLSession struct {
 	d      *Database
 	nextID atomic.Int64
 
-	mu     sync.Mutex
-	conn   *sqlConn
-	closed bool
-	inTx   bool // the last answer's transaction flag
-	lostTx bool // a transaction was open when the socket dropped
+	mu        sync.Mutex
+	conn      *sqlConn
+	closed    bool
+	inTx      bool
+	lostTx    bool
+	uncertain error
 }
 
 type sqlConn struct {
 	ws      *websocket.Conn
+	sending chan struct{}
 	mu      sync.Mutex
-	pending map[int64]chan sqlAnswer
+	pending map[int64]sqlPending
 	err     error // set once the socket is gone
+}
+
+type sqlPending struct {
+	answer     chan sqlAnswer
+	committing bool
+	control    bool
 }
 
 type sqlFrame struct {
@@ -168,10 +174,10 @@ func (s *SQLSession) InTransaction() bool {
 func (s *SQLSession) Close() error {
 	s.mu.Lock()
 	conn := s.conn
-	s.closed, s.conn, s.inTx, s.lostTx = true, nil, false, false
+	s.closed = true
 	s.mu.Unlock()
 	if conn != nil {
-		conn.fail(ErrSQLSessionClosed)
+		s.fail(conn, ErrSQLSessionClosed)
 		_ = conn.ws.Close(websocket.StatusNormalClosure, "")
 	}
 	return nil
@@ -190,11 +196,8 @@ func (s *SQLSession) send(ctx context.Context, typ string, statements []Statemen
 	if conn == nil {
 		return sqlAnswer{}, err
 	}
-	answer, err := conn.call(ctx, id, frame)
+	answer, err := conn.call(ctx, s, id, typ, frame)
 	if err != nil {
-		if typ == "execute" || typ == "commit" {
-			return sqlAnswer{}, fmt.Errorf("%w: %w", ErrCommitUncertain, err)
-		}
 		return sqlAnswer{}, err
 	}
 	if e := answer.Error; e != nil {
@@ -208,6 +211,9 @@ func (s *SQLSession) send(ctx context.Context, typ string, statements []Statemen
 func (s *SQLSession) connection(ctx context.Context, typ string) (*sqlConn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.uncertain != nil {
+		return nil, s.uncertain
+	}
 	if s.closed {
 		return nil, ErrSQLSessionClosed
 	}
@@ -286,7 +292,7 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 			return nil, fmt.Errorf("terrabase: server did not select the %s subprotocol", SQLSubprotocol)
 		}
 		ws.SetReadLimit(c.maxResponse)
-		conn := &sqlConn{ws: ws, pending: map[int64]chan sqlAnswer{}}
+		conn := &sqlConn{ws: ws, sending: make(chan struct{}, 1), pending: map[int64]sqlPending{}}
 		go s.receive(conn)
 		return conn, nil
 	}
@@ -306,65 +312,106 @@ func (s *SQLSession) receive(conn *sqlConn) {
 			err = &SQLError{Code: answer.Error.Code, Message: answer.Error.Message, Statement: answer.Error.Statement, SQLState: answer.Error.SQLState}
 		}
 		if err != nil {
-			s.mu.Lock()
-			if s.conn == conn {
-				s.lostTx = s.lostTx || s.inTx
-				s.conn, s.inTx = nil, false
-			}
-			s.mu.Unlock()
-			conn.fail(fmt.Errorf("terrabase: SQL session socket closed: %w", err))
+			s.fail(conn, fmt.Errorf("terrabase: SQL session socket closed: %w", err))
 			_ = conn.ws.CloseNow()
 			return
 		}
 		s.mu.Lock()
+		conn.mu.Lock()
 		if s.conn == conn {
 			s.inTx = answer.Transaction
 		}
-		s.mu.Unlock()
 		if answer.ID != nil {
-			conn.mu.Lock()
-			if ch, ok := conn.pending[*answer.ID]; ok {
-				ch <- answer
+			if pending, ok := conn.pending[*answer.ID]; ok {
+				if e := answer.Error; e != nil && (e.Code == ErrWriteOutcomeUnknown || e.Code == ErrCommitUncertain) {
+					s.uncertain = &SQLError{Code: e.Code, Message: e.Message, Statement: e.Statement, SQLState: e.SQLState}
+				}
+				pending.answer <- answer
 				delete(conn.pending, *answer.ID)
 			}
-			conn.mu.Unlock()
+		}
+		uncertain := s.uncertain
+		conn.mu.Unlock()
+		s.mu.Unlock()
+		if uncertain != nil {
+			s.fail(conn, uncertain)
+			_ = conn.ws.CloseNow()
+			return
 		}
 	}
 }
 
-func (c *sqlConn) call(ctx context.Context, id int64, frame []byte) (sqlAnswer, error) {
-	ch := make(chan sqlAnswer, 1)
-	c.mu.Lock()
-	if c.err != nil {
-		c.mu.Unlock()
-		return sqlAnswer{}, c.err
+func (c *sqlConn) call(ctx context.Context, s *SQLSession, id int64, typ string, frame []byte) (sqlAnswer, error) {
+	if err := ctx.Err(); err != nil {
+		return sqlAnswer{}, err
 	}
-	c.pending[id] = ch
+	ch := make(chan sqlAnswer, 1)
+	select {
+	case <-ctx.Done():
+		return sqlAnswer{}, ctx.Err()
+	case c.sending <- struct{}{}:
+	}
+	s.mu.Lock()
+	c.mu.Lock()
+	if c.err != nil || s.uncertain != nil {
+		err := c.err
+		if s.uncertain != nil {
+			err = s.uncertain
+		}
+		c.mu.Unlock()
+		s.mu.Unlock()
+		<-c.sending
+		return sqlAnswer{}, err
+	}
+	committing := typ == "commit" || typ == "execute" && !s.inTx
+	if typ == "execute" {
+		for _, pending := range c.pending {
+			committing = committing || pending.control
+		}
+	}
+	c.pending[id] = sqlPending{answer: ch, committing: committing, control: typ == "begin" || typ == "commit" || typ == "rollback"}
 	c.mu.Unlock()
-	if err := c.ws.Write(ctx, websocket.MessageText, frame); err != nil {
-		c.fail(fmt.Errorf("terrabase: SQL session socket closed: %w", err))
+	s.mu.Unlock()
+	writeErr := c.ws.Write(ctx, websocket.MessageText, frame)
+	<-c.sending
+	if err := writeErr; err != nil {
+		s.fail(c, fmt.Errorf("terrabase: SQL session socket closed: %w", err))
 		_ = c.ws.CloseNow()
 	}
 	select {
 	case answer := <-ch:
 		return answer, answer.err
 	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return sqlAnswer{}, ctx.Err()
+		s.fail(c, ctx.Err())
+		_ = c.ws.CloseNow()
+		answer := <-ch
+		return answer, answer.err
 	}
 }
 
-// fail records the first close error and fails every call in flight.
-func (c *sqlConn) fail(err error) {
+func (s *SQLSession) fail(c *sqlConn, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.err == nil {
 		c.err = err
 	}
-	for id, ch := range c.pending {
-		ch <- sqlAnswer{err: c.err}
+	for _, pending := range c.pending {
+		if pending.committing && s.uncertain == nil {
+			s.uncertain = fmt.Errorf("%w: %w", ErrCommitUncertain, c.err)
+		}
+	}
+	if s.conn == c {
+		s.lostTx = s.uncertain == nil && (s.lostTx || s.inTx)
+		s.conn, s.inTx = nil, false
+	}
+	failure := c.err
+	if s.uncertain != nil {
+		failure = s.uncertain
+	}
+	for id, pending := range c.pending {
+		pending.answer <- sqlAnswer{err: failure}
 		delete(c.pending, id)
 	}
 }

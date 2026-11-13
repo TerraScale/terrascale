@@ -33,7 +33,7 @@ pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 << 20;
 ///   `429` without a TerraBase error code is retried only when replay-safe.
 ///   Quota refusals such as `429 operation_allowance` are never retried.
 /// * Transport errors, the transient 503s (`capacity`,
-///   `storage_unavailable`, `dependencies_unavailable`, `commit_uncertain`)
+///   `storage_unavailable`, `dependencies_unavailable`)
 ///   and gateway `502`/`503`/`504` answers without a TerraBase error code
 ///   are retried only when the request is replay-safe: reads, queries and
 ///   other explicitly read-only requests.
@@ -732,8 +732,8 @@ impl Client {
                     | (
                         Some(503),
                         Some(
-                            "commit_uncertain"
-                                | "capacity"
+                            "capacity"
+                                | "commit_uncertain"
                                 | "storage_unavailable"
                                 | "dependencies_unavailable"
                                 | "storage_busy"
@@ -1018,6 +1018,9 @@ impl Client {
                                 (Some(429), Some("rate_limited" | "tenant_busy")) => true,
                                 // An uncoded (edge) 429 grants no mutation retry.
                                 (Some(429), Some("http_429")) => replay_safe,
+                                (Some(503), Some("commit_uncertain")) => {
+                                    replay_safe && req.method == Method::GET
+                                }
                                 // A gateway answer without a TerraBase error code
                                 // never reached a handler that names its outcome.
                                 (Some(status @ 502..=504), Some(code))
@@ -1029,8 +1032,7 @@ impl Client {
                                 (
                                     Some(503),
                                     Some(
-                                        "commit_uncertain"
-                                        | "capacity"
+                                        "capacity"
                                         | "storage_unavailable"
                                         | "dependencies_unavailable"
                                         | "storage_busy"

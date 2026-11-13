@@ -9,6 +9,7 @@ import { confirmWithPassword, onboard, signUp, verify } from '../support/hosted'
 import { newAddress } from '../support/inbox';
 import { createApiKey } from '../support/paid';
 import { auth, dash, production, stateDir } from '../support/stack';
+import { keyId } from '../support/api-key';
 import { saveSecret } from '../support/state';
 
 const first = 'https://gru.api.terrascale.tech';
@@ -36,7 +37,7 @@ const test = base.extend<{ cells: Cells }>({
       const exchange = await request.post(`${auth}/terrascale/oauth/token`, {
         form: {
           grant_type: 'client_credentials',
-          client_id: apiKey.slice(0, 26),
+          client_id: keyId(apiKey),
           client_secret: apiKey,
           project: projectId,
           scope: 'sql:read sql:write databases:read databases:write',

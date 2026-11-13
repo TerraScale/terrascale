@@ -62,7 +62,7 @@ A month reads every node's own record plus its unflushed units. Units of databas
 
 ### Every organization, for the dashboard
 
-`GET /v1/usage/allowances[?after=<organization id>][&month=<previous yyyy-MM>]` on the internal
+`GET /v1/usage/allowances[?after=<organization id>][&month=<complete yyyy-MM>]` on the internal
 listener (shared peer credential) pages every organization, 25 at a time in id order:
 `periodStart`, `observedAt`, `items[{organizationId, operations, logicalBytes, sqlReads, storageByteHours}]`,
 `next`, `operationsContract` (`write-units-4kib-global-v2`) and `storageContract`
@@ -71,10 +71,31 @@ units; `storageByteHours` the stored bytes times hours this month. Once an hour 
 stored bytes of every organization's databases it holds and adds bytes × hours since its last sample
 (one hour for its first sample of the month) to its own month record, so a restart in the same hour
 adds nothing. ts-dashboard bills the month's average stored bytes over the plan allowance per
-GB-month, in MB-months. `month` selects the previous UTC month,
-so ts-dashboard bills a month's last units during the first three days after it closes. A scan
-that crosses into another UTC month or runs past 30 seconds answers `503`. Responses carry
-`Cache-Control: no-store`.
+GB-month, in MB-months. Omitting `month` returns the current UTC month. An explicit `month` accepts any
+complete calendar month in `yyyy-MM` form; the current month, future months and malformed values
+return `400 invalid_request` in the existing error envelope. A month becomes complete at the first
+instant of the next month (00:00 UTC) on the service clock.
+
+For an explicit month, `operations=null`, `sqlReads=null` and `storageByteHours=null` mean that no
+persisted usage-month record and no unflushed unit exists for that organization on any answering
+node. This is unavailable history, never zero usage. A persisted record containing zero totals returns
+numeric zeros. A node without records contributes nothing when another node has records for the
+organization. `logicalBytes` remains null. Units a node has not flushed to its record yet are counted,
+as they are for the current month. Paging, ordering and the JSON fields are unchanged.
+
+Responses expose `Usage-Final: false`. Month completeness is a calendar boundary, not an accounting
+watermark: a buffered or uncertain flush can still persist units attributed to a closed month. There
+is no enforced maximum delay, so no finite waiting interval guarantees final totals. Operations are
+attributed when recorded; an operation completing in the next month is counted there. Storage samples
+are attributed to their sampling hour. A scan that crosses into another UTC month or runs past 30
+seconds answers `503`. Responses carry `Cache-Control: no-store`.
+
+Usage-month records have no time-based expiry or pruning in the service. The separate minute, hour
+and day chart buckets do expire; that pruning does not remove usage-month records. Project deletion
+removes project-scoped records, including project usage months, while organization totals survive.
+Organization deletion removes the organization from the catalog used by this page, so it can disappear
+between page requests even though its month records are not age-pruned. Pages are live reads, not a
+snapshot across requests; creation, deletion and delayed flushes can change what later pages observe.
 
 ## Behavior
 

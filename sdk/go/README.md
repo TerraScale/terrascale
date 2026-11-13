@@ -94,8 +94,8 @@ Retries: TerraBase does not deduplicate retries and rejects `Idempotency-Key`,
 so the client never sends one. Reads are retried after 429 `rate_limited` and
 `tenant_busy` (an admission refusal) with `Retry-After`, and after the transient
 rejections (`capacity`, `storage_unavailable`, `dependencies_unavailable`) with
-backoff. Transport errors, gateway `502`/`504` answers and `commit_uncertain`
-are retried only for reads. Mutations return uncertain outcomes without a replay:
+backoff. Transport errors and gateway `502`/`504` answers are retried only for reads.
+`commit_uncertain` is retried only for replay-safe reads; `write_outcome_unknown` is never retried. Mutations return uncertain outcomes without a replay:
 use `errors.Is(err, tb.ErrCommitUncertain)` and re-read the state before deciding
 what to do. `500 internal_error` is never retried. Requests have a fixed
 30-second total budget and 64 MiB response cap. A server cooldown is never
@@ -285,14 +285,12 @@ err = s.Transaction(ctx, func(s *v1.SQLSession) error {
   nothing is resent. A frame holds at most 1 MiB, checked before sending.
 - Errors are `*v1.SQLError` with `Status` 0. A refused upgrade (401, 403, 404,
   421, …) returns the same `*APIError` as REST.
-- Reconnect: when the socket drops, calls in flight fail (`ErrCommitUncertain`
-  for `Execute`, `Batch` and `Commit`). The next call opens a new socket with a
-  fresh credential. If a transaction was open, every call except `Rollback`
-  returns `ErrTransactionRolledBack` until `Rollback`, which only clears that
-  state. After `Close` calls return `ErrSQLSessionClosed`.
-- Tests replay the recorded session in
-  [websocket-session.json](contracts/terrabase/sql/websocket-session.json)
-  against a local fake; on 2026-11-04 a session ran the same flow against live gru.
+- A lost committing reply returns `ErrCommitUncertain`; every later call returns
+  the same uncertainty without reconnecting. If no committing request was sent,
+  a lost open transaction returns `ErrTransactionRolledBack` until `Rollback`
+  clears local state, after which a call can reconnect. After `Close` calls return `ErrSQLSessionClosed` unless a retained uncertain outcome takes precedence.
+- The journey runs public SQL sessions through a network proxy to the real service,
+  dropping replies and checking persisted rows, retained errors and connection counts.
 - Live sample: `go run ./examples/sql` with `TERRASCALE_API_KEY`,
   `TERRASCALE_PROJECT_ID` and `TERRASCALE_DATABASE_NAME` creates a throwaway table,
   writes, reads and drops it.
@@ -351,9 +349,11 @@ answering node) and `Regions`.
 `CreateDatabaseIn(ctx, org, project, name, "gru")` (or `Database.CreateIn`)
 creates a database in that region; an empty region uses the called region.
 Deleting a database leaves its branches independent.
-A region that does not serve the database answers 421 `ErrWrongRegion`, and the
-`*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
-it elsewhere: send the request to a region in `Regions`. Customer
+Source-only, unreleased server behavior: a request reaching a region without a copy is
+served through one proxy hop by a region that holds the database. A region pin selects
+only the entry region and has no effect on the serving region for these calls; the proxy
+removes it. An unreachable destination or stale forwarded placement returns `503 unavailable`.
+See [release scope and proxy behavior](../region-proxy.md). Customer
 placement/residency does not enable or disable serving regions.
 
 ### Analytics (TS-762)
@@ -676,9 +676,9 @@ consumer floor. See [release toolchain checks](contracts/release-toolchain.md)
 for advisory scanning, artifact qualification and consumer compilation.
 
 PostgreSQL passwords and API key token sources use
-`<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`:
-the ULID alone is the OAuth client ID. Credential prefixes identify secret
-formats and are never part of an entity ID.
+`<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`
+(a key may start with `sk_`): the ULID alone is the OAuth client ID.
+Credential prefixes identify secret formats and are never part of an entity ID.
 
 ### Permanent API key refusals
 
@@ -716,7 +716,8 @@ and from a rename. Response `regions` are sorted without ordering meaning; integ
 with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
 Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
 `lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+A removed regional endpoint proxies to a region that holds the database in the unreleased server contract;
+see [source-only proxy behavior](../region-proxy.md). Use the global API origin.
 
 Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
@@ -744,3 +745,16 @@ are available in the source SDK. See [user profiles](../../docs/auth/user-profil
 for fields, scope requirements, hash encodings and the next-release API names.
 Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
 User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+
+### SQL session outcome rule
+
+An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
+open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
+autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.
+The SDK returns `write_outcome_unknown` (SQLSTATE `08007`) or its existing commit-uncertain error, retains that
+failure for every later call on the session, and closes the connection. It never reconnects or automatically
+retries an uncertain request. If the client cannot prove no request byte left, it treats the request as sent.
+An execute outside a confirmed transaction, or behind unanswered transaction control, is potentially committing.
+A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
+Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
+through another session before deciding whether to repeat it.

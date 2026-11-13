@@ -10,6 +10,7 @@ using TerraBase.Engine.Revisions;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.HomePush;
+using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replicas;
@@ -22,7 +23,7 @@ namespace TerraBase.Features.Replicas;
 internal sealed partial class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
-    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners, RemovedReplicaFaults faults) : BackgroundService
+    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners, RemovedReplicaFaults faults, RemoteDatabases remote) : BackgroundService
 {
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
 
@@ -406,7 +407,7 @@ internal sealed partial class RegionReplication(
         try
         {
             if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-                && placement.Home == home.Region && placement.Includes(options.Region))
+                && placement.Home == home.Region && placement.PlacedIn(options.Region))
             {
                 await FollowRegisteredAsync(key, database, home, cancellationToken).ConfigureAwait(false);
             }
@@ -416,6 +417,9 @@ internal sealed partial class RegionReplication(
             gate.Release();
         }
     }
+
+    private bool CanRebuild(ReplicaPeer home) => options.NatsUrl is null
+        || owners.Confirmed(home.Region) is { Activated: true } observed && observed.Node == home.Name;
 
     private async Task FollowRegisteredAsync((string, string, string) key, TenantContext database, ReplicaPeer home, CancellationToken cancellationToken)
     {
@@ -429,7 +433,9 @@ internal sealed partial class RegionReplication(
 
             if (_followers.TryGetValue(key, out var current))
             {
-                if (current.Home.Region == home.Region && current.Home.Internal == home.Internal)
+                if (current.Home.Region == home.Region && current.Home.Internal == home.Internal
+                    || options.NatsUrl is not null && owners.Confirmed(current.Home.Region) is null
+                    || !CanRebuild(home))
                 {
                     return;
                 }
@@ -470,17 +476,11 @@ internal sealed partial class RegionReplication(
     internal async Task SuspendAsync(TenantContext database)
     {
         var key = Key(database);
-        Follower? follower;
         lock (_gate)
         {
             _suspended[key] = true;
-            _ = _followers.TryRemove(key, out follower);
         }
-
-        if (follower is not null)
-        {
-            await follower.StopAsync().ConfigureAwait(false);
-        }
+        await StopFollowerAsync(key).ConfigureAwait(false);
     }
 
     internal void Resume(TenantContext database)
@@ -817,6 +817,12 @@ internal sealed partial class RegionReplication(
             {
                 _owner.Logger.ZLogError($"Replica of database {Database.DatabaseId:@Database} diverged again within {HealGap.TotalMinutes} minutes of its last rebootstrap; the next waits");
                 _nextVerify = _lastHeal + HealGap;
+                return;
+            }
+
+            if (!_owner.CanRebuild(_home))
+            {
+                _nextVerify = now + RetryGap;
                 return;
             }
 

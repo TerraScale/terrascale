@@ -3,9 +3,10 @@ using System.Net;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.Json;
 using System.Text;
-using TerraBase.Features.Management;
+using TerraBase.Configuration;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -13,11 +14,13 @@ public sealed record NodeUsageMonth(string OrganizationId, long Reads, long Writ
 
 public sealed record NodeUsageMonths(IReadOnlyList<NodeUsageMonth> Items);
 
-internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, InternalCredential credential)
+internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, InternalCredential credential, TerraBaseOptions options)
 {
     internal const string ScopeHeader = "X-TerraBase-Usage-Scope";
 
     private const string NodeScope = "node";
+
+    internal const string ObservationsPath = "/v1/internal/usage/observations";
 
     internal const string MonthsPath = "/v1/internal/usage/months";
 
@@ -99,6 +102,25 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
         return answers?.Select(answer => answer!).ToList();
     }
 
+    internal async Task<UsageCounts?> ObservationsAsync(TenantContext database, AnalyticsWindow window, string region, ObservationFilter filter, CancellationToken cancellationToken)
+    {
+        var path = ObservationsPath + "?organization=" + Uri.EscapeDataString(database.OrganizationId)
+            + "&project=" + Uri.EscapeDataString(database.ProjectId!)
+            + "&database=" + Uri.EscapeDataString(database.DatabaseId!)
+            + "&region=" + Uri.EscapeDataString(region) + "&source=" + Uri.EscapeDataString(options.Region)
+            + "&range=" + Uri.EscapeDataString(window.Range);
+        var answers = await AskAsync(peer => Signed(Request(peer, path)), HttpStatusCode.NotFound,
+            ManagementJsonContext.Default.UsageCounts, cancellationToken, filter).ConfigureAwait(false);
+        if (answers is null || answers.Any(answer => answer is not null && answer.Series.Length != window.Usage.Count))
+        {
+            return null;
+        }
+        var counts = answers.OfType<UsageCounts>().ToArray();
+        return new UsageCounts(counts.Aggregate(OpCounts.Zero, (sum, answer) => sum + answer!.Lifetime),
+            [.. Enumerable.Range(0, window.Usage.Count).Select(index =>
+                counts.Aggregate(OpCounts.Zero, (sum, answer) => sum + answer.Series[index]))]);
+    }
+
     internal static AllowanceUsagePage MergeAllowances(AllowanceUsagePage local, IReadOnlyList<AllowanceUsagePage> others, int size)
     {
         var pages = others.Prepend(local).ToList();
@@ -114,9 +136,9 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
             sums[item.OrganizationId] = sums.TryGetValue(item.OrganizationId, out var sum)
                 ? sum with
                 {
-                    Operations = checked(sum.Operations + item.Operations),
-                    SqlReads = checked(sum.SqlReads + item.SqlReads),
-                    StorageByteHours = checked(sum.StorageByteHours + item.StorageByteHours),
+                    Operations = sum.Operations is null && item.Operations is null ? null : checked((sum.Operations ?? 0) + (item.Operations ?? 0)),
+                    SqlReads = sum.SqlReads is null && item.SqlReads is null ? null : checked((sum.SqlReads ?? 0) + (item.SqlReads ?? 0)),
+                    StorageByteHours = sum.StorageByteHours is null && item.StorageByteHours is null ? null : checked((sum.StorageByteHours ?? 0) + (item.StorageByteHours ?? 0)),
                 }
                 : item;
         }
@@ -183,7 +205,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
 
     private async Task<T?[]?> AskAsync<T>(
         Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, JsonTypeInfo<T> type,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, ObservationFilter? filter = null)
         where T : class
     {
         var others = await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
@@ -194,14 +216,14 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(PeerTimeout);
-        var answers = await Task.WhenAll(others.Select(peer => AskOneAsync(peer, build, status, type, timeout.Token))).ConfigureAwait(false);
+        var answers = await Task.WhenAll(others.Select(peer => AskOneAsync(peer, build, status, type, timeout.Token, filter))).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return answers.Any(answer => !answer.Answered) ? null : [.. answers.Select(answer => answer.Value)];
     }
 
     private async Task<(bool Answered, T? Value)> AskOneAsync<T>(
         RegionPeer peer, Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, JsonTypeInfo<T> type,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, ObservationFilter? filter = null)
         where T : class
     {
         try
@@ -214,10 +236,24 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
                 return (true, null);
             }
 
-            return response.StatusCode == HttpStatusCode.OK
-                && await response.Content.ReadFromJsonAsync(type, cancellationToken).ConfigureAwait(false) is { } value
-                ? (true, value)
-                : (false, null);
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                return (false, null);
+            }
+            const int maxBytes = 8 * 1024 * 1024;
+            using var buffering = filter?.Hold(maxBytes);
+            if (filter is not null)
+            {
+                await response.Content.LoadIntoBufferAsync(maxBytes, cancellationToken).ConfigureAwait(false);
+            }
+            using var parsing = filter?.Hold((response.Content.Headers.ContentLength ?? maxBytes) * 4);
+            var value = await response.Content.ReadFromJsonAsync(type, cancellationToken).ConfigureAwait(false);
+            if (value is UsageCounts observations)
+            {
+                filter?.Admit((observations.Lifetime.Meters?.Count ?? 0) * 2048L
+                    + observations.Series.Sum(point => (point.Meters?.Count ?? 0) * 2048L));
+            }
+            return value is null ? (false, null) : (true, value);
         }
         catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException)
         {

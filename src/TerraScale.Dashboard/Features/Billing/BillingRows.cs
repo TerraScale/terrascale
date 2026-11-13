@@ -34,6 +34,10 @@ public sealed class BillingBinding : IBillingRow
     public DateTimeOffset? RenewalAt { get; set; }
     public string Status { get; set; } = "pending";
     public bool TrialUsed { get; set; }
+    public DateTimeOffset OverageStartsAt { get; set; }
+    public DateTimeOffset? ExpiryUnavailableSince { get; set; }
+    public DateTimeOffset? ExpiryLastLoggedAt { get; set; }
+    public string TaxLocationStatus { get; set; } = "";
     public long Revision { get; set; }
 
     public BillingBinding Copy()
@@ -60,6 +64,9 @@ public sealed class BillingBinding : IBillingRow
             builder.Property(row => row.Version).IsConcurrencyToken();
             builder.Property(row => row.StartedAt).HasConversion(BillingColumns.Utc);
             builder.Property(row => row.RenewalAt).HasConversion(BillingColumns.OptionalUtc);
+            builder.Property(row => row.OverageStartsAt).HasConversion(BillingColumns.Utc);
+            builder.Property(row => row.ExpiryUnavailableSince).HasConversion(BillingColumns.OptionalUtc);
+            builder.Property(row => row.ExpiryLastLoggedAt).HasConversion(BillingColumns.OptionalUtc);
             builder.Property(row => row.InternalReservation).HasConversion(
                 reservation => reservation == null ? null : JsonSerializer.Serialize(reservation, BillingRowJson.Default.InternalBillingReservation),
                 json => json == null ? null : JsonSerializer.Deserialize(json, BillingRowJson.Default.InternalBillingReservation));

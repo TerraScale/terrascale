@@ -1,20 +1,23 @@
-using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.HomeApply;
-using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class RegionSetPlacement(IManagementService management, TerraBaseOptions options, IHomeApply apply, HomeMoves moves, IRegionPeers peers, IDatabaseRevisions revisions)
+internal sealed class RegionSetPlacement(IManagementService management, TerraBaseOptions options, IHomeApply apply, HomeMoves moves, IDatabaseRevisions revisions, DatabaseFences fences)
 {
     internal static readonly Unavailable PlacementNotReady = new("requested regions remain members; retry when a requested region can take over", "replica_not_ready");
 
     public async ValueTask<IResult> UpdateAsync(HttpContext context, ManagedDatabase database, IReadOnlyList<string> selected, CancellationToken cancellationToken)
     {
+        if (database.Home(options.Region) == options.Region && !selected.Contains(options.Region, StringComparer.Ordinal))
+        {
+            fences.Moving(database.Id);
+        }
+
         var user = ManagementRoute.UserId(context);
         var organization = ManagementRoute.OrganizationId(context);
         var placed = await apply.PrepareReplicatedAsync(organization, options.Region,
@@ -48,19 +51,12 @@ internal sealed class RegionSetPlacement(IManagementService management, TerraBas
         var result = await moves.MoveAsync(tenant, target, selected, cancellationToken).ConfigureAwait(false);
         return result switch
         {
-            ManagedDatabase moved => await ContinueAsync(moved, selected, cancellationToken).ConfigureAwait(false),
+            ManagedDatabase moved => Answer(moved),
             Unavailable error => ErrorResponse.From(error == HomeMoves.ReplicaNotReady ? PlacementNotReady : error),
             NotFound error => ManagementRoute.DatabaseNotFound(error),
             Validation => ErrorResponse.From(PlacementNotReady),
             Conflict error => ErrorResponse.From(error),
         };
-    }
-
-    private async ValueTask<IResult> ContinueAsync(ManagedDatabase database, IReadOnlyList<string> selected, CancellationToken cancellationToken)
-    {
-        var home = database.Home(options.Region);
-        var peer = (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(region => region.Region == home);
-        return peer is null ? DatabaseRegions.HomeRegion(home, selected) : new ContinuePlacement(new HomeNode(peer.Region, peer.Address), selected);
     }
 
     private IResult Answer(SetDatabaseRegionsResult result) => result switch
@@ -72,10 +68,4 @@ internal sealed class RegionSetPlacement(IManagementService management, TerraBas
         Validation error => ErrorResponse.From(error),
         Unavailable error => ErrorResponse.From(error),
     };
-
-    private sealed class ContinuePlacement(HomeNode home, IReadOnlyList<string> selected) : IResult
-    {
-        public Task ExecuteAsync(HttpContext httpContext) => HomeForwarding.ForwardAsync(httpContext, home,
-            JsonSerializer.SerializeToUtf8Bytes(new DatabaseRegionsRequest(null, null, null) { Regions = selected }, ManagementJsonContext.Default.DatabaseRegionsRequest));
-    }
 }

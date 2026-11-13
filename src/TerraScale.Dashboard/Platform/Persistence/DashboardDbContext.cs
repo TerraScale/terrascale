@@ -56,6 +56,13 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
 
     public DbSet<BillingBinding> Billing => Set<BillingBinding>();
 
+    public DbSet<OverageCharge> OverageCharges => Set<OverageCharge>();
+    public DbSet<SkippedBillingMeter> SkippedBillingMeters => Set<SkippedBillingMeter>();
+    public DbSet<StripeEventReceipt> StripeEventReceipts => Set<StripeEventReceipt>();
+
+    public DbSet<BillingSubscription> BillingSubscriptions => Set<BillingSubscription>();
+    public DbSet<BillingTerms> BillingTerms => Set<BillingTerms>();
+
     public DbSet<StripeCustomerRow> StripeCustomers => Set<StripeCustomerRow>();
 
     public DbSet<StripeCheckoutRow> StripeCheckouts => Set<StripeCheckoutRow>();
@@ -95,6 +102,11 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
         modelBuilder.ApplyConfiguration(new InvitationReservationRow.Configuration());
         modelBuilder.ApplyConfiguration(new PendingOrganizationCheckout.Configuration());
         modelBuilder.ApplyConfiguration(new BillingBinding.Configuration());
+        modelBuilder.ApplyConfiguration(new BillingSubscription.Configuration());
+        modelBuilder.ApplyConfiguration(new BillingTerms.Configuration());
+        modelBuilder.ApplyConfiguration(new OverageCharge.Configuration());
+        modelBuilder.ApplyConfiguration(new SkippedBillingMeter.Configuration());
+        modelBuilder.ApplyConfiguration(new StripeEventReceipt.Configuration());
         modelBuilder.ApplyConfiguration(new StripeCustomerRow.Configuration());
         modelBuilder.ApplyConfiguration(new StripeCheckoutRow.Configuration());
         modelBuilder.ApplyConfiguration(new BillingChangeReceipt.Configuration());

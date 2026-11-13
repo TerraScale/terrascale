@@ -1,3 +1,5 @@
+using Microsoft.Net.Http.Headers;
+
 namespace TerraBase.Hosting;
 
 internal static class ClientCors
@@ -23,7 +25,14 @@ internal static class ClientCors
                 && (path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
                     || path.Equals("/readyz", StringComparison.OrdinalIgnoreCase)
                     || path.Equals("/backupz", StringComparison.OrdinalIgnoreCase)),
-            branch => branch.UseCors(ProbePolicy));
+            branch => branch
+                .Use((context, next) =>
+                {
+                    context.Response.Headers[HeaderNames.CacheControl] = "no-store";
+                    context.Response.Headers["Timing-Allow-Origin"] = "*";
+                    return next(context);
+                })
+                .UseCors(ProbePolicy));
         app.UseWhen(context => Listeners.ArrivedOn(context) == TerraBaseListener.Client && IsDataPath(context.Request.Path),
             branch => branch.UseCors(Policy));
         return app;

@@ -62,7 +62,7 @@ eventual consistency.
    responding node matches the activated regional writer observed before and after the request (without NATS,
    exactly one configured regional node). An unobserved writer or standby leaves the record intact; otherwise the region takes the placement when it is newer and deletes the replica when it no longer names
    this region. The record stays as the routing record of a region that was removed, and later passes keep it
-   current ([removing a region](placement.md#removing-a-region)). A follower whose database's home changed (a [move](placement.md#moving-the-home)) is stopped, its
+   current ([removing a region](placement.md#removing-a-region)). A follower whose database's home changed (a [move](placement.md#moving-the-writer)) is stopped, its
    replica deleted and pulled again from the new home. The peers file is read again on every sweep, so a region that
    joins is replicated without a restart. A database's home also tells its replica regions directly on deletion
    (`DELETE /v1/sync/organizations/{organization}/projects/{project}/databases/{database}`), so the record and replica

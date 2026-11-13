@@ -14,7 +14,7 @@ function stat(page: Page, label: string) {
   return page.locator('dl[aria-label="Workspace metrics"] .ts-stat').filter({ has: page.locator('dt', { hasText: label }) }).locator('dd');
 }
 
-const apiKeyFormat = /^[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
+const apiKeyFormat = /^(?:sk_)?[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
 const scopes = ['sql:read', 'sql:write', 'databases:read', 'databases:write', 'auth:read', 'auth:write'];
 
 test('sign up, verify the email, onboard on Free, create a database and an API key', async ({ page, context, audit, browser }, info) => {
@@ -122,9 +122,21 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   }
   await audit.check('new API key dialog');
   await keyDialog.getByRole('button', { name: 'Create key', exact: true }).click();
-  const secret = page.locator('.ts-apikeys-secret-value');
+  const secretDialog = page.locator('#key-secret');
+  await expect(secretDialog).toBeVisible();
+  const masked = secretDialog.locator('.ts-apikeys-secret-mask');
+  await expect(masked).toBeVisible();
+  const secret = page.locator('#api-key-secret');
+  const apiKey = (await secret.textContent() ?? '').trim();
+  await expect(masked).not.toHaveText(apiKey);
+  await expect(masked).toContainText('…');
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await secretDialog.getByRole('button', { name: 'Show key', exact: true }).click();
   await expect(secret).toBeVisible();
-  const apiKey = (await secret.innerText()).trim();
+  await expect(secret).toHaveText(apiKey);
+  await secretDialog.getByRole('button', { name: 'Copy API key', exact: true }).click();
+  await expect(secretDialog.getByRole('button', { name: 'Copied', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(apiKey);
   saveSecret('api-key', apiKey);
   expect(apiKeyFormat.test(apiKey), 'the API key secret has the canonical format').toBe(true);
   await audit.check('API key created');

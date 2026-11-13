@@ -15,6 +15,8 @@ public sealed class OrganizationRow
 
     public required string BillingStatus { get; set; }
 
+    public DateTime? PaymentGraceUntil { get; set; }
+
     public required bool PaymentMethodValidated { get; set; }
 
     public required long SpendCapCents { get; set; }

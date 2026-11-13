@@ -101,7 +101,7 @@ internal sealed partial class RegionalHandoff
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         {
-            logger.ZLogWarning($"Regional activation attempt exceeded its bound; admission stays fenced and recovery retries");
+            LogRenewalFailed(logger, options.Region, "timed_out", null, null, nameof(OperationCanceledException));
         }
         catch (NatsKVWrongLastRevisionException)
         {

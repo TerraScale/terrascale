@@ -5,6 +5,11 @@ import { createTerraBaseClient, createTerraBaseClientFromEnvironment, generateId
 
 import { createTsAuthClient } from '../../../sdk/js/src/ts-auth.js';
 
+if (process.env.E2E_SESSION_FAULT) {
+  await (await import('./session-fault.mjs')).sessionFault();
+  process.exit(0);
+}
+
 const spec = JSON.parse(readFileSync(process.env.E2E_OPERATIONS, 'utf8'));
 const run = process.env.E2E_RUN_ID;
 const project = process.env.TERRASCALE_PROJECT_ID;
@@ -167,10 +172,12 @@ const operations = {
       check(updated.placementVersion > added.placementVersion, 'writer change raises placement version');
       const after = await placed.database(created.id).regions.regions();
       same(after.regions.map(row => [row.region, row.role]), [['fra', 'writer']], 'moved status');
-      const error = await refused(() => client.database(created.id).regions.regions());
-      same([error.status, error.code], [421, 'wrong_region'], 'nonmember endpoint');
-      same(cells(await placed.database(created.id).query('SELECT value FROM placement_rows')), [[1]], 'data survived placement');
-      console.log('js placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region');
+      const proxied = await client.database(created.id).regions.regions();
+      same(proxied.regions.map(row => row.region), ['fra'], 'proxied nonmember endpoint');
+      same(cells(await client.database(created.id).query('SELECT value FROM placement_rows')), [[1]], 'data survived placement');
+      await client.database(created.id).execute('INSERT INTO placement_rows VALUES (2)');
+      same(cells(await placed.database(created.id).query('SELECT value FROM placement_rows ORDER BY value')), [[1], [2]], 'acknowledged proxied write retained');
+      console.log('js placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]');
     } finally { await placed.deleteDatabase(project, created.id); }
   },
   async 'sql.execute.positional'(op) {

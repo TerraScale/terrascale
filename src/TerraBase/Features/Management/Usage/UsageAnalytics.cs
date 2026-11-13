@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -8,7 +9,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
-internal sealed class UsageAnalytics(IManagementService management, UsageMeter meter, TerraBaseOptions options, TimeProvider time, IMemoryBudget memory)
+internal sealed class UsageAnalytics(IManagementService management, UsageMeter meter, TerraBaseOptions options, TimeProvider time, IMemoryBudget memory, PeerUsage peers)
     : IUsageAnalytics
 {
     private const int MaxPoints = 16384;
@@ -55,6 +56,12 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             };
         }
 
+        if (region is not null && region != options.Region)
+        {
+            return new ProjectAnalytics(access.ProjectId, window.Range, window.Usage.From, window.Usage.To,
+                window.Usage.Granularity.Minutes * 60, []);
+        }
+
         var (reservation, reserved) = Reserve(databases, window, region);
         using var loaded = new Loaded(memory, reserved, reservation);
         var items = new List<DatabaseAnalytics>();
@@ -71,7 +78,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
                 continue;
             }
 
-            var observed = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
+            var observed = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(options.Region))
                 .ConfigureAwait(false);
             if (observed is not UsageCounts counts)
             {
@@ -81,6 +88,13 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
                     UsageCounts or null => throw new UnreachableException(),
                 };
             }
+            var remote = await peers.ObservationsAsync(tenant, window, options.Region, loaded.Filter(options.Region), cancellationToken).ConfigureAwait(false);
+            if (remote is null)
+            {
+                return new Unavailable("regional request observations could not be read; retry");
+            }
+            counts = new UsageCounts(counts.Lifetime + remote.Lifetime,
+                [.. counts.Series.Select((point, index) => point + remote.Series[index])]);
             var (lifetime, series) = counts;
             var buckets = ByRegion(series, started, cancellationToken);
             foreach (var observing in Regions(record, lifetime, region, window, loaded))
@@ -160,9 +174,9 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
     private int Placed(ManagedDatabase record, string? region) =>
         record.Regions(options.Region).Contains(options.Region) && (region is null || region == options.Region) ? 1 : 0;
 
-    private sealed class Loaded(IMemoryBudget memory, int reserved, IMemoryReservation output) : IDisposable
+    internal sealed class Loaded(IMemoryBudget memory, int reserved, IMemoryReservation output) : IDisposable
     {
-        private readonly List<IMemoryReservation> _reservations = [output];
+        private readonly ConcurrentBag<IMemoryReservation> _reservations = new([output]);
         private int _points = reserved;
         private bool _handedOff;
 

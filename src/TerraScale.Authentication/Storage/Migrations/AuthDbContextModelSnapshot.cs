@@ -2884,6 +2884,48 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.Sso.SsoIdentityLinkRecord", b =>
+                {
+                    b.Property<string>("Domain")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("domain");
+
+                    b.Property<string>("Issuer")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("issuer");
+
+                    b.Property<string>("Subject")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subject");
+
+                    b.Property<DateTime>("ConnectionUpdatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("connection_updated_at");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Domain", "Issuer", "Subject");
+
+                    b.HasIndex("OrganizationId", "UserId");
+
+                    b.ToTable("sso_identity_links", (string)null);
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.UserApiKeys.UserApiKeyPolicyRecord", b =>
                 {
                     b.Property<string>("ProjectId")
@@ -3602,6 +3644,21 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.OrganizationRecord", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Sso.SsoIdentityLinkRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Features.Sso.SsoConnectionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("Domain")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Authentication.Contracts.MembershipRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

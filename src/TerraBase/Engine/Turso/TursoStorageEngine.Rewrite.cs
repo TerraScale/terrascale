@@ -39,7 +39,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         {
             return await Io.WithAdmissionAsync<HealthyRewrite>(async () =>
             {
-                using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
+                using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token, store.Refused, Ledger.Refused);
                 cancellationToken = lifetime.Token;
                 using var budget = new RewriteBudget(this, DiskBudget.FileBytes(path), cancellationToken);
                 using var heldBudget = new CancellationTokenSource(Timeout.InfiniteTimeSpan, TimeProvider.System);
@@ -132,7 +132,8 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                     catch (Exception error) when (renamed)
                     {
                         store.Rewritten(target);
-                        Ledger.FailClosed("a healthy rewrite's rename may not be durable");
+                        store.NoteCopyFault("a healthy rewrite's rename may not be durable");
+                        await store.RecordCopyFaultAsync(store.CopyFault!).ConfigureAwait(false);
                         throw new RewriteUncertainException(error);
                     }
 
@@ -211,6 +212,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         }
 
         token.ThrowIfCancellationRequested();
+        using var mutation = store.EnterMutation();
         DeleteSidecars(path, keepKey: true);
         _checkpoint("rewrite.old_log_removed", step);
         using (store.MeasureRewrite("directory_fsync_before"))
@@ -222,6 +224,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         token.ThrowIfCancellationRequested();
         using (store.MeasureRewrite("rename"))
         {
+            store.ThrowIfUnavailable();
             File.Move(scratch, path, overwrite: true);
         }
         renamed = true;

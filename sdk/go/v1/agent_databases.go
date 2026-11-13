@@ -128,6 +128,10 @@ func (c *Client) CreateScopedKey(ctx context.Context, in ScopedKeyRequest) (*Sco
 	if err := checkAgentTTL(in.TTLSeconds, 2592000); err != nil {
 		return nil, err
 	}
+	id, err := tsauth.APIKeyID(c.apiKey)
+	if err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(in)
 	if err != nil {
 		return nil, err
@@ -140,7 +144,7 @@ func (c *Client) CreateScopedKey(ctx context.Context, in ScopedKeyRequest) (*Sco
 	resp, err := transport.send(ctx, request{
 		method: http.MethodPost,
 		body:   body,
-		header: http.Header{"Authorization": {"Basic " + base64.StdEncoding.EncodeToString([]byte(c.apiKey[:26]+":"+c.apiKey))}},
+		header: http.Header{"Authorization": {"Basic " + base64.StdEncoding.EncodeToString([]byte(id+":"+c.apiKey))}},
 	}, c.authOrigin+"/v1/terrascale/api-keys/self/scoped-keys")
 	if err != nil {
 		if resp != nil && (resp.status < 200 || resp.status >= 300) {

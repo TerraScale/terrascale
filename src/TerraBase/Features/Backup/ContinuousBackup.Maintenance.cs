@@ -53,6 +53,13 @@ internal sealed partial class ContinuousBackup
 
     private async Task RetainCoreAsync(ShippedFile file, CancellationToken cancellationToken)
     {
+        if (file.Database is { } database && await _catalog.ReadAsync<bool?>(async transaction =>
+                await transaction.GetAsync(DeletedDatabases.Kind, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null,
+                static _ => null, cancellationToken).ConfigureAwait(false) is not false)
+        {
+            return;
+        }
+
         var now = _time.GetUtcNow();
         if (file.Database is null)
         {
@@ -416,7 +423,7 @@ internal sealed partial class ContinuousBackup
 
     private async Task RecordAsync(ShippedFile file, CancellationToken cancellationToken)
     {
-        var record = new BackupStatusRecord(file.Prefix, _node, file.Generation?.ToString(), file.LastShipped, Lag(file, _time.GetUtcNow()),
+        var record = new BackupStatusRecord(file.Prefix, _node, file.Generation?.ToString(), file.LastShipped, Lag(file),
             file.SizeBytes, file.SizedAt == DateTimeOffset.MinValue ? null : file.SizedAt, file.RetentionDays, file.LastDrill, _time.GetUtcNow());
         var (kind, id) = RecordKey(file.Database);
         try

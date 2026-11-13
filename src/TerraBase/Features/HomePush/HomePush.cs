@@ -219,7 +219,7 @@ internal class HomePush(
         }
 
         if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-            || placement.Home == options.Region || !placement.Includes(options.Region))
+            || placement.Home == options.Region || !placement.PlacedIn(options.Region))
         {
             return null;
         }

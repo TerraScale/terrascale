@@ -35,12 +35,14 @@ internal sealed partial class ContinuousBackup
     }
     private async Task<bool> HoldAsync(ShippedFile file, CancellationToken cancellationToken)
     {
-        if (await _shippers.ShipperEpochAsync(file.Database, cancellationToken).ConfigureAwait(false) is not { } epoch)
+        var epoch = await _shippers.ShipperEpochAsync(file.Database, cancellationToken).ConfigureAwait(false);
+        file.LeaseKnown = true;
+        if (epoch is null)
         {
             if (file.Shipping)
             {
-                (file.Shipping, file.Epoch, file.BehindSince) = (false, null, null);
-                Abandon(file);
+                (file.Shipping, file.Epoch) = (false, null);
+                file.Side?.Cancellation.Cancel();
             }
 
             return false;
@@ -48,8 +50,7 @@ internal sealed partial class ContinuousBackup
 
         if (file.Epoch != epoch)
         {
-            (file.Shipping, file.Epoch, file.BehindSince) = (true, epoch, _time.GetUtcNow());
-            Abandon(file);
+            (file.Shipping, file.Epoch) = (true, epoch);
             _logger.ZLogInformation($"This member now ships {file.Prefix:@File}");
         }
 
@@ -60,30 +61,35 @@ internal sealed partial class ContinuousBackup
     private async Task StartGenerationAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         _ = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
+        await RecordHolesAsync(file, cancellationToken).ConfigureAwait(false);
         var claim = _disk.Reserve(await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false));
         var generation = EntityIds.New(_time);
         var snapshot = ScratchFile(".db");
         try
         {
-            file.BehindSince ??= _time.GetUtcNow();
             await file.StopSideAsync().ConfigureAwait(false);
             file.Clear();
-            await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
             var captured = await file.Tap.SnapshotAsync(Stream.Null, snapshot, cancellationToken).ConfigureAwait(false);
+            var cursor = ((ICdcBackupRetention)file.Tap).Cursor;
             var at = captured.At;
             var key = BackupLayout.Snapshot(file.Prefix, at, generation, 0);
             var live = !_stopped && at - file.DrilledAt >= DrillInterval
                 ? await _engine.ChecksumAsync(snapshot, cancellationToken).ConfigureAwait(false)
                 : null;
             await StoreGenerationProofAsync(file, generation, key, captured, cancellationToken).ConfigureAwait(false);
-            var generationKey = await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
-            if (file.Tap is ICdcBackupRetention baseline)
+            await using var bundle = new FileStream(ScratchFile(".snapshot"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
+                FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+            await SnapshotBundle.WriteAsync(snapshot, bundle, cancellationToken).ConfigureAwait(false);
+            bundle.Position = 0;
+            var (sealedObject, generationKey) = await SealAsync(file, key, bundle, cancellationToken).ConfigureAwait(false);
+            await using (sealedObject.ConfigureAwait(false))
             {
-                await baseline.AcknowledgeAsync(baseline.Position, cancellationToken).ConfigureAwait(false);
+                await StorePositionAsync(file, new(cursor, generation, generationKey, 0, at, at, at),
+                    key, sealedObject, "snapshot", cancellationToken).ConfigureAwait(false);
             }
 
-            (file.Generation, file.GenerationKey, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
-                (generation, generationKey, 0, 0, at, at, at, false);
+            (file.Generation, file.GenerationKey, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.Behind) =
+                (generation, generationKey, 0, 0, at, at, false);
             Prove(file, at);
             _generations.Add(1);
             (file.LastError, file.Failures) = (null, 0);
@@ -112,30 +118,11 @@ internal sealed partial class ContinuousBackup
             await file.StopSideAsync().ConfigureAwait(false);
             file.PendingClaims.Add(_disk.Reserve(SealedPendingBytes(allowance / 4)));
             file.Pending.Limit = checked(file.Pending.Length + allowance / 4);
-            WalSnapshot captured;
-            try
-            {
-                captured = await file.Tap.SnapshotAsync(file.Pending, snapshot, cancellationToken).ConfigureAwait(false);
-                file.PendingCdcPosition = (file.Tap as ICdcBackupRetention)?.Position ?? 0;
-            }
-            catch
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    Abandon(file);
-                }
-                else
-                {
-                    Drop(file, "read");
-                }
-
-                throw;
-            }
-
+            var (captured, _) = await AdvanceAsync(file, (pending, token) => file.Tap.SnapshotAsync(pending, snapshot, token), cancellationToken).ConfigureAwait(false);
             var read = captured.Read;
             if (!read.Continuous)
             {
-                Hole(file);
+                file.Rebase = "log_unplaceable";
                 return;
             }
 
@@ -151,11 +138,6 @@ internal sealed partial class ContinuousBackup
             {
                 await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             }
-            if (file.LastShipped is not { } shipped || shipped < at)
-            {
-                file.LastShipped = at;
-            }
-
             var generation = file.Generation!.Value;
             var key = new SnapshotKey(BackupLayout.Snapshot(file.Prefix, at, generation, file.Position), at, generation, file.Position);
             var drill = at - file.DrilledAt >= DrillInterval;
@@ -191,10 +173,9 @@ internal sealed partial class ContinuousBackup
     private void StartSide(ShippedFile file, SnapshotKey key, string? snapshot, byte[]? live, bool drill, IDisposable? claim = null)
     {
         var side = new SideWork(key, CancellationTokenSource.CreateLinkedTokenSource(
-            file.Job?.Caller ?? CancellationToken.None, _jobCancellation.Token, file.Retirement.Token))
+            file.Job?.Caller ?? CancellationToken.None, _jobCancellation.Token, file.Retirement.Token, file.Tap.Refused))
         {
             Stored = snapshot is null ? null : new(TaskCreationOptions.RunContinuationsAsynchronously),
-            CdcPosition = (file.Tap as ICdcBackupRetention)?.Position ?? 0,
         };
         file.Side = side;
         side.Completion = Task.Run(() => SideAsync(file, side, snapshot, live, drill, claim), CancellationToken.None);
@@ -213,11 +194,6 @@ internal sealed partial class ContinuousBackup
             {
                 live = drill ? await _engine.ChecksumAsync(snapshot, token).ConfigureAwait(false) : null;
                 await StoreAsync(file, side.Snapshot.Key, snapshot, "snapshot", token).ConfigureAwait(false);
-                if (file.Tap is ICdcBackupRetention snapshotRetention)
-                {
-                    await snapshotRetention.AcknowledgeAsync(side.CdcPosition, token).ConfigureAwait(false);
-                }
-
                 side.Stored!.TrySetResult();
             }
             catch (Exception error)

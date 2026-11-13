@@ -24,9 +24,10 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     {
         public Task<TsAuthScopedKey> CreateScopedKeyAsync(string parentKey, TsAuthScopedKeyRequest request, CancellationToken cancellationToken)
         {
+            var body = parentKey.StartsWith("sk_", StringComparison.Ordinal) ? parentKey[3..] : parentKey;
             return SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/terrascale/api-keys/self/scoped-keys", request,
                 TsAuthIntegrationJsonContext.Default.TsAuthScopedKeyRequest, TsAuthIntegrationJsonContext.Default.TsAuthScopedKey,
-                TsAuthCredentials.Basic(parentKey[..26], parentKey), HttpStatusCode.Created, 4 * 1024, cancellationToken);
+                TsAuthCredentials.Basic(body[..26], parentKey), HttpStatusCode.Created, 4 * 1024, cancellationToken);
         }
     }
 }
