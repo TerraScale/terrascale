@@ -65,6 +65,7 @@ SELECT terrascale_expect_changes(changes(), 1);
 | `serialization_conflict` | 40001 |
 | `row_conflict` | P0001 |
 | `too_large`, `query_canceled` | 54000, 57014 |
+| `write_outcome_unknown` | 08007 (HTTP 503; reconcile before repeating) |
 | `transaction_rolled_back`, `transaction_aborted` | 40000, 25P02 |
 | `read_only_transaction`, `transaction_state` | 25006, 25000 |
 | `quota_exceeded`, `tenant_busy` | 53100, 53300 |

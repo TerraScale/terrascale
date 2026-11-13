@@ -174,12 +174,10 @@ transaction:
 
 Frames carry a client `id`; calls may overlap and answers are matched by `id`. Nothing on a session is resent.
 
-Reconnect: when the socket drops (server restart 1001, regional handoff 1012, network loss, ping timeout), calls in
-flight fail with the close error and are not resent. The next call opens a new socket with a fresh credential (except
-JavaScript: open a new session). If a transaction was open when the socket dropped, the server rolled it back: every
-call except `rollback` fails with `transaction_rolled_back` (40000) until the caller calls `rollback`, which only clears
-the lost transaction. After `close()` the session stays closed. A refused reconnect raises the same HTTP error types as
-`connect()`.
+After a drop with no unanswered committing request, .NET, Go, Python and Rust can reconnect; a lost open
+transaction must first be cleared with `rollback`. JavaScript sessions stay closed. A committing request with
+no received answer instead closes the session permanently with its uncertain error (see the table below).
+A refused reconnect raises the same HTTP error types as `connect()`.
 
 ### Keep-alive and closes
 
@@ -193,15 +191,26 @@ the lost transaction. After `close()` the session stays closed. A refused reconn
 | TerraBase closes the socket with 1012, or with 1001 at a restart | TerraBase still sends every answer queued before the close, runs no frame that arrives later and waits for the client to answer the close. A 1001 does not wait for the call in flight: that call may have run, and its answer is not sent. A client that keeps sending after the 1012 instead of answering it gets no answer to those frames and stays connected until the node stops; close the socket when you read a 1012. A client that sends nothing and never answers is dropped by the ping timeout, 40 to 50 seconds after its last frame; at a restart every connection still open 2 seconds after shutdown starts is dropped. |
 | TerraBase closes the socket for a client fault (1003, 1008, 1009, 1011) and the client does not answer within 2 seconds | TerraBase drops the connection. |
 
-What each SDK does on a 1012 today:
+For any close code, an unanswered committing request keeps the session uncertain:
 
-| SDK | Calls in flight | The next call | Code |
-|---|---|---|---|
-| .NET | fail with `WebSocketException` (`ConnectionClosedPrematurely`, the message names 1012) | opens a new socket | `sdk/dotnet/src/TerraScale.DotNet/TerraBase/Sql/TerraBaseSqlSession.cs:274-277, 296-301, 184-198` |
-| JS/TS | reject with `SqlSocketClosedError` (`closeCode` 1012) | rejects with the same error; the caller opens a new session with `database.connect()` | `sdk/js/src/v1/sql-socket.js:64, 199, 237-243` |
-| Go | fail with `terrabase: SQL session socket closed: …` wrapping the close error | redials | `sdk/go/v1/sql_session.go:292-307, 208-231` |
-| Python | raise `TerraScaleError`, or `CommitUncertainError` for a commit or an execute outside a transaction | reopens | `sdk/python/src/terrascale/session.py:216-240, 89-96` (async: `389-404`) |
-| Rust | fail with `Error::Transport` (`SQL session closed: TerraBase closed the socket (1012: …)`) | opens a new socket | `sdk/rust/src/v1/sql_session.rs:443-453, 461-477, 382-417` |
+| SDK | Error for an unanswered committing request and every later call |
+|---|---|
+| .NET | `TerraBaseSqlException`, `write_outcome_unknown`, SQLSTATE 08007 |
+| JS/TS | `SqlError`, `write_outcome_unknown`, SQLSTATE 08007 |
+| Go | `ErrCommitUncertain` |
+| Python (sync and async) | `CommitUncertainError` |
+| Rust | `Error::CommitUncertain` |
+
+An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
+open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
+autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.
+The SDK returns `write_outcome_unknown` (SQLSTATE `08007`) or its existing commit-uncertain error, retains that
+failure for every later call on the session, and closes the connection. It never reconnects or automatically
+retries an uncertain request. If the client cannot prove no request byte left, it treats the request as sent.
+An execute outside a confirmed transaction, or behind unanswered transaction control, is potentially committing.
+A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
+Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
+through another session before deciding whether to repeat it.
 
 ## Values
 
@@ -221,7 +230,8 @@ request. A row reads by ordinal or column name (`getInt64`, `getDouble`, `getBoo
 ## Errors
 
 A refused statement raises `SqlError` (`TerraBaseSqlException` in .NET) with `code`, `message`, `statement`
-(zero-based index) and `sqlstate`, plus the HTTP status over REST (none over the WebSocket). The request rolled back.
+(zero-based index) and `sqlstate`, plus the HTTP status over REST (none over the WebSocket).
+`write_outcome_unknown` is 503 / 08007 and requires reconciliation; it does not assert rollback.
 Codes are constants (`TerraBaseSqlErrorCodes`); the full table with SQLSTATEs and statuses is
 `sdk/dotnet/contracts/terrabase/sql/error-codes.json`. `isTransient` is true for `serialization_conflict` and
 `tenant_busy`.
