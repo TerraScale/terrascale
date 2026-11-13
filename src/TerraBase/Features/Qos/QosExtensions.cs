@@ -20,6 +20,7 @@ internal static class QosExtensions
 
     public static IServiceCollection AddTerraBaseQos(this IServiceCollection services) => services
         .AddSingleton<IQosAdmission, QosAdmission>()
+        .AddSingleton<QosSessions>()
         .AddSingleton<IStorageQuota, StorageQuota>();
 
     public static WebApplication UseTerraBaseQosMemory(this WebApplication app)

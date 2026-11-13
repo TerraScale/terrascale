@@ -117,6 +117,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             if (session is not null)
             {
                 _sessions.TryRemove(session.ProcessId, out _);
+                using var lease = session.Lease;
                 await session.Sql.DisposeAsync().ConfigureAwait(false);
             }
         }
@@ -237,34 +238,51 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 case HomeNode home:
                     return (null, new Relay(home, PostgresRelay.Startup(parameters, secret), client));
                 case Authorized authorized:
-                    var sql = services.GetRequiredService<ISqlService>().Open(authorized.Database, authorized.CanWrite);
-                    var project = database.IndexOf('/', StringComparison.Ordinal) is var slash && slash >= 0 ? database[..slash] : null;
-                    Session session;
-                    do
+                    var lease = services.GetRequiredService<QosSessions>().TryEnter(authorized.Database);
+                    if (lease is null)
                     {
-                        session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
-                            parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
-                        {
-                            Key = authorized.Key,
-                            Until = authorized.Until,
-                            TokenExpiry = authorized.TokenExpiry,
-                            Project = project,
-                        };
+                        output.Error("53300", "organization session limit exceeded", fatal: true);
+                        await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                        return default;
                     }
-                    while (!_sessions.TryAdd(session.ProcessId, session));
 
+                    ISqlSession? sql = null;
+                    Session? session = null;
                     try
                     {
+                        sql = services.GetRequiredService<ISqlService>().Open(authorized.Database, authorized.CanWrite);
+                        var project = database.IndexOf('/', StringComparison.Ordinal) is var slash && slash >= 0 ? database[..slash] : null;
+                        do
+                        {
+                            session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
+                                parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
+                            {
+                                Key = authorized.Key,
+                                Until = authorized.Until,
+                                Project = project,
+                                Lease = lease,
+                            };
+                        }
+                        while (!_sessions.TryAdd(session.ProcessId, session));
+
                         await GreetAsync(session, output, cancellationToken).ConfigureAwait(false);
+                        return (session, null);
                     }
                     catch
                     {
-                        _sessions.TryRemove(session.ProcessId, out _);
-                        await sql.DisposeAsync().ConfigureAwait(false);
+                        if (session is not null)
+                        {
+                            _sessions.TryRemove(session.ProcessId, out _);
+                        }
+
+                        lease.Dispose();
+                        if (sql is not null)
+                        {
+                            await sql.DisposeAsync().ConfigureAwait(false);
+                        }
+
                         throw;
                     }
-
-                    return (session, null);
                 default:
                     return default;
             }
@@ -419,7 +437,23 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         var failed = false;
         while (true)
         {
-            var (type, body, reservation) = await ReadMessageAsync(input, cancellationToken).ConfigureAwait(false);
+            (byte type, byte[] body, IMemoryReservation reservation) messageRead;
+            using (var idle = new CancellationTokenSource(QosSessions.IdleTimeout, Time))
+            using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, idle.Token))
+            {
+                try
+                {
+                    messageRead = await ReadMessageAsync(input, waiting.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (idle.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    output.Error("57P05", "session idle timeout exceeded", fatal: true);
+                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            var (type, body, reservation) = messageRead;
             using (reservation)
             {
                 if (type == 'X')
@@ -1157,6 +1191,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     }
     private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, IPAddress? Client, ISqlSession Sql, Dictionary<string, string> Settings)
     {
+        public required IDisposable Lease { get; init; }
+
         public KeyToken? Key { get; init; }
         public DateTimeOffset? Until { get; init; }
         public DateTimeOffset? TokenExpiry { get; init; }

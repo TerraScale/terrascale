@@ -33,6 +33,7 @@ internal sealed class SqlSocket(
     IMemoryBudget memory,
     TimeProvider time,
     IQosAdmission admission,
+    QosSessions sessions,
     IUsageMeter usage,
     IRequestLogs logs,
     RegionalIngress ingress) : IDisposable
@@ -63,6 +64,7 @@ internal sealed class SqlSocket(
     private TenantContext? _database;
     private CancellationToken _fence;
     private CancellationToken _admitting;
+    private long? _authId;
     private bool _canWrite;
     private bool _failed;
     private bool _closing;
@@ -81,8 +83,16 @@ internal sealed class SqlSocket(
         await using var cutOff = _revoked.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the credential was revoked")).ConfigureAwait(false);
         using var admitting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, fence);
         (_database, _canWrite, _fence, _admitting) = (database, canWrite, fence, admitting.Token);
-        if (_database is null && !await AuthenticateAsync(cancellationToken).ConfigureAwait(false))
+        var frameAuth = _database is null;
+        if (frameAuth && !await AuthenticateAsync(cancellationToken).ConfigureAwait(false))
         {
+            return;
+        }
+
+        using var lease = sessions.TryEnter(Database);
+        if (lease is null)
+        {
+            await RefuseAsync(_authId, new SqlError(SqlErrors.TenantBusy, "organization session limit exceeded"), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -95,6 +105,11 @@ internal sealed class SqlSocket(
         _session.Prefer(WritePreference.Parse(context.Request.Headers[WritePreference.Header]) ?? WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))
         {
+            if (frameAuth)
+            {
+                await SendAsync(new SqlSocketResult(_authId, "result", [], false), SqlJsonContext.Default.SqlSocketResult, cancellationToken).ConfigureAwait(false);
+            }
+
             await ServeAsync(cancellationToken).ConfigureAwait(false);
         }
     }
@@ -216,7 +231,7 @@ internal sealed class SqlSocket(
                 return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);
         }
 
-        await SendAsync(new SqlSocketResult(request.Id, "result", [], false), SqlJsonContext.Default.SqlSocketResult, cancellationToken).ConfigureAwait(false);
+        _authId = request.Id;
         return true;
     }
 
@@ -237,6 +252,9 @@ internal sealed class SqlSocket(
             return null;
         }
 
+        using var idle = new CancellationTokenSource(QosSessions.IdleTimeout, time);
+        await using var expired = idle.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "session idle timeout exceeded")).ConfigureAwait(false);
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closed.Token);
         var buffer = ArrayPool<byte>.Shared.Rent(FirstBufferBytes);
         var length = 0;
         try
@@ -269,7 +287,7 @@ internal sealed class SqlSocket(
                     (buffer, reservation) = (larger, grown);
                 }
 
-                var read = await socket.ReceiveAsync(buffer.AsMemory(length, Math.Min(buffer.Length, maxBytes) - length), cancellationToken).ConfigureAwait(false);
+                var read = await socket.ReceiveAsync(buffer.AsMemory(length, Math.Min(buffer.Length, maxBytes) - length), waiting.Token).ConfigureAwait(false);
                 if (read.MessageType == WebSocketMessageType.Close)
                 {
                     await CloseAsync(WebSocketCloseStatus.NormalClosure, null).ConfigureAwait(false);
@@ -290,6 +308,11 @@ internal sealed class SqlSocket(
                     return (buffer, length, reservation);
                 }
             }
+        }
+        catch (OperationCanceledException) when (idle.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            Release();
+            return null;
         }
         catch
         {

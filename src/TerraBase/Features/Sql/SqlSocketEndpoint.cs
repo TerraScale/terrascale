@@ -27,6 +27,7 @@ internal sealed class SqlSocketEndpoint(
     IMemoryBudget memory,
     TimeProvider time,
     IQosAdmission admission,
+    QosSessions sessions,
     IUsageMeter usage,
     IRequestLogs logs,
     RegionalIngress ingress) : EndpointWithoutRequest<IResult>
@@ -99,7 +100,7 @@ internal sealed class SqlSocketEndpoint(
         });
         var accepted = HttpContext.Features.GetRequiredFeature<RegionalIngress.Lease>();
         accepted.Dispose();
-        using var connection = new SqlSocket(HttpContext, socket, lifetime, sql, authorization, tenants, options, memory, time, admission, usage, logs, ingress);
+        using var connection = new SqlSocket(HttpContext, socket, lifetime, sql, authorization, tenants, options, memory, time, admission, sessions, usage, logs, ingress);
         try
         {
             await connection.RunAsync(database, canWrite, accepted.Fence, cancellationToken);
