@@ -572,7 +572,8 @@ class ProjectSettingsUpdate:
             body["restrictions"] = self.restrictions.to_body()
         if self.methods is not None:
             body["methods"] = {"passcode": self.methods.passcode, "password": self.methods.password,
-                               "sign_up_mode": self.methods.sign_up_mode, "magic_link": self.methods.magic_link, "username": self.methods.username}
+                               "sign_up_mode": self.methods.sign_up_mode,
+                               "magic_link": self.methods.magic_link, "username": self.methods.username}
         if self.branding is not None:
             branding: dict[str, Any] = {}
             for key in ("name", "logo_url", "theme_color", "default_theme", "background_color", "text_color",

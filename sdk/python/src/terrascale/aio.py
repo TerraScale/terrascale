@@ -22,10 +22,8 @@ from .auth import (
     create_api_key_call,
     create_project_client_call,
     create_project_invitation_call,
-
-    create_user_call,
-
     create_user_api_key_call,
+    create_user_call,
     delete_project_client_call,
     delete_provider_call,
     delete_user_call,
@@ -50,11 +48,11 @@ from .auth import (
     rotate_api_key_call,
     rotate_project_client_secret_call,
     set_provider_call,
+    set_user_api_key_policy_call,
     sign_out_user_call,
     update_project_client_call,
     update_settings_call,
     update_user_call,
-    set_user_api_key_policy_call,
     verify_user_api_key_call,
 )
 from .client import _error, _settings
