@@ -14,7 +14,7 @@ export type StripeLog = {
   unexpected: { method: string; host: string; path: string; query: string[]; reason: string }[];
 };
 
-const apiKeyFormat = /^[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
+const apiKeyFormat = /^(?:sk_)?[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
 const dashboardMetrics = 'http://127.0.0.1:8085/metrics';
 
 export async function stripeLog(): Promise<StripeLog> {

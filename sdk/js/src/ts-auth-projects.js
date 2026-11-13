@@ -291,7 +291,7 @@ function requireProof(value) {
   return value;
 }
 
-const managementCredentialPattern = /^(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|[0-9A-HJKMNP-TV-Z]{26}_[0-9abcdefghjkmnpqrstvwxyz]{52})$/u;
+const managementCredentialPattern = /^(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?:sk_)?[0-9A-HJKMNP-TV-Z]{26}_[0-9abcdefghjkmnpqrstvwxyz]{52})$/u;
 const maximumExportCursorLength = 8192;
 
 /**

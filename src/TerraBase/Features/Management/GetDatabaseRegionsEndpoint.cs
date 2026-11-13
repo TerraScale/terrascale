@@ -21,7 +21,6 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
         Name("getDatabaseRegions");
         Summary("Reads a database's regions and sync progress");
         Description("regions lists every selected region in region-id order, with role writer on the current writer entry. Its order carries no meaning. "
-            + "Transitional: homeRegion and replicas keep their behavior until category C23 of batch db4a5ba7 removes the old placement fields once every consumer sends regions. "
             + "Writer-observed successful page pulls, not application or checksum acknowledgements. lagMs is the age of the oldest known commit "
             + "missing from the last served revision, zero when caught up, and null without sufficient observations. lastPulledAt is when a complete "
             + "pull was served. lastVerified is null until checksum verification reports a result. Observations reset when the database reopens. "
@@ -29,10 +28,9 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
         Tags("Databases");
         Produces<TerraBaseDatabaseRegions>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware(), new DatabaseRegions.WriterReads());
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
@@ -56,7 +54,8 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
             : record.Replicas;
         if (home != options.Region)
         {
-            return DatabaseRegions.HomeRegion(home, replicas.Prepend(home));
+            await DatabaseRegions.ProxyAsync(HttpContext, home).ConfigureAwait(false);
+            return TypedResults.Empty;
         }
 
         var tenant = new TenantContext(ManagementRoute.OrganizationId(HttpContext), PlanTier.Hobby, record.ProjectId, record.Id);

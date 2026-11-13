@@ -89,7 +89,7 @@ func rotateKey(ctx context.Context, s *session, signIn func(context.Context) (*t
 	// A mismatched or malformed success can contain sensitive remote content.
 	if key == nil || key.APIKey.ID != id || key.APIKey.OrganizationID != s.org || key.APIKey.ProjectID != s.project ||
 		(grace > 0) != (key.APIKey.PreviousSecretExpiresAt != nil) ||
-		len(key.Key) != 79 || !strings.HasPrefix(key.Key, id+"_") || strings.Trim(key.Key[27:], "0123456789abcdefghjkmnpqrstvwxyz") != "" {
+		!rotatedSecretMatches(key.Key, id) {
 		return errors.New("Rotation response did not match the key contract; inspect key state before retrying.")
 	}
 	if jsonMode(out) {
@@ -104,6 +104,14 @@ func rotateKey(ctx context.Context, s *session, signIn func(context.Context) (*t
 	}
 	_, err = fmt.Fprintln(out, key.Key)
 	return keyOutputError(err)
+}
+
+func rotatedSecretMatches(secret, id string) bool {
+	body := secret
+	if rest, ok := strings.CutPrefix(secret, "sk_"); ok {
+		body = rest
+	}
+	return len(body) == 79 && strings.HasPrefix(body, id+"_") && strings.Trim(body[27:], "0123456789abcdefghjkmnpqrstvwxyz") == ""
 }
 
 // Preserve only source-confirmed codes/status, never remote messages or causes.

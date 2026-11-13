@@ -31,7 +31,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         internal async Task<Credential?> AuthenticateAsync(string key, string? project, CancellationToken ct)
         {
-            if (key.Length != 79 || key[26] != '_' || !TerraScaleIds.IsValid(key[..26]) || key.Any(char.IsWhiteSpace)) return null;
+            var presented = key.StartsWith("sk_", StringComparison.Ordinal) ? key[3..] : key;
+            if (presented.Length != 79 || presented[26] != '_' || !TerraScaleIds.IsValid(presented[..26]) || key.Any(char.IsWhiteSpace)) return null;
             try
             {
                 var client = new TsAuthClient(http.CreateClient("platform"));

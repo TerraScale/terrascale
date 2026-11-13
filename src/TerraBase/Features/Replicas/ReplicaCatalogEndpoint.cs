@@ -60,7 +60,7 @@ internal sealed class ReplicaCatalogEndpoint(IReplicaCatalog catalog, TerraBaseO
             {
                 switch (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false))
                 {
-                    case TenantDatabaseRecord { Placement: var placement } record when placement.Home == options.Region && (region == options.Region || placement.Includes(region)):
+                    case TenantDatabaseRecord { Placement: var placement } record when placement.Home == options.Region && (region == options.Region || placement.PlacedIn(region)):
                         entries.Add(new ReplicaCatalogEntry(database.OrganizationId, database.ProjectId!, database.DatabaseId!, record.Name,
                             placement.Home, placement.Replicas, placement.Version, placement.AllRegions, record.Identity));
                         break;

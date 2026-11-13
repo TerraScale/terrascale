@@ -26,7 +26,7 @@ internal static class ProjectGrants
         }
 
         var restricted = jwt.FindFirst("database")?.Value;
-        string? restrictedId = null;
+        var restrictedId = restricted is not null && EntityIds.IsValid(restricted) ? restricted : null;
         if (restricted is not null)
         {
             var restriction = await context.RequestServices.GetRequiredService<IManagementService>()

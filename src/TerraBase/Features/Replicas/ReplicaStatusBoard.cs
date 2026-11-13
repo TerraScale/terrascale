@@ -22,13 +22,13 @@ internal sealed class ReplicaStatusBoard(TerraBaseOptions options, IReplicaCatal
         ArgumentNullException.ThrowIfNull(report);
         if (!ReplicaStates.IsReported(report.State)
             || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-            || placement.Home != options.Region || report.Region == options.Region || !placement.Includes(report.Region))
+            || placement.Home != options.Region || report.Region == options.Region || !placement.PlacedIn(report.Region))
         {
             return false;
         }
 
         _reports[Key(database, report.Region)] = (report, time.GetUtcNow());
-        foreach (var stale in _reports.Where(entry => entry.Key.Database == database.DatabaseId && (entry.Key.Region == options.Region || !placement.Includes(entry.Key.Region))).Select(entry => entry.Key).ToList())
+        foreach (var stale in _reports.Where(entry => entry.Key.Database == database.DatabaseId && (entry.Key.Region == options.Region || !placement.PlacedIn(entry.Key.Region))).Select(entry => entry.Key).ToList())
         {
             _ = _reports.TryRemove(stale, out _);
         }

@@ -69,9 +69,9 @@ const secretBody = record({ api_key: apiKey, key: text });
 /** @param {JsonValue | undefined} value */
 export function keySecret(value) {
   const result = secretBody(value);
-  // ApiKeys.Generate: canonical ULID, separator, 52 random lowercase symbols.
-  if (result.key.length !== 79 || result.key.slice(0, 26) !== result.api_key.id ||
-      !/^_[0123456789abcdefghjkmnpqrstvwxyz]{52}$/u.test(result.key.slice(26)))
+  const body = result.key.startsWith("sk_") ? result.key.slice(3) : result.key;
+  if (body.length !== 79 || body.slice(0, 26) !== result.api_key.id ||
+      !/^_[0123456789abcdefghjkmnpqrstvwxyz]{52}$/u.test(body.slice(26)))
     throw new TypeError("Malformed platform key secret.");
   return result;
 }

@@ -196,22 +196,27 @@ jobs:
               - landing-site/static/pricing.json
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-go:
               - sdk/go/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-js:
               - sdk/js/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-python:
               - sdk/python/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-rust:
               - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             docs:

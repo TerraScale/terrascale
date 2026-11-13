@@ -99,6 +99,7 @@ internal sealed class HomeMoves(
     private async Task<MoveHomeResult> MoveAsync(HomeMoveMarker marker, long started, CancellationToken cancellationToken)
     {
         var database = marker.Database;
+        fences.Moving(marker.DatabaseId);
         var peer = await PeerAsync(marker.Target, cancellationToken).ConfigureAwait(false);
         var caughtUpAnswer = peer is null ? null : await PostAsync(peer, marker, "catch-up", null, CancellationToken.None).ConfigureAwait(false);
         using (caughtUpAnswer)
@@ -127,9 +128,11 @@ internal sealed class HomeMoves(
 
             var record = await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is TenantDatabaseRecord found ? found : null;
             var placement = record?.Placement;
-            IReadOnlyList<string> next = placement is null ? [options.Region]
+            IReadOnlyList<string> next = marker.RequestedRegions is { } selected
+                ? [.. selected.Where(region => region != marker.Target).Order(StringComparer.Ordinal)]
+                : placement is null ? [options.Region]
                 : [.. placement.Replicas.Where(region => region != marker.Target).Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-            var promotion = await PromoteAsync(peer, marker, new HomePromoteRequest(marker.MoveId, options.Region, marker.Version, next, placement?.AllRegions ?? false, record?.Name, record?.Identity))
+            var promotion = await PromoteAsync(peer, marker, new HomePromoteRequest(marker.MoveId, options.Region, marker.Version, next, marker.RequestedRegions is null && (placement?.AllRegions ?? false), record?.Name, record?.Identity))
                 .ConfigureAwait(false);
             promoted = promotion switch
             {

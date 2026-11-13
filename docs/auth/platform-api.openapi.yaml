@@ -2063,8 +2063,8 @@ components:
         api_key: { $ref: '#/components/schemas/ApiKey' }
         key:
           type: string
-          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$'
-          description: The whole key string, shown once. Its first 24 characters are the id.
+          pattern: '^(sk_)?[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$'
+          description: The whole key string, shown once. It is the 26-character key id, an underscore and 52 secret characters, and may start with sk_. The key id is the ULID.
     ApiKeyPage:
       type: object
       required: [items, next]

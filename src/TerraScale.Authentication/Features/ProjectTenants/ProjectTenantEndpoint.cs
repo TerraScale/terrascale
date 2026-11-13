@@ -102,10 +102,12 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         var request = this.HttpContext.Request;
         if (!AuthenticationHeaderValue.TryParse(request.Headers.Authorization, out var header)
             || !string.Equals(header.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase)
-            || header.Parameter is not { Length: 79 } secret || secret[26] != '_')
+            || ApiKeys.Parse(header.Parameter) is not { } parsed)
         {
             return await base.AuthenticateAndHandleAsync(cancellationToken);
         }
+
+        var secret = parsed.Presented;
 
         var keys = this.HttpContext.RequestServices.GetRequiredService<ApiKeys>();
         if (await keys.AuthenticateAsync(secret, cancellationToken) is not { } key)

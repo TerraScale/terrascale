@@ -24,6 +24,11 @@ internal static class ReceiptImportProof
 
     public static async Task RunAsync(WebApplication app, CancellationToken cancellationToken)
     {
+        if (Environment.GetEnvironmentVariable("E2E_RETAINED_RECEIVER") is not null)
+        {
+            await RetainedReceiverProof.RunAsync(app, cancellationToken);
+            return;
+        }
         if (Environment.GetEnvironmentVariable("E2E_RECEIPT_ROLE") is not null)
         {
             await RunNodeAsync(app, cancellationToken);

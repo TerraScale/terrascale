@@ -1,6 +1,6 @@
 # Database region observations
 
-`GET /v1/projects/{project}/databases/{database}/regions` requires `databases:read` and the same project/database authority as the database read. It runs at the database's home; another region returns `421 wrong_region` naming that home. Responses are not cached.
+`GET /v1/projects/{project}/databases/{database}/regions` requires `databases:read` and the same project/database authority as the database read. It runs at the database's writer; another region proxies the read to that writer. A forwarded read that would require another hop returns `503 unavailable` with `Retry-After: 1`. Responses are not cached.
 
 The MagicOnion `IManagementService.GetDatabaseRegionsAsync` method returns the same contract. The dashboard calls the home through this RPC. Its Replication tab refreshes observations every ten seconds and also offers an explicit refresh.
 
