@@ -53,8 +53,10 @@ public static class RequestIdentity
         return app;
     }
 
+    /// <summary>Install only on first-party transports; never on outbound callbacks or third-party HTTP clients.</summary>
     public static HttpMessageHandler Wrap(HttpMessageHandler inner, string? secret) => new Propagation(ProofKey(secret)) { InnerHandler = inner };
 
+    /// <summary>Creates a factory-managed handler restricted to one configured service origin.</summary>
     public static DelegatingHandler CreatePropagationHandler(string? secret, Uri origin) => new Propagation(ProofKey(secret), origin);
 
     private static string? ProofKey(string? previous) =>

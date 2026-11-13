@@ -46,6 +46,25 @@ public sealed class CallerCredential
         signing = new SigningCredentials(key, SecurityAlgorithms.EcdsaSha256);
         try
         {
+            var d = Base64UrlEncoder.DecodeBytes(key.D);
+            var x = Base64UrlEncoder.DecodeBytes(key.X);
+            var y = Base64UrlEncoder.DecodeBytes(key.Y);
+            if (d.Length != 32 || x.Length != 32 || y.Length != 32
+                || d.AsSpan().IndexOfAnyExcept((byte)0) < 0
+                || d.AsSpan().SequenceCompareTo(Convert.FromHexString("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551")) >= 0)
+            {
+                throw new CryptographicException("Invalid P-256 scalar or point.");
+            }
+
+            var point = new ECPoint { X = x, Y = y };
+            using var privateKey = ECDsa.Create(new ECParameters { Curve = ECCurve.NamedCurves.nistP256, Q = point, D = d });
+            using var publicKey = ECDsa.Create(new ECParameters { Curve = ECCurve.NamedCurves.nistP256, Q = point });
+            var challenge = RandomNumberGenerator.GetBytes(32);
+            if (!publicKey.VerifyHash(challenge, privateKey.SignHash(challenge)))
+            {
+                throw new CryptographicException("The P-256 private scalar does not match the public point.");
+            }
+
             _ = Token;
         }
         catch (Exception error) when (error is ArgumentException or CryptographicException or FormatException)

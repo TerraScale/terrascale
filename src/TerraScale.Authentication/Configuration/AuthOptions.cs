@@ -121,6 +121,11 @@ public sealed partial record AuthOptions
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
 
+    /// <summary>
+    /// Replaces every secret variable (<c>TS_AUTH_*</c>, <c>CLOUDFLARE_*</c>, <c>TERRABASE_PEER_SECRET</c>) that has a
+    /// <c>&lt;NAME&gt;_FILE</c> companion with that file's contents, trailing newline trimmed: a host that mounts secrets as
+    /// files (OCI Vault on gru) delivers them this way. The file wins over the variable. Call before <see cref="FromProcess"/>.
+    /// </summary>
     public static void ReadSecretFiles()
     {
         foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
