@@ -393,7 +393,7 @@ export const dashboardStates: readonly PageState[] = [
     covers: { path: /^\/analytics$/ },
     heading: title('Analytics'),
     data: async (page, journey) => {
-      await expect(page.locator('#analytics-database, select[name="database"], main')).toContainText(journey.databaseName);
+      await expect(page.locator('#analytics-database')).toContainText(journey.databaseName);
     },
   },
   {

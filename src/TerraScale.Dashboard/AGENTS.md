@@ -21,3 +21,10 @@
 
 - Treat TerraBase, ts-auth and stored data as untrusted input: never `ToDictionary`/`Add` keys or pass values to `ArgumentException`-throwing BCL calls without checking first (`TryAdd`, `TryParse`, range tests), and reject a bad response as the area's `JsonException` or validation failure. See `docs/dashboard/analytics.md#platform-data-and-optional-panels`.
 - Optional page parts (sync, metrics, analytics) load through `OptionalPanel`, which renders the page with the part's notice and logs EventId 44 with code frames. Required reads never go through it; add no other broad `catch (Exception)`.
+
+## Dropdowns
+
+- Every dropdown uses browser-managed HTML controls styled with shared dashboard design tokens: colors, font, border, radius, dimensions and focus, disabled and invalid states. Preserve labels, keyboard access, visible focus, OS accessibility and forced-colors support.
+- Value choices use real select/option elements and shared ts-select styles. Preserve name/value submission, selected, disabled and required states. Never hide a select behind a proxy control or simulate selects/listboxes in JavaScript. Customizable select styling (base-select and ::picker(select)) is progressive CSS enhancement inside @supports; unsupported browsers retain ordinary native selects without a JavaScript polyfill.
+- Action and navigation dropdowns use semantic links/buttons in popover="auto" containers opened by native popovertarget invokers. Position them with CSS anchors and browser collision handling. Never turn actions into select options or hand-manage dropdown positioning, opening, dismissal or keyboard handling in JavaScript/Datastar. Use ordinary Tab navigation; do not claim ARIA menu semantics requiring a custom keyboard model.
+- Keep non-dropdown details/summary disclosures as disclosures.
