@@ -47,6 +47,7 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
                     using var frame = await ReceiveAsync(client, tenant, stop.Token).ConfigureAwait(false);
                     if (frame.Type == WebSocketMessageType.Close)
                     {
+                        stop.CancelAfter(SqlLimits.MaxRequestTime);
                         await destination.CloseOutputAsync(client.CloseStatus ?? WebSocketCloseStatus.NormalClosure,
                             client.CloseStatusDescription, stop.Token).ConfigureAwait(false);
                         return;
@@ -80,7 +81,10 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
             }
             finally
             {
-                await stop.CancelAsync().ConfigureAwait(false);
+                if (destination.State != WebSocketState.CloseSent)
+                {
+                    await stop.CancelAsync().ConfigureAwait(false);
+                }
             }
         }
 
@@ -96,6 +100,7 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
                     {
                         if (frame.Type == WebSocketMessageType.Close)
                         {
+                            stop.CancelAfter(SqlLimits.MaxRequestTime);
                             await client.CloseOutputAsync(destination.CloseStatus ?? WebSocketCloseStatus.EndpointUnavailable,
                                 destination.CloseStatusDescription, stop.Token).ConfigureAwait(false);
                             return;
@@ -118,7 +123,10 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
             }
             finally
             {
-                await stop.CancelAsync().ConfigureAwait(false);
+                if (client.State != WebSocketState.CloseSent)
+                {
+                    await stop.CancelAsync().ConfigureAwait(false);
+                }
             }
         }
     }

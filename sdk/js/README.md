@@ -261,8 +261,8 @@ todos.close();
 `shape(table).subscribe()` loads every row of the table, then keeps it current with each committed change. The
 listener runs after the snapshot and after every change, with `rows` keyed by row id (a decimal string) and
 `upToDate` once the shape reached the table's head. Row values decode like SQL results (`Uint8Array` blobs).
-In a replica region, writes made in that region show at once; `provisional` holds the keys of rows whose values the
-database's home has not confirmed yet (such inserts have keys starting with `~`). A write the home rejects disappears
+In a region that holds the database, writes made there show at once; `provisional` holds the keys of rows whose values the
+database's writer has not confirmed yet (such inserts have keys starting with `~`). A write the writer rejects disappears
 from `rows`.
 A schema change of the table restarts the shape from a new snapshot; transient refusals and lost connections retry
 with backoff; authentication, scope and unknown-table errors reject `done`. It needs the data read scope, or an end-user token with a read grant for the selected table.

@@ -156,7 +156,7 @@ function postgresRows(id: string): string {
   const current = journey();
   return execFileSync('psql', ['-X', '-tA', '-v', 'ON_ERROR_STOP=1', '-c', 'SELECT value FROM placement_rows ORDER BY value',
     `postgresql://any@pg.terrascale.tech:5432/${current.projectId}/${id}?sslmode=verify-full&sslrootcert=${encodeURIComponent(join(stateDir, 'pki', 'ca.pem'))}`], {
-    env: { PATH: process.env.PATH, HOME: mkdtempSync(join(stateDir, 'postgres-home-')), SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
+    env: { PATH: process.env.PATH, SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
     encoding: 'utf8',
   }).trim();
 }
@@ -202,7 +202,7 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     }), `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`);
     pg = spawn('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=verbose',
       `postgresql://any@pg.terrascale.tech:5432/${current.projectId}/${created.id}?sslmode=verify-full&sslrootcert=${encodeURIComponent(join(stateDir, 'pki', 'ca.pem'))}`], {
-      env: { PATH: process.env.PATH, HOME: mkdtempSync(join(stateDir, 'postgres-home-')), SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
+      env: { PATH: process.env.PATH, SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     pgExited = new Promise<unknown[]>(resolve => pg!.once('close', (...args) => resolve(args)));
@@ -439,6 +439,9 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3], [4]]);
     console.log('R3 open transaction through proxy: acknowledged uncommitted insert, writer move, close 1012; value 987654 absent');
 
+  } catch (error) {
+    console.log('R3 primary failure:', error);
+    throw error;
   } finally {
     if (pg && pg.exitCode === null) {
       pg.kill('SIGTERM');

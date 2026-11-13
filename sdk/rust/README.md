@@ -75,7 +75,7 @@ on the outer error, returns it); over a WebSocket session it is `Error::Sql` dir
 (constants in `sql_error_codes`), `message`, zero-based `statement` and `sqlstate`, and `is_transient()` is
 true for `serialization_conflict` and `tenant_busy`. A `409 serialization_conflict` rolled back and is
 resent at most twice with jitter; other refusals return at once. Failures before execution keep the generic
-error variants (401, 404, 421, 429, 503).
+error variants (401, 404, 429, 503).
 
 ### Sessions: interactive transactions
 
