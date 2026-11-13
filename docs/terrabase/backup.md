@@ -286,7 +286,8 @@ The engine keeps every change after the durable anchor, so an unreachable bucket
 Every pass, before the hole decision and also while the file backs off, the shipper measures the unacknowledged capture
 payload and row overhead. When it exceeds 256 MiB, or the shared disk admission refuses that many bytes with its
 protected headroom, the shipper discards: it moves the engine's durable anchor to the committed end, and the engine
-trims older rows. That is the whole discard; it records nothing. Once the trim passes the stored cursor, the next pass
+trims older rows as far as its other readers allow (a replica region that has not pulled them yet, a shape still reading
+them). That is the whole discard; it records nothing. Once the trim passes the stored cursor, the next pass
 finds the anchor beyond it and records the hole. A later discard during the same outage finds no stored cursor (the
 generation waits for its base snapshot) and adds no hole, so an outage of any length is exactly one hole.
 

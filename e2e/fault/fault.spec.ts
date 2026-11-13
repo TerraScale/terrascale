@@ -116,6 +116,7 @@ test('history lost while the backup store is unreachable is one hole, survives a
       expect(response.status(), await response.text()).toBe(200);
     }
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
+    await ledger.compare(cells);
     await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the discarded history becomes exactly one hole' }).toBe(holes + 1);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(1);
     expect(await probe(writer, '/backupz')).toBe(503);
@@ -130,6 +131,9 @@ test('history lost while the backup store is unreachable is one hole, survives a
     const restart = restartAfterKill(writer);
     await restart();
     await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
+    await expect.poll(async () => (await cells.get(`${endpoint('gru')}${database(created.id)}`)).status(), {
+      message: 'the restarted writer authenticates requests again',
+    }).toBe(200);
     await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the restarted writer publishes the durable hole total' }).toBe(holes + 1);
     await expect.poll(() => probe(writer, '/backupz'), { message: 'the restarted writer resumes its generation' }).toBe(200);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(0);
