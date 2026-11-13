@@ -191,7 +191,7 @@ internal sealed partial class ContinuousBackup
     private void StartSide(ShippedFile file, SnapshotKey key, string? snapshot, byte[]? live, bool drill, IDisposable? claim = null)
     {
         var side = new SideWork(key, CancellationTokenSource.CreateLinkedTokenSource(
-            file.Job?.Caller ?? CancellationToken.None, _jobCancellation.Token, file.Retirement.Token))
+            file.Job?.Caller ?? CancellationToken.None, _jobCancellation.Token, file.Retirement.Token, file.Tap.Refused))
         {
             Stored = snapshot is null ? null : new(TaskCreationOptions.RunContinuationsAsynchronously),
             CdcPosition = (file.Tap as ICdcBackupRetention)?.Position ?? 0,

@@ -5,6 +5,8 @@ using System.Globalization;
 using System.IO;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using Turso.Raw.Public;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,7 +20,98 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
     private static readonly List<IStorageTransaction> Held = [];
     private static readonly List<SqliteConnection> Replay = [];
 
-    public static void Initialize() => DiagnosticListener.AllListeners.Subscribe(new StartupHook());
+    public static void Initialize()
+    {
+        if (Environment.GetEnvironmentVariable("ENGINE_INTEGRITY_PROXY") is { } proxy)
+        {
+            NativeLibrary.SetDllImportResolver(typeof(TursoBindings).Assembly,
+                (name, assembly, path) => name == "turso_sdk_kit" ? NativeLibrary.Load(proxy) : IntPtr.Zero);
+        }
+        DiagnosticListener.AllListeners.Subscribe(new StartupHook());
+    }
+
+    private static void FaultBoundary(string step, TenantContext database)
+    {
+        if (step == "storage.fault.recording")
+        {
+            Console.WriteLine("fault recording marker flushed");
+            _ = kill(Environment.ProcessId, 19);
+        }
+    }
+
+    [DllImport("libc")]
+    private static extern int kill(int process, int signal);
+
+    private static readonly Dictionary<string, IWalTap> Taps = [];
+
+    private static async Task ProbeTapAsync(IStorageEngine engine, TenantContext tenant, string operation, CancellationToken cancellationToken)
+    {
+        var database = tenant.DatabaseId ?? throw new InvalidOperationException("a tap requires a database id");
+        if (operation == "tap-open")
+        {
+            Taps[database] = (await ((IWalBackup)engine).OpenTapAsync(tenant, cancellationToken))!;
+            return;
+        }
+        var tap = Taps[database];
+        using var content = new MemoryStream();
+        try
+        {
+            _ = await tap.ReadAsync(content, cancellationToken);
+            throw new InvalidOperationException("a faulted tap returned data");
+        }
+        catch (Exception error) when (error.GetType().Name == "StorageCopyFaultedException")
+        {
+            if (content.Length != 0 || !((CancellationToken)tap.GetType().GetProperty("Refused")!.GetValue(tap)!).IsCancellationRequested)
+            {
+                throw new InvalidOperationException("a faulted tap emitted data or did not cancel shipping");
+            }
+        }
+        try
+        {
+            try
+            {
+                tap.GetType().GetMethod("ThrowIfUnavailable")!.Invoke(tap, null);
+            }
+            catch (TargetInvocationException error) when (error.InnerException?.GetType().Name == "StorageCopyFaultedException")
+            {
+                throw error.InnerException!;
+            }
+            throw new InvalidOperationException("a faulted tap admitted a buffered upload");
+        }
+        catch (Exception error) when (error.GetType().Name == "StorageCopyFaultedException")
+        {
+            Console.WriteLine("pre-opened tap refused: read bytes 0; buffered shipping refused; shipping token cancelled");
+        }
+        try
+        {
+            _ = await tap.SnapshotAsync(content, Path.Combine(Path.GetTempPath(), Path.GetRandomFileName()), cancellationToken);
+            throw new InvalidOperationException("a faulted tap returned a snapshot");
+        }
+        catch (Exception error) when (error.GetType().Name == "StorageCopyFaultedException")
+        {
+            Console.WriteLine("pre-opened tap snapshot refused");
+        }
+        try
+        {
+            await (ValueTask)tap.GetType().GetMethod("AcknowledgeAsync")!.Invoke(tap, [0L, cancellationToken])!;
+            throw new InvalidOperationException("a faulted tap acknowledged CDC");
+        }
+        catch (Exception error) when (error.GetType().Name == "StorageCopyFaultedException")
+        {
+            Console.WriteLine("pre-opened tap acknowledgement refused");
+        }
+        try
+        {
+            _ = await ((IWalBackup)engine).OpenTapAsync(tenant, cancellationToken);
+            throw new InvalidOperationException("a faulted copy opened another tap");
+        }
+        catch (Exception error) when (error.GetType().Name == "StorageCopyFaultedException")
+        {
+            Console.WriteLine("new tap on faulted copy refused");
+        }
+        await tap.DisposeAsync();
+        Taps.Remove(database);
+    }
 
     public void OnNext(DiagnosticListener listener)
     {
@@ -65,6 +158,20 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                 {
                     var engine = services.GetRequiredService<IStorageEngine>();
                     var tenant = new TenantContext(parts[1], PlanTier.Hobby, parts[2], parts[3]);
+                    if (parts[0].StartsWith("tap-", StringComparison.Ordinal))
+                    {
+                        await ProbeTapAsync(engine, tenant, parts[0], cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "arm-recording")
+                    {
+                        var field = engine.GetType().GetField("_checkpoint", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                        field.SetValue(engine, Delegate.CreateDelegate(field.FieldType,
+                            typeof(StartupHook).GetMethod(nameof(FaultBoundary), BindingFlags.Static | BindingFlags.NonPublic)!));
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
                     if (parts[0] == "pending")
                     {
                         var ledger = engine.GetType().GetProperty("Ledger", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;

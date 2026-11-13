@@ -97,7 +97,7 @@ def request(method, path, body=None, actor=True):
     return json.loads(text) if text else None
 
 
-def start(point=None, failure=None, binary=None, directory=None, proof_target=None):
+def start(point=None, failure=None, binary=None, directory=None, proof_target=None, integrity=False):
     global node, generation, reader, proof_events
     generation += 1
     current = dict(env)
@@ -108,6 +108,11 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
             LD_PRELOAD=str(state / "crash.so"),
             ENGINE_PROOF_TARGET=proof_target,
             ENGINE_PROOF_CONTROL=str(state / "proof-control"),
+        )
+    if integrity:
+        current.update(
+            ENGINE_INTEGRITY_PROXY=str(state / "integrity.so"),
+            ENGINE_INTEGRITY_CONTROL=str(state / "integrity-control"),
         )
     if point:
         current.update(LD_PRELOAD=str(state / "crash.so"), ENGINE_CRASH_POINT=point)
@@ -347,6 +352,81 @@ def recovered(identities):
             assert client.query("SELECT 1;") == {}
 
 
+def boundary_cases(selected=None):
+    if selected in (None, "marker"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "recording-marker"})["id"]
+        sql(project, identity, ["CREATE TABLE intact(id INTEGER PRIMARY KEY);", "INSERT INTO intact VALUES (1);"])
+        hook("arm-recording", identity)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            pending = executor.submit(hook, "fault", identity)
+
+            def expired(signum, frame):
+                raise TimeoutError("fault recording did not reach the flushed marker")
+
+            previous = signal.signal(signal.SIGALRM, expired)
+            signal.alarm(40)
+            try:
+                _, status = os.waitpid(node.pid, os.WUNTRACED)
+                assert os.WIFSTOPPED(status), "node exited before the fault marker boundary"
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, previous)
+                end(hard=True, rollback=False)
+            try:
+                pending.result(timeout=5)
+                raise AssertionError("fault recording returned before its killed commit")
+            except RuntimeError as error:
+                assert str(error).startswith("hook interrupted"), str(error)
+        before = files(identity)
+        start()
+        assert hook("ledger", identity) == [1, 0], "fault marker was discarded"
+        unavailable(identity, "copy_faulted")
+        assert files(identity) == before
+        end()
+        start()
+        unavailable(identity, "copy_faulted")
+        assert hook("ledger", identity) == [1, 0]
+        assert files(identity) == before
+        end()
+        print(
+            "fault marker flushed, killed before fault row: permanent fault before proof; refused across two restarts", flush=True
+        )
+
+    for code in (11, 26):
+        if selected not in (None, "integrity" + str(code)):
+            continue
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "integrity-" + str(code)})["id"]
+        hook("intent", identity)
+        end(hard=True, rollback=False)
+        before = files(identity)
+        control = state / "integrity-control"
+        control.write_text(str(code))
+        start(integrity=True)
+        counts = hook("ledger", identity)
+        proof_log = (state / ("node-" + str(generation) + ".log")).read_text()
+        assert f"injected integrity exception {code}" in proof_log, proof_log
+        assert counts == [0, 1], (counts, [line for line in proof_log.splitlines() if "proof" in line or "injected" in line])
+        unavailable(identity, "recovery_pending")
+        assert gauge("terrabase_storage_proof_pending") == 1
+        metrics = subprocess.check_output(["curl", "-fsS", f"http://127.0.0.1:{ports[2]}/metrics"], text=True)
+        assert 'reason="integrity_engine_corruption"' in metrics, metrics
+        assert files(identity) == before
+        end(hard=True, rollback=False)
+        start(integrity=True)
+        assert hook("ledger", identity) == [0, 1]
+        unavailable(identity, "recovery_pending")
+        assert files(identity) == before
+        control.unlink()
+        recovered([identity])
+        end()
+        print(
+            f"integrity throws {code}: no fault, retained intent and files, pending refusal across restart; "
+            "reason integrity_engine_corruption; healthy after removal", flush=True
+        )
+
+
 def admission_cases():
     added_started = time.perf_counter()
     start()
@@ -355,7 +435,10 @@ def admission_cases():
     with Postgres(marked) as existing:
         assert existing.query("BEGIN;") == {}
         assert existing.query("SELECT 1;") == {}
+        hook("tap-open", marked)
+        sql(project, marked, ["CREATE TABLE captured(id INTEGER PRIMARY KEY);", "INSERT INTO captured VALUES (1);"])
         hook("fault", marked)
+        hook("tap-refused", marked)
         before = files(marked)
         response = existing.query("SELECT 1;")
         assert response["C"] == "57P03" and "copy_faulted" in response["M"], response
@@ -375,6 +458,8 @@ def admission_cases():
         flush=True,
     )
     end()
+
+    boundary_cases()
 
     for kind in ("locked", "io"):
         start()
@@ -494,6 +579,12 @@ subprocess.run(
     ["cc", "-shared", "-fPIC", str(root / "e2e/env/engine-crash.c"), "-o", str(state / "crash.so"), "-ldl"], check=True
 )
 
+subprocess.run(
+    ["cc", "-shared", "-fPIC", str(root / "e2e/env/engine-crash-integrity.c"),
+     "-o", str(state / "integrity.so"), "-Wl,--no-as-needed", str(build / "libturso_sdk_kit.so"),
+     "-Wl,-rpath," + str(build), "-ldl"], check=True
+)
+
 try:
     start()
     organization = request("POST", "/v1/management/organizations", {"name": "Crash proof"})["id"]
@@ -503,6 +594,14 @@ try:
         "name": "crash protocols", "scopes": ["sql:read", "sql:write"],
         "organizationId": organization, "projectId": project,
     }, actor=False)["secret"]
+    if len(sys.argv) > 2:
+        request("PUT", f"/v1/management/organizations/{organization}/plan", {"plan": "enterprise"})
+        end()
+        if sys.argv[2] == "admission":
+            print(f"admission cases: {admission_cases():.3f}s", flush=True)
+        else:
+            boundary_cases(sys.argv[2])
+        sys.exit(0)
     with Postgres(database) as client:
         assert client.query("SELECT 1;") == {}
     print("PostgreSQL authentication and healthy SELECT: ready", flush=True)

@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Turso;
 using Turso.Data.Sqlite;
+using Turso.Raw.Public;
 
 namespace TerraBase.Engine.Turso;
 
@@ -245,6 +246,9 @@ internal sealed partial class TursoDatabaseStore
     internal async Task<(long Offset, TursoChangeTap Replay, Ulid Incarnation)> WriteRewriteAsync(
     string target, long minimumOffset, TursoChangeTap? replay, Ulid targetIncarnation, bool finalPass, CancellationToken cancellationToken)
     {
+        ThrowIfUnavailable();
+        using var refused = ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         using var overall = MeasureRewrite(finalPass ? "final" : "off_writer");
         const string reason = "the source file or its log reported an I/O error or corruption while rewriting";
         var verifyReplay = replay is null;
@@ -282,7 +286,9 @@ internal sealed partial class TursoDatabaseStore
                         }
                     }
                     cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfUnavailable();
                     TursoSession.OpenExisting(source, FilePath);
+                    using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(TursoSession.Handle(source)));
                     Execute(source, "BEGIN;");
                     if (Ulid.Parse((string)Scalar(source, TursoStatements.Incarnation)!) != Incarnation || Closed)
                     {
@@ -439,6 +445,7 @@ internal sealed partial class TursoDatabaseStore
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
+                ThrowIfUnavailable();
                 return (offset, replay!, incarnation);
             }, cancellationToken).ConfigureAwait(false);
         }
@@ -548,6 +555,7 @@ internal sealed partial class TursoDatabaseStore
 
     private void RefuseUnhealthy()
     {
+        ThrowIfUnavailable();
         if ((Ledger?.FailedClosed ?? CloseRefusal) is { } refusal)
         {
             throw new RewriteRefusedException($"only a healthy copy is rewritten: {refusal}");

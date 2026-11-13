@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Turso.Data.Sqlite;
+using Turso.Raw.Public;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
@@ -220,7 +221,7 @@ internal sealed partial class TursoDatabaseStore(
             await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
         }
 
-        ThrowIfRefused(maintenance: false);
+        ThrowIfUnavailable();
         return await BeginOperationAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -244,6 +245,9 @@ internal sealed partial class TursoDatabaseStore(
             Leases!.ThrowIfUnleased(database);
         }
     }
+
+    internal CancellationTokenSource ReadCancellation(CancellationToken cancellationToken) =>
+        CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Refused, Ledger?.Refused ?? CancellationToken.None);
 
     internal void ThrowIfUnavailable()
     {
@@ -745,6 +749,9 @@ internal sealed partial class TursoDatabaseStore(
     internal async Task<Ulid> CopyToAsync(string path, CancellationToken cancellationToken)
     {
         const string reason = "the source file or its log reported an I/O error or corruption while copying";
+        ThrowIfUnavailable();
+        using var refused = ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         ExceptionDispatchInfo? sourceError = null;
         try
         {
@@ -765,11 +772,14 @@ internal sealed partial class TursoDatabaseStore(
                 {
                     Checkpoint?.Invoke("copy.source.opening", tenant);
                 }
+                ThrowIfUnavailable();
                 TursoSession.OpenExisting(source, FilePath);
+                using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(TursoSession.Handle(source)));
                 using var begin = source.CreateCommand();
                 begin.CommandText = "BEGIN;";
                 begin.ExecuteNonQuery();
                 TursoCopy.Write(source, targetConnection, cancellationToken);
+                ThrowIfUnavailable();
             }, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception) when (sourceError is not null)
@@ -785,6 +795,7 @@ internal sealed partial class TursoDatabaseStore(
             throw;
         }
 
+        ThrowIfUnavailable();
         if (Tenant is { } targetSource)
         {
             Checkpoint?.Invoke("copy.target.initializing", targetSource);
@@ -832,10 +843,14 @@ internal sealed partial class TursoDatabaseStore(
 
     internal async Task<T> WithWritersHeldAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken, string holder = "the continuous backup")
     {
+        ThrowIfUnavailable();
         await AcquireWriterAsync(holder, cancellationToken).ConfigureAwait(false);
         try
         {
-            return await call().ConfigureAwait(false);
+            ThrowIfUnavailable();
+            var result = await call().ConfigureAwait(false);
+            ThrowIfUnavailable();
+            return result;
         }
         finally
         {
@@ -855,12 +870,19 @@ internal sealed partial class TursoDatabaseStore(
 
     internal async Task<T> OnWriterAsync<T>(Func<TursoSession, T> call, CancellationToken cancellationToken)
     {
+        ThrowIfUnavailable();
+        using var refused = ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         await using var operation = await BeginOperationAsync(cancellationToken).ConfigureAwait(false);
         TursoSession? writer = null;
         try
         {
             writer = await WriterSessionAsync(cancellationToken).ConfigureAwait(false);
+            using var interrupted = Refused.Register(() => TursoBindings.Interrupt(writer.Native));
+            using var failed = Ledger?.Refused.Register(() => TursoBindings.Interrupt(writer.Native));
+            ThrowIfUnavailable();
             var result = await writer.ExecuteAsync(WriteLane, () => call(writer), cancellationToken).ConfigureAwait(false);
+            ThrowIfUnavailable();
             operation?.Complete();
             return result;
         }

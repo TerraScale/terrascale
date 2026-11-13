@@ -399,7 +399,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             if (store is not null)
             {
 
-                ThrowIfCopyRefused(store);
+                store.ThrowIfUnavailable();
             }
 
             ReserveIntent(key);
@@ -1207,7 +1207,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         }
 
         using var disk = Disk.Reserve(DiskBudget.WorkspaceBytes(DiskBudget.FileBytes(source.FilePath)));
-        ThrowIfCopyRefused(source);
+        source.ThrowIfUnavailable();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         ExceptionDispatchInfo? copyError = null;
         try
@@ -1227,7 +1227,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
                 _ = await source.WithWritersHeldAsync(() =>
                 {
-                    ThrowIfCopyRefused(source);
+                    source.ThrowIfUnavailable();
                     return Task.FromResult(true);
                 }, cancellationToken, "a copy checking its source").ConfigureAwait(false);
                 return incarnation;
@@ -1240,14 +1240,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             throw;
         }
         return true;
-    }
-
-    private void ThrowIfCopyRefused(TursoDatabaseStore source)
-    {
-        if (Ledger.Refusal(source) is { } refusal)
-        {
-            throw new StorageCopyFaultedException(refusal);
-        }
     }
 
     private async Task<bool> CreateFileAsync(

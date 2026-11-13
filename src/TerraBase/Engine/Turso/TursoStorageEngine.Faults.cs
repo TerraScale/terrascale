@@ -25,6 +25,7 @@ internal sealed partial class TursoStorageEngine
         var path = Locate(database).Path;
         var scratch = Path.Combine(_dataDirectory, ".tmp", "proof-" + EntityIds.New());
         var checking = false;
+        StorageProof proof;
         try
         {
             var bytes = await Io.RunAsync(() =>
@@ -46,7 +47,7 @@ internal sealed partial class TursoStorageEngine
             }
 
             var connectionString = await Encryption.ExistingAsync(path, Io, cancellationToken).ConfigureAwait(false);
-            return await Io.RunAsync<StorageProof>(() =>
+            proof = await Io.RunAsync<StorageProof>(() =>
             {
                 using var disk = Disk.Reserve(DiskBudget.WorkspaceBytes(DiskBudget.FileBytes(path)));
                 Directory.CreateDirectory(scratch);
@@ -82,7 +83,18 @@ internal sealed partial class TursoStorageEngine
                 started = Stopwatch.GetTimestamp();
                 command.CommandText = "PRAGMA integrity_check;";
                 checking = true;
-                var integrity = command.ExecuteScalar() as string;
+                string? integrity = null;
+                using (var results = command.ExecuteReader())
+                {
+                    while (results.Read())
+                    {
+                        var result = results.GetString(0);
+                        if (integrity is null || result != "ok")
+                        {
+                            integrity = result;
+                        }
+                    }
+                }
                 checking = false;
                 if (integrity is null)
                 {
@@ -104,22 +116,20 @@ internal sealed partial class TursoStorageEngine
         {
             var (failure, _) = SqlErrors.Classify(error.Message, false, false,
                 error.SqliteExtendedErrorCode == 0 ? error.SqliteErrorCode : error.SqliteExtendedErrorCode);
-            return checking && failure is StorageFailure
-                ? new ProofDamaged("the integrity check reported database corruption")
-                : new ProofIncomplete(failure switch
-                {
-                    Busy => "busy_or_storage",
-                    Interrupted => "interrupted",
-                    StorageFailure => "storage",
-                    Constraint or PrimaryKey or Unique or NotNull or Check or ForeignKeyFailure => "constraint",
-                    Error or KnownError or Syntax or NoSuchTable or NoSuchColumn or AlreadyExists or TooBig or ReadOnly or StaleRow => "unavailable",
-                });
+            proof = new ProofIncomplete(failure switch
+            {
+                Busy => "busy_or_storage",
+                Interrupted => "interrupted",
+                StorageFailure => checking ? "integrity_engine_corruption" : "storage",
+                Constraint or PrimaryKey or Unique or NotNull or Check or ForeignKeyFailure => "constraint",
+                Error or KnownError or Syntax or NoSuchTable or NoSuchColumn or AlreadyExists or TooBig or ReadOnly or StaleRow => "unavailable",
+            });
         }
         catch (Exception error)
         {
             _logger.ZLogWarning($"A recovery proof could not complete: {error.GetType().Name:@Failure}");
 
-            return new ProofIncomplete(error switch
+            proof = new ProofIncomplete(error switch
             {
                 OperationCanceledException => "cancelled",
                 TimeoutException => "timeout",
@@ -129,12 +139,18 @@ internal sealed partial class TursoStorageEngine
                 _ => "unavailable",
             });
         }
-        finally
+        try
         {
             if (Directory.Exists(scratch))
             {
                 Directory.Delete(scratch, recursive: true);
             }
         }
+        catch (Exception error)
+        {
+            _logger.ZLogWarning($"Recovery proof scratch cleanup could not complete: {error.GetType().Name:@Failure}");
+            return new ProofIncomplete("scratch_cleanup");
+        }
+        return proof;
     }
 }

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Data.Common;
+using Turso;
 using Turso.Data.Sqlite;
 using Turso.Raw.Public.Handles;
 
@@ -31,8 +32,10 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
 
     public SqliteConnection Connection => connection;
 
-    internal TursoDatabaseHandle Native =>
-        NativeHandle?.GetValue(connection) as TursoDatabaseHandle
+    internal TursoDatabaseHandle Native => Handle(connection);
+
+    internal static TursoDatabaseHandle Handle(DbConnection connection) =>
+        (connection is SqliteConnection ? NativeHandle : RawHandle)?.GetValue(connection) as TursoDatabaseHandle
         ?? throw new InvalidOperationException("the Turso driver no longer exposes its native connection handle");
 
     public int Statistics { get; set; }
@@ -276,6 +279,9 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
         command.Parameters.Clear();
         return command;
     }
+
+    private static readonly FieldInfo? RawHandle =
+        typeof(TursoConnection).GetField("_turso", BindingFlags.NonPublic | BindingFlags.Instance);
 
     private static readonly FieldInfo? NativeHandle =
         typeof(SqliteConnection).GetField("_database", BindingFlags.NonPublic | BindingFlags.Instance);

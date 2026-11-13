@@ -358,11 +358,12 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
             }
 
             after = intents[^1].Rowid;
-            foreach (var (rowid, key, incarnation, replacement, _) in intents)
+            foreach (var (rowid, key, incarnation, replacement, faulting) in intents)
             {
                 var started = Stopwatch.GetTimestamp();
                 var intent = new PendingProof(rowid, key, incarnation, replacement, 0, engine.Time.GetTimestamp());
-                var result = Deleted(key) ? new ProofPassed()
+                var result = faulting ? new ProofDamaged("a durable fault recording was interrupted")
+                    : Deleted(key) ? new ProofPassed()
                     : await ReadRowAsync(system, key, cancellationToken).ConfigureAwait(false) is { } fault
                         ? new ProofDamaged(fault.Reason)
                         : await engine.RecoverCopyAsync(key.Tenant, incarnation, replacement, cancellationToken).ConfigureAwait(false);
@@ -394,6 +395,17 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
 
     private async Task CompleteProofAsync(TursoDatabaseStore system, PendingProof intent, StorageProof proof, CancellationToken cancellationToken)
     {
+        var faulting = await InSystemAsync(engine.IntentStore!, command =>
+        {
+            using var select = command("SELECT run = $faulting FROM _tb_write_intent WHERE rowid = $rowid;");
+            select.Parameters.AddWithValue("$faulting", Faulting);
+            select.Parameters.AddWithValue("$rowid", intent.Rowid);
+            return select.ExecuteScalar() is long value && value != 0;
+        }, cancellationToken, write: false).ConfigureAwait(false);
+        if (faulting)
+        {
+            proof = new ProofDamaged("a durable fault recording was interrupted");
+        }
         if (proof is ProofIncomplete incomplete)
         {
             _pending[intent.Key] = intent with { Attempts = Math.Min(5, intent.Attempts + 1), At = engine.Time.GetTimestamp() };

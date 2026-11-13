@@ -65,6 +65,7 @@ jobs:
       status: ${{ steps.filter.outputs.status }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
       journey: ${{ steps.journey.outputs.journey }}
+      engine: ${{ steps.filter.outputs.engine }}
     steps:
       # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
       - if: github.event_name == 'push'
@@ -79,6 +80,20 @@ jobs:
           base: ${{ github.event_name == 'push' && github.event.before || '' }}
           ref: ${{ github.event_name == 'push' && github.sha || '' }}
           filters: |
+            engine:
+              - src/TerraBase/Engine/**/!(AGENTS.md|CLAUDE.md)
+              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
+              - e2e/env/engine-crash*
+              - e2e/env/build.sh
+              - scripts/terrabase/**
+              - scripts/vendor/download-turso-native.sh
+              - scripts/vendor/verify-turso-native.sh
+              - benchmark/turso-sync-host/turso-pin.env
+              - Directory.*
+              - global.json
+              - NuGet.config
+              - .github/workflows/ci.yml
+              - .github/workflows/journey.yml
             shared: &shared
               - .github/workflows/ci.yml
               - Makefile
@@ -791,6 +806,8 @@ jobs:
       || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
       || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
     uses: ./.github/workflows/journey.yml
+    with:
+      engine: ${{ needs.changes.outputs.engine == 'true' }}
 
   all-green:
     name: all-green
