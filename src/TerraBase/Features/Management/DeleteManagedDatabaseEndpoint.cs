@@ -15,8 +15,8 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
         Delete(ProjectApiRoute.Database);
         Metadata(AnchoredRevocation.Instance);
         Name("deleteDatabase");
-        Summary("Deletes a database and its data");
-        Description("Branches of the database are independent copies and are not deleted. Delete in its home region (421 wrong_region elsewhere). Permanent purge authority removes every replica, including allRegions placement, without a preceding PATCH. Refused with 409 move_in_progress while the database's home move runs; retry after it settles. Platform databases answer 409 platform_database_protected. 204 records logical deletion and local cleanup, tells every replica region to forget its record and replica at once, and retries remote erasure durably." + " " + ProjectApiRoute.IdentityDescription);
+        Summary("Moves a database to the seven-day deleted state");
+        Description("The database is unreachable and is listed under deleted-databases for seven days. Restore it there by immutable ID before purgeAt. Data, backups and keys are retained until then; permanent cleanup begins after that deadline. Branches are independent. Platform databases are protected. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);

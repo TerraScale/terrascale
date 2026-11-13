@@ -77,6 +77,43 @@ test.describe('database deletion', () => {
     expect(query.status()).toBe(200);
   });
 
+  test('a deleted database is unreachable, listed for seven days, and restores its rows', async ({ request }) => {
+    const current = journey();
+    const headers = await placementHeaders(request);
+    const databases = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases`;
+    const created = await request.post(databases, { headers, data: { name: `undo-${current.runId}`, ttlSeconds: 60 } });
+    expect(created.status()).toBe(201);
+    const database = await created.json();
+    const url = `${databases}/${database.id}`;
+    const deletedUrl = `https://api.terrascale.tech/v1/projects/${current.projectId}/deleted-databases`;
+    try {
+      const written = await request.post(`${url}/sql/execute`, {
+        headers,
+        data: { statements: [{ sql: 'CREATE TABLE kept (value TEXT)' }, { sql: "INSERT INTO kept VALUES ('retained')" }] },
+      });
+      expect(written.status()).toBe(200);
+      expect((await request.delete(url, { headers })).status()).toBe(204);
+      expect((await request.get(url, { headers })).status()).toBe(404);
+      expect((await request.post(`${url}/sql/execute`, { headers, data: { statements: [{ sql: 'SELECT * FROM kept' }] } })).status()).toBe(404);
+      const listed = await request.get(`${deletedUrl}?limit=100`, { headers });
+      expect(listed.status()).toBe(200);
+      const retained = (await listed.json()).items.find((item: { id: string }) => item.id === database.id);
+      expect(retained.name).toBe(database.name);
+      expect(Date.parse(retained.purgeAt) - Date.parse(retained.deletedAt)).toBe(7 * 24 * 60 * 60 * 1000);
+      const restored = await request.post(`${deletedUrl}/${database.id}/restore`, { headers });
+      expect(restored.status()).toBe(200);
+      expect(await restored.json()).toMatchObject({ id: database.id, name: database.name, expiresAt: null });
+      const read = await request.post(`${url}/sql/execute`, { headers, data: { statements: [{ sql: 'SELECT value FROM kept' }] } });
+      expect(read.status()).toBe(200);
+      expect((await read.json()).results[0].rows).toEqual([['retained']]);
+      const after = await request.get(`${deletedUrl}?limit=100`, { headers });
+      expect(after.status()).toBe(200);
+      expect((await after.json()).items.some((item: { id: string }) => item.id === database.id)).toBe(false);
+    } finally {
+      await request.delete(url, { headers });
+    }
+  });
+
   test('delete the journey database on its danger page by typing its name', async ({ page, audit }) => {
     const current = journey();
     await page.goto(`/databases/${current.databaseId}/danger`);

@@ -99,7 +99,8 @@ internal sealed partial class EngineManagementService
                 return ManagementErrors.NotFound;
             }
 
-            if (await CatalogTables.HasDatabasesAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false)
+            if (await AnyAsync(transaction, DeletedDatabases.Project(project.Id), cancellationToken).ConfigureAwait(false)
+                || await CatalogTables.HasDatabasesAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false)
                 || await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(project.Id), cancellationToken).ConfigureAwait(false)
                 || await AnyAsync(transaction, ProjectBackupDestinations.Kind(project.Id), cancellationToken).ConfigureAwait(false)
                 || await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(project.Id), cancellationToken).ConfigureAwait(false))

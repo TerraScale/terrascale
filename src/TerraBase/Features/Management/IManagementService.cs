@@ -138,6 +138,12 @@ internal interface IManagementService
 
     ValueTask<WritableProjectResult> GetWritableProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
+    ValueTask<ListDeletedDatabasesResult> ListDeletedDatabasesAsync(
+        string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken);
+
+    ValueTask<SetDatabaseRegionsResult> RestoreDeletedDatabaseAsync(
+        string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
+
     ValueTask<DeleteDatabaseResult> DeleteDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 

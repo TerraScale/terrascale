@@ -1,0 +1,1527 @@
+{
+  "openapi": "3.2.0",
+  "info": {
+    "title": "Database deletion and restoration",
+    "version": "v1"
+  },
+  "paths": {
+    "/v1/projects/{project}/databases/{database}": {
+      "delete": {
+        "tags": [
+          "Databases"
+        ],
+        "summary": "Moves a database to the seven-day deleted state",
+        "description": "The database is unreachable and is listed under deleted-databases for seven days. Restore it there by immutable ID before purgeAt. Data, backups and keys are retained until then; permanent cleanup begins after that deadline. Branches are independent. Platform databases are protected. Authorization: Bearer <ts-auth project access token>. project_id must equal {project}; scope must grant the operation. {database} is the immutable database ULID or its name. A token narrowed to one database cannot reach another. Tokens for another project or database answer 404.\n\nRequired JWT scopes: databases:write.",
+        "operationId": "deleteDatabase",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "database",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-TerraScale-Region-Pin",
+            "in": "header",
+            "description": "Optional single raw region ID. An empty, duplicate or malformed pin returns 421 invalid_region_pin and a pin naming another region 421 region_pin_mismatch, both before execution and with recovery guidance; behind the edge a mismatched pin also answers ts-replay: region=<pin>.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "403": {
+            "description": "Forbidden Error codes: forbidden_scope, forbidden_role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found Error codes: unknown_database, unknown_route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict Error codes: database_replicated, wrong_region, move_in_progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Misdirected Request; X-TerraBase-Region identifies the serving node. Error codes: region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable Error codes: storage_busy, capacity, unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized: missing, unknown or expired credential. Error codes: invalid_key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "TsAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project}/databases/{database}/if-id/{expectedId}": {
+      "delete": {
+        "tags": [
+          "Databases"
+        ],
+        "summary": "Deletes a database only if its immutable identity matches",
+        "description": "expectedId must be a canonical uppercase ULID matching the database ID resolved from the name for this request. A mismatch answers 409 database_identity_mismatch before placement or deletion. Never fall back to unconditional DELETE on 404: older servers do not support this route. Matching deletion has the same home-region requirement, independent branches and durable replica-erasure behavior as deleteDatabase, including allRegions, without a placement PATCH. 204 moves the database to the seven-day deleted state, preserving its data, backups and keys until purgeAt. Restore by immutable ID through deleted-databases. This is not an atomic reset or replacement operation. Authorization: Bearer <ts-auth project access token>. project_id must equal {project}; scope must grant the operation. {database} is the immutable database ULID or its name. A token narrowed to one database cannot reach another. Tokens for another project or database answer 404.\n\nRequired JWT scopes: databases:write.",
+        "operationId": "deleteDatabaseIfId",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "database",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expectedId",
+            "in": "path",
+            "description": "The immutable database ID inspected by the caller; a canonical uppercase ULID.",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-TerraScale-Region-Pin",
+            "in": "header",
+            "description": "Optional single raw region ID. An empty, duplicate or malformed pin returns 421 invalid_region_pin and a pin naming another region 421 region_pin_mismatch, both before execution and with recovery guidance; behind the edge a mismatched pin also answers ts-replay: region=<pin>.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request Error codes: invalid_request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden Error codes: forbidden_scope, forbidden_role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found Error codes: unknown_database, unknown_route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict Error codes: database_identity_mismatch, wrong_region, move_in_progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Misdirected Request; X-TerraBase-Region identifies the serving node. Error codes: region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable Error codes: storage_busy, capacity, unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized: missing, unknown or expired credential. Error codes: invalid_key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "TsAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project}/deleted-databases": {
+      "get": {
+        "tags": [
+          "Databases"
+        ],
+        "summary": "Lists databases in the seven-day deleted state",
+        "description": "Requires a project token without a database restriction. Deleted databases retain their data and backups until purgeAt. Restore by immutable ID in the region that accepted deletion; a reused name or exhausted database allowance returns 409. Restoration clears the previous TTL. Query: after (exclusive cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.\n\nRequired JWT scopes: databases:read.",
+        "operationId": "listDeletedDatabases",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-TerraScale-Region-Pin",
+            "in": "header",
+            "description": "Optional single raw region ID. An empty, duplicate or malformed pin returns 421 invalid_region_pin and a pin naming another region 421 region_pin_mismatch, both before execution and with recovery guidance; behind the edge a mismatched pin also answers ts-replay: region=<pin>.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManagementPageOfDeletedDatabaseBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request Error codes: invalid_request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden Error codes: forbidden_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found Error codes: unknown_database, unknown_route, not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict Error codes: conflict.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable Error codes: storage_busy, capacity, unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized: missing, unknown or expired credential. Error codes: invalid_key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Misdirected Request; X-TerraBase-Region identifies the serving node. Error codes: region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "TsAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project}/deleted-databases/{deletedDatabase}/restore": {
+      "post": {
+        "tags": [
+          "Databases"
+        ],
+        "summary": "Restores a deleted database before its seven-day deadline",
+        "description": "Requires a project token without a database restriction. Deleted databases retain their data and backups until purgeAt. Restore by immutable ID in the region that accepted deletion; a reused name or exhausted database allowance returns 409. Restoration clears the previous TTL. Query: after (exclusive cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.\n\nRequired JWT scopes: databases:write.",
+        "operationId": "restoreDeletedDatabase",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "deletedDatabase",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-TerraScale-Region-Pin",
+            "in": "header",
+            "description": "Optional single raw region ID. An empty, duplicate or malformed pin returns 421 invalid_region_pin and a pin naming another region 421 region_pin_mismatch, both before execution and with recovery guidance; behind the edge a mismatched pin also answers ts-replay: region=<pin>.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManagedDatabaseBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request Error codes: invalid_request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden Error codes: forbidden_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found Error codes: unknown_database, unknown_route, not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict Error codes: conflict.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable Error codes: storage_busy, capacity, unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized: missing, unknown or expired credential. Error codes: invalid_key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Misdirected Request; X-TerraBase-Region identifies the serving node. Error codes: region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "TsAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DeletedDatabaseBody": {
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "deletedAt",
+          "purgeAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "purgeAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ErrorBody": {
+        "required": [
+          "error"
+        ],
+        "type": "object",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        }
+      },
+      "ErrorDetail": {
+        "required": [
+          "code"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "op": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "details": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ValidationDetail"
+            }
+          },
+          "region": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "machine": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "url": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "requestId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "docsUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ManagedDatabaseBody": {
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "branchedFrom",
+          "createdAt",
+          "region",
+          "homeRegion",
+          "replicaRegions",
+          "allRegions",
+          "placementVersion",
+          "previousName",
+          "conflictOf",
+          "regions"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "branchedFrom": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "region": {
+            "type": "string"
+          },
+          "homeRegion": {
+            "type": "string",
+            "description": "Transitional: old-field PATCH bumps the version on repeat and refuses with 409 move_in_progress while a move is pending; removed with move-home by category C23 of batch db4a5ba7 once every consumer sends regions. Cannot be combined with regions in a request."
+          },
+          "replicaRegions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Transitional: old-field PATCH bumps the version on repeat and refuses with 409 move_in_progress while a move is pending; removed with move-home by category C23 of batch db4a5ba7 once every consumer sends regions. Cannot be combined with regions in a request."
+          },
+          "allRegions": {
+            "type": "boolean",
+            "description": "Transitional: old-field PATCH bumps the version on repeat and refuses with 409 move_in_progress while a move is pending; removed with move-home by category C23 of batch db4a5ba7 once every consumer sends regions. Cannot be combined with regions in a request."
+          },
+          "placementVersion": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Placement epoch; unchanged region-set updates retain it, membership and writer changes increase it.",
+            "format": "int64"
+          },
+          "previousName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "conflictOf": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "expiresAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Selected regions in catalog order, sorted by region id. Order carries no meaning; a status entry identifies the writer with role writer."
+          }
+        }
+      },
+      "ManagementPageOfDeletedDatabaseBody": {
+        "required": [
+          "items",
+          "next"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeletedDatabaseBody"
+            }
+          },
+          "next": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ValidationDetail": {
+        "required": [
+          "path",
+          "keyword"
+        ],
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "keyword": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "TsAuth": {
+        "type": "http",
+        "description": "Authorization: Bearer <ts-auth project access token> issued by https://127.0.0.1:17684. project_id must name the route's project; scope must grant the operation.",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}

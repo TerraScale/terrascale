@@ -24,7 +24,7 @@ internal sealed class SqlService(
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, database, canWrite, apply, fences);
+        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, database, canWrite, apply, fences, placements);
         return replicas.Holds(database)
             ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, time, database, canWrite, Local)
             : Local();
@@ -184,7 +184,7 @@ internal sealed class SqlService(
 
 internal sealed class SqlSession(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
-    TenantContext database, bool canWrite, IHomeApply apply, DatabaseFences fences)
+    TenantContext database, bool canWrite, IHomeApply apply, DatabaseFences fences, IReplicaCatalog placements)
     : ISqlSession
 {
     private const int MaxStatements = 256;
@@ -339,6 +339,13 @@ internal sealed class SqlSession(
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (await CheckDatabaseAsync(placements, database, cancellationToken).ConfigureAwait(false) is { } unavailable)
+            {
+                await DropAsync().ConfigureAwait(false);
+                _inTransaction = false;
+                return unavailable;
+            }
+
             await ExpireIfDueAsync().ConfigureAwait(false);
             if (_lost is { } lost)
             {
@@ -394,6 +401,14 @@ internal sealed class SqlSession(
             _gate.Release();
         }
     }
+
+    internal static async ValueTask<SqlError?> CheckDatabaseAsync(IReplicaCatalog placements, TenantContext database, CancellationToken cancellationToken) =>
+        await placements.FindAsync(database, cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantDatabaseRecord => null,
+            NotFound => UnknownDatabase,
+            Unavailable => SqlErrors.Busy("the database catalog is unavailable"),
+        };
 
     internal static SqlStatement Internal(string sql) => new(sql, [], NoNamed, MaxRows, MaxBytes, SqlLimits.MaxRequestTime);
 
@@ -458,6 +473,13 @@ internal sealed class SqlSession(
     private async ValueTask<SqlOutcome> ExecuteLockedAsync(
         SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, bool first, CancellationToken cancellationToken)
     {
+        if (await CheckDatabaseAsync(placements, database, cancellationToken).ConfigureAwait(false) is { } unavailable)
+        {
+            await DropAsync().ConfigureAwait(false);
+            _inTransaction = false;
+            return unavailable;
+        }
+
         if (HasNonFiniteArgs(command))
         {
             return SqlErrors.NonFinite;

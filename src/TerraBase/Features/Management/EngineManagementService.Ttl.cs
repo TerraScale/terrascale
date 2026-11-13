@@ -66,10 +66,9 @@ internal sealed partial class EngineManagementService
         {
             try
             {
-                if (await DeleteRecordedAsync(storage, (transaction, token) => UnregisterExpiredAsync(transaction, storage, now, token), cancellationToken).ConfigureAwait(false)
+                if (await WriteAsync<bool>(transaction => UnregisterExpiredAsync(transaction, storage, now, cancellationToken), static _ => false, cancellationToken).ConfigureAwait(false)
                     is bool deleted && deleted)
                 {
-                    _ = Shredded(storage);
                     logger.ZLogInformation($"Deleted database {storage.DatabaseId:@Database} at the end of its TTL");
                 }
             }
@@ -106,7 +105,7 @@ internal sealed partial class EngineManagementService
             return false;
         }
 
-        _ = await UnregisterRecordAsync(transaction, storage, database, cancellationToken, customerDeletion: true).ConfigureAwait(false);
+        _ = await RetainDeletedAsync(transaction, storage, database, cancellationToken).ConfigureAwait(false);
         return true;
     }
 }

@@ -13,6 +13,7 @@ internal sealed partial class EngineManagementService
             return;
         }
 
+        await PurgeDeletedDatabasesAsync(cancellationToken).ConfigureAwait(false);
         await ConvergePurgesAsync(cancellationToken).ConfigureAwait(false);
         await ConvergeClosuresAsync(cancellationToken).ConfigureAwait(false);
         try

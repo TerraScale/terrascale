@@ -238,7 +238,8 @@ internal sealed partial class EngineManagementService
         ProjectClosure.IsClosedAsync(transaction, projectId, cancellationToken);
 
     private static async ValueTask<bool> IsProjectEmptyAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
-        !await CatalogTables.HasDatabasesAsync(transaction, projectId, cancellationToken).ConfigureAwait(false)
+        !await AnyAsync(transaction, DeletedDatabases.Project(projectId), cancellationToken).ConfigureAwait(false)
+        && !await CatalogTables.HasDatabasesAsync(transaction, projectId, cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, ProjectBackupDestinations.Kind(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);

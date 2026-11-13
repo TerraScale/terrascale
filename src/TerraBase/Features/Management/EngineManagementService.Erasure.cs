@@ -109,6 +109,18 @@ internal sealed partial class EngineManagementService
             return false;
         }
 
+        var deleted = await SystemCatalog.ListAsync(transaction, DeletedDatabases.Project(project), null, CatalogPage,
+            ManagementJsonContext.Default.DeletedDatabaseRecord, record => record.Database.Id, token).ConfigureAwait(false);
+        foreach (var record in deleted.Items)
+        {
+            _ = await UnregisterRecordAsync(transaction, record.Storage, record.Database, token, customerDeletion: true).ConfigureAwait(false);
+            await RemoveDeletedAsync(transaction, record, token).ConfigureAwait(false);
+        }
+        if (deleted.Next is not null)
+        {
+            return false;
+        }
+
         var databases = await CatalogTables.DatabasesAsync(transaction, project, null, CatalogPage, token).ConfigureAwait(false);
         foreach (var database in databases.Items.Where(database => !PlatformDatabases.IsPlatformDatabase(database.Id)))
         {
