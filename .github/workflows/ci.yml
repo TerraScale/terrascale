@@ -196,19 +196,6 @@ jobs:
               - '!benchmark/**/!(turso-pin.env)'
               - '!{aspire,ops}/**'
               - '!{.dockerignore,.gitignore,.legacy-scan-mode,.mcp.json,Dockerfile,TerraScale.slnx,*.slnf,dotnet-tools.json}'
-      - name: Record the main push range
-        if: github.event_name == 'push'
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: echo "$BEFORE" > "$RUNNER_TEMP/push-before.txt"
-      - name: Share the main push range with site deployments
-        if: github.event_name == 'push'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: push-range
-          path: ${{ runner.temp }}/push-before.txt
-          if-no-files-found: error
-          retention-days: 30
       - id: areas
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
@@ -443,10 +430,9 @@ jobs:
       !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
       && needs.journey.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
+      && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only'
     concurrency:
-      # A build-only dispatch releases nothing: it never waits on or cancels a pending release.
-      group: ${{ inputs.publication == 'build-only' && format('build-{0}', github.run_id) || 'production-terrabase' }}
+      group: production-terrabase
       cancel-in-progress: false
     env:
       AREA: terrabase
@@ -462,6 +448,10 @@ jobs:
       actions: write
     steps: &production-steps
       - *checkout
+      - uses: ./terrascale/.github/actions/qualified-main
+        if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
+        with:
+          revision: ${{ github.sha }}
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: terrascale/global.json
@@ -556,11 +546,28 @@ jobs:
           fi
           exit "$status"
 
-  # Cold maintenance: release a TerraBase digest that a build-only dispatch published for this exact main revision.
-  # Each region separately: a fenced founder retains the candidate only from a release it serves itself. No build,
-  # no other service, and a failure never dispatches another run.
+  main-build-only:
+    needs: [changes, terrabase, test]
+    if: >-
+      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
+      && github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: build-${{ github.run_id }}
+      cancel-in-progress: false
+    env:
+      AREA: terrabase
+      SERVICE: terrabase
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      actions: read
+    steps: *production-steps
+
   release-only:
-    needs: [checks, journey]
+    needs: checks
     if: github.event_name == 'workflow_dispatch' && inputs.publication == 'release-only' && github.ref == 'refs/heads/main'
     concurrency:
       group: production-terrabase
@@ -569,6 +576,7 @@ jobs:
     timeout-minutes: 210
     permissions:
       contents: read
+      actions: read
       # Reads the private TerraBase image to check its revision label.
       packages: read
       # ts-orch accepts this job's OIDC token to release the pinned digest.
@@ -577,7 +585,12 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-          sparse-checkout: scripts/ci
+          sparse-checkout: |
+            scripts/ci
+            .github/actions/qualified-main
+      - uses: ./.github/actions/qualified-main
+        with:
+          revision: ${{ github.sha }}
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -786,7 +799,7 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
       || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
-      || (github.event_name == 'workflow_dispatch' && !inputs.native_artifacts)))
+      || (github.event_name == 'workflow_dispatch' && !inputs.native_artifacts && inputs.publication == 'release')))
     uses: ./.github/workflows/journey.yml
 
   all-green:

@@ -1,83 +1,74 @@
-# Recover CI after a missing push event
+# Recover CI and deployment
 
-A missing GitHub push event does not qualify a commit.
-Recover the actual `main` head with:
+Deployments and SDK releases require a successful main-push CI run for their exact
+revision, including both journey shards and `all-green`. A pull-request run or
+maintenance dispatch cannot replace that proof. Re-run failed jobs of the main
+push CI run after fixing its failure. A revision with no main-push CI run cannot
+be qualified by dispatching CI.
 
-```sh
-gh workflow run ci.yml --repo TerraScale/terrascale --ref main
-```
+Normal CI dispatches run the journey and both core services. Build-only and
+release-only maintenance dispatches verify the existing main-push proof with
+`qualified-main` instead of running another journey during the maintenance window.
+Native-artifact maintenance does not qualify a revision.
 
-Use the branch name: GitHub rejects a raw SHA as a dispatch ref. Normal dispatch
-selects both services, TerraBase and ts-auth, because it has no `push.before` to diff.
-Images recovery dispatches must start at the real main head; branch and tag
-dispatches cannot release. The existing `native_artifacts` maintenance dispatch remains
-unqualified and cannot satisfy the release gate.
+## Recover the dashboard
 
-On a dispatch the aggregate `test` job requires `changes` and the policy checks.
-Normal dispatch then runs both service jobs (`main`, then `main-auth-ordered`), which
-publish from their own Release build and release only from the real main ref.
-
-Dashboard release requires that revision's own push or dispatch Images run,
-whose `test` job (`dashboard-ci.yml`) builds and checks the application it releases.
-A commit qualifies as soon as it has such a run, unless every one of them completed
-with a failed `test` job: its push run releases it without waiting for CI to finish,
-and only a failed CI run skips it (`qualified` and `target` in
-`scripts/dashboard/ci/release-gate.py`). A run that failed only in its release step
-keeps the commit qualified, so heal and re-runs retry that commit instead of falling
-back to an older one.
-The Images gate accepts push CI after the complete run and its required `test`
-job succeed. Normal dispatch additionally requires successful `main` and
-`main-auth-ordered` jobs. Those main-ref-only service jobs prevent a branch or tag
-dispatch from posing as main qualification. Failed CI remains disqualifying, and native
-maintenance, pull requests and skipped quality gates cannot qualify.
-
-After CI completes, Images' `workflow_run` heal reruns an existing push/dispatch
-Images run. If GitHub never created one, it dispatches Images on `main` only when
-the qualified revision is still the head. The resulting push/dispatch OIDC token
-signs the same SHA as the image label; a `workflow_run` token never deploys.
-Each run keeps signing its original main SHA after unrelated pushes, just as a
-push run does. Images rechecks CI, newest qualification and deployed ancestry
-immediately before release, so a newer qualified revision still supersedes it.
-When the missing run belongs to an older commit, recover the current head; a head dispatch cannot sign an older image.
-Older qualifications with no push or dispatch Images run are skipped during
-selection, so they cannot strand a newer recovery. A qualified current head
-stays eligible: heal can create its missing dispatch. Existing signed main
-runs remain eligible after unrelated pushes.
-
-For a manually recovered head whose CI completed before this heal was available:
+The dashboard needs its own push or dispatch Images run. Its `test` job builds
+and checks the application that run publishes. A failed application check cannot
+qualify a deployment. A failed release can be recovered by re-running the Images
+push run:
 
 ```sh
-gh workflow run images-ghcr.yml --repo TerraScale/terrascale --ref main
+gh run rerun <images-push-run-id> --repo TerraScale/terrascale
 ```
+
+CI completion calls `heal`. The Images push run also calls it after the application
+build and its image job finish. If CI finishes first, heal dispatches Images on
+main while the push run is still active. If the build finishes first, the later
+CI completion triggers the handoff. A dispatch already in progress owns the
+handoff. A completed original run can be re-run for the same signed revision.
+Dispatches still run dashboard-ci again.
+
+The recovery dispatch signs the main head at creation. It must pass main-push
+qualification for that exact revision. An older Images run keeps signing its own
+revision after unrelated pushes. The `dashboard-release` lock serializes release
+jobs. Inside it, the release step checks the newest eligible commit and the live
+revision again. A second contender sees the first deployment live and cannot
+deploy it again. A failed readiness read stops deployment.
 
 Inspect the CI and Images run URLs and the final live readiness revision before
-reporting recovery. A successful dispatch request alone is not deployment proof.
+reporting recovery. A successful handoff alone is not deployment proof.
 
-Use the controlled missed-push drill to prove recovery
-without a push CI run and record the exact revision and deployment evidence.
+## Recover the sites
 
-Core service publication waits for the aggregate `test` job. When both services
-are selected, TerraBase must finish its rollout before ts-auth starts, so a
-failed TerraBase check cannot deploy only a new scope issuer. Auth-only runs
-continue after `test` when TerraBase was intentionally not selected.
-
-## Redeploy the sites
-
-The docs, landing and status sites deploy from `.github/workflows/sites.yml`
-(`Sites`), not from CI. To redeploy all three, dispatch it on `main`:
+Docs, landing and status deploy from `.github/workflows/sites.yml` (`Sites`).
+Recover pending site changes on qualified main with:
 
 ```sh
 gh workflow run sites.yml --repo TerraScale/terrascale --ref main
 ```
 
-`deploy-docs`, `deploy-landing` and `deploy-status` each wait for their site's
-lock, check out the tip of `main` when they start, build it and deploy it. A
-dispatch deploys that tip without checking its CI, as a push does: CI on the
-pull request checks a change before it reaches `main`. Each job then runs
-`scripts/ci/prove-worker-deploy.mjs`. It takes the version each Worker got from
-the deploy's own record and reads Cloudflare's records for it: the Worker's
-active deployment must serve that version at 100%, and the version's message
-must be the commit the job checked out. It never requests the public sites, so
-a new version still reaching Cloudflare's edge cannot fail it. To retry a
-failed site deploy, re-run its failed job with `gh run rerun <run id> --failed`;
-like every deploy job, the re-run checks out the tip of `main` when it starts.
+Each job waits for its site's lock and checks out the exact qualified revision.
+It reads the live Worker version message under that lock. Only a strict ancestor
+can advance to the candidate revision; an equal or newer live revision is left
+alone. A Worker with no recorded revision deploys the qualified revision.
+
+The path filter compares the live revision with the candidate. It includes
+changes from earlier commits whose CI failed or whose site deployment never
+completed. Status Workers are selected separately, so recovery after a partial
+deploy advances only the Workers that still need it.
+
+The deploy records its commit as the Worker version message.
+`scripts/ci/prove-worker-deploy.mjs` reads Cloudflare's records and requires each
+selected Worker to serve its recorded version at 100%, with that commit as its
+message.
+
+## SDK tags and production alerts
+
+Older tags without a journey-qualified main-push CI run are refused. Push an SDK
+tag only after main CI is green for that exact commit. A tag pushed earlier fails
+and needs a re-run after CI succeeds.
+
+Production-journey reports update one alert at a time. GitHub retains one pending
+report per concurrency group. A newer pending report replaces an older pending
+report. The newest state wins.

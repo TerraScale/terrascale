@@ -2,6 +2,7 @@
 import functools
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -40,18 +41,13 @@ def ci(sha):
             pages = gh('api', '--paginate', '--slurp',
                        f'repos/{REPO}/actions/runs/{run["databaseId"]}/jobs?filter=latest&per_page=100')
             jobs = {job['name']: job['conclusion'] for page in pages for job in page['jobs']}
-            # A skipped job keeps its unevaluated name expression (`... || 'test'`).
             test = next((conclusion for name, conclusion in jobs.items()
                          if name == 'test' or name.endswith("|| 'test'")), None)
-            # Native maintenance deliberately has no qualifying test job. It cannot turn CI green.
             if run['event'] == 'workflow_dispatch' and test is None:
                 continue
-            # A push that selects no core area runs only changes and skips test; the run conclusion still gates it.
             passed = {'success', 'skipped'} if run['event'] == 'push' else {'success'}
             if run['conclusion'] != 'success' or test not in passed:
                 return 'failed'
-            # Normal recovery selects both core services. Their jobs can succeed only
-            # for refs/heads/main, so a branch/tag dispatch cannot qualify as main CI.
             if run['event'] == 'workflow_dispatch' and any(
                     jobs.get(name) != 'success' for name in ('main', 'main-auth-ordered')):
                 return 'failed'
@@ -72,15 +68,14 @@ def images_runs(sha):
 
 
 def live():
-    try:
-        with urllib.request.urlopen('https://dash.terrascale.tech/readyz', timeout=30) as response:
-            return response.headers.get('X-TerraScale-Revision')
-    except OSError:
-        return None
+    with urllib.request.urlopen('https://dash.terrascale.tech/readyz', timeout=30) as response:
+        revision = response.headers.get('X-TerraScale-Revision', '')
+    if not re.fullmatch('[0-9a-f]{40}', revision):
+        raise SystemExit('Dashboard readiness has no valid source revision')
+    return revision
 
 
 def target():
-    """Newest qualified main commit newer than live whose CI has not failed."""
     deployed = live()
     head = main_head()
     for page in range(1, 4):
@@ -90,9 +85,6 @@ def target():
             if sha == deployed:
                 return None, deployed
             if qualified(sha):
-                # A head dispatch cannot sign an older SHA. Do not let an
-                # orphaned qualification strand every later recovery run.
-                # The current head remains eligible so heal can create its run.
                 if sha != head and not images_runs(sha):
                     print(f'Skipping {sha}: main advanced and no signed Images run exists', file=sys.stderr)
                     continue
@@ -111,9 +103,6 @@ def newer_than(base, head):
 
 
 def release(revision):
-    # GitHub binds a main dispatch to the head at creation. Like a push run,
-    # it keeps signing that SHA after unrelated main pushes; target() still
-    # rejects it if a newer qualified revision exists.
     if (os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
             and os.environ.get('GITHUB_REF') != 'refs/heads/main'):
         print(f'Recovery dispatch {revision} is not a main-ref run', file=sys.stderr)
@@ -141,9 +130,14 @@ def heal():
         subprocess.check_call(['gh', 'workflow', 'run', WORKFLOW, '--repo', REPO, '--ref', 'main'])
         print(f'Dispatched {WORKFLOW} on main to release {sha} (live {deployed})')
         return
+    dispatched = [run for run in runs if run['event'] == 'workflow_dispatch' and run['status'] != 'completed']
+    if dispatched:
+        print(f'Dispatch {dispatched[0]["databaseId"]} already owns the qualified deployment handoff')
+        return
     run = max(runs, key=lambda item: item['databaseId'])
     if run['status'] != 'completed':
-        print(f'Run {run["databaseId"]} for {sha} is still {run["status"]}')
+        subprocess.check_call(['gh', 'workflow', 'run', WORKFLOW, '--repo', REPO, '--ref', 'main'])
+        print(f'Dispatched {WORKFLOW} on main after CI qualified {sha} (Images still {run["status"]})')
         return
     if run['attempt'] >= RERUNS:
         raise SystemExit(f'Run {run["databaseId"]} for {sha} already ran {run["attempt"]} attempts')
