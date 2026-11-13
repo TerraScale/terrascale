@@ -144,7 +144,45 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
     public sealed record ApiKeyActions(ShellModel Shell, ProjectCredential Key, string Query, string View, string Reopen, string Error, string DraftGrace, DateTimeOffset Now);
 
-    public sealed record ApiKeySecret(CreatedProjectCredential Revealed, bool Rotated, string DoneUrl, string Warning);
+    public sealed record ApiKeySecret(CreatedProjectCredential Revealed, bool Rotated, string DoneUrl, string Warning, ProjectApiKeyMetadata Metadata, string DatabaseLabel)
+    {
+        public static ApiKeySecret For(AccountContext context, CreatedProjectCredential revealed, bool rotated, string doneUrl, string warning)
+        {
+            var metadata = ApiKeyService.Metadata(revealed.Key);
+            return new(revealed, rotated, doneUrl, warning, metadata, Label(context, metadata));
+        }
+
+        public string ExpiryLabel => Revealed.Key.ExpiresAt is { } expires ? "expires " + ApiKeyFormat.Date(expires) : "no expiry";
+
+        public bool Prefixed => Revealed.Secret.StartsWith("sk_", StringComparison.Ordinal);
+
+        public string SecretBody => Prefixed ? Revealed.Secret[3..] : Revealed.Secret;
+
+        public string MaskHead => Masked()[..8];
+
+        public string MaskTail => Masked()[^4..];
+
+        private string Masked()
+        {
+            var body = SecretBody;
+            if (body.Length < 12)
+            {
+                throw new ArgumentOutOfRangeException(nameof(Revealed), "The API key secret is too short to mask.");
+            }
+
+            return body;
+        }
+
+        private static string Label(AccountContext context, ProjectApiKeyMetadata metadata)
+        {
+            if (metadata.DatabaseId.Length == 0)
+            {
+                return "All databases";
+            }
+
+            return context.Project?.Databases.GetValueOrDefault(metadata.DatabaseId) is { Name.Length: > 0 } database ? database.Name : metadata.DatabaseId;
+        }
+    }
 
     public sealed record ApiKeysPage(ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
     {
@@ -158,7 +196,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public IReadOnlyList<ProjectCredential> Filtered => [.. Keys.Where(key => (Status.Length == 0 || Status == "active" == key.IsActive) && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase)))];
         public string DatabaseFilterTitle => Context.Project?.Databases.GetValueOrDefault(DatabaseId)?.Name ?? "All databases";
         public bool ErrorInDialog => Create.Length > 0 || Filtered.Any(key => Reopen == "rotate-" + key.Id || Reopen == "revoke-" + key.Id);
-        public ApiKeySecret? Secret => Revealed is null ? null : new(Revealed, Rotated, WorkspaceUrl.For(Context, With("/api-keys", clear: true)), Warning);
+        public ApiKeySecret? Secret => Revealed is null ? null : ApiKeySecret.For(Context, Revealed, Rotated, WorkspaceUrl.For(Context, With("/api-keys", clear: true)), Warning);
         public ApiKeyActions Actions(ProjectCredential key) => new(Shell, key, With(""), "", Reopen, Error, DraftGrace, Now);
 
         public string With(string path, bool clear = false, string? create = null)
@@ -190,7 +228,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public string CidrsDialog => "cidrs-" + Key.Id;
         public bool CidrsFailed => Error.Length > 0 && Reopen == CidrsDialog;
         public bool ErrorInDialog => Error.Length > 0 && (CidrsFailed || Reopen == "rotate-" + Key.Id || Reopen == "revoke-" + Key.Id);
-        public ApiKeySecret? Secret => Revealed is null ? null : new(Revealed, Rotated, Path, Warning);
+        public ApiKeySecret? Secret => Revealed is null ? null : ApiKeySecret.For(Context, Revealed, Rotated, Path, Warning);
         public ApiKeyActions Actions => new(Shell, Key, "", ApiKeyPages.DetailsView, Reopen, Error, DraftGrace, Now);
     }
 }
