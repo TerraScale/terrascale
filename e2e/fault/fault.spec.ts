@@ -257,8 +257,6 @@ test('history lost while the backup store is unreachable is one hole each time, 
     const atSnapshot = await restore(to);
     const [one, both] = [[[1, 'before-outage']], [[1, 'before-outage'], [2, 'during-outage']]];
     expect(to < duringSent ? [one] : to > duringAcked ? [both] : [one, both]).toContainEqual(atSnapshot);
-    const latest = await json<{ latest: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`));
-    expect(await restore(Date.parse(latest.latest)), 'every acknowledged row is in a restore of the newest proven time').toEqual([[1, 'before-outage'], [2, 'during-outage'], [3, 'after-outage']]);
     console.log(`restores of ${created.id}: ${JSON.stringify(before)} at ${new Date(second).toISOString()}, before the hole; ${JSON.stringify(atSnapshot)} at the replacement snapshot ${new Date(to).toISOString()}`);
   } finally {
     if (outage) await backupStore('up');
@@ -274,13 +272,14 @@ test('restores read the holes recorded with the backup: one the restoring node h
   }), 201);
   const ledger = new Ledger(created.id);
   let unlisted = false;
+  let restored: string | undefined;
   const latest = async () => {
     const window = await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`);
     return window.status() === 200 ? Date.parse((await window.json() as { latest: string }).latest) : 0;
   };
   const planned = async (at: number) => {
     const response = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/plan`, { data: { pointInTime: new Date(at).toISOString() } });
-    return response.status();
+    return `${response.status()} ${response.status() === 200 ? '' : await response.text()}`.trim();
   };
   const refused = async (at: number) => {
     const response = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
@@ -294,6 +293,7 @@ test('restores read the holes recorded with the backup: one the restoring node h
   };
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await expect.poll(latest, { message: 'the backup stores its first snapshot before the writes the step restores between' }).toBeGreaterThan(0);
     await ledger.write(cells, 'gru', [[1, 'first']]);
     const firstAcked = Date.now();
     await expect.poll(latest, { message: 'the backup proves the first write' }).toBeGreaterThanOrEqual(firstAcked);
@@ -308,7 +308,19 @@ test('restores read the holes recorded with the backup: one the restoring node h
     const target = firstAcked + 2 * step;
     const [before, after] = [target - step, target + step];
     const half = Math.floor(step / 2);
-    for (const at of [before, target, after]) expect(await planned(at), `a restore to ${new Date(at).toISOString()} is admitted before any hole is recorded`).toBe(200);
+    for (const at of [before, target, after]) expect(await planned(at), `a restore to ${new Date(at).toISOString()} is admitted before any hole is recorded`).toBe('200');
+    const started = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+      data: { pointInTime: new Date(await latest()).toISOString(), name: name('hole-records-latest') },
+    });
+    expect(started.status(), await started.text()).toBe(202);
+    const operation = await started.json() as { id: string };
+    await expect.poll(async () => {
+      const state = await json<{ status: string; database: string; errorCode?: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/restores/${operation.id}`));
+      expect(state.status, state.errorCode).not.toBe('failed');
+      if (state.status === 'completed') restored = state.database;
+      return state.status;
+    }, { message: 'the restore of the newest proven time completes' }).toBe('completed');
+    expect(await ledger.read(cells, 'gru', restored), 'every acknowledged row is in a restore of the newest proven time').toEqual([[1, 'first'], [2, 'second']]);
 
     await plantHole(shipped.file, { incarnation: shipped.incarnation, from: 1, to: 2, fromAt: target - half, toAt: target + half, open: false });
     const unknownToNode = await refused(target);
@@ -334,10 +346,11 @@ test('restores read the holes recorded with the backup: one the restoring node h
     expect(unreadable.unavailableFrom).toBeUndefined();
     await holeRecords('listed');
     unlisted = false;
-    expect(await planned(before), 'the same time is admitted again once the hole records can be listed').toBe(200);
+    expect(await planned(before), 'the same time is admitted again once the hole records can be listed').toBe('200');
     console.log(`hole records of ${created.id}: refused ${new Date(target).toISOString()} (planted, unknown to the node; first of 33), ${new Date(after).toISOString()} (open, unknown end) and ${new Date(before).toISOString()} while unlisted`);
   } finally {
     if (unlisted) await holeRecords('listed');
+    if (restored) await removeDatabase(cells, restored);
     await removeDatabase(cells, created.id);
   }
 });
