@@ -252,6 +252,7 @@
       "terrascale.dotnet": {
         "type": "Project",
         "dependencies": {
+          "Microsoft.IdentityModel.JsonWebTokens": "[8.23.0, )",
           "NUlid": "[1.7.3, )"
         }
       },
