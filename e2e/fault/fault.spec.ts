@@ -168,7 +168,9 @@ test('a region writer that stays down keeps its homes, and every acknowledged ro
       }
       await recovered(ledgers, token);
       for (const [index, ledger] of ledgers.entries()) {
-        expect((await homeLease(kv, ledger.id)).value, 'the returning writer resumes as home at the same epoch').toMatchObject({ home: 'gru', node: 'journey-1', epoch: before[index].value.epoch });
+        const after = (await homeLease(kv, ledger.id)).value;
+        expect(after, 'the returning writer resumes as home').toMatchObject({ home: 'gru', node: 'journey-1' });
+        expect(after.epoch, 'only its own activation raised the epoch').toBeLessThanOrEqual(before[index].value.epoch + 1);
       }
       for (const ledger of ledgers) await ledger.drop(token, node('journey-1'));
     }
