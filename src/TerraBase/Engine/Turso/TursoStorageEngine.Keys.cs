@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using TerraBase.Features.Backup;
 
 namespace TerraBase.Engine.Turso;
@@ -23,9 +24,18 @@ internal sealed partial class TursoStorageEngine : IWrappedKeyFiles
 
     internal void ThrowIfDetachedRefused(string path)
     {
-        if (_keyRefusals.TryGetValue(path, out var id))
+        while (_keyRefusals.TryGetValue(path, out var refusals))
         {
-            throw new InvalidDataException($"database '{Path.GetFileNameWithoutExtension(path)}' is refused under key id '{id}'");
+            foreach (var refusal in refusals)
+            {
+                if (refusal.Wrapper != path + DatabaseKeys.Suffix)
+                {
+                    throw new InvalidDataException($"database '{Path.GetFileNameWithoutExtension(path)}' is refused under key id '{refusal.Id}'");
+                }
+                var key = Encryption.Keyring.Unwrap(WrappedKeyFile.Read(refusal.Wrapper));
+                CryptographicOperations.ZeroMemory(key);
+            }
+            _keyRefusals.TryRemove(new KeyValuePair<string, KeyRefusal[]>(path, refusals));
         }
         if (_detachedRefusals.ContainsKey(path) || _detachedRefusalScopes.Keys.Any(scope => Path.GetFullPath(path).StartsWith(scope, StringComparison.Ordinal)))
         {

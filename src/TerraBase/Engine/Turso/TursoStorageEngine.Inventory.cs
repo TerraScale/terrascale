@@ -13,8 +13,9 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoStorageEngine
 {
-    private readonly ConcurrentDictionary<string, string> _keyRefusals = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, KeyRefusal[]> _keyRefusals = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _weakWarnings = new(StringComparer.Ordinal);
+    private sealed record KeyRefusal(string Id, string Wrapper);
     private sealed record RetainedInventory(long Files, long Bytes);
     private static readonly RetainedInventory UnknownRetained = new(-1, -1);
     private RetainedInventory _retainedInventory = UnknownRetained;
@@ -182,6 +183,8 @@ internal sealed partial class TursoStorageEngine
             }
             wrappers++;
             var stem = name.EndsWith(".db.key", StringComparison.Ordinal) ? name[..^".db.key".Length] : null;
+            var primary = stem is not null && (parts.Length == 1 && stem is SystemName or IntentName
+                || parts.Length == 3 && Ulid.TryParse(stem, out _) && Ulid.TryParse(parts[0], out _) && Ulid.TryParse(parts[1], out _));
             var authoritative = name.Contains(".retained-key", StringComparison.Ordinal) || name.Contains(".retained.", StringComparison.Ordinal)
                 || stem is SystemName or IntentName || stem is not null && Ulid.TryParse(stem, out _);
             try
@@ -207,7 +210,7 @@ internal sealed partial class TursoStorageEngine
                 {
                     _logger.ZLogWarning($"Retained in-progress key artifact {Path.GetRelativePath(_dataDirectory, path):@Artifact} cannot be inventoried; retirement counts are unknown");
                 }
-                if (startup && (authoritative || authoritativeIntent))
+                if (startup && (authoritative || authoritativeIntent) && (!primary || error is InvalidDataException or JsonException))
                 {
                     RefuseKey(path, "unknown");
                 }
@@ -257,9 +260,15 @@ internal sealed partial class TursoStorageEngine
         {
             throw new TerraBaseConfigurationException($"catalog wrapper is not authentic under key id '{id}'");
         }
-        if (_keyRefusals.TryAdd(database, id))
+        var refusal = new KeyRefusal(id, wrapper);
+        if (_keyRefusals.TryAdd(database, [refusal]))
         {
             _logger.ZLogError($"Local wrapper refused database {Path.GetRelativePath(_dataDirectory, database):@Database} under key id {id:@KeyId}; files are retained");
+        }
+        else
+        {
+            _keyRefusals.AddOrUpdate(database, [refusal], (_, held) =>
+                held.Any(item => item.Wrapper == wrapper) ? held : [.. held, refusal]);
         }
     }
 

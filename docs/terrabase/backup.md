@@ -527,6 +527,11 @@ repeat returned unknown during the five-second recount interval.
 | 2 | 3963.89 | 1794.53 | 23.56 |
 | 3 | 3715.78 | 1613.06 | 20.98 |
 
+An access failure while inventorying an installed primary sidecar makes reference counts
+unknown; the engine still applies its normal admission and pending-proof rules. Repaired
+primary material must authenticate before its inventory refusal clears. Refusals for other
+retained artifacts remain recorded independently.
+
 An authoritative wrapper or a readable live or retained credential naming an unconfigured
 id stops startup before readiness and names the missing id. Retained images participate
 because backup replay can need their values after live credentials have been rewrapped.
