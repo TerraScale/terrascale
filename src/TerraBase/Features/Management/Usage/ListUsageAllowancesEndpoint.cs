@@ -15,8 +15,8 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
         Metadata(new Requires("usage.read"));
         Get("/v1/usage/allowances");
         Name("listUsageAllowances");
-        Summary("Lists every organization's billed usage this month");
-        Description("Up to 25 organizations after the optional after (an organization id), in id order, with the write units (operations, billed over the plan allowance) and SQL read units (sqlReads, fair use, never billed) of every project, region and node in the UTC month (each region answers its own share and the answering region sums them; 503 when a region cannot answer): this month, or the previous one when month is its yyyy-MM, so a month's last units are billed after it closes. next names the last organization when more follow. storageByteHours sums every node's hourly samples of its stored bytes (storageContract stored-byte-hours-global-v1); divide by the hours of the month for average stored bytes. logicalBytes is null. periodStart and observedAt are taken before the scan; a scan that crosses into another UTC month, or runs past 30 seconds, answers 503 and should be retried. Responses are never cached.");
+        Summary("Lists every organization's monthly usage");
+        Description("Up to 25 organizations after the optional after (an organization id), in id order, with the write units (operations, billed over the plan allowance) and SQL read units (sqlReads, fair use, never billed) of every project, region and node in the UTC month (each region answers its own share and the answering region sums them; 503 when a region cannot answer): this month when month is omitted, or any complete UTC calendar month with persisted usage when month is its yyyy-MM, so a month's last units are billed after it closes. next names the last organization when more follow. storageByteHours sums every node's hourly samples of its stored bytes (storageContract stored-byte-hours-global-v1); divide by the hours of the month for average stored bytes. logicalBytes is null. periodStart and observedAt are taken before the scan; a scan that crosses into another UTC month, or runs past 30 seconds, answers 503 and should be retried. For an explicit month, null operations, sqlReads and storageByteHours mean that organization has no persisted records for the month; persisted zero totals remain zero. A month is complete at the first instant of the next UTC month on the service clock. Usage-Final is false: pending or uncertain flushes can update a closed month without a fixed deadline. Responses are never cached.");
         Tags("Usage");
         Produces<AllowanceUsagePage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -36,16 +36,19 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
         var now = time.GetUtcNow();
         var current = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
         var month = HttpContext.Request.Query["month"].ToString();
-        var previous = month.Length > 0;
-        if (previous && month != current.AddMonths(-1).ToString("yyyy-MM", CultureInfo.InvariantCulture))
+        var historical = HttpContext.Request.Query.ContainsKey("month");
+        var requested = current;
+        if (historical && (!DateTimeOffset.TryParseExact(month, "yyyy-MM", CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out requested) || requested >= current))
         {
-            return ErrorResponse.From(new Validation("month must be the previous UTC month, yyyy-MM"));
+            return ErrorResponse.From(new Validation("month must be a complete UTC month, yyyy-MM"));
         }
 
         HttpContext.Response.Headers.CacheControl = "no-store";
+        HttpContext.Response.Headers["Usage-Final"] = "false";
         var nodeOnly = PeerUsage.NodeOnly(HttpContext);
-        var others = nodeOnly ? Task.FromResult<IReadOnlyList<AllowanceUsagePage>?>([]) : peers.AllowancesAsync(after.Length > 0 ? after : null, previous ? month : null, cancellationToken);
-        var local = await usage.ListAllowanceUsageAsync(after.Length > 0 ? after : null, previous, cancellationToken);
+        var others = nodeOnly ? Task.FromResult<IReadOnlyList<AllowanceUsagePage>?>([]) : peers.AllowancesAsync(after.Length > 0 ? after : null, historical ? month : null, cancellationToken);
+        var local = await usage.ListAllowanceUsageAsync(after.Length > 0 ? after : null, historical ? requested : null, cancellationToken);
         if (local is not AllowanceUsagePage page)
         {
             return local switch

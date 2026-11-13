@@ -114,9 +114,9 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
             sums[item.OrganizationId] = sums.TryGetValue(item.OrganizationId, out var sum)
                 ? sum with
                 {
-                    Operations = checked(sum.Operations + item.Operations),
-                    SqlReads = checked(sum.SqlReads + item.SqlReads),
-                    StorageByteHours = checked(sum.StorageByteHours + item.StorageByteHours),
+                    Operations = sum.Operations is null && item.Operations is null ? null : checked((sum.Operations ?? 0) + (item.Operations ?? 0)),
+                    SqlReads = sum.SqlReads is null && item.SqlReads is null ? null : checked((sum.SqlReads ?? 0) + (item.SqlReads ?? 0)),
+                    StorageByteHours = sum.StorageByteHours is null && item.StorageByteHours is null ? null : checked((sum.StorageByteHours ?? 0) + (item.StorageByteHours ?? 0)),
                 }
                 : item;
         }
