@@ -13,6 +13,7 @@ case $service in
     dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore -p:SourceRevisionId="$revision"
     rm -rf "$out/terrabase"
     cp -a src/TerraBase/bin/Release/net11.0 "$out/terrabase"
+    python3 e2e/fault/build-receipts.py "$root" "$out"
     ;;
   ts-auth)
     dotnet restore src/TerraScale.Authentication/TerraScale.Authentication.csproj --locked-mode

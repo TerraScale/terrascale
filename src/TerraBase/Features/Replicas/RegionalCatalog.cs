@@ -22,8 +22,6 @@ internal static class RegionalCatalog
 
     private static bool Shared(string kind) => kind is "catalog" or "api_keys" or "api_key_hashes"
         or "project_closures" or "deleted_databases" or "database_expiry" or "retired_databases" or "database_purges" or "home_moves" or FileErasure.Purges or FileErasure.ProjectPurges
-        || kind.StartsWith("database_purge_receipts/", StringComparison.Ordinal)
-        || kind.StartsWith("project_closure_receipts/", StringComparison.Ordinal)
         || kind.StartsWith("deleted_databases/", StringComparison.Ordinal)
         || kind.StartsWith("file-storage/", StringComparison.Ordinal)
         || kind.StartsWith("backup_destination_history/", StringComparison.Ordinal)
@@ -32,6 +30,10 @@ internal static class RegionalCatalog
             || kind.EndsWith("/backup_destination", StringComparison.Ordinal) || kind.EndsWith("/file-buckets", StringComparison.Ordinal))
         || kind.StartsWith("databases/", StringComparison.Ordinal) && (kind.EndsWith("/functions", StringComparison.Ordinal)
             || kind.EndsWith("/backup_policy", StringComparison.Ordinal));
+
+    private static bool Received(string kind) => Shared(kind)
+        || kind.StartsWith("database_purge_receipts/", StringComparison.Ordinal)
+        || kind.StartsWith("project_closure_receipts/", StringComparison.Ordinal);
 
     internal static async Task<RegionalCatalogSnapshot> ExportAsync(IStorageEngine engine, CancellationToken cancellationToken)
     {
@@ -104,9 +106,16 @@ internal static class RegionalCatalog
     internal static async Task ImportAsync(IStorageEngine engine, RegionalCatalogSnapshot snapshot, CancellationToken cancellationToken)
     {
         if (snapshot.Tables.Count != Tables.Length || !snapshot.Tables.Select(table => table.Name).SequenceEqual(Tables)
-            || snapshot.Records.Any(record => !Shared(record.Kind)))
+            || snapshot.Records.Any(record => !Received(record.Kind)))
         {
             throw new InvalidDataException("invalid regional catalog snapshot");
+        }
+        var count = snapshot.Tables.Sum(table => (long)table.Rows.Count) + snapshot.Records.Count;
+        var bytes = snapshot.Tables.Sum(table => table.Rows.Sum(row => row.Sum(cell => cell.Text is { } text ? 6L * text.Length + 64 : 64)))
+            + snapshot.Records.Sum(record => record.Json.Length * 2L + 6L * (record.Id.Length + record.Kind.Length) + 128);
+        if (count > MaxRows || bytes > MaxBytes)
+        {
+            throw new InvalidDataException("regional catalog exceeds the handoff bound");
         }
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);

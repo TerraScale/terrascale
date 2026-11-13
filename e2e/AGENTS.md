@@ -149,6 +149,12 @@ The `multi-region faults` shard of `journey.yml` shares the normal service and S
 the fault specs. Local runs use the same variables and normal prepare/start/up/stop lifecycle, followed by
 `bash env/local.sh exec npx playwright test --project fault` from `e2e/`.
 
+The shard also builds a journey-only receipt driver from the same product sources.
+Its exporter copy includes receipt kinds only inside that driver; the shipped exporter
+is unchanged. The driver uses the real engine, catalog schema, serializers and importer
+to prove receipt bytes and holder/authority bindings, receipt-free import retention,
+and the existing row/byte limits. It adds no runtime product setting.
+
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
 8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
 under the run state. Four-node mode starts a checksum-pinned NATS server with JetStream and a generated credential

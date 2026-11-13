@@ -5,7 +5,7 @@ import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from
 import { request } from 'node:http';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
-import { expect } from '@playwright/test';
+import { expect, request as apiRequest } from '@playwright/test';
 import { database, json, sql, type Cells } from '../placement/support';
 import { stateDir } from '../support/stack';
 
@@ -178,45 +178,41 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
         return true;
       }
     }, { message: 'the killed process releases its data directory before restart' }).toBe(true);
-    const issuer = access ? Number(readFileSync(join(stateDir, 'pids', 'ts-auth.pid'), 'utf8').trim()) : undefined;
-    if (issuer) process.kill(issuer, 'SIGSTOP');
+    const log = join(stateDir, 'logs', `${node.service}.log`);
+    const offset = readFileSync(log).length;
+    const output = openSync(log, 'a', 0o600);
     try {
-      const log = join(stateDir, 'logs', `${node.service}.log`);
-      const offset = readFileSync(log).length;
-      const output = openSync(log, 'a', 0o600);
-      try {
-        const child = spawn(command[0], command.slice(1), { env: environment, stdio: ['ignore', output, output] });
-        child.on('error', error => { throw error; });
-        writeFileSync(pidFile, `${child.pid}\n`);
-        child.unref();
-      } finally {
-        closeSync(output);
-      }
-      await expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
-        message: 'the restarted writer opens its listeners',
-      }).toBe(true);
-      await expect.poll(() => nodeStatus(node), {
-        message: 'the restarted node restores its ready regional role',
-      }).toMatchObject({ writer, ready: true });
-      if (access) {
-        const response = await fetch(`http://127.0.0.1:${node.port}${access.path}`, {
-          headers: { authorization: `Bearer ${access.token}` }, signal: AbortSignal.timeout(15_000),
-        });
-        expect(response.status, 'a valid credential reports unavailable authentication while the issuer is paused').toBe(503);
-        expect(await response.json()).toMatchObject({ error: { code: 'auth_unavailable' } });
-        console.log(`startup authentication after writer admission ${node.name}: HTTP ${response.status}`);
-      }
+      const child = spawn(command[0], command.slice(1), { env: environment, stdio: ['ignore', output, output] });
+      child.on('error', error => { throw error; });
+      writeFileSync(pidFile, `${child.pid}\n`);
+      child.unref();
     } finally {
-      if (issuer) process.kill(issuer, 'SIGCONT');
+      closeSync(output);
     }
-    await expect.poll(async () => {
-      const response = await fetch(`http://127.0.0.1:${node.port + 1011}/metrics`);
-      expect(response.status).toBe(200);
-      return (await response.text()).split('\n')
-        .filter(line => line.startsWith('terrabase_auth_key_fetches_total{') && line.includes('outcome="success"'))
-        .reduce((total, line) => total + Number(line.split(' ').at(-1)), 0);
-    }, { message: 'the restarted node has loaded the signing keys for existing credentials' }).toBeGreaterThan(0);
+    await expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
+      message: 'the restarted writer opens its listeners',
+    }).toBe(true);
+    await expect.poll(() => nodeStatus(node), {
+      message: 'the restarted node restores its ready regional role',
+    }).toMatchObject({ writer, ready: true });
+    if (access) {
+      const context = await apiRequest.newContext({ extraHTTPHeaders: { authorization: `Bearer ${access.token}` } });
+      try {
+        await tokenReady(node, context, access.path);
+      } finally {
+        await context.dispose();
+      }
+    }
   };
+}
+
+export async function tokenReady(node: Node, cells: Pick<Cells, 'get'>, path: string): Promise<void> {
+  await expect.poll(async () => {
+    const response = await cells.get(`http://127.0.0.1:${node.port}${path}`);
+    const status = response.status();
+    await response.dispose();
+    return status;
+  }, { message: `${node.name} must verify the existing token before authenticated recovery checks` }).not.toBe(401);
 }
 
 export function faultId(): string {

@@ -18,18 +18,24 @@ Each node refreshes its own region before starting observation of other regions.
 Remote observations run independently of local renewal, with separate failure
 boundaries and a two-second bound for each region. An invalid, missing,
 unreadable or timed-out remote owner record leaves that region's last observed
-owner intact and does not delay local renewal or observations of later regions.
+owner intact and does not delay local renewal. Observation is sequential: a slow
+region can delay every later region by up to its two-second attempt budget.
 Regions already observed are still checked when all their peer lines disappear.
 The observer uses its own NATS connection and never takes the renewal semaphore.
 Connection and bucket initialization happen before admission; each successfully
 created store is cached. Failed setup is attempted again on the next pass, while
 renewal of an already-held lease never repeats bucket setup. Both loops receive
 the service shutdown token and finish before their connections are disposed.
+The read-only observer also exits when the peers file no longer admits this node.
+This change removes the dependency of a node's own renewal on other regions'
+records; it does not remove the dependency on the replicated store's quorum
+across regions.
 
 Ownership failures identify the own-renewal or remote-observation phase and the
 region. Causes distinguish unavailable storage, timeout, an absent record, an
 invalid record with its byte length, and an owner outside admitted peers with
-that owner name. Record contents are never logged. A changed remote failure
+that owner name after node-id validation. A malformed owner logs only its
+length. Record contents are never logged. A changed remote failure
 state is logged once; recovery logs once when observation succeeds again. The counter
 `terrabase_ownership_refresh_errors_total{region}` counts failed remote refresh
 attempts. Its only label is an admitted region name from the peers file or a
@@ -43,18 +49,27 @@ replica synchronization, placement discovery or a home move until observation
 recovers; it cannot grant writer admission. The destination must prove its own
 exclusive admission and database authority before acknowledging a write.
 Placement deletion treats a failed remote observation as unknown and cannot use
-its retained owner to authorize forgetting data after a `404`.
+its retained owner to authorize forgetting data after a `404`. A changed source
+endpoint can replace a follower only when the old and new source owners are
+confirmed and the new source is activated; otherwise its local replica stays.
+Checksum healing also waits for confirmation that its source is the activated owner.
+Home lookups cache a result for up to 30 seconds. A confirmed change of owner
+invalidates that cached result on its next lookup. Removed-placement refreshes
+can remain cached for up to ten minutes after an observation changes.
 
-A handoff transfers database-erasure receipts and project-closure receipts with
-the records they confirm. Their original node identity and authority remain
-unchanged. The replacement can then prove erasure for purge records naming the
-previous writer and complete cross-region project closure after promotion.
+Handoff import accepts database-erasure receipts and project-closure receipts,
+preserving their original holder and authority bindings byte for byte. Receipts
+count against the same 10,000-row and 4 MiB snapshot limits. Export does not send
+these receipts: receivers must accept them throughout the fleet before a later
+change enables sending them. A closure that needs the previous writer's receipt
+still waits after a writer change, as before. The fault journey returns ownership
+to the original receipt holder and verifies the recovered stack before closure.
 
-On restart, client requests carrying a bearer credential receive retryable
-`503 auth_unavailable` while signing keys have not loaded, rather than an invalid
-credential response. Internal writer readiness is independent of issuer startup
-so the issuer can bootstrap its own storage. Recovery verification waits for a
-successful signing-key fetch as well as the node's ready regional role.
+The crash-recovery journey waits for a read-only authenticated request at the
+restarted writer to stop answering 401 before checking its recovered data. After
+restoring the foreign topology, it makes the same readiness wait at each restarted
+foreign node before checking regional credentials. These waits use the existing
+step timeout; they do not change bearer authentication behavior.
 
 The durable phases are:
 

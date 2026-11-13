@@ -4,6 +4,7 @@ using System.Diagnostics.Metrics;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
+using TerraBase.Configuration;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replicas;
@@ -55,6 +56,10 @@ internal sealed partial class RegionalHandoff
                     kv = await context.GetStoreAsync(Bucket, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
                 var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
+                if (!nodes.Any(node => node.Name == options.MachineId && node.Region == options.Region))
+                {
+                    return;
+                }
                 foreach (var region in nodes.Select(node => node.Region).Concat(owners.Regions).Distinct(StringComparer.Ordinal).Where(region => region != options.Region))
                 {
                     using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -152,7 +157,9 @@ internal sealed partial class RegionalHandoff
             }
             if (!nodes.Any(node => node.Region == region && node.Name == owner.Node))
             {
-                throw new OwnershipRecordException("owner_not_admitted", owner: owner.Node);
+                throw TerraBaseOptions.IsMachineId(owner.Node)
+                    ? new OwnershipRecordException("owner_not_admitted", owner: owner.Node)
+                    : new OwnershipRecordException("owner_malformed", owner.Node?.Length);
             }
 
             if (region == options.Region)

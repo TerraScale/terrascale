@@ -1,4 +1,3 @@
-using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 
@@ -9,15 +8,6 @@ internal static class BearerChallenge
     internal static async Task InvokeAsync(HttpContext context, Func<Task> next)
     {
         var presented = context.Request.Headers.Authorization.ToString();
-        if (presented.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            && context.RequestServices.GetRequiredService<TerraBaseOptions>().AuthIssuer is not null
-            && context.RequestServices.GetRequiredService<IIssuerKeys>().Keys is null)
-        {
-            await ErrorResponse.From(new Unavailable("authentication is not ready; signing keys are not loaded", "auth_unavailable"))
-                .ExecuteAsync(context).ConfigureAwait(false);
-            return;
-        }
-
         context.Response.OnStarting(() =>
         {
             if (Listeners.ArrivedOn(context) == TerraBaseListener.Client
