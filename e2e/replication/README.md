@@ -9,6 +9,7 @@ It uses the existing journey object-store stand-in for encrypted replication pay
     export DOTNET_PROCESSOR_COUNT=4
     export E2E_REGIONS=2
     bash e2e/env/local.sh prepare
+    bash e2e/env/tools.sh nats-server
     bash e2e/env/local.sh start
     bash e2e/env/local.sh exec node e2e/replication/frontier.mjs
     bash e2e/env/local.sh stop
