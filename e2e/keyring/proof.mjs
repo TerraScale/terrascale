@@ -248,6 +248,7 @@ try {
     TERRABASE_SHAPES_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_CDN_API_TOKEN: undefined };
   child = node(candidate, 'k1', disabledBackups);
   await ready(child);
+  await internal(peer, 'http://127.0.0.1:18381', 'PUT', '/v1/management/organizations/' + scope.organization + '/plan', { plan: 'team' });
   const retained = value(await metrics(), 'terrabase_keys_local_wrapped', 'key_id="k0"');
   assert.equal(retained, 0, 'with no backup consumer the engine trims released old-key images');
   console.log('retained images: backups disabled old_key=' + retained);
