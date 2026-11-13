@@ -1,8 +1,11 @@
 import { connect } from 'node:net';
 import { connect as secure, type TLSSocket } from 'node:tls';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { connect as peer } from 'node:http2';
+import { join } from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { auth } from '../support/stack';
+import { auth, onLocalStack, stateDir } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 
 const api = 'https://api.terrascale.tech';
@@ -87,6 +90,27 @@ async function websocket(credential: string) {
   return { socket, closed, reply };
 }
 
+async function setPlan(plan: 'hobby' | 'enterprise'): Promise<void> {
+  const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
+  saveSecret('session-peer', credential);
+  const session = peer('http://127.0.0.1:8081');
+  try {
+    const stream = session.request({
+      ':method': 'PUT', ':path': `/admin/organizations/${journey().organizationId}/plan`,
+      'content-type': 'application/json', 'x-terrabase-peer-credential': credential,
+    });
+    session.on('error', error => stream.destroy(error));
+    const response = once(stream, 'response');
+    stream.end(JSON.stringify({ plan }));
+    expect((await response)[0][':status']).toBe(200);
+    let body = '';
+    for await (const chunk of stream) body += chunk.toString();
+    expect(JSON.parse(body).plan).toBe(plan);
+  } finally {
+    session.close();
+  }
+}
+
 test('Postgres and WebSocket share the organization session cap and release idle sessions', async ({ request }) => {
   const credential = await token(request, 'sql:read sql:write');
   const read = await token(request, 'sql:read');
@@ -136,6 +160,26 @@ test('Postgres and WebSocket share the organization session cap and release idle
     for (const client of sockets) if (client.socket.readyState === WebSocket.OPEN) client.socket.close();
     await Promise.all([...clients.map(client => client.closed), ...sockets.map(client => client.closed)]);
   }
+
+  await onLocalStack(async () => {
+    const enterprise: Awaited<ReturnType<typeof websocket>>[] = [];
+    try {
+      await setPlan('enterprise');
+      for (let i = 0; i < 128; i++) {
+        const accepted = await websocket(credential);
+        enterprise.push(accepted);
+        expect(accepted.reply.type, `Enterprise session ${i + 1}`).toBe('result');
+      }
+      const refused = await websocket(credential);
+      enterprise.push(refused);
+      expect(refused.reply).toMatchObject({ type: 'error', error: { code: 'tenant_busy' } });
+      expect((await refused.closed).code).toBe(1008);
+    } finally {
+      for (const client of enterprise) if (client.socket.readyState === WebSocket.OPEN) client.socket.close();
+      await Promise.all(enterprise.map(client => client.closed));
+      await setPlan('hobby');
+    }
+  });
 });
 
 test('data-modifying WITH requires write scope and read-only WITH returns data', async ({ request }) => {
