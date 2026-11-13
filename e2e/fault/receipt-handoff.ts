@@ -61,7 +61,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
   const tools = process.env.E2E_TOOLS ?? join(homedir(), '.cache', 'terrascale-e2e');
   const natsLog = createWriteStream(join(directory, 'nats.log'));
   const configuration = join(directory, 'nats.conf');
-  writeFileSync(configuration, 'listen: 127.0.0.1:4322\nhttp: 127.0.0.1:8322\nauthorization { token: ' + token +
+  writeFileSync(configuration, 'listen: 127.0.0.1:4322\nhttp: 127.0.0.1:8322\nauthorization { token: ' + JSON.stringify(token) +
     ' }\njetstream { store_dir: ' + join(directory, 'nats') + ' }\n', { mode: 0o600 });
   const nats = spawn(join(tools, 'nats-server'), ['--config', configuration], { stdio: ['ignore', 'pipe', 'pipe'] });
   nats.stdout.pipe(natsLog);
@@ -148,7 +148,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
       }
     }
     console.log('RECEIPT_HANDOFF ' + scenario + ': ' +
-      (scenario === 'identical' ? 'target activated' : 'catalog bytes unchanged; source writer restored; management write/read accepted'));
+      (scenario === 'identical' ? 'target activated' : 'receipt bytes unchanged; snapshot sentinels absent; source writer restored; management write/read accepted'));
   } finally {
     await Promise.all(children.map(async child => {
       if (child.process.exitCode === null && child.process.signalCode === null) {

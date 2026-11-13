@@ -155,8 +155,9 @@ is unchanged. The driver uses the real engine, catalog schema, serializers and i
 to prove receipt bytes and holder/authority bindings through the real importer,
 atomic refusal of invalid or conflicting evidence, and byte-preserving receipt-free
 import retention. Isolated pairs of real driver nodes with their own NATS exercise
-the real drain and preparation endpoints: the receiver retains its entire catalog
-on refusal, and the source resumes management writes and reads after receipt or
+the real drain and preparation endpoints: retained receipt bytes and unapplied
+snapshot sentinels prove refusal while background maintenance runs; the source
+resumes management writes and reads after receipt or
 row/byte-limit rejection. Only the journey copy sends receipts; the product
 importer and handoff refusal path are unchanged in the driver. It adds no runtime
 product setting.

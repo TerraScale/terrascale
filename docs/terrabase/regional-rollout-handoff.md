@@ -77,11 +77,14 @@ that changed and changed back between lookups. A stale route can cause forwardin
 refusal or failure; it cannot admit a second writer. Removed-placement refreshes
 can remain cached for up to ten minutes after an observation changes.
 
-Handoff import accepts database-erasure receipts and affirmative project-closure
+Handoff import accepts database-erasure receipts and project-closure
 receipts only when their supported typed formats bind to the key's database or
 project, the key's holder, and the matching authority record in the incoming
 snapshot. Missing or ambiguous authority, malformed records, unsupported receipt
-versions and failed `Binds`/`Confirms` checks reject the whole import.
+versions and failed `Binds` or `Confirms`/`Refuses` binding checks reject the whole
+import. Purge receipts use format 1; closure formats 1 and 2 require evidence
+version 2. A valid closure refusal can be retained at an absent key; differing
+affirmative and negative evidence at an existing key is a conflict.
 
 A receipt absent at the receiver is stored byte for byte. An identical receipt
 already there requires no write. Any different bytes at an existing receipt key

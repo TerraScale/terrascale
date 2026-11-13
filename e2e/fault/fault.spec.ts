@@ -107,6 +107,8 @@ test('handoff receives receipts with their original bindings before exporting th
   const result = await promisify(execFile)('dotnet', [join(build, 'receipt-import', 'terrabase.dll'),
     `--data-directory=${join(stateDir, `receipt-import-${faultId()}`)}`,
   ], { env: environment, cwd: e2eRoot, timeout: 20_000 });
+  expect(result.stdout).toContain('RECEIPT_CASE absent-refusal passed');
+  expect(result.stdout).toContain('RECEIPT_CASE closure-version-two passed');
   expect(result.stdout).toContain('RECEIPT_IMPORT identical=accepted invalid=16 retained_bytes=2 ordinary_export=0');
   console.log(result.stdout.split('\n').filter(line => line.startsWith('RECEIPT_')).join('\n'));
 });

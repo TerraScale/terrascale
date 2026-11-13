@@ -12,8 +12,8 @@ internal static class ReceiptImportProof
     private const string Holder = "receipt-source";
     private static readonly TenantContext Database = new("01ARZ3NDEKTSV4RRFFQ69G5FAV", PlanTier.Hobby, "01ARZ3NDEKTSV4RRFFQ69G5FAW", "01ARZ3NDEKTSV4RRFFQ69G5FAX");
     private static readonly DateTimeOffset Authority = new(2099, 1, 1, 0, 0, 0, TimeSpan.Zero);
-    private static readonly DatabasePurgeRecord Purge = new(Database, Authority, Authority, Authority, null, [Holder]);
-    private static readonly ProjectClosureRecord Closure = new(Database.ProjectId!, "01ARZ3NDEKTSV4RRFFQ69G5FAY", Database.OrganizationId, Authority, [Holder]);
+    private static readonly DatabasePurgeRecord Purge = new(Database, Authority, Authority, Authority, null, [Holder, "receipt-pending"]);
+    private static readonly ProjectClosureRecord Closure = new(Database.ProjectId!, "01ARZ3NDEKTSV4RRFFQ69G5FAY", Database.OrganizationId, Authority, [Holder, "receipt-pending"]);
     private static readonly DatabasePurgeReceipt PurgeReceipt = new(Database, Holder, Authority, Authority: Authority);
     private static readonly ProjectClosureReceipt ClosureReceipt = new(Database.ProjectId!, Closure.ClosureId, Holder, true, Authority, EvidenceVersion: 2);
     private static readonly string PurgeKind = DatabasePurge.Receipts(Database.DatabaseId!);
@@ -91,6 +91,29 @@ internal static class ReceiptImportProof
             Require(stored is not null && stored.Json.Span.SequenceEqual(absent.Json), "absent valid receipt was not stored byte for byte");
         }
         Console.WriteLine("RECEIPT_CASE absent-valid passed");
+        var refusal = Record(ClosureKind, "receipt-new", ClosureReceipt with { MachineId = "receipt-new", Empty = false });
+        await ImportAsync(incoming with { Records = [.. incoming.Records, refusal] });
+        await using (var transaction = await (await engine.OpenSystemDatabaseAsync(cancellationToken)).BeginTransactionAsync(false, cancellationToken))
+        {
+            var stored = await transaction.GetAsync(refusal.Kind, refusal.Id, cancellationToken);
+            var typed = await SystemCatalog.GetAsync(transaction, refusal.Kind, refusal.Id, ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken);
+            Require(stored is not null && stored.Json.Span.SequenceEqual(refusal.Json) && typed is not null && typed.Refuses(Closure, refusal.Id),
+                "absent valid closure refusal was not retained with its original binding");
+        }
+        Console.WriteLine("RECEIPT_CASE absent-refusal passed");
+        var second = Closure with { ProjectId = "01ARZ3NDEKTSV4RRFFQ69G5FAZ", ClosureId = "01ARZ3NDEKTSV4RRFFQ69G5FB0", FormatVersion = 2 };
+        var versionTwo = Record(ProjectClosure.Receipts(second.ProjectId), Holder,
+            ClosureReceipt with { ProjectId = second.ProjectId, ClosureId = second.ClosureId, FormatVersion = 2 });
+        await ImportAsync(incoming with { Records = [.. incoming.Records,
+            new RegionalRecord(ProjectClosure.Kind, second.ProjectId, JsonSerializer.SerializeToUtf8Bytes(second, ManagementJsonContext.Default.ProjectClosureRecord)), versionTwo] });
+        await using (var transaction = await (await engine.OpenSystemDatabaseAsync(cancellationToken)).BeginTransactionAsync(false, cancellationToken))
+        {
+            var stored = await transaction.GetAsync(versionTwo.Kind, versionTwo.Id, cancellationToken);
+            var typed = await SystemCatalog.GetAsync(transaction, versionTwo.Kind, versionTwo.Id, ManagementJsonContext.Default.ProjectClosureReceipt, cancellationToken);
+            Require(stored is not null && stored.Json.Span.SequenceEqual(versionTwo.Json) && typed is not null && typed.Confirms(second, versionTwo.Id),
+                "supported version-two closure receipt was not retained with its original binding");
+        }
+        Console.WriteLine("RECEIPT_CASE closure-version-two passed");
         Require(failed.Count == 0, "receipt cases failed: " + string.Join(", ", failed));
         Console.WriteLine("RECEIPT_IMPORT identical=accepted invalid=16 retained_bytes=2 ordinary_export=0");
 
@@ -118,9 +141,16 @@ internal static class ReceiptImportProof
                 }
                 else if (command == "unchanged")
                 {
-                    var after = await SendingCatalog.ExportAsync(engine, cancellationToken);
-                    Require(before is not null && Bytes(before).AsSpan().SequenceEqual(Bytes(after)),
-                        "refused handoff changed the receiving catalog: " + Difference(before, after));
+                    if (before is null)
+                    {
+                        throw new InvalidOperationException("receiver catalog capture missing");
+                    }
+                    await SameAsync(engine, before, cancellationToken);
+                    await using var transaction = await (await engine.OpenSystemDatabaseAsync(cancellationToken)).BeginTransactionAsync(false, cancellationToken);
+                    var marker = await transaction.GetAsync(MarkerKind, Marker, cancellationToken);
+                    var rows = await transaction.ExecuteStatementAsync(Sql("SELECT count(*) FROM catalog_retired_ids WHERE id = ?", Marker), cancellationToken);
+                    Require(marker is null && rows.Rows.Count == 1 && rows.Rows[0][0] is long count && count == 0,
+                        "refused handoff applied another snapshot row");
                 }
                 else if (command == "receipts")
                 {
@@ -197,7 +227,7 @@ internal static class ReceiptImportProof
             "absent-database" => Record(PurgeKind, "receipt-absent", PurgeReceipt with { MachineId = "receipt-absent", Database = wrongDatabase }),
             "absent-project" => Record(ClosureKind, "receipt-absent", ClosureReceipt with { MachineId = "receipt-absent", ProjectId = Database.DatabaseId! }),
             "purge-version" => Record(PurgeKind, Holder, PurgeReceipt with { FormatVersion = 2 }),
-            "closure-version" => Record(ClosureKind, Holder, ClosureReceipt with { FormatVersion = 2 }),
+            "closure-version" => Record(ClosureKind, Holder, ClosureReceipt with { FormatVersion = 3 }),
             "evidence-version" => Record(ClosureKind, Holder, ClosureReceipt with { EvidenceVersion = 1 }),
             "malformed" => purge with { Json = "{"u8.ToArray() },
             "duplicate" => Record(PurgeKind, Holder, PurgeReceipt with { VerifiedAt = Authority.AddSeconds(-1) }),
@@ -231,25 +261,10 @@ internal static class ReceiptImportProof
         Records = [.. snapshot.Records.OrderBy(record => record.Kind, StringComparer.Ordinal).ThenBy(record => record.Id, StringComparer.Ordinal)]
     }, ReplicasJsonContext.Default.RegionalCatalogSnapshot);
 
-    private static string Difference(RegionalCatalogSnapshot? before, RegionalCatalogSnapshot after)
-    {
-        if (before is null)
-        {
-            return "capture missing";
-        }
-        var tables = before.Tables.Where(table => !Bytes(new([table], [])).AsSpan().SequenceEqual(Bytes(new([after.Tables.Single(candidate => candidate.Name == table.Name)], []))))
-            .Select(table => table.Name);
-        var kinds = before.Records.Concat(after.Records).Select(record => record.Kind).Distinct(StringComparer.Ordinal)
-            .Where(kind => !Bytes(new([], [.. before.Records.Where(record => record.Kind == kind)])).AsSpan()
-                .SequenceEqual(Bytes(new([], [.. after.Records.Where(record => record.Kind == kind)]))))
-            .Select(kind => kind.Split('/')[0]);
-        return "tables=" + string.Join(',', tables) + "; kinds=" + string.Join(',', kinds);
-    }
-
     private static async Task SameAsync(IStorageEngine engine, RegionalCatalogSnapshot snapshot, CancellationToken cancellationToken)
     {
         await using var transaction = await (await engine.OpenSystemDatabaseAsync(cancellationToken)).BeginTransactionAsync(false, cancellationToken);
-        foreach (var receipt in snapshot.Records.Where(record => record.Kind == PurgeKind || record.Kind == ClosureKind))
+        foreach (var receipt in snapshot.Records.Where(record => record.Id == Holder && (record.Kind == PurgeKind || record.Kind == ClosureKind)))
         {
             var stored = await transaction.GetAsync(receipt.Kind, receipt.Id, cancellationToken);
             Require(stored is not null && stored.Json.Span.SequenceEqual(receipt.Json), "identical receipt import changed receipt bytes");

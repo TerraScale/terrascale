@@ -66,8 +66,9 @@ internal sealed partial class RegionalReceiptImports(IMeterFactory meters, ILogg
             }
             var closureReceipt = JsonSerializer.Deserialize(record.Json, ManagementJsonContext.Default.ProjectClosureReceipt);
             var closure = JsonSerializer.Deserialize(authorities[0].Json, ManagementJsonContext.Default.ProjectClosureRecord);
-            return closureReceipt is not null && closure is { FormatVersion: 1, ClosureId.Length: > 0 }
-                && record.Kind == ProjectClosure.Receipts(closureReceipt.ProjectId) && closureReceipt.Confirms(closure, record.Id);
+            return closureReceipt is not null && closure is { FormatVersion: 1 or 2, ClosureId.Length: > 0 }
+                && record.Kind == ProjectClosure.Receipts(closureReceipt.ProjectId)
+                && (closureReceipt.Confirms(closure, record.Id) || closureReceipt.Refuses(closure, record.Id));
         }
         catch (Exception error) when (error is JsonException or JsonValidationException)
         {
