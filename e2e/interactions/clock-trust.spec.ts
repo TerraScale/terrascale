@@ -227,7 +227,7 @@ test('a received write never carries a wrong local clock into the HLC, and a cle
     expect(await received(14)).toMatchObject({ state: 'confirmed', conflicts: [] });
     await stop(h);
     set(h, 0);
-    await opens(h, 'restart after applying while ahead');
+    await opens(h, 'restart after applying while ahead', false);
     const restarted = await sql(h, "INSERT INTO clock_rows VALUES (15, 'issued after the restart')");
     expect(restarted.status, restarted.body).toBe(200);
     expect(await sample()).toBeLessThanOrEqual(50);
@@ -238,7 +238,7 @@ test('a received write never carries a wrong local clock into the HLC, and a cle
     expect((await sql(h, "INSERT INTO clock_rows VALUES (16, 'before a clean restart')")).status).toBe(200);
     await stop(h);
     expect(log(h)).toContain('Saved the last HLC stamp');
-    await opens(h, 'clean restart');
+    await opens(h, 'clean restart', false);
     const resumed = await sql(h, "INSERT INTO clock_rows VALUES (17, 'after a clean restart')");
     const after = Date.now();
     expect(resumed.status, resumed.body).toBe(200);
