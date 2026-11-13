@@ -17,7 +17,7 @@ using ZLogger;
 namespace TerraBase.Features.Replicas;
 
 internal sealed record RegionalPosition(string Organization, string Project, string Database, string Home, string Revision);
-internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, long Epoch, RegionalCatalogSnapshot? Catalog = null, string? Operation = null);
+internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, long Epoch, RegionalCatalogSnapshot? Catalog = null, string? Operation = null, RetainedManifest? Retained = null);
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "");
 internal sealed record RegionalDrain(string Target);
 
@@ -194,6 +194,21 @@ internal sealed partial class RegionalHandoff(
             _activationAfter = page.Next;
         }
         while (true);
+        string? retainedAfter = null;
+        do
+        {
+            var retained = await RegionalRetention.RecordsAsync(services.GetRequiredService<IStorageEngine>(), retainedAfter, cancellationToken).ConfigureAwait(false);
+            foreach (var stored in retained.Records)
+            {
+                var record = RegionalRetention.Read(stored);
+                if (!await leases.TakeRegionalAsync(record.Storage, source, cancellationToken).ConfigureAwait(false))
+                {
+                    return false;
+                }
+            }
+            retainedAfter = retained.HasMore ? retained.Records[^1].Id : null;
+        }
+        while (retainedAfter is not null);
         _activeEpoch = owner.Epoch;
         _activatingEpoch = 0;
         _activationAfter = null;
@@ -351,6 +366,10 @@ internal sealed partial class RegionalHandoff(
             }
         }
 
+        if (request.Retained is not null && !await ReceiveRetainedAsync(request, cancellationToken).ConfigureAwait(false))
+        {
+            return Refuse("retained manifest or certified positions did not verify");
+        }
         await services.GetRequiredService<HomePush.HomePush>().RebuildForPromotionAsync(cancellationToken).ConfigureAwait(false);
         if (!await PreparingAsync(request, cancellationToken).ConfigureAwait(false))
         {
