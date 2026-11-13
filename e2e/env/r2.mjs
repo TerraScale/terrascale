@@ -156,6 +156,9 @@ createServer((request, response) => {
     if (request.method === 'PUT') {
       if (Number(request.headers['content-length']) !== body.length) return unexpected(request, response, 400, 'IncompleteBody', 'content-length differs from the body');
       if ((!platform || request.headers['x-amz-checksum-sha256']) && request.headers['x-amz-checksum-sha256'] !== sha256(body, 'base64')) return fail(response, 400, 'BadDigest', 'The SHA256 you specified did not match the calculated checksum.');
+      const current = objects.get(key);
+      if (request.headers['if-none-match'] === '*' && current) return fail(response, 412, 'PreconditionFailed', 'Object already exists.');
+      if (request.headers['if-match'] && request.headers['if-match'] !== current?.etag) return fail(response, 412, 'PreconditionFailed', 'Object changed.');
       objects.set(key, { body, type: request.headers['content-type'] ?? 'application/octet-stream', etag: `"${createHash('md5').update(body).digest('hex')}"`, modified: new Date().toUTCString() });
       response.writeHead(200, { etag: objects.get(key).etag, ...(request.headers['x-amz-checksum-sha256'] ? { 'x-amz-checksum-sha256': request.headers['x-amz-checksum-sha256'] } : {}), 'content-length': 0 });
       return response.end();

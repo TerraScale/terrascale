@@ -22,7 +22,12 @@ internal static class Lifecycle
     {
         if (args is ["previous", var file])
         {
-            PreviousBuild.Open(file);
+            await PreviousBuild.OpenAsync(file);
+            return;
+        }
+        if (args is ["new-credentials", var output])
+        {
+            await Records.NewCredentialsAsync(output, CancellationToken.None);
             return;
         }
         if (args is ["rows"] or ["seed-rows"] or ["rows", _] or ["seed-rows", _])
@@ -79,6 +84,23 @@ internal static class Lifecycle
                 await Console.Out.WriteLineAsync("keyring-driver:unregistered-survived row=42");
                 return;
             }
+            if (mode.ValueKind == JsonValueKind.String && mode.GetString() == "refused")
+            {
+                try
+                {
+                    await app.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken);
+                    throw new InvalidOperationException("unresolved database was opened");
+                }
+                catch (InvalidDataException error) when (error.Message.Contains("unresolved detached import", StringComparison.Ordinal))
+                {
+                    await Console.Out.WriteLineAsync("keyring-driver:database-refused node-started");
+                }
+                var system = await app.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
+                await using var transaction = await system.BeginTransactionAsync(write: false, cancellationToken);
+                await transaction.GetAsync("keyring-proof", "unrelated", cancellationToken);
+                await Console.Out.WriteLineAsync("keyring-driver:unrelated-database-opened");
+                return;
+            }
             var replicas = app.Services.GetRequiredService<IDatabaseReplicas>();
             await app.Services.GetRequiredService<RegionReplication>().SuspendAsync(database);
             using var http = new HttpClient(new SocketsHttpHandler { EnableMultipleHttp2Connections = true });
@@ -88,6 +110,16 @@ internal static class Lifecycle
             var source = new Uri("http://127.0.0.1:18481/v1/sync/organizations/" + database.OrganizationId
                 + "/projects/" + database.ProjectId + "/databases/" + database.DatabaseId);
             await replicas.OpenAsync(database, source, http, cancellationToken);
+            if (mode.ValueKind == JsonValueKind.String && mode.GetString() == "recovered")
+            {
+                await using var reader = await replicas.BeginReadAsync(database, cancellationToken)
+                    ?? throw new InvalidOperationException("recovered replica missing");
+                var rows = await reader.ExecuteAsync(new SqlStatement("SELECT value FROM keyring_rows", [], new Dictionary<string, object?>(),
+                    10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
+                Require(rows.Rows is [var row] && row is [long value] && value == 42, "intermediate rename lost row 42");
+                await Console.Out.WriteLineAsync("keyring-driver:recovered row=42");
+                return;
+            }
             await Console.Out.WriteLineAsync("keyring-driver:replica-ready");
             Require(await Console.In.ReadLineAsync(cancellationToken) == "detach", "detach command missing");
             await using (var writer = await replicas.BeginWriteAsync(database, cancellationToken)
@@ -117,7 +149,20 @@ internal static class Lifecycle
                 if (command == "fail")
                 {
                     using var cancelled = new CancellationTokenSource();
-                    await cancelled.CancelAsync();
+                    var observedCopy = 0;
+                    var targetDirectory = Path.Combine(app.Services.GetRequiredService<TerraBaseOptions>().DataDirectory,
+                        database.OrganizationId, database.ProjectId!);
+                    Directory.CreateDirectory(targetDirectory);
+                    using var watcher = new FileSystemWatcher(targetDirectory) { NotifyFilter = NotifyFilters.Size | NotifyFilters.LastWrite };
+                    watcher.Changed += (_, change) =>
+                    {
+                        if (change.FullPath.EndsWith(".creating", StringComparison.Ordinal) && new FileInfo(change.FullPath) is { Exists: true, Length: >= 4096 })
+                        {
+                            Interlocked.Exchange(ref observedCopy, 1);
+                            cancelled.Cancel();
+                        }
+                    };
+                    watcher.EnableRaisingEvents = true;
                     try
                     {
                         await app.Services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancelled.Token);
@@ -125,7 +170,8 @@ internal static class Lifecycle
                     }
                     catch (OperationCanceledException)
                     {
-                        await Console.Out.WriteLineAsync("keyring-driver:import-failed");
+                        Require(Volatile.Read(ref observedCopy) == 1, "failed import was not interrupted mid-copy");
+                        await Console.Out.WriteLineAsync("keyring-driver:import-failed mid-copy");
                     }
                 }
                 else

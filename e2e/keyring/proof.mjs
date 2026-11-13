@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:https';
 import { join, resolve } from 'node:path';
@@ -43,7 +43,7 @@ async function stop(child) {
 let standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store', { ...clean, E2E_REGIONS: '2' });
 const requests = [];
 const proxy = createServer({ key: readFileSync(join(profile, 'tls.key')), cert: readFileSync(join(profile, 'tls.pem')) }, (request, response) => {
-  requests.push({ method: request.method, path: request.url, range: request.headers.range });
+  requests.push({ method: request.method, path: request.url, range: request.headers.range, match: request.headers['if-match'], absent: request.headers['if-none-match'] });
   const upstream = httpRequest({ hostname: '127.0.0.1', port: 8028, method: request.method, path: request.url, headers: request.headers }, answer => {
     response.writeHead(answer.statusCode, answer.headers);
     answer.pipe(response);
@@ -55,17 +55,18 @@ proxy.listen(443, '0.0.0.0');
 await once(proxy, 'listening');
 const sha = body => createHash('sha256').update(body).digest('hex');
 const hmac = (key, value) => createHmac('sha256', key).update(value).digest();
-async function object(method, bucket, path, query = '') {
+async function object(method, bucket, path, query = '', body, conditions = {}) {
   const host = bucket === 'journey-backups' ? 'journey.backups.terrascale.tech' : '6cd3f3639e928077593d9b470765efeb.r2.cloudflarestorage.com';
   const target = `/${bucket}/${path}`;
   const date = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '');
   const scope = `${date.slice(0, 8)}/auto/s3/aws4_request`;
-  const payload = sha('');
+  const payload = sha(body ?? '');
   const headers = 'host;x-amz-content-sha256;x-amz-date';
   const canonical = [method, target, query, `host:${host}\nx-amz-content-sha256:${payload}\nx-amz-date:${date}\n`, headers, payload].join('\n');
   const key = scope.split('/').reduce((key, part) => hmac(key, part), `AWS4${secret}`);
   const signature = hmac(key, ['AWS4-HMAC-SHA256', date, scope, sha(canonical)].join('\n')).toString('hex');
-  return fetch(`https://${host}${target}${query ? `?${query}` : ''}`, { method, headers: {
+  return fetch(`https://${host}${target}${query ? `?${query}` : ''}`, { method, body, headers: {
+    ...conditions,
     'x-amz-date': date, 'x-amz-content-sha256': payload,
     authorization: `AWS4-HMAC-SHA256 Credential=${access}/${scope}, SignedHeaders=${headers}, Signature=${signature}`,
   } });
@@ -197,17 +198,20 @@ try {
     const response = await object('GET', 'ts-terrabase-shapes-prod', path);
     assert.equal(sha(Buffer.from(await response.arrayBuffer())), hash);
   }
+  const credentialFile = join(profile, 'new-credentials.json');
+  await records('new-credentials', 'k0', credentialFile);
+  const newCredential = JSON.parse(readFileSync(credentialFile, 'utf8'));
   const previousInput = join(profile, 'previous.json');
   const previousWrappers = [];
   for (const path of createdCustody) {
     const response = await object('GET', 'ts-terrabase-shapes-prod', path);
     previousWrappers.push(await response.text());
   }
-  writeFileSync(previousInput, JSON.stringify({ baseline, master, wrappers: previousWrappers }), { mode: 0o600 });
+  writeFileSync(previousInput, JSON.stringify({ baseline, master, wrappers: previousWrappers, credential: newCredential }), { mode: 0o600 });
   const previous = startProcess('dotnet', [process.env.E2E_KEYRING_DRIVER, 'previous', previousInput], 'previous-wrapper-reader', clean);
   const [previousCode] = await once(previous, 'exit');
   children.delete(previous);
-  assert.equal(previousCode, 0, 'origin/main ordinary unwrap opened every new custody wrapper');
+  assert.equal(previousCode, 0, 'origin/main opened new custody wrappers and credential plaintext');
   console.log('one key creation: origin/main opened new database sidecar and custody wrappers unchanged; SQL row=42');
   console.log('rollback: origin/main opened the same directory after the single-key upgrade');
   const leftover = join(data, '_system.db.key.rewrapping');
@@ -265,6 +269,38 @@ try {
     const rotated = rotatedCredentials.find(record => record.Id === original.Id);
     assert.deepEqual(rotated, { ...original, KeyId: 'k1' }, 'reopened credential plaintext and ciphertext match for ' + original.Id);
   }
+  const restored = join(profile, 'restored-without-cache');
+  cpSync(data, restored, { recursive: true });
+  rmSync(join(restored, '.master-key-history'));
+  const refusal = node(candidate, 'k0', { TERRABASE_DATA_DIRECTORY: restored });
+  const [refusalCode] = await once(refusal, 'exit');
+  children.delete(refusal);
+  assert.equal(refusalCode, 2, 'restored node refuses a fleet key missing from configuration');
+  assert.ok(readFileSync(join(profile, 'node-' + sequence + '.log'), 'utf8').includes("configured master key id 'k1' cannot be removed"));
+  assert.equal(existsSync(join(restored, '.master-key-history')), false, 'refusal does not invent local history');
+  console.log('re-provisioned empty disk plus restored data without cache: shared history refused and named missing k1');
+  const historyResponse = await object('GET', 'journey-backups', 'v1/master-key-history');
+  assert.equal(historyResponse.status, 200);
+  const historyDocument = await historyResponse.text();
+  for (const [id, material] of [['k0', master], ['k1', next]]) {
+    const fingerprint = createHmac('sha256', Buffer.from(material, 'base64')).update('TerraBase/master-key-history/v1').digest('hex').toUpperCase();
+    assert.ok(historyDocument.includes(id + ' ' + fingerprint + '\n'), 'shared history binds ' + id + ' to its material');
+  }
+  const historyWrites = requests.filter(request => request.method === 'PUT' && request.path.endsWith('/v1/master-key-history'));
+  assert.ok(historyWrites.some(request => request.absent === '*'), 'shared history creation is conditional');
+  assert.ok(historyWrites.some(request => typeof request.match === 'string'), 'shared history extension is conditional');
+  assert.ok(historyWrites.every(request => request.absent === '*' || typeof request.match === 'string'), 'no unconditional product history writes');
+  const malformed = await object('PUT', 'journey-backups', 'v1/master-key-history', '', Buffer.from('unreadable'), { 'if-match': historyResponse.headers.get('etag') });
+  assert.equal(malformed.status, 200);
+  const badHistory = node(candidate, 'k1', { TERRABASE_DATA_DIRECTORY: restored });
+  const [badHistoryCode] = await once(badHistory, 'exit');
+  children.delete(badHistory);
+  assert.equal(badHistoryCode, 2, 'unreadable shared history refuses even a complete configured ring');
+  assert.ok(readFileSync(join(profile, 'node-' + sequence + '.log'), 'utf8').includes('master key history cannot be read'));
+  const repaired = await object('PUT', 'journey-backups', 'v1/master-key-history', '', Buffer.from(historyDocument), { 'if-match': malformed.headers.get('etag') });
+  assert.equal(repaired.status, 200);
+  const conflict = await object('PUT', 'journey-backups', 'v1/master-key-history', '', Buffer.from('shorter'), { 'if-match': malformed.headers.get('etag') });
+  assert.equal(conflict.status, 412, 'stale conditional writes cannot shorten shared history');
   console.log('startup read row=42 from every database; reopened both current and historical credentials, compared plaintext and unchanged ciphertext');
   const firstLog = await (await fetch('http://127.0.0.1:8028/log')).json();
   assert.deepEqual(firstLog.unexpected, [], 'first scenario had no unexpected object-store requests');

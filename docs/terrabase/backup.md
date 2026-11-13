@@ -395,16 +395,36 @@ an active-key wrapper unchanged; an old-key wrapper is verified before use. The 
 file and directory are synced before the source key record is deleted. Promotion registers
 its detached database path under the key-record lock before releasing that lock. Maintenance
 and deletion skip a live import's detached source. Completion and startup recover from disk:
-an import intent records the destination key identity before publication. A matching published
-database and key, followed by a destination directory sync, prove the source redundant.
-Otherwise the database and all replica sidecars are put back and the replica directory is
-synced. An absent registration or catalog record never permits deletion. Interrupted moves and
-failed imports take the same put-back path. A conflicting or unreadable recovery record is
-preserved and startup fails rather than discarding data. The file audit also preserves a
+a versioned import intent is flushed and its directory synced before the first detach change.
+It binds the database id, source incarnation, commit position, source file size, imported row count and typed content byte length,
+SHA-256 digest of the imported schema and typed rows, and wrapped source key. Before copying,
+an atomic, synced intent update records the destination key. Import preserves the recorded
+source incarnation for this promotion, checkpoints the destination, verifies its content and
+flushes it before publication. Ordinary restores still receive a new incarnation.
+Recovery opens the destination read-only with its authenticated key, requires a single
+integrity-check result of `ok`, matches its incarnation, requires its commit position to be at
+least the recorded position, and compares imported row count, minimum typed content byte length and content digest. The digest
+covers the same table projections as the import: engine-owned tables and ephemeral shape
+snapshot rows are excluded, and only persistent grant rows of shape chunks are copied.
+A newer destination whose logical digest differs is conservatively refused and both copies
+are retained. Key equality alone never proves content redundancy.
+Only after content verification and destination directory/ancestor sync can recovery remove
+the detached source. An independently existing replica must pass the same content verification
+before removal. Without a published destination, recovery puts back the database and each
+sidecar without overwriting anything, verifies the restored content and key, and syncs its
+directory. An intent is parsed, scope/version checked and authenticated even when the destination
+is absent. An unpublished destination key is reconciled against its intent before removal;
+its material remains available in that intent until the restored replica is durable.
+An absent registration or catalog record never permits deletion. Interrupted moves and
+failed imports take the same put-back path. A conflicting, corrupt or unreadable recovery
+record preserves the remaining copies, refuses that database and logs its name.
+The node and unrelated databases continue serving. The counter
+`terrabase.storage.detached_recovery_failures` records these refusals. The file audit also preserves a
 published database whose catalog registration is absent, even after its observation grace period.
 The rewrap pass removes only its own .key.rewrapping temporaries. Detached keys remain
 readable and are rewrapped unless a live import holds their registration. Database deletion
-removes that database's own detached files under its durable deletion marker.
+removes that database's own detached files only under a durable deletion record with a supported
+version and matching organization, project and database scope.
 
 
 `terrabase.keys.wrapped{key_id}` counts local database and replica sidecars, custody keys, and
@@ -430,16 +450,58 @@ wrappers inside catalog snapshots, custody objects inside
 retained bucket snapshot views, customer-bucket snapshots, volume backups or restore leases.
 This build cannot prove that these copies or stopped nodes no longer need an old key.
 
-This build adds and activates keys; it does not retire them. Each node durably records every
-configured key id in its data directory. Startup refuses a configuration missing any recorded
-id and names that id. An unreadable or malformed history also refuses startup. There is no
-override. Removing a key arrives in a later change that can prove nothing needs it, including
-stopped nodes, retained catalog backups, bucket snapshots and restore leases.
+This build adds and activates keys; it cannot retire them. The authoritative history is
+`v1/master-key-history` in the deployment's platform backup bucket, alongside the backups that
+outlive individual nodes. Every startup reads it before opening encrypted storage. The document
+contains a versioned header and each id with its material fingerprint. Creation uses
+`If-None-Match: *`; extension uses `If-Match` with the ETag just read. A conditional-write
+conflict rereads and validates the complete history before extending it. The existing document stays an exact byte prefix when ids are appended; entries are
+never removed or replaced, so concurrent nodes cannot shorten history or change a binding.
+No cleanup path deletes this object.
 
-Before activating a new key, every region and every node must hold exactly the same key ids
-and key material. This is an operator requirement that this build cannot verify across the
-fleet. When a wrapper names an id absent from a node's configuration, that node refuses that
-item and names the missing id; it never tries other keys.
+The fingerprint is HMAC-SHA-256 with the 256-bit master material as key and the fixed,
+domain-separated message `TerraBase/master-key-history/v1`. It does not reveal key material.
+Guessing a key still requires testing a 256-bit candidate with a cryptographic operation, as
+the existing authenticated wrappers already permit; this adds no useful cheaper guessing oracle.
+A configured id with a different fingerprint refuses startup and names the id, even if it
+currently wraps nothing. A missing configured id also refuses startup and names it.
+
+The synced local `.master-key-history` is a cache and an offline lower bound, never the fleet
+authority. It is written through a flushed temporary file, atomic rename and directory sync.
+A malformed or unreadable local cache refuses startup even when the store is reachable.
+Here “valid configuration” means every id/fingerprint in each available history is configured
+unchanged. New configured ids are appended online and cached offline.
+
+| Object store | Shared document | Local cache | Encrypted data | Startup decision |
+| --- | --- | --- | --- | --- |
+| Reachable | Present and readable | Absent | Absent or present | Validate fleet ids/material; append new ids conditionally; cache and start. Missing/changed ids refuse. |
+| Reachable | Present and readable | Present and readable | Absent or present | Validate both histories; conditionally append the configured superset; cache and start. Missing/changed ids refuse. |
+| Reachable | Absent | Absent | Absent | First installation: conditionally create history from configured keys; cache and start. |
+| Reachable | Absent | Absent | Present | First upgrade from a build without history: conditionally record the configured keys; cache and start. Unknown historical configuration cannot be reconstructed. |
+| Reachable | Absent | Present and readable | Absent or present | Validate cache; conditionally create shared history including every cached/configured key; cache and start. |
+| Reachable | Unreadable, malformed or access denied | Absent or present | Absent or present | Refuse the node; a cache cannot override an unreadable authoritative document. |
+| Reachable | Present or absent | Unreadable or malformed | Absent or present | Refuse the node. |
+| Unreachable or no store configured | Unknown | Present and readable | Absent or present | Validate cache; durably add configured keys locally and start. Shared registration waits for a reachable startup. |
+| Unreachable or no store configured | Unknown | Absent | Absent | Truly new node: record configured keys locally and start. |
+| Unreachable or no store configured | Unknown | Absent | Present | Refuse the node; a new disk with restored data is not a new installation. |
+| Unreachable or no store configured | Unknown | Unreadable or malformed | Absent or present | Refuse the node. |
+
+The offline empty-directory check conservatively treats every existing file other than the
+cache and its writing temporary as possible encrypted data. Re-provisioning with a new disk
+and restored files cannot remove a fleet key: a reachable shared history refuses the missing
+id before any database opens, and without shared access or a cache existing data refuses
+startup. There is no override. Removal requires a later change proving that stopped nodes,
+retained catalog backups, bucket snapshots and restore leases need none of that key.
+
+Before activating a new key, distribute the same key ids and material to every region and
+node, keeping the original active until they have all registered the expanded ring. With one
+configured key its id must be `k0`, the original id; any other sole id is rejected to preserve
+byte compatibility in both directions. Multiple keys with active `k0` also write the original
+layout. When a wrapper names an unconfigured id, the item is refused and the id named.
+
+Deletion on absent or excluding catalog state in pre-existing replica, home-file, settle,
+demote and pending-cleanup paths is not covered here; the separate deletion-on-absence
+change owns those paths. This change adds no calls into them.
 
 ## Bucket layout (version 1)
 
@@ -447,6 +509,7 @@ item and names the missing id; it never tries other keys.
 v1/<organization>/<project>/<database>/snapshots/<unix ms>-<generation>-<log position>
 v1/<organization>/<project>/<database>/wal/<generation>/<first log position>-<unix ms>
 v1/_system/…                                  the same for _system.db
+v1/master-key-history                        append-only fleet key ids and material fingerprints
 v1/keys/<organization>/<project>/<database>/<data key id> wrapped data keys (v1/keys/_system/… for _system.db)
 ```
 

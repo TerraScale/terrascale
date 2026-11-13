@@ -124,6 +124,13 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
   }
 
   try {
+    await start('k1', { k1: k1.toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain("single master key must use the original id 'k0'");
+    await stop();
+    await start('k0', { k0: k0.toString('base64') });
+    await ready();
+    await stop();
     if (process.env.E2E_KEYRING_BASELINE) {
       const original = process.env.E2E_KEYRING_BASELINE;
       const output = openSync(join(directory, 'origin.log'), 'w', 0o600);
@@ -191,7 +198,15 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     rmSync(replicaDirectory, { recursive: true });
     await start('k1', { k1: k1.toString('base64') });
     await expect.poll(() => child?.exitCode).toBe(2);
-    expect(readFileSync(log, 'utf8')).toContain("configured master key id 'k0' cannot be removed");
+    expect(readFileSync(log, 'utf8')).toContain("single master key must use the original id 'k0'");
+    await stop();
+    await start('k0', { k0: k0.toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain("configured master key id 'k1' cannot be removed");
+    await stop();
+    await start('k1', { k0: randomBytes(32).toString('base64'), k1: k1.toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain("configured master key id 'k0' has different material");
     await stop();
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await ready();

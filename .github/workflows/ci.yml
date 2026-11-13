@@ -65,6 +65,7 @@ jobs:
       status: ${{ steps.filter.outputs.status }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
       journey: ${{ steps.journey.outputs.journey }}
+      keyring: ${{ steps.filter.outputs.keyring }}
     steps:
       # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
       - if: github.event_name == 'push'
@@ -152,6 +153,14 @@ jobs:
             sdk-rust:
               - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
+              - .github/workflows/ci.yml
+            keyring:
+              - e2e/keyring/**
+              - e2e/interactions/keyring.spec.ts
+              - e2e/env/{build.sh,hostnames,r2.mjs,scrub.py}
+              - e2e/{package.json,package-lock.json,playwright.config.ts,tsconfig.json}
+              - e2e/support/{stack.ts,state.ts}
+              - .github/workflows/journey.yml
               - .github/workflows/ci.yml
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
@@ -792,7 +801,7 @@ jobs:
       || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
     uses: ./.github/workflows/journey.yml
     with:
-      keyring: ${{ contains(fromJSON(needs.changes.outputs.dotnet), 'terrabase') || github.event_name != 'pull_request' }}
+      keyring: ${{ contains(fromJSON(needs.changes.outputs.dotnet), 'terrabase') || needs.changes.outputs.keyring == 'true' || github.event_name != 'pull_request' }}
 
   all-green:
     name: all-green

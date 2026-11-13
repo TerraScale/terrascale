@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createDecipheriv, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, existsSync, linkSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { test as base, expect } from '@playwright/test';
@@ -158,6 +158,14 @@ const test = base.extend<{}, { promotion: Promotion }>({
           statements: [{ sql: 'CREATE TABLE keyring_rows(value INTEGER)' }, { sql: 'INSERT INTO keyring_rows VALUES(' + ([one, two].includes(database) ? '42' : '0') + ')' }],
         }, false);
       }
+      await request(home, 'POST', projectPath + '/databases/' + String(failed.id) + '/sql/execute', {
+        statements: [{ sql: 'CREATE TABLE copy_payload(value BLOB)' }],
+      }, false);
+      for (let batch = 0; batch < 8; batch++) {
+        await request(home, 'POST', projectPath + '/databases/' + String(failed.id) + '/sql/execute', {
+          statements: [{ sql: 'WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<64) INSERT INTO copy_payload SELECT zeroblob(4096) FROM numbers' }],
+        }, false);
+      }
       const sql = { statements: [{ sql: 'SELECT value FROM keyring_rows' }] };
       await expect.poll(() => existsSync(replicaKey(one.id)) && existsSync(replicaKey(two.id))).toBe(true);
       await request(replica, 'POST', syncPath(one.id) + '/catch-up', undefined, false);
@@ -272,17 +280,64 @@ const test = base.extend<{}, { promotion: Promotion }>({
           await exited;
           children.delete(second);
         };
+        const runRecovery = async (database: Record<string, unknown>, mode: 'recovered' | 'refused') => {
+          writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: database.id, mode }), { mode: 0o600 });
+          second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER!, driverRequest);
+          await checkpoint(mode === 'recovered' ? 'keyring-driver:recovered row=42' : 'keyring-driver:unrelated-database-opened');
+          await stop(second);
+        };
+        const snapshot = (id: unknown) => {
+          const path = detached(id);
+          return new Map(readdirSync(join(path, '..')).filter(name => name.startsWith(String(id) + '.'))
+            .map(name => [join(path, '..', name), readFileSync(join(path, '..', name))]));
+        };
+        const restore = (id: unknown, saved: Map<string, Buffer>) => {
+          const path = detached(id);
+          for (const name of readdirSync(join(path, '..')).filter(name => name.startsWith(String(id) + '.'))) rmSync(join(path, '..', name));
+          for (const [name, content] of saved) writeFileSync(name, content, { mode: 0o600 });
+        };
         const beforePublication = async () => {
           await launch(crash);
           await kill();
           expect(existsSync(detached(crash.id))).toBe(true);
+          const saved = snapshot(crash.id);
+          const path = detached(crash.id);
+          const replicaPath = replicaKey(crash.id).slice(0, -4);
+          const sidecars = [...saved.keys()].filter(name => name.startsWith(path + '-'));
+          for (const step of ['intent', 'key', 'database', ...sidecars.map((_, index) => 'sidecar-' + index)]) {
+            restore(crash.id, saved);
+            if (step === 'intent' || step === 'key') {
+              renameSync(path, replicaPath);
+              for (const sidecar of sidecars) renameSync(sidecar, replicaPath + sidecar.slice(path.length));
+              if (step === 'intent') rmSync(path + '.key');
+            } else if (step === 'database') {
+              for (const sidecar of sidecars) renameSync(sidecar, replicaPath + sidecar.slice(path.length));
+            } else {
+              const moved = Number(step.slice('sidecar-'.length)) + 1;
+              for (const sidecar of sidecars.slice(moved)) renameSync(sidecar, replicaPath + sidecar.slice(path.length));
+            }
+            await runRecovery(crash, 'recovered');
+            expect(existsSync(path)).toBe(false);
+            expect(existsSync(path + '.importing')).toBe(false);
+          }
+          restore(crash.id, saved);
+          const originalIntent = readFileSync(path + '.importing');
+          writeFileSync(path + '.importing', '{');
+          await runRecovery(crash, 'refused');
+          expect(readFileSync(path + '.importing').toString()).toBe('{');
+          expect(existsSync(path)).toBe(true);
+          writeFileSync(path + '.importing', originalIntent);
+          writeFileSync(replicaPath, readFileSync(path));
+          await runRecovery(crash, 'refused');
+          expect(existsSync(path) && existsSync(replicaPath)).toBe(true);
+          restore(crash.id, saved);
           await launch(crash);
           expect(existsSync(replicaKey(crash.id))).toBe(true);
           await maintenance();
           second.stdin!.write('import\n');
           await checkpoint('keyring-driver:imported row=42');
           await stop(second);
-          console.log('crash before publication: home stopped; replica-only row=42; restart put back database, sidecars and key; new promotion read 42');
+          console.log('detach durable states: intent, key, database and each sidecar rename recovered row=42; malformed unused intent and conflicting replica preserved; unrelated database opened');
 
         };
         const afterPublication = async () => {
@@ -293,6 +348,35 @@ const test = base.extend<{}, { promotion: Promotion }>({
           expect(existsSync(promotedKey(published.id))).toBe(true);
           expect(existsSync(detached(published.id))).toBe(true);
           await kill();
+          const saved = snapshot(published.id);
+          const destination = promotedKey(published.id).slice(0, -4);
+          const databaseBytes = readFileSync(destination);
+          const keyBytes = readFileSync(destination + '.key');
+          for (const state of ['before-key', 'after-key', 'corrupt', 'conflicting-key', 'conflicting-replica']) {
+            restore(published.id, saved);
+            writeFileSync(destination, databaseBytes);
+            writeFileSync(destination + '.key', keyBytes);
+            if (state === 'before-key' || state === 'after-key') {
+              rmSync(destination);
+              if (state === 'before-key') rmSync(destination + '.key');
+              await runRecovery(published, 'recovered');
+              expect(existsSync(destination + '.key')).toBe(false);
+            } else {
+              if (state === 'corrupt') writeFileSync(destination, databaseBytes.subarray(0, 100));
+              if (state === 'conflicting-key') writeFileSync(destination + '.key', readFileSync(promotedKey(active.id)));
+              if (state === 'conflicting-replica') {
+                const other = replicaKey(published.id).slice(0, -4);
+                writeFileSync(other, databaseBytes.subarray(0, 100));
+              }
+              await runRecovery(published, 'refused');
+              expect(existsSync(detached(published.id))).toBe(true);
+              expect(existsSync(destination)).toBe(true);
+              expect(readFileSync(detached(published.id)).equals(saved.get(detached(published.id))!)).toBe(true);
+            }
+          }
+          restore(published.id, saved);
+          writeFileSync(destination, databaseBytes);
+          writeFileSync(destination + '.key', keyBytes);
           writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: published.id, mode: 'published' }), { mode: 0o600 });
           second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER!, driverRequest);
           await checkpoint('keyring-driver:unregistered-survived row=42');
@@ -310,7 +394,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
           expect(existsSync(replicaKey(failed.id))).toBe(true);
           expect(existsSync(detached(failed.id))).toBe(false);
           await stop(second);
-          console.log('failed import: home stopped; cancelled import put back a usable replica; direct replica read=42');
+          console.log('failed import: filesystem observed destination pages before cancellation mid-copy; source put back and read row=42');
         };
         await use({ beforePublication, afterPublication, failedImport });
       }

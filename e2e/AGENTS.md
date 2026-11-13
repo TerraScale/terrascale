@@ -479,9 +479,13 @@ The OAuth2 provider at identity.journey.terrascale.tech is served by env/oauth2.
 ## Keyring recovery lane
 
 The keyring job in the existing journey workflow reuses the TerraBase service artifact and its lifecycle
-driver from the service build. The existing TerraBase change output selects it for engine and backup
-changes; main runs select it too. It builds a pinned single-key baseline and runs
+driver from the service build. TerraBase changes, the keyring lane's own inputs and changes
+to the journey workflow select it; main runs select it too. It builds a pinned single-key baseline and runs
 `bash e2e/keyring/proof.sh` in an isolated network namespace. The proof selects the keyring
 interaction and promotion specs itself, including process kills before publication and after durable
-publication, failed-import put-back, key-removal refusal, record-store refusal, credential reopening,
-and row reads from every persisted database. The extra lane runs alongside the normal shards.
+publication, reconstructed states at every intermediate detach and publication rename, conflicting
+replicas and destinations, corrupt destinations with valid keys, mid-copy cancellation and put-back,
+fleet key-removal refusal after restoration without a local cache, key material changes, record-store
+refusal, reverse credential compatibility and row reads from every persisted database.
+Intermediate states are reconstructed from real detached/published files after a process kill;
+the journey does not claim to inject power failure at every individual system call. The extra lane runs alongside the normal shards.

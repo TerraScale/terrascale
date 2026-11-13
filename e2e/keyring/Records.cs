@@ -45,6 +45,18 @@ internal static class Records
         }
     }
 
+    internal static async Task NewCredentialsAsync(string output, CancellationToken cancellationToken)
+    {
+        TerraBaseOptions.ReadSecretFiles();
+        var options = TerraBaseOptions.FromProcess([]);
+        var keyring = new MasterKeyring(options.DatabaseKeyring ?? throw new InvalidOperationException("credential proof requires keyring configuration"),
+            new KeyRewrapFaults(NullLogger<KeyRewrapFaults>.Instance));
+        var credentials = await CustomerCredentials.SealAsync(keyring, "new-access", "new-secret", cancellationToken);
+        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(
+            new CompatibilityCredential(credentials.WrappedKey, credentials.Ciphertext, "new-access", "new-secret"),
+            ProofJsonContext.Default.CompatibilityCredential), cancellationToken);
+    }
+
     internal static void Rows(string operation)
     {
         TerraBaseOptions.ReadSecretFiles();
@@ -60,8 +72,11 @@ internal static class Records
             {
                 using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
                 {
-                    DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false,
-                    EncryptionCipher = "aegis256", EncryptionKey = Convert.ToHexString(key),
+                    DataSource = path,
+                    Mode = SqliteOpenMode.ReadWrite,
+                    Pooling = false,
+                    EncryptionCipher = "aegis256",
+                    EncryptionKey = Convert.ToHexString(key),
                 }.ToString());
                 connection.Open();
                 using var command = connection.CreateCommand();
@@ -88,5 +103,8 @@ internal static class Records
 
 internal sealed record CredentialProof(string Id, string AccessKeyId, string SecretKey, string Ciphertext, string KeyId);
 
+internal sealed record CompatibilityCredential(string WrappedKey, string Ciphertext, string AccessKeyId, string SecretKey);
+
+[JsonSerializable(typeof(CompatibilityCredential))]
 [JsonSerializable(typeof(List<CredentialProof>))]
 internal sealed partial class ProofJsonContext : JsonSerializerContext;
