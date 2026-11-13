@@ -269,5 +269,11 @@
       "inFlightCommit": "outcome unknown",
       "replayed": false
     }
+  },
+  "failureBehavior": {
+    "rollback": "Only a received rollback answer or a lost transaction with no committing request sent establishes rollback.",
+    "uncertain": "A committing request that may have left the client without a received answer fails with write_outcome_unknown or the existing commit-uncertain error; every later call fails the same way. The session closes without retry or reconnect.",
+    "sent": "Unless no byte can be proven to have left the client, treat the request as sent.",
+    "nonCommitting": "Losing a read or non-committing statement inside an open transaction retains transaction-lost behavior."
   }
 }

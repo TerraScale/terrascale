@@ -132,6 +132,16 @@
       "status": 503
     },
     {
+      "code": "copy_faulted",
+      "sqlstate": "57P03",
+      "status": 503
+    },
+    {
+      "code": "recovery_pending",
+      "sqlstate": "57P03",
+      "status": 503
+    },
+    {
       "code": "unauthorized",
       "sqlstate": "28000",
       "status": 401
