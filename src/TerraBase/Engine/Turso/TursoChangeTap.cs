@@ -593,7 +593,15 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
     {
         var rewrite = _store.RewriteAnchor;
         var below = rewrite < 0 ? _durableAnchor : Math.Min(_durableAnchor, rewrite);
-        _ = TursoStorageTransaction.Trim(writer.Connection, null, below, _store.IsSystem);
+        using (var transaction = writer.Connection.BeginTransaction())
+        {
+            _ = TursoStorageTransaction.Trim(writer.Connection, transaction, below, _store.IsSystem);
+            using var command = writer.Connection.CreateCommand();
+            command.Transaction = transaction;
+            TursoStorageTransaction.RecordBackupFloor(command, _durableAnchor);
+            transaction.Commit();
+        }
+
         _store.ObserveCdcSize(writer.Connection);
         return true;
     }
