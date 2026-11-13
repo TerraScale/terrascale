@@ -335,7 +335,7 @@ namespace TerraScale.Dashboard
                 string Policy()
                 {
                     return $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {(context.Items.ContainsKey("auth-branding") ? $"style-src 'self' 'nonce-{nonce}'" : styles)}; " +
-                    $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self'" + fileOrigins + "; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com" + fileOrigins +
+                    $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self' https://*.api.terrascale.tech" + fileOrigins + "; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com" + fileOrigins +
                     (context.Items[Platform.Mcp.McpOAuth.FormActionKey] is string client ? " " + client : "") + "; base-uri 'none'; frame-ancestors 'none'";
                 }
 
