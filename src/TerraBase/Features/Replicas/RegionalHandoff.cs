@@ -59,7 +59,7 @@ internal sealed partial class RegionalHandoff(
             return;
         }
 
-        _nats = new NatsConnection(new NatsOpts
+        var connectionOptions = new NatsOpts
         {
             Url = url.ToString(),
             AuthOpts = new NatsAuthOpts { Token = token },
@@ -67,7 +67,8 @@ internal sealed partial class RegionalHandoff(
             MaxReconnectRetry = -1,
             ReconnectWaitMin = TimeSpan.FromMilliseconds(100),
             ReconnectWaitMax = TimeSpan.FromSeconds(1),
-        });
+        };
+        _nats = new NatsConnection(connectionOptions);
         var js = new NatsJSContext(_nats);
         Task? observations = null;
         try
@@ -78,7 +79,7 @@ internal sealed partial class RegionalHandoff(
                 {
                     if (_kv is null || _writerLease is null)
                     {
-                        await _nats.ConnectAsync().ConfigureAwait(false);
+                        await _nats.ConnectAsync().AsTask().WaitAsync(stoppingToken).ConfigureAwait(false);
                         _kv ??= await new NatsKVContext(js).CreateOrUpdateStoreAsync(new NatsKVConfig(Bucket)
                         {
                             History = 1,
@@ -97,12 +98,19 @@ internal sealed partial class RegionalHandoff(
                             _writerLease = new RegionalWriterLease(js, writers, options.Region, options.MachineId, _session);
                         }
                     }
-                    await RefreshAsync(_kv, stoppingToken).ConfigureAwait(false);
-                    observations ??= ObserveRegionsAsync(_kv, stoppingToken);
+                    using var attempt = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    attempt.CancelAfter(AttemptBudget);
+                    await RefreshAsync(_kv, attempt.Token).ConfigureAwait(false);
+                    if (_renewalFailure is not null)
+                    {
+                        _renewalFailure = null;
+                        LogRenewalRecovered(logger, options.Region);
+                    }
+                    observations ??= ObserveRegionsAsync(connectionOptions, stoppingToken);
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                 {
-                    logger.ZLogWarning($"Regional ownership could not be confirmed; customer writes remain fenced after the lease expires: {error.GetType().Name:@Error}");
+                    RenewalFailed(error);
                 }
 
                 await Task.Delay(TimeSpan.FromMilliseconds(250), stoppingToken).ConfigureAwait(false);
@@ -645,8 +653,18 @@ internal sealed partial class RegionalHandoff(
 
     private static byte[] Encode(RegionalOwner owner) => JsonSerializer.SerializeToUtf8Bytes(owner, ReplicasJsonContext.Default.RegionalOwner);
 
-    private static RegionalOwner Decode(byte[] value) => JsonSerializer.Deserialize(value, ReplicasJsonContext.Default.RegionalOwner)
-        ?? throw new InvalidDataException("invalid regional owner");
+    private static RegionalOwner Decode(byte[] value)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize(value, ReplicasJsonContext.Default.RegionalOwner)
+                ?? throw new OwnershipRecordException("record_invalid", value.Length);
+        }
+        catch (JsonException)
+        {
+            throw new OwnershipRecordException("record_invalid", value.Length);
+        }
+    }
 
     private async Task<ServingNode?> SelfRegionPeerAsync(string node, CancellationToken cancellationToken)
     {

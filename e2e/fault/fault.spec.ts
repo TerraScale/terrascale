@@ -2,9 +2,9 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
-import { auth, stateDir } from '../support/stack';
-import { journey, saveSecret } from '../support/state';
-import { crashWrite, endpoint, Ledger, nodes, nodeRequest, nodeStatus, regions, restartAfterKill, topology } from './support';
+import { auth, dash, stateDir } from '../support/stack';
+import { journey, ownerSession, saveSecret } from '../support/state';
+import { crashWrite, endpoint, faultId, Ledger, nodes, nodeRequest, nodeStatus, regions, restartAfterKill, topology } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -33,7 +33,7 @@ test('a writer killed during a write restarts without losing acknowledged rows i
     const writer = (await topology()).find(node => node.region === 'gru')!;
     const writing = crashWrite(writer, ledger, grant.access_token);
     await writing.sent;
-    const restart = restartAfterKill(writer);
+    const restart = restartAfterKill(writer, true, { token: grant.access_token, path: database(created.id) });
     try {
       const outcome = await writing.outcome;
       if (outcome.error) throw outcome.error;
@@ -91,11 +91,24 @@ test('restore a backup into another database and compare its rows with the snaps
 });
 
 
-test('another region outside admitted peers cannot interrupt local writer renewal', async ({ cells, request }) => {
+test('another region outside admitted peers cannot interrupt local writer renewal', async ({ cells, request, playwright }) => {
   const writers = await topology();
   const local = writers.find(node => node.region === 'gru')!;
   const foreign = writers.find(node => node.region === 'fra')!;
   const target = nodes.find(node => node.region === 'fra' && node.name !== foreign.name)!;
+  const user = faultId();
+  const manage = async (node: typeof foreign, method: string, path: string, body?: unknown, expected = 200) => {
+    const response = await nodeRequest(node, path, method, body, user);
+    expect(response.status, response.body).toBe(expected);
+    return response.body ? JSON.parse(response.body) as { id: string } : undefined;
+  };
+  const organization = (await manage(foreign, 'POST', '/v1/management/organizations', { name: name('handoff-closure') }, 201))!;
+  const organizationPath = `/v1/management/organizations/${organization.id}`;
+  const projectRecord = (await manage(foreign, 'POST', `${organizationPath}/projects`, { name: name('handoff-closure') }, 201))!;
+  const projectPath = `${organizationPath}/projects/${projectRecord.id}`;
+  const retired = (await manage(foreign, 'POST', `/v1/projects/${projectRecord.id}/databases`, { name: name('handoff-purge'), regions: ['fra'] }, 201))!;
+  await manage(foreign, 'DELETE', `/v1/projects/${projectRecord.id}/databases/${retired.id}`, undefined, 204);
+  let handedOff = false;
   const peers = join(stateDir, 'peers');
   const original = readFileSync(peers, 'utf8');
   const replacePeers = (value: string) => {
@@ -148,15 +161,62 @@ test('another region outside admitted peers cannot interrupt local writer renewa
     await topology();
     const drain = await nodeRequest(foreign, `/v1/rollout/drain?target=${target.name}`, 'POST');
     expect(drain.status, drain.body).toBe(204);
+    handedOff = true;
     await expect.poll(() => nodeStatus(local, 'fra'), { message: 'the restored foreign owner is observed after handoff' })
       .toMatchObject({ owner: target.name });
     await expect.poll(() => nodeStatus(target)).toMatchObject({ owner: target.name, writer: true, ready: true });
+    const closure = { version: 2, closureId: faultId(), authorityOrganizationId: organization.id };
+    const closurePath = `/admin/projects/${projectRecord.id}/closure`;
+    const closing = await nodeRequest(local, closurePath, 'PUT', closure);
+    expect([200, 202]).toContain(closing.status);
+    const query = `?version=2&closureId=${closure.closureId}&authorityOrganizationId=${organization.id}`;
+    await expect.poll(async () => {
+      const response = await nodeRequest(target, closurePath + query);
+      expect([200, 202]).toContain(response.status);
+      return JSON.parse(response.body);
+    }, { message: 'the promoted foreign writer completes erasure with the prior writer receipts' })
+      .toMatchObject({ status: 'accepted', pendingHolders: 0, closureId: closure.closureId });
+    const closed = await nodeRequest(local, closurePath, 'PUT', closure);
+    expect(closed.status, closed.body).toBe(200);
+    expect(JSON.parse(closed.body)).toMatchObject({ status: 'accepted', pendingHolders: 0 });
+    console.log('cross-region closure completed after the foreign owner changed');
     expect(await ledger.read(cells, 'gru')).toEqual(ledger.acknowledged);
     console.log(`foreign ownership restored: ${target.name} observed from ${local.name}; acknowledged rows retained`);
   } finally {
     replacePeers(original);
+    if (handedOff) {
+      await restartAfterKill(foreign, false)();
+      const primed = await nodeRequest(foreign, `/v1/rollout/prime?source=${target.name}`, 'POST');
+      expect(primed.status, primed.body).toBe(204);
+      const restored = await nodeRequest(target, `/v1/rollout/drain?target=${foreign.name}`, 'POST');
+      expect(restored.status, restored.body).toBe(204);
+      await restartAfterKill(target, false)();
+      const caughtUp = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
+      expect(caughtUp.status, caughtUp.body).toBe(204);
+    }
     await expect.poll(() => nodeStatus(local), { message: 'local authority is restored before cleanup' })
       .toMatchObject({ writer: true, ready: true });
     await removeDatabase(cells, created.id);
+    await manage(foreign, 'DELETE', projectPath, undefined, 204);
+    await manage(foreign, 'DELETE', organizationPath, undefined, 204);
+    expect(readFileSync(peers, 'utf8')).toBe(original);
+    const restoredWriters = await topology();
+    expect(restoredWriters.map(node => node.name).sort()).toEqual(writers.map(node => node.name).sort());
+    for (const node of nodes) {
+      for (const writer of writers) {
+        expect(await nodeStatus(node, writer.region)).toMatchObject({ owner: writer.name, ready: true });
+      }
+    }
+    for (const region of regions) expect((await cells.get(`${endpoint(region)}${project()}/databases`)).status()).toBe(200);
+    const owner = await playwright.request.newContext({ storageState: ownerSession() });
+    try {
+      const profile = await owner.get(`${dash}/profile`);
+      expect(new URL(profile.url()).pathname).toBe('/profile');
+      expect(profile.status()).toBe(200);
+      expect(await profile.text()).toContain(journey().email);
+    } finally {
+      await owner.dispose();
+    }
+    console.log('restored original writers, all four peer observations, and existing account credentials and session');
   }
 });

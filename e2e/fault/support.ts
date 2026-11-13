@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
@@ -15,20 +16,24 @@ export const nodes = [
   { name: 'journey-4', region: 'fra', address: '127.0.0.4', port: 8380, service: 'terrabase-fra-2' },
 ] as const;
 type Node = typeof nodes[number];
-type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean };
+type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; session: string };
 type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
 
-export async function nodeRequest(node: Node, path: string, method = 'GET'): Promise<{ status: number; body: string }> {
+export async function nodeRequest(node: Node, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(`http://${node.address}:8081`);
-  const stream = session.request({ ':method': method, ':path': path, 'x-terrabase-peer-credential': credential });
+  const stream = session.request({
+    ':method': method, ':path': path, 'x-terrabase-peer-credential': credential,
+    ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
+    ...(user ? { 'x-terrabase-user-id': user } : {}),
+  });
   stream.setTimeout(15_000, () => stream.destroy(new Error(`status request timed out for ${node.name}`)));
   session.on('error', error => stream.destroy(error));
   try {
     const response = once(stream, 'response');
-    stream.end();
+    stream.end(payload === undefined ? undefined : JSON.stringify(payload));
     const [headers] = await response;
     let body = '';
     for await (const chunk of stream) body += chunk;
@@ -153,7 +158,7 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
   return { sent, outcome: outcome.then(() => ({ error: undefined }), (error: Error) => ({ error })) };
 }
 
-export function restartAfterKill(node: Node): () => Promise<void> {
+export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }): () => Promise<void> {
   const pidFile = join(stateDir, 'pids', `${node.service}.pid`);
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   const environment = Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
@@ -165,6 +170,14 @@ export function restartAfterKill(node: Node): () => Promise<void> {
   process.kill(pid, 'SIGKILL');
   console.log(`SIGKILL ${node.name}: client write flushed, response outstanding`);
   return async () => {
+    await expect.poll(() => {
+      try {
+        return readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ')[2] === 'Z';
+      } catch (error) {
+        expect((error as NodeJS.ErrnoException).code).toBe('ENOENT');
+        return true;
+      }
+    }, { message: 'the killed process releases its data directory before restart' }).toBe(true);
     const log = join(stateDir, 'logs', `${node.service}.log`);
     const offset = readFileSync(log).length;
     const output = openSync(log, 'a', 0o600);
@@ -179,8 +192,25 @@ export function restartAfterKill(node: Node): () => Promise<void> {
     await expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
       message: 'the restarted writer opens its listeners',
     }).toBe(true);
-    await expect.poll(async () => (await nodeStatus(node)).writer, {
-      message: 'the restarted node reacquires its fenced writer lease',
-    }).toBe(true);
+    if (access) {
+      const response = await fetch(`http://127.0.0.1:${node.port}${access.path}`, { headers: { authorization: `Bearer ${access.token}` } });
+      expect([200, 503], 'a valid credential succeeds or reports that startup is not ready').toContain(response.status);
+      console.log(`startup authentication ${node.name}: HTTP ${response.status}`);
+    }
+    await expect.poll(() => nodeStatus(node), {
+      message: 'the restarted node restores its ready regional role',
+    }).toMatchObject({ writer, ready: true });
+    await expect.poll(async () => {
+      const response = await fetch(`http://127.0.0.1:${node.port + 1011}/metrics`);
+      expect(response.status).toBe(200);
+      return (await response.text()).split('\n')
+        .filter(line => line.startsWith('terrabase_auth_key_fetches_total{') && line.includes('outcome="success"'))
+        .reduce((total, line) => total + Number(line.split(' ').at(-1)), 0);
+    }, { message: 'the restarted node has loaded the signing keys for existing credentials' }).toBeGreaterThan(0);
   };
+}
+
+export function faultId(): string {
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  return '01' + Array.from(randomBytes(24), value => alphabet[value % 32]).join('');
 }

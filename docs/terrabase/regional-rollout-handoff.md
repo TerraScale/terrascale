@@ -20,11 +20,17 @@ boundaries and a two-second bound for each region. An invalid, missing,
 unreadable or timed-out remote owner record leaves that region's last observed
 owner intact and does not delay local renewal or observations of later regions.
 Regions already observed are still checked when all their peer lines disappear.
-Connection and bucket initialization happen before admission; established stores
-are reused across refreshes instead of reconnecting before each renewal.
+The observer uses its own NATS connection and never takes the renewal semaphore.
+Connection and bucket initialization happen before admission; each successfully
+created store is cached. Failed setup is attempted again on the next pass, while
+renewal of an already-held lease never repeats bucket setup. Both loops receive
+the service shutdown token and finish before their connections are disposed.
 
-A remote observation failure logs its region and error when the failure state
-changes; recovery logs once when observation succeeds again. The counter
+Ownership failures identify the own-renewal or remote-observation phase and the
+region. Causes distinguish unavailable storage, timeout, an absent record, an
+invalid record with its byte length, and an owner outside admitted peers with
+that owner name. Record contents are never logged. A changed remote failure
+state is logged once; recovery logs once when observation succeeds again. The counter
 `terrabase_ownership_refresh_errors_total{region}` counts failed remote refresh
 attempts. Its only label is an admitted region name from the peers file or a
 previous observation; it has a dedicated telemetry view with room for region
@@ -38,6 +44,17 @@ recovers; it cannot grant writer admission. The destination must prove its own
 exclusive admission and database authority before acknowledging a write.
 Placement deletion treats a failed remote observation as unknown and cannot use
 its retained owner to authorize forgetting data after a `404`.
+
+A handoff transfers database-erasure receipts and project-closure receipts with
+the records they confirm. Their original node identity and authority remain
+unchanged. The replacement can then prove erasure for purge records naming the
+previous writer and complete cross-region project closure after promotion.
+
+On restart, client requests carrying a bearer credential receive retryable
+`503 auth_unavailable` while signing keys have not loaded, rather than an invalid
+credential response. Internal writer readiness is independent of issuer startup
+so the issuer can bootstrap its own storage. Recovery verification waits for a
+successful signing-key fetch as well as the node's ready regional role.
 
 The durable phases are:
 
