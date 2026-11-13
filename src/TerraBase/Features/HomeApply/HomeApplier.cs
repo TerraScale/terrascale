@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
@@ -14,13 +15,14 @@ using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.HomeApply;
 
-internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHlcState peers, IHomeWriteLease leases, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger)
+internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHomeWriteLease leases, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger, IMeterFactory meters)
     : IHomeApply
 {
+    private readonly Counter<long> _superseded = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.home_apply.superseded", "{write}");
+
     internal const int MaxChanges = 1024;
     internal const int KeptConflicts = 10_000;
     private static readonly TimeSpan KeptConflictAge = TimeSpan.FromDays(30);
-    private static readonly TimeSpan MaxAhead = TimeSpan.FromMilliseconds(50);
     private static readonly TimeSpan KeptApplied = TimeSpan.FromDays(7);
 
     private static readonly string[] Tables =
@@ -37,12 +39,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         var id = transaction.Id!;
         var region = transaction.Region!;
         var stamp = transaction.Hlc!.Value;
-        var bound = Math.Max(time.GetUtcNow().ToUnixTimeMilliseconds(), peers.HighWater);
-        var skewed = stamp.PhysicalMilliseconds - bound > MaxAhead.TotalMilliseconds;
-        if (!skewed)
-        {
-            _ = await clock.ObserveAsync(stamp, cancellationToken).ConfigureAwait(false);
-        }
+        _ = await clock.ObserveAsync(stamp, cancellationToken).ConfigureAwait(false);
 
         Rejection rejection;
         IStorageTransaction? applying;
@@ -68,46 +65,44 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
                 return recorded;
             }
 
-            if (skewed)
+            var before = await applying.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false);
+            await applying.SuspendForeignKeysAsync(cancellationToken).ConfigureAwait(false);
+            var run = new ApplyRun(applying, new Writer(stamp, region, id), cancellationToken);
+            try
             {
-                rejection = new Rejection("clock", null, null, "the transaction's clock is ahead of the peer clocks by more than 50 milliseconds");
+                foreach (var change in transaction.Changes!)
+                {
+                    await run.ApplyAsync(change).ConfigureAwait(false);
+                }
+
+                await run.CheckForeignKeysAsync().ConfigureAwait(false);
+                var result = new HomeApplyResult(id, WriteStates.Confirmed, [.. run.Superseded.Select(conflict => conflict.Public)], []);
+                await RecordAsync(applying, transaction, result, run.Superseded, cancellationToken).ConfigureAwait(false);
+                var growth = await applying.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false) - before;
+                if (growth != 0)
+                {
+                    await applying.AddSqlStorageAsync(growth, cancellationToken).ConfigureAwait(false);
+                }
+
+                _ = await applying.CommitAsync(cancellationToken).ConfigureAwait(false);
+                if (run.Superseded.Count > 0)
+                {
+                    _superseded.Add(1, new KeyValuePair<string, object?>("region", region));
+                }
+
+                return result;
             }
-            else
+            catch (RejectedException rejected)
             {
-                var before = await applying.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false);
-                await applying.SuspendForeignKeysAsync(cancellationToken).ConfigureAwait(false);
-                var run = new ApplyRun(applying, new Writer(stamp, region, id), cancellationToken);
-                try
-                {
-                    foreach (var change in transaction.Changes!)
-                    {
-                        await run.ApplyAsync(change).ConfigureAwait(false);
-                    }
-
-                    await run.CheckForeignKeysAsync().ConfigureAwait(false);
-                    var result = new HomeApplyResult(id, WriteStates.Confirmed, [.. run.Superseded.Select(conflict => conflict.Public)], []);
-                    await RecordAsync(applying, transaction, result, run.Superseded, cancellationToken).ConfigureAwait(false);
-                    var growth = await applying.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false) - before;
-                    if (growth != 0)
-                    {
-                        await applying.AddSqlStorageAsync(growth, cancellationToken).ConfigureAwait(false);
-                    }
-
-                    _ = await applying.CommitAsync(cancellationToken).ConfigureAwait(false);
-                    return result;
-                }
-                catch (RejectedException rejected)
-                {
-                    rejection = rejected.Rejection;
-                }
-                catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
-                {
-                    throw new StorageBusyException();
-                }
-                catch (SqlStatementException error) when (Rejects(error) is { } kind)
-                {
-                    rejection = new Rejection(kind, run.Current?.Table, run.Current?.Key, error.Message);
-                }
+                rejection = rejected.Rejection;
+            }
+            catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+            {
+                throw new StorageBusyException();
+            }
+            catch (SqlStatementException error) when (Rejects(error) is { } kind)
+            {
+                rejection = new Rejection(kind, run.Current?.Table, run.Current?.Key, error.Message);
             }
         }
 
@@ -174,22 +169,27 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         return true;
     }
 
-    public async ValueTask StampHomeWritesAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
+    public async ValueTask<bool> StampHomeWritesAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transaction);
         var stamped = await transaction.RunAsync("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_ts_rows'", cancellationToken).ConfigureAwait(false);
         if (stamped.Rows.Count == 0)
         {
-            return;
+            return true;
         }
 
         var changes = await transaction.ReadCapturedChangesAsync(cancellationToken).ConfigureAwait(false);
         if (changes.Count == 0)
         {
-            return;
+            return true;
         }
 
-        var stamp = new Writer(await clock.NextAsync(cancellationToken).ConfigureAwait(false), options.Region, EntityIds.New(time).ToString());
+        if (await clock.IssueAsync(cancellationToken).ConfigureAwait(false) is not { } issued)
+        {
+            return false;
+        }
+
+        var stamp = new Writer(issued, options.Region, EntityIds.New(time).ToString());
         var shapes = new Dictionary<string, TableShape?>(StringComparer.OrdinalIgnoreCase);
         foreach (var change in changes)
         {
@@ -230,6 +230,8 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             stamps.Deleted = null;
             await ApplySql.WriteStampsAsync(transaction, shape.Name, after, stamps, cancellationToken).ConfigureAwait(false);
         }
+
+        return true;
     }
 
     private static string? KeyOf(TableShape shape, IReadOnlyList<string> columns, object?[] image)

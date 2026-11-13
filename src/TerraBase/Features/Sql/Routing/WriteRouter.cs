@@ -63,10 +63,9 @@ public interface ILocalCommitPath
 }
 
 internal sealed class WriteRouter(
-    SchemaFactsCache schemas, IMeterFactory meters, TerraBaseOptions options, IEnumerable<ILocalWriteClock> clocks,
+    SchemaFactsCache schemas, IMeterFactory meters, TerraBaseOptions options,
     IEnumerable<ILocalCommitPath> paths)
 {
-    private readonly ILocalWriteClock? _clock = clocks.LastOrDefault();
     private readonly ILocalCommitPath? _path = paths.LastOrDefault();
     private const int MaxFingerprints = 65_536;
     private readonly ConcurrentDictionary<string, byte> _fingerprints = new(StringComparer.Ordinal);
@@ -75,7 +74,7 @@ internal sealed class WriteRouter(
         "Writes of replica regions by the router's decision (route, reason) and where they committed (commit).");
 
     private bool LocalCommitAvailable(TenantContext database, bool homeDurable) =>
-        _clock?.Allowed == true && _path?.Ready(database) == true && (homeDurable || _path.LocalAckAvailable);
+        _path?.Ready(database) == true && (homeDurable || _path.LocalAckAvailable);
 
     public async ValueTask<WriteRoute> RouteAsync(
         TenantContext database, IReplicaReader? reader, IReadOnlyList<string> statements, WriteOverride preference, bool homeDurable,

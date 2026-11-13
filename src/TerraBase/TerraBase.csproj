@@ -53,7 +53,6 @@
     <PackageReference Include="Google.Protobuf" />
     <PackageReference Include="Grpc.Net.Client" />
     <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
-    <Protobuf Include="Features/Clock/Protos/*.proto" GrpcServices="Both" Access="Internal" />
     <Protobuf Include="Features/Backup/Protos/*.proto" GrpcServices="Both" Access="Internal" />
     <Protobuf Include="Features/Sync/Protos/*.proto" ProtoRoot="Features/Sync/Protos" GrpcServices="None" Access="Internal" />
   </ItemGroup>

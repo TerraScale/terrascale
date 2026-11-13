@@ -2,7 +2,6 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 
-const twoRegions = process.env.E2E_REGIONS === '2';
 const platformBuckets = new Set(['journey-backups', 'ts-terrabase-shapes-prod']);
 const platformObject = /^\/(journey-backups|ts-terrabase-shapes-prod)\/((?:v1|catalog-anchor)\/[^?]+)$/;
 const origin = 'https://dash.terrascale.tech';
@@ -78,7 +77,7 @@ function unexpected(request, response, status, code, detail) {
 function list(request, response, name, query) {
   const prefix = query.get('prefix') ?? '';
   const limit = Number(query.get('max-keys') ?? 1000);
-  const platform = twoRegions && platformBuckets.has(name);
+  const platform = platformBuckets.has(name);
   const encoded = query.has('encoding-type');
   if (query.get('list-type') !== '2' || !(platform ? prefix.startsWith('v1/') : projectPrefix.test(prefix)) || [...query.keys()].some((key) => !listQuery.has(key) && !(platform && key === 'start-after'))
     || !Number.isInteger(limit) || limit < 1 || limit > 1000 || (encoded && query.get('encoding-type') !== 'url'))
@@ -110,7 +109,7 @@ createServer((request, response) => {
     const at = pair.indexOf('=');
     query.append(decode(at < 0 ? pair : pair.slice(0, at)), at < 0 ? '' : decode(pair.slice(at + 1)));
   }
-  const platform = twoRegions && platformObject.exec(rawPath);
+  const platform = platformObject.exec(rawPath);
   const target = bucket.exec(rawPath) ?? platform;
   const listed = request.method === 'GET' ? listing.exec(rawPath) : null;
   log.calls.push(`${request.method} ${target ? '/' + target[1] + '/<key>' : listed ? '/' + listed[1] + '?prefix=<project>' : rawPath}`);
@@ -121,7 +120,7 @@ createServer((request, response) => {
     response.writeHead(204, { 'access-control-allow-methods': 'PUT', 'access-control-allow-headers': 'content-type, x-amz-checksum-sha256', 'access-control-max-age': '600' });
     return response.end();
   }
-  const platformBucket = twoRegions && /^\/(journey-backups|ts-terrabase-shapes-prod)\/?$/.exec(rawPath);
+  const platformBucket = /^\/(journey-backups|ts-terrabase-shapes-prod)\/?$/.exec(rawPath);
   if (!target && !listed && !platformBucket) return unexpected(request, response, 404, 'NoSuchBucket', 'path outside the files bucket');
   const key = target ? `${target[1]}/${target[2]}` : null;
   const chunks = [];

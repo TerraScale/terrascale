@@ -819,7 +819,11 @@ internal sealed class SqlSession(
     {
         try
         {
-            await ChargedAsync(async () => { await apply.StampHomeWritesAsync(transaction, cancellationToken).ConfigureAwait(false); return true; }).ConfigureAwait(false);
+            if (!await ChargedAsync(() => apply.StampHomeWritesAsync(transaction, cancellationToken)).ConfigureAwait(false))
+            {
+                return new SqlError(SqlErrors.SerializationConflict, "this node's clock is not known to be good, so it stamped nothing and committed nothing; retry", RetryAfterSeconds: 1);
+            }
+
             if (_publishId is { } publishId && !await ChargedAsync(() => apply.ClaimAsync(transaction, publishId, cancellationToken)).ConfigureAwait(false))
             {
                 return null;

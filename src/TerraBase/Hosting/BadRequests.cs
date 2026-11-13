@@ -20,6 +20,8 @@ public sealed record ErrorDetail(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DocsUrl = null);
 public static class BadRequests
 {
+    internal const string UnknownRoute = "unknown_route";
+
     public static WebApplication UseTerraBaseBadRequests(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -89,7 +91,7 @@ public static class BadRequests
     {
         StatusCodes.Status401Unauthorized => "invalid_key",
         StatusCodes.Status403Forbidden => "forbidden_scope",
-        StatusCodes.Status404NotFound => "unknown_route",
+        StatusCodes.Status404NotFound => UnknownRoute,
         StatusCodes.Status405MethodNotAllowed => "method_not_allowed",
         StatusCodes.Status408RequestTimeout => "request_timeout",
         StatusCodes.Status413PayloadTooLarge => "payload_too_large",

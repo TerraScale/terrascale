@@ -25,8 +25,8 @@ unconfirmed local write lives outside it, in the push stream.
    capture a pull reverts the local transaction without replaying it.
 2. Before commit, the transaction's captured changes become one `RegionTransaction`
    ([format](home-apply.md#regiontransaction)): a new ULID id, the origin region and a commit stamp from the
-   node's durable HLC (`IHlcClock`, [HLC](hlc-clock.md)). Clock admission is the router's: a node whose
-   `ILocalWriteClock.Allowed` is false also refuses the local transaction here, and the write goes home.
+   node's durable HLC (`IHlcClock.IssueAsync`, [HLC](hlc-clock.md#clock-trust)). A node whose clock is not trusted
+   gets no stamp, refuses the local transaction here, and the write goes home.
 3. Inside the still-open transaction, the node publishes the `RegionTransaction` to its own region's push stream
    with the transaction id as `Nats-Msg-Id`, then commits the replica transaction. The write is acknowledged to the
    client only after JetStream acknowledged storing the message and the commit succeeded. A publish that fails rolls

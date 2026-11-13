@@ -78,7 +78,6 @@ builder.Services.AddSingleton<CallerAdmission>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<NodeHlcClock>();
 builder.Services.AddSingleton<IHlcClock>(provider => provider.GetRequiredService<NodeHlcClock>());
-builder.Services.AddSingleton<IHlcState>(provider => provider.GetRequiredService<NodeHlcClock>());
 builder.Services.ConfigureHttpClientDefaults(http => http
     .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) }));
@@ -187,7 +186,6 @@ try
     app.MapTerraScaleEndpoints();
     app.MapTerraScaleOpenApi().WithMetadata(new ListenerMetadata(TerraBaseListener.Client));
     app.MapTerraBaseMetrics();
-    app.MapTerraBaseClock();
     app.MapTerraBaseKeyRevocation(options);
     app.MapTerraBaseRestRpc().WithMetadata(ListenerMetadata.Internal, new CallerTransport());
     await ApplicationRunCompletion.RunAsync(app);
