@@ -19,10 +19,10 @@ Needs the .NET SDK of `global.json`, Node 24 with npm, Go (`sdk/go/.go-version`)
 (`e2e/sdk/rust/rust-toolchain.toml`), Python 3.12, git, make, curl, openssl, tar, sha256sum, jq, `certutil` (Ubuntu
 `libnss3-tools`; NixOS `nix shell nixpkgs#nss.tools`), `psql` of PostgreSQL 16 or later for `sslrootcert=system`
 (NixOS `nix shell nixpkgs#postgresql`), iproute2 `ip`, procps `pgrep`, util-linux `unshare`, `nsenter`
-and `mount`, a CA bundle at `/etc/ssl/certs/ca-certificates.crt`, and unprivileged user namespaces; Ubuntu 23.10 and
-later restrict those through AppArmor until `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, the one
-command CI runs with sudo. The `ubuntu-24.04` runner image has all of them; CI installs only the pinned versions of
-the .NET SDK, Node and Go through setup actions and of Rust through rustup. `local.sh start` creates user, network,
+and `mount`, `strace` for the placement commit-I/O fault (NixOS `nix shell nixpkgs#strace`), a CA bundle at
+`/etc/ssl/certs/ca-certificates.crt`, and unprivileged user namespaces; Ubuntu 23.10 and later restrict those through
+AppArmor until `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. CI installs `strace`, applies that
+sysctl and installs the pinned versions of the .NET SDK, Node and Go through setup actions and of Rust through rustup. `local.sh start` creates user, network,
 mount and PID namespaces. The network has only loopback: the production names resolve to the local edge and every
 other name or address fails to connect, so nothing reaches production. Everything the suite starts runs inside
 through `local.sh exec`. `local.sh stop` asks the namespace's first process to stop the stack in order and exit, kills

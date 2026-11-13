@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { expect } from '@playwright/test';
 import { rawSqlSocket, frame, scheduleStatement } from '../support/sql-socket';
 import { holdPeerStream, holdPeerReplies } from '../support/peer-stream-fault';
+import { delayCommitSync } from '../support/native-commit-fault';
 import { postgres, stalledPostgres, message } from '../support/postgres-wire';
 import { auditedContext, Audit } from '../support/audit';
 import { newAddress } from '../support/inbox';
@@ -497,3 +498,68 @@ test('an entry WebSocket relay preserves a commit answer held beyond the total l
     await removeDatabase(cells, created.id);
   }
 });
+
+for (const kind of ['local WebSocket', 'local Postgres', 'forwarded SQL', 'WebSocket relay', 'Postgres relay'] as const) {
+  test(kind + ' delivers a complete commit accepted before expiry after native sync crosses the limit', async ({ cells, request }) => {
+    const remote = kind.endsWith('relay') || kind === 'forwarded SQL';
+    const forwarded = kind === 'forwarded SQL';
+    const current = journey();
+    const created = await json<Database>(await cells.post(home + project() + '/databases', {
+      data: { name: name('native-commit'), homeRegion: 'gru', replicaRegions: forwarded ? ['fra'] : [] },
+    }), 201);
+    let ws: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
+    let pg: Awaited<ReturnType<typeof postgres>> | undefined;
+    let fault: Awaited<ReturnType<typeof delayCommitSync>> | undefined;
+    let cancel = () => {};
+    try {
+      await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
+      await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (1)');
+      if (forwarded) await replicated(cells, replica, created.id, 1);
+      if (kind.includes('Postgres')) {
+        pg = await postgres(remote ? 6532 : 6432, created.id);
+        expect(await pg.connected).toBe(true);
+      } else {
+        const token = await credential(request);
+        ws = await rawSqlSocket('http://127.0.0.1:' + (remote ? 8180 : 8080) + database(created.id) + '/sql/ws', token);
+      }
+      const beganWall = Date.now();
+      const began = performance.now();
+      if (pg) {
+        await pg.begin();
+        const inserted = once(pg.results, 'ready');
+        pg.socket.write(message('Q', Buffer.from('INSERT INTO placement_rows VALUES (7)\0')));
+        await inserted;
+        expect(pg.errors).toEqual([]);
+      } else {
+        expect((await execute(ws!, 'BEGIN')).transaction).toBe(true);
+        expect((await execute(ws!, 'INSERT INTO placement_rows VALUES (7)')).type).toBe('result');
+      }
+      const wal = join(stateDir, 'terrabase', current.organizationId, current.projectId, created.id + '.db-wal');
+      fault = await delayCommitSync(wal);
+      const answer = pg ? once(pg.results, 'ready') : once(ws!.events, 'message');
+      cancel = scheduleStatement(pg?.socket ?? ws!.socket, pg ? message('Q', Buffer.from('COMMIT\0'))
+        : frame(1, Buffer.from(JSON.stringify({ id: 4, type: 'commit' }))), began, 4500);
+      const result = await Promise.race([answer, (pg ? pg.closed : ws!.closing).then(reason => { throw new Error('native commit connection closed: ' + JSON.stringify(reason)); })]);
+      if (pg) expect(pg.errors).toEqual([]);
+      else expect(result[0]).toMatchObject({ id: 4, type: 'result', transaction: false });
+      expect(performance.now() - began, 'native commit completion crosses the transaction limit').toBeGreaterThan(5000);
+      const trace = await fault.finish();
+      const sync = trace.split('\n').find(line => line.includes('fsync(') && line.includes(wal) && line.includes('(DELAYED)'));
+      expect(sync, 'the real commit entered a delayed fsync on its database WAL').toBeDefined();
+      expect(sync).toContain('= 0');
+      const entered = Number(/(?:^|\s)(\d{10}\.\d+)\s+fsync\(/.exec(sync!)?.[1]) * 1000;
+      expect(entered, 'the complete commit reached native I/O before expiry').toBeLessThan(beganWall + 5000);
+      expect(entered, 'the syscall belongs to the scheduled commit').toBeGreaterThan(beganWall + 4000);
+      console.log(kind + ': native fsync entered at ' + Math.round(entered - beganWall) + ' ms; commit answered after ' + Math.round(performance.now() - began) + ' ms');
+      expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [7]]);
+    } finally {
+      cancel();
+      await fault?.finish();
+      pg?.socket.destroy();
+      ws?.socket.destroy();
+      if (pg) await pg.closed;
+      if (ws) await ws.closed;
+      await removeDatabase(cells, created.id);
+    }
+  });
+}

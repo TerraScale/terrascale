@@ -204,6 +204,8 @@ jobs:
         timeout-minutes: 2
         run: |
           bash e2e/env/pki.sh
+          sudo apt-get update
+          sudo apt-get install --yes strace
           sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
           bash e2e/env/local.sh start
       - name: Egress guard
