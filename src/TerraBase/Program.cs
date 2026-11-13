@@ -131,7 +131,7 @@ try
     callers.Observe(app.Services.GetRequiredService<IMeterFactory>(), app.Services.GetRequiredService<TimeProvider>());
     try
     {
-        var engine = app.Services.GetRequiredService<TursoStorageEngine>();
+        var engine = app.Services.GetRequiredService<IStorageEngine>();
         await engine.InventoryKeysAsync(app.Lifetime.ApplicationStopping);
         _ = app.Services.GetRequiredService<IDatabaseReplicas>();
     }

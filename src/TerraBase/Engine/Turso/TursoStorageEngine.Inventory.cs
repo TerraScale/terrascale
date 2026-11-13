@@ -114,7 +114,7 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
-    internal async Task InventoryKeysAsync(CancellationToken cancellationToken)
+    public async ValueTask InventoryKeysAsync(CancellationToken cancellationToken)
     {
         var missing = InventoryLocalKeys();
         if (!SystemDatabaseExists)

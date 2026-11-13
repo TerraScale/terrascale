@@ -1,7 +1,6 @@
 using System.Diagnostics.Metrics;
 using Amazon.S3;
 using TerraBase.Engine;
-using TerraBase.Engine.Turso;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
@@ -75,10 +74,7 @@ internal sealed class KeyRewrap(
                 {
                     await credentials.RunAsync(inventory, cancellationToken).ConfigureAwait(false);
                 }
-                if (storage is TursoStorageEngine engine)
-                {
-                    await engine.InventoryKeysAsync(cancellationToken).ConfigureAwait(false);
-                }
+                await storage.InventoryKeysAsync(cancellationToken).ConfigureAwait(false);
                 Interlocked.Exchange(ref _unreadable, inventory.UnreadableCount);
                 Volatile.Write(ref _counts, writer ? inventory.Counts
                     : keyring.KeyIds.ToDictionary(id => id, _ => -1L, StringComparer.Ordinal));
