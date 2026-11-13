@@ -18,6 +18,7 @@ type StandIn = { asked: () => number; close: () => Promise<void> };
 
 const internalPort = 18281;
 const run = randomBytes(3).toString('hex');
+const masterKey = randomBytes(32).toString('base64');
 const nodes: Record<'a' | 'b' | 'c', Node> = {
   a: { name: `clock-a-${run}`, region: `gru-${run}`, address: '127.0.0.21', port: 18280, metrics: 19280, postgres: 16280 },
   b: { name: `clock-b-${run}`, region: `fra-${run}`, address: '127.0.0.22', port: 18290, metrics: 19290, postgres: 16290 },
@@ -45,9 +46,8 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
   const library = join(root, 'libclock-replay.so');
   const peers = join(root, 'peers');
   const peerSecret = randomBytes(32).toString('hex');
-  const masterKey = randomBytes(32).toString('base64');
   saveSecret(`clock-trust-peer-${label}`, peerSecret);
-  saveSecret(`clock-trust-master-${label}`, masterKey);
+  saveSecret('clock-trust-master', masterKey);
   const [r2Key, r2Secret] = readFileSync(join(stateDir, 'r2'), 'utf8').split('\n');
   const cloudflareToken = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[9];
   const running = new Map<Node, ChildProcess>();
