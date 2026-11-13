@@ -29,6 +29,8 @@ public sealed partial class AuthDbContext
 
     public DbSet<AuditEventRecord> AuditEvents => this.Set<AuditEventRecord>();
 
+    public DbSet<SsoIdentityLinkRecord> SsoIdentityLinks => this.Set<SsoIdentityLinkRecord>();
+
     public DbSet<SsoConnectionRecord> SsoConnections => this.Set<SsoConnectionRecord>();
 
     public DbSet<ProjectAuthSettingsRecord> ProjectAuthSettings => this.Set<ProjectAuthSettingsRecord>();
@@ -139,6 +141,16 @@ public sealed partial class AuthDbContext
             connection.HasOne<OrganizationRecord>().WithMany().HasForeignKey(row => row.OrganizationId).OnDelete(DeleteBehavior.Cascade);
             connection.HasIndex(row => row.OrganizationId).IsUnique();
             Versioned(connection);
+        });
+
+        model.Entity<SsoIdentityLinkRecord>(link =>
+        {
+            link.ToTable("sso_identity_links");
+            link.HasKey(row => new { row.Domain, row.Issuer, row.Subject });
+            link.HasOne<SsoConnectionRecord>().WithMany().HasForeignKey(row => row.Domain).OnDelete(DeleteBehavior.Cascade);
+            link.HasOne<MembershipRecord>().WithMany().HasForeignKey(row => new { row.OrganizationId, row.UserId }).OnDelete(DeleteBehavior.Cascade);
+            link.HasIndex(row => new { row.OrganizationId, row.UserId });
+            Versioned(link);
         });
 
         model.Entity<ProjectAuthSettingsRecord>(settings =>

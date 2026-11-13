@@ -69,6 +69,8 @@ public enum SignInStep
     /// <summary>The email's domain signs in through its organization's identity provider; continue there.</summary>
     Sso,
 
+    SsoLink,
+
     /// <summary>Ask for the authenticator app's code or a recovery code after the primary credential.</summary>
     Mfa,
 
@@ -165,6 +167,12 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The same-origin page that starts the single sign-on (<see cref="SignInStep.Sso"/>).</summary>
     public string? SsoUrl { get; init; }
 
+    public string? SsoOrganization { get; init; }
+
+    public string? SsoIssuer { get; init; }
+
+    public string? SsoConfirmation { get; init; }
+
     public string? AccountUrl => this.Next is { } next && (next == AuthOptions.DashboardOrigin + "/profile"
         || next == AuthOptions.DashboardOrigin + "/profile?tab=security")
         ? next
@@ -223,6 +231,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.DeviceDenied => this.Copy.TitleDeviceDenied,
         SignInStep.NotFound => this.Copy.TitleNotFound,
         SignInStep.Sso => this.Copy.TitleSso,
+        SignInStep.SsoLink => this.Copy.TitleSsoLink,
         SignInStep.Mfa => this.Copy.TitleMfa,
         SignInStep.MfaEnroll => this.Copy.TitleSecurity,
         SignInStep.Security => this.Copy.TitleSecurity,

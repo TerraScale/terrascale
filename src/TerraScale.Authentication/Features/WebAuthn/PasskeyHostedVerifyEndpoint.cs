@@ -3,8 +3,9 @@ using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
-using TerraScale.Authentication.Security;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Endpoints;
 
@@ -53,6 +54,12 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
             throw new ApiException(403, "passkey_denied", "The passkey registration failed verification; start again.");
         }
 
+        if (pending is not null && !Tenancy.IsProject(caller.InstanceId)
+            && !await this.HttpContext.RequestServices.GetRequiredService<SsoSignIn>().CanFinishAsync(this.HttpContext, caller, cancellationToken))
+        {
+            throw new ApiException(403, "passkey_denied", "Start sign-in again before enrolling a passkey.");
+        }
+
         var raw = PasskeyVerifyEndpoint.Map(body.Response);
         var entry = raw is null ? null
             : await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken).ConfigureAwait(false);
@@ -64,7 +71,10 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
         if (pending is not null)
         {
             var session = await sessions.CreateAsync(caller with { MultiFactor = true, MfaMethod = "passkey" }, cancellationToken);
-            BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token, caller.InstanceId);
+            if (!await SignInFlow.EnrolledAsync(this.HttpContext, sessions, session, cancellationToken))
+            {
+                throw new ApiException(403, "passkey_denied", "Start sign-in again before enrolling a passkey.");
+            }
         }
 
         return Results.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
