@@ -184,10 +184,11 @@ function displace(root, id, target) {
 try {
   const sourceRoot = new URL('../../', import.meta.url);
   const changed = execFileSync('git', ['diff', '--name-only', 'origin/main'], { encoding: 'utf8' }).trim().split('\n');
+  changed.push(...execFileSync('git', ['log', '--format=', '--name-only', 'origin/main..HEAD', '--', 'src/TerraBase'], { encoding: 'utf8', cwd: sourceRoot }).trim().split('\n'));
   changed.push(...execFileSync('git', ['ls-files', '--others', '--exclude-standard', 'src/TerraBase'], { encoding: 'utf8', cwd: sourceRoot }).trim().split('\n'));
   for (const output of [join(build, 'terrabase'), process.env.E2E_RETENTION_CERTIFICATION_BUILD]) {
     const symbols = readFileSync(join(output, 'terrabase.pdb'));
-    for (const file of changed.filter(file => file.startsWith('src/TerraBase/') && file.endsWith('.cs') && !file.endsWith('/Program.cs'))) {
+    for (const file of changed.filter(file => file.startsWith('src/TerraBase/') && file.endsWith('.cs') && !file.endsWith('/Program.cs') && existsSync(new URL(file, sourceRoot)))) {
       assert(symbols.includes(createHash('sha256').update(readFileSync(new URL(file, sourceRoot))).digest()), 'compiled source must match the final code: ' + file + ' in ' + output);
     }
   }

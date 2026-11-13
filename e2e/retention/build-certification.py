@@ -45,9 +45,14 @@ with (work / "receiver-build.log").open("w") as log:
 current = Path(os.environ["E2E_BUILD"]) / "terrabase"
 changed = subprocess.check_output(["git", "diff", "--name-only", "origin/main"], cwd=repo, text=True).splitlines()
 changed += subprocess.check_output(
+    ["git", "log", "--format=", "--name-only", "origin/main..HEAD", "--", "src/TerraBase"],
+    cwd=repo, text=True,
+).splitlines()
+changed += subprocess.check_output(
     ["git", "ls-files", "--others", "--exclude-standard", "src/TerraBase"], cwd=repo, text=True
 ).splitlines()
-inputs = [repo / name for name in changed if name.startswith("src/TerraBase/") and name.endswith(".cs")]
+inputs = [repo / name for name in sorted(set(changed))
+          if name.startswith("src/TerraBase/") and name.endswith(".cs") and (repo / name).is_file()]
 helper_stale = [
     file for file in inputs
     if file.name != "Program.cs" and file.read_bytes() != (source / file.relative_to(repo)).read_bytes()
