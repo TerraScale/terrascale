@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test as base, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
+import { expect, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
+import { clientProxy, test as base } from './client-address';
 import { checkLinks, type Link } from './links';
 import { production, stackHosts } from './stack';
 import { saveCookies } from './state';
@@ -154,7 +155,7 @@ async function guard(context: BrowserContext): Promise<void> {
 }
 
 export async function auditedContext(browser: Browser, options: BrowserContextOptions): Promise<BrowserContext> {
-  const context = await browser.newContext(options);
+  const context = await browser.newContext({ ...options, proxy: clientProxy() });
   await guard(context);
   return context;
 }

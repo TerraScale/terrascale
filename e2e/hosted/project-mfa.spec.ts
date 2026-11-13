@@ -369,17 +369,15 @@ test.describe('project MFA and session policy', () => {
             new DOMParser().parseFromString(html, 'text/html').querySelector<HTMLInputElement>('input[name=challenge]')?.value, field!);
           expect(challenge).toBeTruthy();
           saveSecret('mfa-budget-challenge-' + index, challenge!);
-          if (index < 10) {
-            const wrong = await probe.request.post(`${auth}/ui/${project}/sign-in/mfa`, {
-              headers: { Origin: auth }, form: { challenge: challenge!, code: 'invalid-recovery-code' },
-            });
-            statuses.push(wrong.status());
-            expect([401, 429], `MFA proof attempt ${index + 1}`).toContain(wrong.status());
-            if (wrong.status() === 401) expect(await wrong.text()).toContain('That code is wrong or already used');
-          }
+          const wrong = await probe.request.post(`${auth}/ui/${project}/sign-in/mfa`, {
+            headers: { Origin: auth }, form: { challenge: challenge!, code: 'invalid-recovery-code' },
+          });
+          statuses.push(wrong.status());
+          expect([401, 429], `MFA proof attempt ${index + 1}`).toContain(wrong.status());
+          if (wrong.status() === 401) expect(await wrong.text()).toContain('That code is wrong or already used');
         }
         expect(statuses[0], 'a wrong second factor reaches proof verification').toBe(401);
-        expect(statuses[9], 'wrong proofs exhaust the remaining MFA budget within ten attempts').toBe(429);
+        expect(statuses[10], 'eleven wrong proofs exceed the ten-attempt MFA budget even after the earlier window expires').toBe(429);
         expect(statuses.slice(statuses.indexOf(429)).every(status => status === 429), 'an exhausted proof budget stays exhausted').toBe(true);
       } finally {
         await saveCookies(probe);
