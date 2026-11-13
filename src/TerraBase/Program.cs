@@ -166,6 +166,7 @@ try
 
         return next(context);
     });
+    app.UseTerraBaseRegionalServices();
     app.UseTerraBaseQosMemory();
     app.UseTerraBaseCatalogGate();
     SqlRequestTiming.Checkpoint(app, "admission");
