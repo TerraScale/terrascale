@@ -42,7 +42,7 @@ internal sealed class ProxyRequestBudget(TimeProvider time, TimeSpan duration)
 
             context.Request.Headers.Remove(RemainingHeader);
             context.Features.Set(new ProxyRequestBudget(context.RequestServices.GetRequiredService<TimeProvider>(), duration));
-            if (!Listeners.IsForwarded(context) || context.Request.Headers.ContainsKey("Sec-WebSocket-Key") || context.Request.Method == "CONNECT")
+            if (!Listeners.IsForwarded(context) || context.Request.Method == "CONNECT")
             {
                 await next(context).ConfigureAwait(false);
                 return;
