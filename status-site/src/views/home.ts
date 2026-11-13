@@ -8,7 +8,6 @@ import { byHour, RANGES } from "../domain/range";
 import { vantageLabel, type Coverage, type VantageCoverage, type VantageState } from "../domain/coverage";
 import {
   aggregate,
-  CANARY_CREDENTIAL_INVALID,
   CANARY_QUOTA_EXHAUSTED,
   EMAIL_INBOX_UNAVAILABLE,
   COMING_SOON,
@@ -64,7 +63,6 @@ const REGION_ORDER: Record<string, number> = { gru: 0, fra: 1, sjc: 2 };
 
 /** What brings each monitor fault's checks back. */
 const MONITOR_REMEDY: Record<string, string> = {
-  [CANARY_CREDENTIAL_INVALID]: "Monitoring credentials need reprovisioning.",
   [CANARY_QUOTA_EXHAUSTED]: "The monitoring account has used its monthly operation allowance.",
   [EMAIL_INBOX_UNAVAILABLE]: "The disposable inbox the delivery probe reads is unavailable.",
 };

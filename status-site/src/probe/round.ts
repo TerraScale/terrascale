@@ -11,10 +11,10 @@ import { sqlTime } from "../db/reads";
 import { judge, needsBody, parseSpec, type CheckSpec } from "../domain/assertions";
 import { adopt, step, type Action, type Observation, type Tracker } from "../domain/auto-incident";
 import { consensus, settle, type VantageResult } from "../domain/consensus";
-import { aggregate, isMonitorFault, type IncidentImpact, type TimelineState } from "../domain/status";
+import { aggregate, isMonitorFault, SLOW_MS, type IncidentImpact, type TimelineState } from "../domain/status";
 import type { Env } from "../env";
 import { logEvent } from "../log";
-import { emailSample, INBOX_API, runEmailProbe, type EmailProbeState } from "./email";
+import { ARRIVAL_SLOW_MS, emailSample, INBOX_API, runEmailProbe, type EmailProbeState } from "./email";
 import { canarySample, isTokenRoute, parseCanaries, runCanary, runTokenProbe, type CanaryResult } from "./canary";
 import type { ProbeResponse, Target } from "./protocol";
 import {
@@ -209,6 +209,9 @@ export function observe(
   maintenance: readonly (string | null)[],
 ): Observation[] {
   const byId = new Map(samples.map((sample) => [sample.endpointId, sample]));
+  const slowAfter = new Map(
+    endpoints.map((endpoint) => [endpoint.id, endpoint.url === INBOX_API ? ARRIVAL_SLOW_MS : SLOW_MS]),
+  );
   return components.flatMap((component) => {
     const own = endpoints.flatMap((endpoint) =>
       endpoint.componentId === component.id ? (byId.get(endpoint.id) ?? []) : [],
@@ -216,9 +219,17 @@ export function observe(
     if (own.length === 0) return [];
     const failing = own.reduce((sum, sample) => sum + sample.total - sample.ok, 0);
     const total = own.reduce((sum, sample) => sum + sample.total, 0);
+    const slow = own.reduce(
+      (sum, sample) =>
+        sum +
+        sample.results.filter(
+          (result) => result.ok === 1 && (result.ms ?? 0) > (slowAfter.get(sample.endpointId) ?? SLOW_MS),
+        ).length,
+      0,
+    );
     const errors = [
       ...new Set(
-        own.flatMap((sample) => sample.results.flatMap((result) => (result.ok === 0 && result.e ? [result.e] : []))),
+        own.flatMap((sample) => sample.results.flatMap((result) => (result.ok !== null && result.e ? [result.e] : []))),
       ),
     ];
     const state = aggregate(own.map((sample) => sample.state as TimelineState));
@@ -232,7 +243,7 @@ export function observe(
         // Healthy HTTP siblings cannot prove recovery while the canary is unmeasured.
         state: state === "operational" && monitorFault ? "none" : state,
         monitorFault,
-        detail: `${failing} of ${total} checks failing${errors.length > 0 ? ` (${errors.slice(0, 3).join(", ")})` : ""}`,
+        detail: `${failing} of ${total} checks failing, ${slow} slow${errors.length > 0 ? ` (${errors.slice(0, 3).join(", ")})` : ""}`,
         suppressed: maintenance.includes(null) || maintenance.includes(component.id),
       },
     ];
