@@ -12,6 +12,8 @@ const listQuery = new Set(['list-type', 'prefix', 'max-keys', 'encoding-type']);
 const objects = new Map();
 const log = { calls: [], unexpected: [] };
 let backupsDown = false;
+let holesUnlisted = false;
+const backupPuts = [];
 
 const sha256 = (data, encoding) => createHash('sha256').update(data).digest(encoding);
 const hmac = (key, data) => createHmac('sha256', key).update(data).digest();
@@ -110,6 +112,28 @@ createServer((request, response) => {
     response.writeHead(204);
     return response.end();
   }
+  if (request.method === 'POST' && rawPath === '/fault/holes' && /^state=(unlisted|listed)$/.test(rawQuery)) {
+    holesUnlisted = rawQuery === 'state=unlisted';
+    response.writeHead(204);
+    return response.end();
+  }
+  if (request.method === 'GET' && rawPath === '/fault/puts') {
+    const text = JSON.stringify(backupPuts);
+    response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) });
+    return response.end(text);
+  }
+  if (request.method === 'POST' && rawPath === '/fault/plant') {
+    const key = new URLSearchParams(rawQuery).get('key') ?? '';
+    const file = /^(v1\/.+\/nodes\/[^/]+)\/holes\/[^/]+$/.exec(key);
+    const owner = file && [...objects.keys()].find((stored) => stored.includes(`/journey-backups/${file[1]}/`));
+    if (!owner) {
+      response.writeHead(404);
+      return response.end();
+    }
+    objects.set(`${owner.slice(0, owner.indexOf('/journey-backups/'))}/journey-backups/${key}`, { body: Buffer.alloc(0), type: 'application/json', etag: `"${createHash('md5').digest('hex')}"`, modified: new Date().toUTCString() });
+    response.writeHead(204);
+    return response.end();
+  }
   if (backupsDown && /^\/journey-backups(\/|$)/.test(rawPath)) return request.socket.destroy();
   if (request.method === 'GET' && rawPath === '/log') {
     const text = JSON.stringify(log);
@@ -165,11 +189,15 @@ createServer((request, response) => {
       response.writeHead(200, { 'content-type': 'application/xml', 'content-length': Buffer.byteLength(text) });
       return response.end(text);
     }
-    if (platformBucket && query.has('list-type')) return list(request, response, account, platformBucket[1], query);
+    if (platformBucket && query.has('list-type')) {
+      if (holesUnlisted && (query.get('prefix') ?? '').endsWith('/holes/')) return fail(response, 403, 'AccessDenied', 'Access Denied');
+      return list(request, response, account, platformBucket[1], query);
+    }
     if (listed) return list(request, response, account, listed[1], query);
     if (request.method === 'PUT') {
       if (Number(request.headers['content-length']) !== body.length) return unexpected(request, response, 400, 'IncompleteBody', 'content-length differs from the body');
       if ((!platform || request.headers['x-amz-checksum-sha256']) && request.headers['x-amz-checksum-sha256'] !== sha256(body, 'base64')) return fail(response, 400, 'BadDigest', 'The SHA256 you specified did not match the calculated checksum.');
+      if (platform && platform[1] === 'journey-backups') backupPuts.push(platform[2]);
       objects.set(key, { body, type: request.headers['content-type'] ?? 'application/octet-stream', etag: `"${createHash('md5').update(body).digest('hex')}"`, modified: new Date().toUTCString() });
       response.writeHead(200, { etag: objects.get(key).etag, ...(request.headers['x-amz-checksum-sha256'] ? { 'x-amz-checksum-sha256': request.headers['x-amz-checksum-sha256'] } : {}), 'content-length': 0 });
       return response.end();

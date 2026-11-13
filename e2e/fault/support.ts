@@ -27,14 +27,38 @@ export type BackupContinuity = {
   replacing: boolean; holes: BackupHole[];
 };
 
-export async function continuity(node: Node, id: string): Promise<BackupContinuity> {
+export async function continuity(node: Node, id: string): Promise<BackupContinuity & { file: string }> {
   const response = await nodeRequest(node, '/v1/backup');
   expect(response.status, response.body).toBe(200);
   const status = JSON.parse(response.body) as { files: { file: string; continuity: BackupContinuity | null }[] };
   const files = status.files.filter(file => file.file.includes(`/${id}/nodes/`));
   expect(files, JSON.stringify(status.files.map(file => file.file))).toHaveLength(1);
   expect(files[0]!.continuity).not.toBeNull();
-  return files[0]!.continuity!;
+  return { ...files[0]!.continuity!, file: files[0]!.file };
+}
+
+export type HoleRecord = { incarnation: string; from: number; to: number; fromAt: number | null; toAt: number | null; open: boolean };
+
+const time = (at: number | null) => at === null ? 'unknown' : String(at).padStart(13, '0');
+
+export const holeKey = (file: string, hole: HoleRecord) =>
+  `${file}/holes/${hole.incarnation}-${String(hole.from).padStart(16, '0')}-${String(hole.to).padStart(16, '0')}-${time(hole.fromAt)}-${time(hole.toAt)}-${hole.open ? 'open' : 'closed'}`;
+
+export async function plantHole(file: string, hole: HoleRecord): Promise<void> {
+  const response = await fetch(`${r2StandIn}/fault/plant?key=${encodeURIComponent(holeKey(file, hole))}`, { method: 'POST' });
+  expect(response.status).toBe(204);
+}
+
+export async function holeRecords(state: 'unlisted' | 'listed'): Promise<void> {
+  const response = await fetch(`${r2StandIn}/fault/holes?state=${state}`, { method: 'POST' });
+  expect(response.status).toBe(204);
+  console.log(`backup hole records ${state}`);
+}
+
+export async function backupPuts(file: string): Promise<string[]> {
+  const response = await fetch(`${r2StandIn}/fault/puts`);
+  expect(response.status).toBe(200);
+  return (await response.json() as string[]).filter(key => key.startsWith(`${file}/`));
 }
 
 export async function nodeRequest(node: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string }> {

@@ -9,10 +9,7 @@ namespace TerraBase.Features.Backup;
 
 public sealed record BackupHole(string Incarnation, long From, long To, DateTimeOffset? FromAt, DateTimeOffset? ToAt, bool Open);
 
-public sealed record BackupHoles(IReadOnlyList<BackupHole> Lost, DateTimeOffset? UnavailableBefore)
-{
-    public IEnumerable<BackupHole> Covering(DateTimeOffset at) => Lost.Where(hole => hole.Covers(at));
-}
+public sealed record BackupHoles(IReadOnlyList<BackupHole> Lost, DateTimeOffset? UnavailableBefore);
 
 public static class BackupHoleExtensions
 {

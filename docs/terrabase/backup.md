@@ -341,7 +341,8 @@ time. A listing that misses the newest state therefore shows an older, still-ref
 A restore reads the hole objects of the backup it restores from, on whatever node runs it, and joins them with the
 node's own account when the node has one: a node whose system database was lost or recovered from an older copy, or
 that never recorded the hole, still refuses a time inside it. When the hole objects cannot be listed, the restore is
-refused with 503 `pitr_plan_unavailable`: an unknown record is not a complete one. A backup written by the previous
+refused at admission with 409 `backup_history_incomplete` without `unavailableFrom` or `unavailableTo`: an unknown
+record is not a complete one, and a request after the store answers again can be admitted. A backup written by the previous
 build has no hole objects; for it the restore assumes only what the bucket proves itself (contiguous segment positions
 within a generation, a read mark or later object proving the time, and a generation that ends where the next one's
 snapshot begins), so history before the upgrade is never called complete beyond those checks, and a loss the previous
