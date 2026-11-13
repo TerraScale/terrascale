@@ -8,7 +8,7 @@ public sealed record DeletedDatabaseBody(string Id, string ProjectId, string Nam
 
 public readonly union ListDeletedDatabasesResult(ManagementPage<DeletedDatabaseBody>, NotFound, Unavailable);
 
-internal sealed record DeletedDatabaseRecord(TenantContext Storage, ManagedDatabase Database, DateTimeOffset DeletedAt, DateTimeOffset PurgeAt)
+internal sealed record DeletedDatabaseRecord(TenantContext Storage, ManagedDatabase Database, DateTimeOffset DeletedAt, DateTimeOffset PurgeAt, string Revision)
 {
     public DeletedDatabaseBody Body => new(Database.Id, Database.ProjectId, Database.Name, DeletedAt, PurgeAt);
 }

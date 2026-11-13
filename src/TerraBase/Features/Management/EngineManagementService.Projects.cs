@@ -107,8 +107,9 @@ internal sealed partial class EngineManagementService
                 return ManagementErrors.NotEmpty;
             }
 
-            while (!await EraseRetainedDatabasesAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false))
+            if (!await EraseRetainedDatabasesAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false))
             {
+                return new Unavailable("retained copies are busy; retry project deletion", "retained_catching_up");
             }
             await CatalogTables.DeleteProjectAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteKindsAsync(SystemCatalog.ProjectState(project.Id), cancellationToken).ConfigureAwait(false);

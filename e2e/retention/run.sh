@@ -26,6 +26,12 @@ exec "$E2E_RETENTION_NODE" "$@"
 NODE
 chmod 700 "$E2E_STATE/retention-tools/node"
 export PATH="$E2E_STATE/retention-tools:$PATH"
+bash e2e/env/build.sh "$root" "$E2E_BUILD" terrabase
+bash e2e/env/build.sh "$root" "$E2E_BUILD" ts-auth
+bash e2e/env/build.sh "$root" "$E2E_BUILD" dashboard
+E2E_RETENTION_CERTIFICATION_BUILD=$(python3 e2e/retention/build-certification.py)
+export E2E_RETENTION_CERTIFICATION_BUILD
+export E2E_RETENTION_RECEIVER_BUILD="$(dirname "$E2E_STATE")/certification/receiver-build"
 bash e2e/env/pki.sh
 trap 'cd "$root"; bash e2e/env/local.sh stop' EXIT
 bash e2e/env/local.sh start

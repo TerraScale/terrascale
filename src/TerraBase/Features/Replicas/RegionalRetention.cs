@@ -8,6 +8,7 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed record RetainedManifest(int Count, string Digest);
 internal sealed record RetainedEntry(DeletedDatabaseRecord Record, string Revision);
+internal sealed record RetainedCertification(int Count, string Digest, int Missing, double OldestMissingSeconds);
 internal sealed record RetainedPage(IReadOnlyList<RetainedEntry> Entries, string? Next);
 
 internal static class RegionalRetention
@@ -16,7 +17,7 @@ internal static class RegionalRetention
     internal const long PageBytes = 256 * 1024;
     internal const int MaxDatabases = 1_000_000;
 
-    internal static void Append(IncrementalHash hash, string key) => hash.AppendData(Encoding.UTF8.GetBytes(key + "\n"));
+    internal static void Append(IncrementalHash hash, string key, string revision) => hash.AppendData(Encoding.UTF8.GetBytes(key + "\n" + revision + "\n"));
 
     internal static async Task<RetainedManifest> ManifestAsync(IStorageEngine engine, CancellationToken token)
     {
@@ -32,7 +33,7 @@ internal static class RegionalRetention
                 {
                     throw new IOException("retained handoff database bound exceeded");
                 }
-                Append(hash, record.Id);
+                Append(hash, record.Id, Read(record).Revision);
             }
             after = page.HasMore ? page.Records[^1].Id : null;
         }

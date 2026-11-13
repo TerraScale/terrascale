@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { natsRequest } from '../retention/nats.mjs';
 import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
-import { auth } from '../support/stack';
+import { auth, stateDir } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
-import { crashWrite, endpoint, Ledger, regions, restartAfterKill, topology } from './support';
+import { crashWrite, endpoint, Ledger, nodes, regions, restartAfterKill, topology } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -85,5 +88,55 @@ test('restore a backup into another database and compare its rows with the snaps
   } finally {
     if (restored) await removeDatabase(cells, restored);
     await removeDatabase(cells, created.id);
+  }
+});
+
+test('retained deletion holds an incoming remote write until restoration', async ({ cells }, info) => {
+  info.annotations.push({ type: 'release-dependency', description: 'Expected to fail with the acknowledging consumer; requires the frontier consumer to hold unknown retained IDs. This remains a required fault journey assertion.' });
+  const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+    data: { name: name('retained-incoming'), regions: [...regions] },
+  }), 201);
+  const ledger = new Ledger(created.id);
+  const token = readFileSync(join(stateDir, 'nats-token'), 'utf8').trim();
+  const stream = 'TERRABASE_PUSH_FRA';
+  const listed = await natsRequest(token, '$JS.API.CONSUMER.NAMES.' + stream) as { consumers: string[] };
+  const consumers = listed.consumers.filter(consumer => /^home-gru(?:-|$)/.test(consumer));
+  expect(consumers.length).toBeGreaterThan(0);
+  const pause = async (until: string) => {
+    for (const consumer of consumers) await natsRequest(token, '$JS.API.CONSUMER.PAUSE.' + stream + '.' + consumer, { pause_until: until });
+  };
+  let restored = false;
+  try {
+    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await ledger.write(cells, 'gru', [[1, 'before-delete']]);
+    await ledger.compare(cells);
+    await pause(new Date(Date.now() + 3_600_000).toISOString());
+    await ledger.write(cells, 'fra', [[2, 'arrived-while-retained']]);
+    const state = await natsRequest(token, '$JS.API.STREAM.INFO.' + stream) as { state: { last_seq: number } };
+    expect((await ledger.read(cells, 'gru')).some(row => row[0] === 2)).toBe(false);
+    expect((await cells.delete(`${endpoint('gru')}${database(created.id)}`)).status()).toBe(204);
+    await pause('0001-01-01T00:00:00Z');
+    await expect.poll(async () => {
+      const details = await Promise.all(consumers.map(consumer => natsRequest(token, '$JS.API.CONSUMER.INFO.' + stream + '.' + consumer))) as { delivered: { stream_seq: number } }[];
+      return details.some(consumer => consumer.delivered.stream_seq >= state.state.last_seq);
+    }, { message: 'the remote write reaches the consumer while the home database is retained' }).toBe(true);
+    await expect.poll(async () => {
+      const details = await Promise.all(consumers.map(consumer => natsRequest(token, '$JS.API.CONSUMER.INFO.' + stream + '.' + consumer))) as { ack_floor: { stream_seq: number } }[];
+      if (details.some(consumer => consumer.ack_floor.stream_seq >= state.state.last_seq)) return true;
+      const homeNodes = nodes.filter(node => node.region === 'gru');
+      const metrics = await Promise.all(homeNodes.map(async node => {
+        const response = await fetch('http://' + node.address + ':' + (node.name === 'journey-1' ? 9091 : 9291) + '/metrics');
+        return response.text();
+      }));
+      return metrics.some(text => /^terrabase_push_held(?:\{[^}]*\})? [1-9]/m.test(text));
+    }, { message: 'delivery is either acknowledged by the old consumer or held by the frontier consumer before restore' }).toBe(true);
+    const restore = await cells.post(`${endpoint('gru')}${project()}/deleted-databases/${created.id}/restore`);
+    expect(restore.status()).toBe(200);
+    restored = true;
+    await expect.poll(() => ledger.read(cells, 'gru'), { message: 'restore includes the remote write delivered during retention', timeout: 45_000 })
+      .toEqual([[1, 'before-delete'], [2, 'arrived-while-retained']]);
+  } finally {
+    await pause('0001-01-01T00:00:00Z');
+    if (restored) await removeDatabase(cells, created.id);
   }
 });

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes, createHash, createHmac } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { dirname, join } from 'node:path';
 import { expect } from '@playwright/test';
+import { natsRequest } from './nats.mjs';
 
 const state = process.env.E2E_STATE;
 const build = process.env.E2E_BUILD;
@@ -181,9 +182,30 @@ function displace(root, id, target) {
 }
 
 try {
+  const sourceRoot = new URL('../../', import.meta.url);
+  const changed = execFileSync('git', ['diff', '--name-only', 'origin/main'], { encoding: 'utf8' }).trim().split('\n');
+  changed.push(...execFileSync('git', ['ls-files', '--others', '--exclude-standard', 'src/TerraBase'], { encoding: 'utf8', cwd: sourceRoot }).trim().split('\n'));
+  for (const output of [join(build, 'terrabase'), process.env.E2E_RETENTION_CERTIFICATION_BUILD]) {
+    const symbols = readFileSync(join(output, 'terrabase.pdb'));
+    for (const file of changed.filter(file => file.startsWith('src/TerraBase/') && file.endsWith('.cs') && !file.endsWith('/Program.cs'))) {
+      assert(symbols.includes(createHash('sha256').update(readFileSync(new URL(file, sourceRoot))).digest()), 'compiled source must match the final code: ' + file + ' in ' + output);
+    }
+  }
+  console.log('compiled source: every changed TerraBase C# file matches the final source in both proof builds');
   const contract = await fetch('https://api.terrascale.tech/openapi/v1.json');
   assert.equal(contract.status, 200, 'export the real generated contract before the proof');
   writeFileSync(join(directory, 'openapi-v1.json'), await contract.text());
+  const certificationBuild = process.env.E2E_RETENTION_CERTIFICATION_BUILD;
+  assert(certificationBuild && existsSync(join(certificationBuild, 'terrabase.dll')));
+  const certificationEnvironment = { ...environment, DOTNET_ENVIRONMENT: 'Development', TERRABASE_DATA_DIRECTORY: join(directory, 'certification-data'),
+    TERRABASE_PORT: '8480', TERRABASE_INTERNAL_PORT: '8481', TERRABASE_METRICS_PORT: '9491', TERRABASE_POSTGRES_PORT: '6832' };
+  for (const key of ['TS_REGION', 'TS_NODE', 'TS_PEERS_FILE', 'TS_NATS_URL', 'TERRABASE_NATS_TOKEN_FILE']) delete certificationEnvironment[key];
+  const certification = start('certification-10000', 'dotnet', [join(certificationBuild, 'terrabase.dll')], certificationEnvironment);
+  const [certificationCode] = await nodes.find(node => node.process === certification).stopped;
+  const certificationLog = readFileSync(join(directory, 'certification-10000.log'), 'utf8');
+  console.log(certificationLog.split('\n').filter(line => line.startsWith('CERTIFICATION_10000')).join('\n'));
+  assert.equal(certificationCode, 0, 'the 10000-record production certification proof succeeds');
+  const mixedStarted = performance.now();
   const receiverBuild = process.env.E2E_RETENTION_RECEIVER_BUILD;
   assert(receiverBuild && existsSync(join(receiverBuild, 'terrabase.dll')), 'the preparation build is required for mixed-version proof');
   const receiverPid = Number(readFileSync(join(state, 'pids', 'terrabase-fra.pid'), 'utf8'));
@@ -213,7 +235,7 @@ try {
   const preparedReceiver = nodes.find(node => node.name === 'receiver-preparation');
   preparedReceiver.process.kill('SIGTERM');
   await preparedReceiver.stopped;
-  console.log('mixed version: candidate home soft-delete, C54 receiver forgets without retiring id, restore re-adopts row [73]');
+  console.log('mixed version: candidate home soft-delete, C54 receiver forgets without retiring id, restore re-adopts row [73]; elapsed_ms=' + Math.round(performance.now() - mixedStarted));
   for (const name of ['terrabase', 'terrabase-fra']) {
     const pid = Number(readFileSync(join(state, 'pids', name + '.pid'), 'utf8'));
     if (existsSync('/proc/' + pid)) process.kill(pid, 'SIGTERM');
@@ -281,9 +303,33 @@ try {
     coldCandidate.process.kill('SIGCONT');
   }
   const [restoreId, purgeId, unreachableId, expiryId] = created;
-  await expect.poll(() => files(roots[1], restoreId), { message: 'candidate has no retained source files before handoff', timeout: 45_000 }).toEqual([]);
-  await expect.poll(() => files(roots[1], purgeId), { message: 'candidate has no second retained source files before handoff', timeout: 45_000 }).toEqual([]);
-  console.log('candidate has no retained files before handoff');
+  const coldStarted = performance.now();
+  const cold = await checked(1, '/v1/rollout/drain?target=journey-2', 'POST', undefined, 503);
+  assert.equal(cold.json().error.code, 'retained_catching_up');
+  assert.match(cold.json().error.message, /candidate is still catching up: at least [1-9][0-9]* retained copies missing or behind/);
+  const coldElapsed = performance.now() - coldStarted;
+  assert(coldElapsed < 5000, 'cold candidate is refused immediately, before the drain deadline');
+  assert.equal((await checked(1, '/v1/rollout/status')).json().writer, true);
+  console.log('300 cold: planned handoff refused retained_catching_up; source writer=true; elapsed_ms=' + Math.round(coldElapsed));
+  const catchingUp = performance.now();
+  let catchingUpProof;
+  try {
+    await expect.poll(async () => {
+      catchingUpProof = (await checked(2, '/v1/rollout/retained/certification')).json();
+      return catchingUpProof;
+    }, { message: 'the background reconciler catches up all 300 retained copies', timeout: 45_000 })
+      .toMatchObject({ count: 300, missing: 0 });
+  } finally {
+    console.log('300 cold: background catch-up current=' + (catchingUpProof ? catchingUpProof.count - catchingUpProof.missing : 'unavailable')
+      + ' missing=' + (catchingUpProof?.missing ?? 'unavailable') + '; elapsed_ms=' + Math.round(performance.now() - catchingUp));
+  }
+  for (let sample = 1; sample <= 3; sample++) {
+    const started = performance.now();
+    const proof = (await checked(2, '/v1/rollout/retained/certification')).json();
+    assert.equal(proof.count, 300);
+    assert.equal(proof.missing, 0);
+    console.log('300 warm certification sample=' + sample + '; elapsed_ms=' + Math.round(performance.now() - started));
+  }
   const pull = '/v1/sync/organizations/' + owner.organizationId + '/projects/' + owner.projectId + '/databases/' + restoreId + '/pull-updates';
   const publicPull = await fetch('http://127.0.0.1:8080' + pull, {
     method: 'POST', body: Buffer.alloc(0),
@@ -312,6 +358,8 @@ try {
   }
   const handoffStarted = performance.now();
   await checked(1, '/v1/rollout/drain?target=journey-2', 'POST', undefined, 204);
+  const handoffElapsed = performance.now() - handoffStarted;
+  assert(handoffElapsed < 30_000, 'planned warm handoff stays inside the existing deadline');
   assert.equal((await checked(2, '/v1/rollout/status')).json().writer, true);
   await routeAuthToWriter(2);
   const received = [];
@@ -323,7 +371,7 @@ try {
   } while (receivedAfter);
   assert.equal(received.length, 300);
   assert(pageIds.every(record => received.includes(record.id)));
-  console.log('300 retained databases crossed handoff in bounded pages; verified manifest; elapsed ms=' + Math.round(performance.now() - handoffStarted));
+  console.log('300 warm: planned handoff certified without retained transfer; elapsed_ms=' + Math.round(handoffElapsed));
   assert(files(roots[1], restoreId).some(file => file.endsWith('.db')));
   assert(files(roots[1], purgeId).some(file => file.endsWith('.db')));
   console.log('POST /v1/rollout/drain?target=journey-2 -> 204; peer writer=true; both retained databases have files');
@@ -406,6 +454,60 @@ try {
   assert.deepEqual((await checked(2, deleted(unreachableId), 'GET')).json().outstanding, []);
   assert.deepEqual(await backups(unreachableId), []);
   console.log('verified files=0, keys=0, backup objects=0: both purge jobs GET complete; subsequent DELETE 404 gone');
+  const takeoverRecord = (await checked(2, project + '/databases', 'POST', { name: 'retained-unplanned', regions: ['gru'] }, 201)).json();
+  await checked(2, database(takeoverRecord.id) + '/sql/execute', 'POST', { statements: [{ sql: 'CREATE TABLE proof (value INTEGER)' }, { sql: 'INSERT INTO proof VALUES (99117)' }] });
+  await checked(2, database(takeoverRecord.id), 'DELETE', undefined, 204);
+  const unavailable = { id: takeoverRecord.id, value: 99117 };
+  await expect.poll(() => files(roots[0], unavailable.id).some(file => file.endsWith('.db')),
+    { message: 'candidate continuously retains the crash-proof database', timeout: 45_000 }).toBe(true);
+  await expect.poll(async () => (await checked(1, '/v1/rollout/retained/certification')).json().missing,
+    { message: 'returning candidate holds retained copies before the crash proof', timeout: 45_000 }).toBe(0);
+  const oldWriter = nodes.find(node => node.name === 'node-2');
+  const candidate = nodes.find(node => node.name === 'node-1');
+  oldWriter.process.kill('SIGSTOP');
+  candidate.process.kill('SIGSTOP');
+  const returnCandidateFiles = displace(roots[0], unavailable.id, join(held, 'takeover'));
+  const beforeTakeoverKeys = await keys(unavailable.id);
+  const beforeTakeoverBackups = await backups(unavailable.id);
+  const takeoverStarted = performance.now();
+  try {
+    const latest = await natsRequest(natsToken, '$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
+    const owner = JSON.parse(Buffer.from(latest.message.data, 'base64').toString());
+    await natsRequest(natsToken, '$KV.terrabase-region-owners.gru', {
+      ...owner, node: 'journey-1', epoch: owner.epoch + 1, previous: 'journey-2', activated: false, prepared: null,
+      transfer: { id: randomBytes(16).toString('hex'), source: 'journey-1', target: 'journey-1',
+        sourceSession: '', phase: 'recovering', deadline: new Date(Date.now() + 30_000).toISOString() },
+    });
+    candidate.process.kill('SIGCONT');
+    await expect.poll(async () => (await checked(1, '/v1/rollout/status')).json().writer,
+      { message: 'unplanned takeover does not wait for the retained copy', timeout: 45_000 }).toBe(true);
+    await routeAuthToWriter(1);
+    const liveRows = (await checked(1, database(restoreId) + '/sql/execute', 'POST', { statements: [{ sql: 'SELECT value FROM kept ORDER BY value' }] })).json().results[0].rows;
+    assert.deepEqual(liveRows, [[11], [22], [33]]);
+    const unavailableRestore = await checked(1, deleted(unavailable.id) + '/restore', 'POST', undefined, 503);
+    assert.equal(unavailableRestore.json().error.code, 'retained_copy_unavailable');
+    assert.match(unavailableRestore.json().error.message, /copy not available on this node yet/);
+    await checked(1, deleted(unavailable.id), 'DELETE', undefined, 503);
+    assert.deepEqual(await keys(unavailable.id), beforeTakeoverKeys);
+    assert.deepEqual(await backups(unavailable.id), beforeTakeoverBackups);
+    const retained = (await checked(1, project + '/deleted-databases?limit=100')).json();
+    assert(retained.items.some(record => record.id === unavailable.id) || retained.next);
+    console.log('unplanned takeover: live rows continue, restore retryable 503, purge 503, catalog/keys/backups preserved; elapsed_ms=' + Math.round(performance.now() - takeoverStarted));
+    oldWriter.process.kill('SIGCONT');
+    const arriving = performance.now();
+    await expect.poll(async () => (await checked(1, '/v1/rollout/retained/certification')).json().missing,
+      { message: 'returning partner supplies and certifies the missing retained copy outside handoff', timeout: 45_000 }).toBe(0);
+    assert(files(roots[0], unavailable.id).some(file => file.endsWith('.db')));
+    await checked(1, deleted(unavailable.id) + '/restore', 'POST');
+    const restoredRows = (await checked(1, database(unavailable.id) + '/sql/execute', 'POST', { statements: [{ sql: 'SELECT value FROM proof' }] })).json().results[0].rows;
+    assert.deepEqual(restoredRows, [[unavailable.value]]);
+    console.log('unplanned takeover: copy arrived from returning partner and restore has original row; elapsed_ms=' + Math.round(performance.now() - arriving));
+  } finally {
+    oldWriter.process.kill('SIGCONT');
+    candidate.process.kill('SIGCONT');
+    rmSync(join(held, 'takeover'), { recursive: true, force: true });
+  }
+
 
 
 

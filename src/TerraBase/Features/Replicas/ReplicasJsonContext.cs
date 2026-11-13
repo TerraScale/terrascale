@@ -21,6 +21,7 @@ namespace TerraBase.Features.Replicas;
 [JsonSerializable(typeof(RetentionExpiryRequest))]
 [JsonSerializable(typeof(RetentionExpiryAnswer))]
 [JsonSerializable(typeof(RetainedManifest))]
+[JsonSerializable(typeof(RetainedCertification))]
 [JsonSerializable(typeof(RetainedPage))]
 [JsonSerializable(typeof(RegionalPosition))]
 [JsonSerializable(typeof(RegionalPrepare))]

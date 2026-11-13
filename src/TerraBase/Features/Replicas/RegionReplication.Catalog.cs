@@ -373,7 +373,15 @@ internal sealed partial class RegionReplication
                 await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
+                    if (home.Region == options.Region
+                        && await remote.RetentionAsync(home.Internal, database, cancellationToken).ConfigureAwait(false) is not false)
+                    {
+                        await SuspendAsync(database).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
+                    }
                     if (await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false) is Unavailable error)
                     {
                         faults.Failed(database, home.Region, new InvalidOperationException(error.Message));

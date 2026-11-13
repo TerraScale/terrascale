@@ -1284,7 +1284,7 @@
           "Databases"
         ],
         "summary": "Reads the durable database purge job",
-        "description": "Requires a project token without a database restriction and databases:write, the same scope as restore. Call the region that accepted deletion. Starts durable destruction, ending the restore window. 202 includes the job state until files, keys on every holder and backup objects are verified absent; 204 confirms verified completion. Repeating an incomplete request returns its current job; a completed job returns 404 gone on a later DELETE. GET on this path reads the job, including after completion. Storage is released at purge, not at soft deletion. A call outside the home region returns 409 wrong_region.\n\nRequired JWT scopes: databases:write.",
+        "description": "Requires a project token without a database restriction and databases:write. Call the region that accepted deletion. Returns 200 with the durable purge job, including after completion. The job remains destroying until files, keys on every holder and backup objects are verified absent, then becomes complete with no outstanding work. Returns 404 when no purge job exists, 409 wrong_region outside the home region, or retryable 503 when unavailable. Reading the job does not start deletion.\n\nRequired JWT scopes: databases:write.",
         "operationId": "getDatabasePurge",
         "parameters": [
           {

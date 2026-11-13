@@ -45,27 +45,35 @@ checked again inside the catalog commit. An outgoing writer's retained copies ca
 no authority after handoff. Authenticated permanent purge supersedes retention on
 every holder, so retained records cannot protect files from authorized destruction.
 
-A regional writer handoff transfers retained home databases outside the catalog
-snapshot's unchanged 10,000-row and 4 MiB aggregate bounds. The retained protocol
-allows up to 1,000,000 databases, in pages of at most 100 records and 256 KiB of
-stored payload. Project-index records are reconstructed. The receiver verifies a
-manifest count and SHA-256 digest over ordered database keys, and each certified
-database position, before promotion. Retained records commit by page before file
-imports, protecting staged files; at most four databases import concurrently.
-A 10,000-database transfer requires at least
-100 pages; elapsed time depends on file sizes and catch-up I/O, and has not yet
-been measured. The existing 30-second drain budget still fails closed if exhausted. A cold
-300-database transfer currently exceeds that budget, so the protocol bound is
-not a validated runtime capacity. Transfer preparation must leave the critical
-drain window before this can ship.
-The incoming writer imports their files before completing the handoff. Retained page
-pulls require the internal listener, a valid peer credential and a known peer in the
-same region. Clients and other regions cannot pull a retained database.
+Retained databases replicate continuously to the in-region partner. Deletion records
+the database's final drained position. A background reconciler imports missing or
+behind copies through the normal page-replica path, with at most four concurrent
+imports and bulk I/O priority below tenant traffic. Catalog pages contain at most
+100 records and 256 KiB of stored payload; project indexes are reconstructed.
+The separate retained-record bound is 1,000,000 databases. Retained page pulls
+require the internal listener, a valid peer credential and a known same-region peer.
+Clients and other regions cannot pull a retained database.
 
-Restore returns 503 with Retry-After while retained files are unavailable. Purge also
-refuses missing retained files: it preserves the retained record, keys and backups,
-increments terrabase.purge.errors with reason retained_files_missing and logs the
-database ID. Maintenance can purge after the files return.
+A planned handoff checks the candidate before fencing the writer. A missing,
+behind or different retained set returns retryable 503 retained_catching_up,
+including a missing-count lower bound when catalogs differ and a statement that the candidate is still catching up.
+The writer keeps serving. Prepare transfers no retained files: it compares the
+count and SHA-256 digest of ordered database keys and certified positions against
+the candidate's locally verified copies. The existing 30-second deadline remains.
+
+An unplanned takeover does not wait for retained copies or their leases. Live
+traffic can resume with the copies available on the new node. The reconciler
+continues fetching retained copies from the returning partner. A retained record
+stays in the catalog when its copy is absent. Restore returns retryable 503
+retained_copy_unavailable with "copy not available on this node yet" until that
+copy is current locally. Purge and scheduled expiry also refuse missing or behind
+copies, preserving the catalog record, keys and backups. They increment
+terrabase.purge.errors with reason retained_files_missing.
+
+The gauges terrabase.retention.catalog, terrabase.retention.current and
+terrabase.retention.missing expose the retained count, current local copies and
+missing or behind copies. terrabase.retention.oldest_missing reports the age in
+seconds of the oldest deleted record whose copy is missing or behind.
 
 Scheduled expiry waits until the writer and at least one other node independently
 confirm that seven days plus a one-hour margin have passed since deletion. It asks
@@ -92,13 +100,19 @@ Incoming replicated writes must remain durable until restoration permits applyin
 them or permanent purge permits discarding them. The current replication consumer
 acknowledges a missing live registration before its apply loop, so it does not yet
 preserve writes arriving during retention. This blocks release of retention-producing
-deletion. The consumer change must remove the missing-registration acknowledgement,
-use only positive `DatabasePurge.IsPermanentlyPurgedAsync` authority to acknowledge
-without applying, and leave missing or retained registrations in its existing durable
-progress-and-backoff loop until restoration or permanent purge. That admission
-check must run before decode or park, and recheck permanent authority while waiting.
-The replication consumer is outside this change; retained-record presence must never authorize an
-acknowledgement.
+deletion. The frontier consumer distinguishes positive permanent-purge authority from
+unknown registrations. A retained record has no permanent-purge authority, so it
+must remain held until restore makes its registration visible. Once restored, the
+consumer applies the stored message before acknowledging it. The required
+multi-region fault journey pauses delivery, commits a remote row, deletes at home,
+resumes delivery while retained, then restores and checks both rows. Its release
+dependency annotation does not skip the assertion or turn its failure green.
+The replication consumer is outside this change.
+
+The receiver-only build must also preserve same-region retained copies and their
+catalog before producers roll out. Its current missing-registration sweep still
+deletes a same-region replica. That receiving-side gap blocks the rolling-release
+guarantee even when the cross-region mixed-build restore proof passes.
 
 Release order, with every node upgraded before the next step: handoff-import
 compatibility, retained-deletion receivers, then retention-producing deletion.

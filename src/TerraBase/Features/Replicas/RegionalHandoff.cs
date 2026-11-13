@@ -200,13 +200,14 @@ internal sealed partial class RegionalHandoff(
             _activationAfter = page.Next;
         }
         while (true);
-        do
+        while (owner.Transfer is { Phase: Activating })
         {
             var retained = await RegionalRetention.RecordsAsync(services.GetRequiredService<IStorageEngine>(), _activationRetainedAfter, cancellationToken).ConfigureAwait(false);
             foreach (var stored in retained.Records)
             {
                 var record = RegionalRetention.Read(stored);
-                if (!await leases.TakeRetainedRegionalAsync(record, source, cancellationToken).ConfigureAwait(false))
+                if (services.GetRequiredService<IStorageEngine>().HasDatabaseFiles(record.Storage, cancellationToken)
+                    && !await leases.TakeRetainedRegionalAsync(record, source, cancellationToken).ConfigureAwait(false))
                 {
                     return false;
                 }
@@ -217,7 +218,6 @@ internal sealed partial class RegionalHandoff(
                 break;
             }
         }
-        while (true);
         _activeEpoch = owner.Epoch;
         _activatingEpoch = 0;
         _activationAfter = null;
@@ -376,7 +376,7 @@ internal sealed partial class RegionalHandoff(
             }
         }
 
-        if (request.Retained is not null && !await ReceiveRetainedAsync(request, cancellationToken).ConfigureAwait(false))
+        if (request.Retained is not null && !await CertifyRetainedAsync(request.Retained, cancellationToken).ConfigureAwait(false))
         {
             return Refuse("retained manifest or certified positions did not verify");
         }
@@ -538,6 +538,19 @@ internal sealed partial class RegionalHandoff(
         if (peer is null)
         {
             return DrainRefused(progress, "target is outside admitted regional peers");
+        }
+
+        if (owners.Writer)
+        {
+            var manifest = await RegionalRetention.ManifestAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false);
+            using var certification = await _http.GetAsync(new Uri(peer.InternalListener(options.InternalPort), "/v1/rollout/retained/certification"), cancellationToken).ConfigureAwait(false);
+            var proof = certification.IsSuccessStatusCode
+                ? await certification.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.RetainedCertification, cancellationToken).ConfigureAwait(false) : null;
+            if (proof is null || proof.Missing != 0 || proof.Count != manifest.Count || proof.Digest != manifest.Digest)
+            {
+                var missing = proof is null ? manifest.Count : Math.Max(proof.Missing, Math.Abs(manifest.Count - proof.Count));
+                return new Unavailable($"candidate is still catching up: at least {Math.Max(1, missing)} retained copies missing or behind", "retained_catching_up");
+            }
         }
 
         IDisposable? admission = null;

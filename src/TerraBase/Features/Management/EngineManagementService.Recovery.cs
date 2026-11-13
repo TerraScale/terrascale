@@ -175,6 +175,7 @@ internal sealed partial class EngineManagementService : IDisposable
     private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(
         TenantContext storage, CancellationToken cancellationToken, bool abandonedCreation = false, TenantContext? intent = null)
     {
+        using var copy = await retention.LockCopyAsync(storage.DatabaseId!, cancellationToken).ConfigureAwait(false);
         var registered = await ReadAsync<CleanupRegistration>(async transaction =>
         {
             if (intent is not null && !SameCleanupIntent(

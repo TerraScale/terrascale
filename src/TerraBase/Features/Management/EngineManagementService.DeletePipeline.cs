@@ -76,7 +76,7 @@ internal sealed partial class EngineManagementService
     }
 
     private async ValueTask<RecordedDeletion> DeleteRecordedAsync(
-        TenantContext storage, Func<IStorageTransaction, CancellationToken, ValueTask<bool>> unregister, CancellationToken cancellationToken)
+        TenantContext storage, Func<IStorageTransaction, CancellationToken, ValueTask<bool>> unregister, CancellationToken cancellationToken, RetentionAuthority.Lease? admission = null)
     {
         var recording = false;
         RecordedDeletion decision = false;
@@ -111,6 +111,7 @@ internal sealed partial class EngineManagementService
             return decision;
         }
 
+        admission?.Dispose();
         checkpoint("delete.intent", storage);
         var cleanup = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
         if (cleanup is Unavailable error)
