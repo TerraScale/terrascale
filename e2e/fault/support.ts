@@ -228,6 +228,10 @@ export class Ledger {
     })).status, { message: `database ${this.id} is deleted`, timeout: 60_000 }).toBe(204);
   }
 
+  statement(rows: Row[]): string {
+    return `INSERT INTO fault_rows (id, value) VALUES ${rows.map(([id, value]) => `(${id}, '${value}')`).join(',')}`;
+  }
+
   async write(cells: Cells, region: string, rows: Row[]): Promise<void> {
     this.record('submitted', rows, region);
     await sql(cells, endpoint(region), this.id, this.statement(rows));
