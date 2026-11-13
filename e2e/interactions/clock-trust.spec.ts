@@ -304,8 +304,8 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     await expect.poll(() => metric(a, 'terrabase_clock_steps_total'), { message: 'the step is counted' }).toBeGreaterThan(stepsBefore);
     const readings: string[] = [];
     await expect.poll(async () => {
-      const rounds = await metric(a, 'terrabase_clock_agreeing_rounds');
       const open = await allowed(a);
+      const rounds = await metric(a, 'terrabase_clock_agreeing_rounds');
       readings.push(`${open}@${rounds}`);
       if (open === 1) expect(rounds).toBeGreaterThanOrEqual(2);
       return open;
