@@ -51,11 +51,11 @@ namespace TerraScale.Dashboard.Features.Data
             return SavedQueryOutput(await saved.SaveAsync(Scope(organizationId, projectId), "", name, sql, Cancellation));
         }
 
-        [McpServerTool(Name = "delete_saved_query", Title = "Delete saved query", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Delete a saved query from the project. Requires write access.")]
-        public async Task<McpDeleted> DeleteSavedQuery(string queryId, string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "delete_saved_query", Title = "Delete saved query", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
+        public McpStepUpRequired DeleteSavedQuery(string queryId, string? organizationId = null, string? projectId = null, string databaseId = "")
         {
-            await saved.DeleteAsync(Scope(organizationId, projectId), "", queryId, Cancellation);
-            return new(true);
+            var scope = DatabaseService.Scope(Scope(organizationId, projectId));
+            return McpDeletion.Required("delete_saved_query", queryId, scope, databaseId);
         }
 
         private static McpSavedQuery SavedQueryOutput(SavedQuery query)

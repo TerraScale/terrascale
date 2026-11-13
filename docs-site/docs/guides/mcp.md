@@ -93,4 +93,21 @@ accept `ttlHours`. With `pointInTime`, `fork_database` returns a running restore
 
 Creating or rotating an API key needs the dashboard: an unattended assistant call returns `step_up_required`, and you finish the action from the dashboard's **API keys** page, where rotating also asks for a fresh confirmation. Listing, restricting and revoking keys work from the assistant.
 
+## Delete resources
+
+The `delete_database`, `delete_project`, `delete_saved_query`, `delete_function`,
+`delete_file_bucket` and `delete_file` tools never delete through an unattended
+MCP connection, whether it uses a project API key, OAuth or a personal access token.
+They return `code: "step_up_required"`, `tool`, `resource` and `confirmationUrl`.
+Open the URL, sign in to the indicated organization and project, and confirm the
+action in the dashboard. The resource remains until the dashboard completes deletion.
+
+The URL opens the database's danger zone, organization projects, function details,
+bucket or file page. For a saved query, pass `databaseId` to open that database's
+SQL editor; without it, select the database from the database list and open its SQL editor.
+The dashboard retains its authorization and confirmation requirements.
+
+`execute_sql` still accepts writes and schema changes allowed by the key's scopes;
+it does not use this resource-deletion handoff.
+
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

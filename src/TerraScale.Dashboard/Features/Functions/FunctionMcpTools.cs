@@ -35,22 +35,11 @@ namespace TerraScale.Dashboard.Features.Functions
             return new(await functions.LogsAsync(context, DatabaseService.Database(context, databaseId), name, Cancellation));
         }
 
-        [McpServerTool(Name = "delete_function", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Permanently delete a function with its schedule and logs. Obtain explicit user consent; confirmName must equal name. Requires project data write access.")]
-        public async Task<McpFunctionDeleted> Delete(string databaseId, string name, string confirmName, string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "delete_function", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
+        public McpStepUpRequired Delete(string databaseId, string name, string confirmName, string? organizationId = null, string? projectId = null)
         {
-            var context = Scope(organizationId, projectId);
-            var database = DatabaseService.Database(context, databaseId);
-            if (name.Length == 0 || !string.Equals(name, confirmName, StringComparison.Ordinal))
-            {
-                throw new AccountAccessException("Confirm the function name before deleting it.", 422);
-            }
-
-            if (!await functions.DeleteAsync(context, database, name, Cancellation))
-            {
-                throw new AccountAccessException("This function does not exist.", 404);
-            }
-
-            return new(true);
+            var scope = DatabaseService.Scope(Scope(organizationId, projectId));
+            return McpDeletion.Required("delete_function", name, scope, databaseId);
         }
 
         private AccountContext Scope(string? organizationId, string? projectId)
@@ -64,5 +53,4 @@ namespace TerraScale.Dashboard.Features.Functions
     public sealed record McpFunctionList(IReadOnlyList<FunctionRecord> Functions, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
     public sealed record McpFunctionDetail(FunctionRecord Function, string InvokeUrl);
     public sealed record McpFunctionLogs(IReadOnlyList<FunctionInvocation> Logs);
-    public sealed record McpFunctionDeleted(bool Deleted);
 }

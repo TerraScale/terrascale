@@ -20,12 +20,11 @@ namespace TerraScale.Dashboard.Features.Settings
             return new(true);
         }
 
-        [McpServerTool(Name = "delete_project", UseStructuredContent = true, Destructive = true, OpenWorld = false), Description("Delete an empty project after confirming its exact name. The default or last project cannot be deleted. Requires an owner or admin role.")]
-        public async Task<ProjectDeleted> Delete(string confirmName, string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "delete_project", UseStructuredContent = true, Destructive = true, OpenWorld = false), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
+        public McpStepUpRequired Delete(string confirmName, string? organizationId = null, string? projectId = null)
         {
-            var scope = Scope(organizationId, projectId);
-            await settings.DeleteProjectAsync(scope, scope.Project?.Id ?? "", confirmName, Cancellation);
-            return new(true);
+            var scope = DatabaseService.Scope(Scope(organizationId, projectId));
+            return McpDeletion.Required("delete_project", scope.ProjectId, scope);
         }
 
         private AccountContext Scope(string? organizationId, string? projectId)
@@ -37,5 +36,4 @@ namespace TerraScale.Dashboard.Features.Settings
     }
 
     public sealed record SettingsSaved(bool Saved);
-    public sealed record ProjectDeleted(bool Deleted);
 }

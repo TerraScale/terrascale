@@ -26,11 +26,11 @@ namespace TerraScale.Dashboard.Features.FileStorage
             return Save(() => files.SetRulesAsync(Scope(organizationId, projectId), bucketId, rules, Cancellation));
         }
 
-        [McpServerTool(Name = "delete_file_bucket", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Delete an empty bucket after explicit user consent. confirmName must equal the bucket name exactly; pending file cleanup may prevent deletion. Requires project data write access.")]
-        public Task<McpFileStorageSaved> DeleteBucket(string bucketId, string confirmName, string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "delete_file_bucket", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
+        public McpStepUpRequired DeleteBucket(string bucketId, string confirmName, string? organizationId = null, string? projectId = null)
         {
-            var context = Scope(organizationId, projectId);
-            return Save(() => files.DeleteBucketAsync(context, bucketId, confirmName, Cancellation));
+            var scope = DatabaseService.Scope(Scope(organizationId, projectId));
+            return McpDeletion.Required("delete_file_bucket", bucketId, scope);
         }
 
         [McpServerTool(Name = "create_file_upload", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Reserve file storage and return a private five-minute upload capability. Upload size is 1–104857600 bytes, sha256 is base64, and metadata is a JSON object. PUT the exact bytes with every returned header, then call complete_file_upload. Never log or share the URL or headers. Requires project data write access.")]
@@ -45,12 +45,11 @@ namespace TerraScale.Dashboard.Features.FileStorage
             return Save(() => files.CompleteAsync(Scope(organizationId, projectId), bucketId, fileId, Cancellation));
         }
 
-        [McpServerTool(Name = "delete_file", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Revoke new downloads and queue physical file cleanup after explicit user consent. confirmFileId must equal fileId. Existing signed downloads remain valid until expiry. Requires project data write access and the file's write rule.")]
-        public Task<McpFileStorageSaved> Delete(string bucketId, string fileId, string confirmFileId, string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "delete_file", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
+        public McpStepUpRequired Delete(string bucketId, string fileId, string confirmFileId, string? organizationId = null, string? projectId = null)
         {
-            var context = Scope(organizationId, projectId);
-            Confirm(fileId, confirmFileId, "file");
-            return Save(() => files.DeleteAsync(context, bucketId, fileId, Cancellation));
+            var scope = DatabaseService.Scope(Scope(organizationId, projectId));
+            return McpDeletion.Required("delete_file", fileId, scope, bucketId: bucketId);
         }
 
         [McpServerTool(Name = "create_file_download", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Return a private short-lived attachment download capability for a completed file. Never log or share the URL or headers. Requires data read access and the file's read rule.")]
@@ -59,13 +58,6 @@ namespace TerraScale.Dashboard.Features.FileStorage
             return Request(() => files.DownloadAsync(Scope(organizationId, projectId), bucketId, fileId, Cancellation));
         }
 
-        private static void Confirm(string id, string confirmation, string kind)
-        {
-            if (id.Length == 0 || !string.Equals(id, confirmation, StringComparison.Ordinal))
-            {
-                throw new AccountAccessException("Confirm the " + kind + " ID before deleting it.", 422);
-            }
-        }
         private static Task<McpFileStorageSaved> Save(Func<Task> operation)
         {
             return Request(async () => { await operation(); return new McpFileStorageSaved(true); });
