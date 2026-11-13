@@ -166,7 +166,8 @@ internal static class Lifecycle
                     await app.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken);
                     throw new InvalidOperationException("unresolved database was opened");
                 }
-                catch (InvalidDataException error) when (error.Message.Contains("unresolved detached import", StringComparison.Ordinal))
+                catch (InvalidDataException error) when (error.Message.Contains("unresolved detached import", StringComparison.Ordinal)
+                    || error.Message == "database '" + database.DatabaseId + "' is refused under key id 'unknown'")
                 {
                     await Console.Out.WriteLineAsync("keyring-driver:database-refused node-started");
                 }
