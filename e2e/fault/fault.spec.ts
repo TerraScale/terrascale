@@ -447,8 +447,9 @@ test('a regional writer role moves only with the target certificate and current 
     expect(moved).toMatchObject({ home: 'gru', node: 'journey-1', adopted: expect.any(String) });
     const restart = restartAfterKill(gru);
     await restart();
-    await expect.poll(async () => (await homeLease(kv, ledger.id)).value.session, { message: 'journey-1 rewrites its lease under its new session', timeout: 60_000 }).not.toBe(moved.session);
-    expect((await homeLease(kv, ledger.id)).value, 'a restart keeps the adopted position').toMatchObject({ node: 'journey-1', epoch: moved.epoch, adopted: moved.adopted });
+    await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the restarted writer\'s activation takes the lease at the next epoch and keeps the adopted position', timeout: 60_000 })
+      .toMatchObject({ node: 'journey-1', home: 'gru', epoch: moved.epoch + 1, adopted: moved.adopted });
+    expect((await homeLease(kv, ledger.id)).value.session, 'journey-1 holds the lease under its new session').not.toBe(moved.session);
     await keptUnchanged();
     await ledger.write(cells, 'gru', [[802, 'after-restart']]);
     await ledger.compare(cells);
