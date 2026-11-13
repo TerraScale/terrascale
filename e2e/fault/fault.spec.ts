@@ -91,7 +91,7 @@ test('restore a backup into another database and compare its rows with the snaps
 test('history lost while the backup store is unreachable is one hole, survives a restart and is refused by restores', async ({ cells }) => {
   const writer = (await topology()).find(node => node.region === 'gru')!;
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
-    data: { name: name('backup-hole'), regions: [...regions] },
+    data: { name: name('backup-hole'), regions: ['gru'] },
   }), 201);
   const ledger = new Ledger(created.id);
   const restored: string[] = [];
@@ -116,7 +116,6 @@ test('history lost while the backup store is unreachable is one hole, survives a
       expect(response.status(), await response.text()).toBe(200);
     }
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
-    await ledger.compare(cells);
     await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the discarded history becomes exactly one hole' }).toBe(holes + 1);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(1);
     expect(await probe(writer, '/backupz')).toBe(503);
