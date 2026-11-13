@@ -430,28 +430,12 @@ def main():
                           'databases': setup.state['databases']}))
         return 0
     except (
-        ArithmeticError,
-        AssertionError,
-        AttributeError,
-        BufferError,
-        EOFError,
-        ExceptionGroup,
-        ImportError,
-        LookupError,
-        MemoryError,
-        NameError,
         OSError,
-        ReferenceError,
-        RuntimeError,
-        StopAsyncIteration,
-        StopIteration,
-        SyntaxError,
-        SystemError,
-        TypeError,
-        ValueError,
-        Warning,
-        subprocess.SubprocessError,
         http.client.HTTPException,
+        subprocess.SubprocessError,
+        ValueError,
+        LookupError,
+        RuntimeError,
     ) as error:
         # Exception repr, HTTP bodies and subprocess stderr may contain secrets.
         print(json.dumps({'failed_stage': setup.stage if setup else 'private state', 'error_type': type(error).__name__,
