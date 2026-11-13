@@ -28,7 +28,9 @@ async function github(path, method = 'GET', body) {
   });
   const existingLabel = path === 'labels' && response.status === 422;
   assert.ok(response.ok || existingLabel, `GitHub ${method} ${path}: HTTP ${response.status}`);
-  return response.status === 204 || existingLabel ? null : response.json();
+  if (response.status === 204 || existingLabel) return null;
+  const text = await response.text();
+  return text === '' ? null : JSON.parse(text);
 }
 
 async function cloudflare(path) {
@@ -69,20 +71,17 @@ function ancestor(base, head) {
   return result.status === 0;
 }
 
-async function qualified(revision) {
-  const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=1`);
-  const run = runs[0];
-  if (!run || run.status !== 'completed' || run.conclusion !== 'success') return false;
-  assert.ok(run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository.full_name === repo, 'Unexpected CI identity');
-  const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
-  assert.ok(count <= 100, 'CI jobs exceed the qualification read bound');
-  const journey = jobs.filter((job) => job.name.startsWith('journey / journey '));
-  return journey.length >= 2 && journey.every((job) => job.conclusion === 'success') && jobs.some((job) => job.name === 'all-green' && job.conclusion === 'success');
-}
-
 async function target() {
   for (const revision of git('rev-list', '--first-parent', '-10', 'origin/main').split('\n')) {
-    if (await qualified(revision)) return revision;
+    const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=1`);
+    const run = runs[0];
+    const current = revision === process.env.GITHUB_SHA && run && String(run.id) === process.env.GITHUB_RUN_ID && run.status === 'in_progress';
+    if (!run || (!current && (run.status !== 'completed' || run.conclusion !== 'success'))) continue;
+    assert.ok(run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository.full_name === repo, 'Unexpected CI identity');
+    const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+    assert.ok(count <= 100, 'CI jobs exceed the qualification read bound');
+    const journey = jobs.filter((job) => job.name.startsWith('journey / journey '));
+    if (journey.length >= 2 && journey.every((job) => job.conclusion === 'success') && jobs.some((job) => job.name === 'all-green' && job.conclusion === 'success')) return revision;
   }
   return null;
 }
@@ -238,9 +237,8 @@ if (args[0] === '--prove') {
     }
   }
   if (thing !== 'all') assert.ok(failures.length === 0, failures.join('; '));
+  const revision = await target();
   if (thing === 'all') {
-    const revision = await target();
-    const head = git('rev-parse', 'origin/main');
     const selected = [];
     for (const [kind, name, deployed] of live) {
       if (!states.has(name)) continue;
@@ -248,10 +246,6 @@ if (args[0] === '--prove') {
       if (revision === null) {
         if (deployed === null) failures.push(`${name}: nothing qualified and no live revision`);
         report(`${name}: live ${deployed ?? 'absent'}, no qualified target`);
-        continue;
-      }
-      if (services[kind] && revision !== head) {
-        report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: waiting for main ${head} to qualify; a dispatched release signs main's head`);
         continue;
       }
       try {
@@ -267,22 +261,41 @@ if (args[0] === '--prove') {
       }
     }
     if (revision !== null) {
+      const head = git('rev-parse', 'origin/main');
       for (const service of ['auth', 'dashboard']) {
         if (!selected.some(([kind]) => kind === service)) continue;
-        const workflow = service === 'auth' ? 'ci.yml' : 'images-ghcr.yml';
-        const active = [];
-        for (const status of ['queued', 'in_progress', 'waiting', 'pending', 'requested']) {
-          const { workflow_runs: runs } = await github(`actions/workflows/${workflow}/runs?branch=main&event=workflow_dispatch&status=${status}&per_page=100`);
-          active.push(...runs);
-        }
-        if (active.length === 0) {
-          await github(`actions/workflows/${workflow}/dispatches`, 'POST', { ref: 'main', inputs: service === 'auth' ? { reconcile_auth: true } : {} });
-          report(`${service}: requested its locked deploy job in ${workflow}`);
+        if (head === revision) {
+          const workflow = service === 'auth' ? 'ci.yml' : 'images-ghcr.yml';
+          const active = [];
+          for (const status of ['queued', 'in_progress', 'waiting', 'pending', 'requested']) {
+            const { workflow_runs: runs } = await github(`actions/workflows/${workflow}/runs?branch=main&event=workflow_dispatch&status=${status}&per_page=100`);
+            active.push(...runs);
+          }
+          if (active.length === 0) {
+            await github(`actions/workflows/${workflow}/dispatches`, 'POST', { ref: 'main', inputs: service === 'auth' ? { reconcile_auth: true } : {} });
+            report(`${service}: requested its locked deploy job in ${workflow}`);
+            continue;
+          }
+          const oldest = active.toSorted((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at))[0];
+          report(`${service}: waiting for the manual ${workflow} run ${oldest.html_url}, active since ${oldest.created_at}`);
+          if (Date.now() - Date.parse(oldest.created_at) > activeLimit) failures.push(`${service}: ${oldest.html_url} has been active for more than two hours`);
           continue;
         }
-        const oldest = active.toSorted((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at))[0];
-        report(`${service}: waiting for the manual ${workflow} run ${oldest.html_url}, active since ${oldest.created_at}`);
-        if (Date.now() - Date.parse(oldest.created_at) > activeLimit) failures.push(`${service}: ${oldest.html_url} has been active for more than two hours`);
+        const jobName = service === 'auth' ? 'main-auth' : 'main-dashboard / Publish and release';
+        const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=1`);
+        const run = runs[0];
+        assert.ok(run?.id, `${service}: no main-push CI run for ${revision}`);
+        if (run.status !== 'completed') {
+          report(`${service}: waiting for the target push run ${run.html_url}, status ${run.status}`);
+          if (Date.now() - Date.parse(run.created_at) > activeLimit) failures.push(`${service}: ${run.html_url} has been active for more than two hours`);
+          continue;
+        }
+        const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+        assert.ok(count <= 100, 'CI jobs exceed the qualification read bound');
+        const job = jobs.find((entry) => entry.name === jobName);
+        assert.ok(job?.id, `${service}: ${run.html_url} has no ${jobName} job to re-run`);
+        await github(`actions/jobs/${job.id}/rerun`, 'POST');
+        report(`${service}: re-ran ${jobName} on ${run.html_url}`);
       }
     }
     appendFileSync(process.env.GITHUB_OUTPUT, `docs=${selected.some(([kind]) => kind === 'docs')}\nlanding=${selected.some(([kind]) => kind === 'landing')}\nstatus=${JSON.stringify(selected.filter(([kind]) => kind === 'status').map(([, name]) => name))}\n`);
@@ -292,18 +305,17 @@ if (args[0] === '--prove') {
     assert.ok(live.length === 1, 'A locked deploy job reconciles exactly one thing');
     const [[kind, name, deployed]] = live;
     const alert = states.get(name);
-    const own = process.env.GITHUB_SHA;
-    assert.match(own ?? '', /^[0-9a-f]{40}$/, 'Missing or invalid run commit');
-    const revision = await qualified(own) ? own : null;
     let deploy = false;
     if (revision === null) {
-      assert.ok(deployed !== null, `${name}: ${own} is not qualified and there is no live revision`);
-      report(`${name}: live ${deployed}, this run's commit ${own} is not qualified; a release signs only that commit`);
+      assert.ok(deployed !== null, `${name}: nothing qualified and no live revision`);
+      report(`${name}: live ${deployed}, no qualified target`);
     } else {
       const decision = work(kind, name, deployed, revision);
       if (deployed === revision) {
         if (!healthy(alert, revision)) await writeState(alert, name, revision, 0, false);
         report(`${name}: live ${deployed}, target ${revision}: already live; state healthy`);
+      } else if (services[kind] && revision !== process.env.GITHUB_SHA) {
+        report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: signed run ${process.env.GITHUB_SHA} cannot release it`);
       } else {
         const attempt = next(alert, revision);
         if (typeof attempt !== 'number') {

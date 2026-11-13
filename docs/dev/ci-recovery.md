@@ -11,8 +11,8 @@ a dispatch. It reconciles docs, landing, each status Worker, dashboard and auth.
 An event starts reconciliation. Its SHA does not select the deployed source.
 
 One short decision job reads every live revision and selects target once.
-It starts site jobs only for Workers with work and dispatches service workflows
-only when a service has work. A no-op schedule runs no other runner jobs.
+It starts site jobs only for Workers with work and re-runs a service release
+job only when that service has work. A no-op schedule runs no other runner jobs.
 
 Each deploy job holds its own lock while it reads live, selects target and
 deploys. The shared script is `scripts/ci/site-deploy-gate.mjs`. It fetches main
@@ -35,29 +35,31 @@ Auth and dashboard read their readiness revision. Their release jobs run in
 `ci.yml` and `images-ghcr.yml`, as required by the release service's existing
 OIDC policy. Dashboard provenance, the SBOM and `gh attestation verify` name
 the package `scripts/ci/reconcile-image.sh` publishes,
-`ghcr.io/terrascale/terrascale-dashboard`. The release is signed with the
-dispatched run's commit, and each region refuses an image whose revision label
-names another commit. So Sites requests a main dispatch only when work is due
-and main's head is the target; otherwise the decision says it is waiting for
-main's head to qualify. The dispatched job reads live inside its release lock
-and releases only its own commit, and only if that commit is qualified; if not,
-it records nothing and the next reconcile after main CI tries again. It checks
-out that commit, reuses an image labeled with it, or builds and checks one.
-Only then does it move the mutable main tag and release the pinned arm64
-digest. The availability of a prior Images run does not matter.
+`ghcr.io/terrascale/terrascale-dashboard`. gru accepts the image only when its
+revision label equals the OIDC sha, so a qualified main push releases from
+that push: `main-auth` in `ci.yml`, and dashboard through `main-dashboard`
+calling `images-ghcr.yml`. The gate counts that in-progress push as qualified
+once `all-green` and both journey shards have concluded success. The locked
+job releases only when target is this run's sha. It checks out that commit,
+reuses an image labeled with it, or builds and checks one. Only then does it
+move the mutable main tag and release the pinned arm64 digest. A run whose
+sha is not the target does not release. A retry re-runs that push run's
+release job, which keeps the sha and raises the attempt. Sites dispatches
+`ci.yml` only when main's head is the target, and dispatches `images-ghcr.yml`
+for the dashboard only in that same case. The first release after this change
+comes from a new push run. Never re-run run 43472114785 or any older run.
 
 Every site deploy records target as the Worker version message. The proof
 requires that version at 100% traffic. Auth and dashboard verify readiness and
 write `deploy-revision`. The production journey reads this receipt, so it uses
-the deployed source.
+the signed commit that was released.
 A release job that did not succeed starts no production journey; its own
 state issue and job summary show the failure.
 
 Every decision goes to the job summary with the thing, its live revision and
 the target: deploying (with the attempt number), already live, live ahead,
 inputs unchanged, suppressed after two attempts, waiting on an older target,
-no qualified target, waiting for main's head to qualify, or waiting for a
-manual run.
+no qualified target, or waiting for a manual run.
 
 ## Attempts and suppression
 
@@ -179,21 +181,20 @@ writes (ensure label and create issue). The next successful-live reconcile
 costs another decision and locked job (eight reads) and one healthy-state body
 PATCH, with no issue close or comment.
 
-One service deployment uses 2(P+2)+5 GitHub reads (thirteen): decision,
-five active-run checks and locked release. Writes are one workflow dispatch
-and one state-body PATCH; first initialization replaces the PATCH with label
-and issue creation. There are four readiness requests including proof.
-Auth retains three dispatch runner jobs (`main-auth`, `test`, `all-green`),
-dashboard one. Success triggers another Sites decision and a locked state
-refresh, with the same thirteen reads, one dispatch and one body PATCH, no
-build or release. The release also starts production journey detection, suite
-and report; detection reads jobs and the revision artifact metadata and ZIP.
-These follow-ups are outside the deployment gate counts.
+A service releases inside its qualified main-push CI run (`main-auth`, or
+`main-dashboard` calling Images). That run's locked job reads live and writes
+one state-body PATCH. A retry re-runs the target push run's job when main's
+head is newer, which is one POST and one jobs read, or dispatches only when
+main's head is the target (five active-run checks, then one dispatch). Do not
+re-run run 43472114785 or any older run; the first release after this change
+is a new push. Success starts production journey detection, which reads jobs
+and the revision artifact metadata and ZIP. These follow-ups are outside the
+deployment gate counts.
 
 A suppressed, already-notified thing adds no writes or deploy job to the
 four-read decision. On first suppression, a Worker adds its four-read locked
 job and two writes (one comment, one body PATCH); a service adds five active-run
-reads, the four-read locked job and three writes (dispatch, comment, PATCH).
+reads, the four-read locked job and three writes (re-run or dispatch, comment, PATCH).
 The reset job uses P reads (two) and one body PATCH without live or CI reads.
 
 For fifteen successful deployments of every one of the seven things, an

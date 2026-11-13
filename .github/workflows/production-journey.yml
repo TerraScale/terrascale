@@ -33,7 +33,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
           RELEASE_STEPS: '["Release to every region", "Release the pinned arm64 digest to each region"]'
-          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main-auth", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
+          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main-auth", "release-only", "main-dashboard / Publish and release"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
         run: |
           set -euo pipefail
           [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
@@ -62,7 +62,7 @@ jobs:
             echo "journey=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if jq -e '.jobs[] | select(.name == "main-auth" or .name == "Publish and release") | select(.conclusion == "success")
+          if jq -e '.jobs[] | select(.name == "main-auth" or .name == "Publish and release" or .name == "main-dashboard / Publish and release") | select(.conclusion == "success")
             | .steps[]? | select(.name == "Release to every region" and .conclusion == "success")' <<< "$jobs" > /dev/null; then
             artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=deploy-revision&per_page=1" --jq '.artifacts[0].id // empty')
             test -n "$artifact"
