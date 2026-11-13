@@ -7,9 +7,9 @@ import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
 import { auth, dash, desktop, onLocalStack } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
-import type { TerraScaleResult } from '../../sdk/js/types/result';
+import type { TerraScaleResult } from '../../sdk/js/src/result.js';
 
-const { createTsAuthClient } = require('../../sdk/js/src/ts-auth.js') as typeof import('../../sdk/js/types/ts-auth');
+const { createTsAuthClient } = require('../../sdk/js/src/ts-auth.js') as typeof import('../../sdk/js/src/ts-auth.js');
 
 function value<T>(result: TerraScaleResult<T>): T {
   if (!result.ok) throw new Error('Organization SDK call failed: ' + result.error.code);

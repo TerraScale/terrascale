@@ -28,6 +28,6 @@ ready mailpit curl -fsS --max-time 2 http://127.0.0.1:8025/readyz
 ready cloudflare-sink curl -fsS --max-time 2 http://127.0.0.1:8026/messages
 ready stripe curl -fsS --max-time 2 http://127.0.0.1:8027/log
 ready r2 curl -fsS --max-time 2 http://127.0.0.1:8028/log
-ready oauth2 curl -fsS --max-time 2 http://127.0.0.1:8030/readyz
+ready oauth2 curl -fsS --max-time 2 http://127.0.0.1:8031/readyz
 ready caddy edge_serves
 ready pg-edge pg_edge_serves
