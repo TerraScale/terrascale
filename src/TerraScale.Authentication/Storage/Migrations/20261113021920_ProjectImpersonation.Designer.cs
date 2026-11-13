@@ -11,8 +11,8 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Storage.Migrations
 {
     [DbContext(typeof(AuthDbContext))]
-    [Migration("20261113011354_UserProfiles")]
-    partial class UserProfiles
+    [Migration("20261113021920_ProjectImpersonation")]
+    partial class ProjectImpersonation
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -1628,6 +1628,132 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.ToTable("support_deliveries", (string)null);
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.Impersonation.ImpersonationRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActorEmail")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("actor_email");
+
+                    b.Property<long>("ActorEpoch")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("actor_epoch");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("actor_id");
+
+                    b.Property<string>("ActorStamp")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("actor_stamp");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("client_id");
+
+                    b.Property<string>("CookieHash")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cookie_hash");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ended_at");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("InstanceId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("instance_id");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTime?>("RedeemedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("redeemed_at");
+
+                    b.Property<DateTime>("TicketExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ticket_expires_at");
+
+                    b.Property<string>("TicketHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ticket_hash");
+
+                    b.Property<string>("TicketOwner")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ticket_owner");
+
+                    b.Property<long>("UserEpoch")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("user_epoch");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("UserStamp")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_stamp");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("CookieHash")
+                        .IsUnique();
+
+                    b.HasIndex("TicketHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("InstanceId", "ExpiresAt");
+
+                    b.ToTable("impersonations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_impersonations_expiry", "expires_at IS NULL OR (redeemed_at IS NOT NULL AND unixepoch(expires_at) BETWEEN unixepoch(redeemed_at) AND unixepoch(redeemed_at) + 3600)");
+
+                            t.HasCheckConstraint("ck_impersonations_reason", "length(reason) BETWEEN 1 AND 500");
+
+                            t.HasCheckConstraint("ck_impersonations_tenant", "instance_id <> 'terrascale'");
+
+                            t.HasCheckConstraint("ck_impersonations_ticket", "length(ticket_hash) = 64");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.Platform.AccountDeletionReceipt", b =>
                 {
                     b.Property<string>("InstanceId")
@@ -2127,6 +2253,12 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<string>("Name")
                         .HasColumnType("TEXT")
                         .HasColumnName("name");
+
+                    b.Property<bool>("OrganizationPicker")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("organization_picker");
 
                     b.Property<bool>("Passcode")
                         .HasColumnType("INTEGER")
@@ -2693,6 +2825,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("event_id");
 
+                    b.Property<string>("ActorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("actor_id");
+
                     b.Property<int>("Attempts")
                         .HasColumnType("INTEGER")
                         .HasColumnName("attempts");
@@ -2731,6 +2867,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<string>("Provider")
                         .HasColumnType("TEXT")
                         .HasColumnName("provider");
+
+                    b.Property<string>("Reason")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reason");
 
                     b.Property<string>("SessionId")
                         .HasColumnType("TEXT")
@@ -2939,6 +3079,21 @@ namespace TerraScale.Authentication.Storage.Migrations
 
             modelBuilder.Entity("TerraScale.Authentication.Features.AttackProtection.KnownDeviceRecord", b =>
                 {
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Impersonation.ImpersonationRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("UserId")

@@ -11,7 +11,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Storage.Migrations
 {
     [DbContext(typeof(AuthDbContext))]
-    [Migration("20261113011729_ProjectOrganizations")]
+    [Migration("20261113021943_ProjectOrganizations")]
     partial class ProjectOrganizations
     {
         /// <inheritdoc />
@@ -2511,6 +2511,12 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<string>("Name")
                         .HasColumnType("TEXT")
                         .HasColumnName("name");
+
+                    b.Property<bool>("OrganizationPicker")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("organization_picker");
 
                     b.Property<bool>("Passcode")
                         .HasColumnType("INTEGER")

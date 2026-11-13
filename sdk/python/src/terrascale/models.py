@@ -567,7 +567,6 @@ class ProjectSettingsUpdate:
     branding: ProjectSettingsBranding | None = None
     configuration: ProjectSettingsConfiguration | None = None
     restrictions: ProjectRestrictions | None = None
-
     organization_picker: bool | None = None
 
     def to_body(self) -> dict[str, Any]:

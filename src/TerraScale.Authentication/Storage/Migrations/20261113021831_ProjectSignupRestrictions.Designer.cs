@@ -11,8 +11,8 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Storage.Migrations
 {
     [DbContext(typeof(AuthDbContext))]
-    [Migration("20261113012300_ProjectSignInMethods")]
-    partial class ProjectSignInMethods
+    [Migration("20261113021831_ProjectSignupRestrictions")]
+    partial class ProjectSignupRestrictions
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -788,10 +788,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("user_id");
 
-                    b.Property<string>("Username")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("username");
-
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
                         .IsRequired()
@@ -1280,37 +1276,11 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("email");
 
-                    b.Property<bool>("EmailVerified")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasDefaultValue(true)
-                        .HasColumnName("email_verified");
-
-                    b.Property<string>("ExternalId")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("external_id");
-
-                    b.Property<string>("FirstName")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("first_name");
-
-                    b.Property<string>("ImageUrl")
-                        .HasMaxLength(2048)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("image_url");
-
                     b.Property<string>("InstanceId")
                         .IsRequired()
                         .HasMaxLength(26)
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
-
-                    b.Property<string>("LastName")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("last_name");
 
                     b.Property<string>("PasswordHash")
                         .HasColumnType("TEXT")
@@ -1320,35 +1290,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("platform_role");
 
-                    b.Property<string>("PrivateMetadata")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
-                        .HasColumnName("private_metadata");
-
-                    b.Property<string>("PublicMetadata")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
-                        .HasColumnName("public_metadata");
-
                     b.Property<string>("SessionStamp")
                         .HasColumnType("TEXT")
                         .HasColumnName("session_stamp");
-
-                    b.Property<string>("UnsafeMetadata")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
-                        .HasColumnName("unsafe_metadata");
-
-                    b.Property<string>("Username")
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("username");
 
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
@@ -1362,12 +1306,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasIndex("InstanceId", "Email")
                         .IsUnique();
 
-                    b.HasIndex("InstanceId", "ExternalId")
-                        .IsUnique();
-
-                    b.HasIndex("InstanceId", "Username")
-                        .IsUnique();
-
                     b.ToTable("users", null, t =>
                         {
                             t.HasCheckConstraint("ck_users_auth_epoch", "auth_epoch >= 0");
@@ -1375,8 +1313,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                             t.HasCheckConstraint("ck_users_email", "length(email) BETWEEN 3 AND 254 AND email = lower(email)");
 
                             t.HasCheckConstraint("ck_users_platform_role", "platform_role IS NULL OR platform_role = 'admin'");
-
-                            t.HasCheckConstraint("ck_users_username", "username IS NULL OR (length(username) BETWEEN 3 AND 32 AND username = lower(username) AND username NOT GLOB '*[^a-z0-9_.]*')");
                         });
                 });
 
@@ -1640,132 +1576,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasKey("RequestId");
 
                     b.ToTable("support_deliveries", (string)null);
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.Impersonation.ImpersonationRecord", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
-
-                    b.Property<string>("ActorEmail")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("actor_email");
-
-                    b.Property<long>("ActorEpoch")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("actor_epoch");
-
-                    b.Property<string>("ActorId")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("actor_id");
-
-                    b.Property<string>("ActorStamp")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("actor_stamp");
-
-                    b.Property<string>("ClientId")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("client_id");
-
-                    b.Property<string>("CookieHash")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("cookie_hash");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("created_at");
-
-                    b.Property<DateTime?>("EndedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("ended_at");
-
-                    b.Property<DateTime?>("ExpiresAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("expires_at");
-
-                    b.Property<string>("InstanceId")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("instance_id");
-
-                    b.Property<string>("OrganizationId")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("organization_id");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("reason");
-
-                    b.Property<DateTime?>("RedeemedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("redeemed_at");
-
-                    b.Property<DateTime>("TicketExpiresAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("ticket_expires_at");
-
-                    b.Property<string>("TicketHash")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("ticket_hash");
-
-                    b.Property<string>("TicketOwner")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("ticket_owner");
-
-                    b.Property<long>("UserEpoch")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("user_epoch");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("user_id");
-
-                    b.Property<string>("UserStamp")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("user_stamp");
-
-                    b.Property<string>("Version")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(26)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("version");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ActorId");
-
-                    b.HasIndex("CookieHash")
-                        .IsUnique();
-
-                    b.HasIndex("TicketHash")
-                        .IsUnique();
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("InstanceId", "ExpiresAt");
-
-                    b.ToTable("impersonations", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_impersonations_expiry", "expires_at IS NULL OR (redeemed_at IS NOT NULL AND unixepoch(expires_at) BETWEEN unixepoch(redeemed_at) AND unixepoch(redeemed_at) + 3600)");
-
-                            t.HasCheckConstraint("ck_impersonations_reason", "length(reason) BETWEEN 1 AND 500");
-
-                            t.HasCheckConstraint("ck_impersonations_tenant", "instance_id <> 'terrascale'");
-
-                            t.HasCheckConstraint("ck_impersonations_ticket", "length(ticket_hash) = 64");
-                        });
                 });
 
             modelBuilder.Entity("TerraScale.Authentication.Features.Platform.AccountDeletionReceipt", b =>
@@ -2229,264 +2039,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.ToTable("step_up_proofs", (string)null);
                 });
 
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationDismissal", b =>
-                {
-                    b.Property<string>("ProjectId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("project_id");
-
-                    b.Property<string>("OrganizationId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("organization_id");
-
-                    b.Property<string>("UserId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("user_id");
-
-                    b.Property<string>("Version")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(26)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("version");
-
-                    b.HasKey("ProjectId", "OrganizationId", "UserId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("project_organization_dismissals", (string)null);
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationDomain", b =>
-                {
-                    b.Property<string>("ProjectId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("project_id");
-
-                    b.Property<string>("OrganizationId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("organization_id");
-
-                    b.Property<string>("Domain")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("domain");
-
-                    b.Property<DateTime?>("CheckedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("checked_at");
-
-                    b.Property<int>("FailedChecks")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("failed_checks");
-
-                    b.Property<DateTime?>("LeaseUntil")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("lease_until");
-
-                    b.Property<string>("VerificationToken")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("verification_token");
-
-                    b.Property<DateTime?>("VerifiedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("verified_at");
-
-                    b.Property<string>("Version")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(26)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("version");
-
-                    b.HasKey("ProjectId", "OrganizationId", "Domain");
-
-                    b.HasIndex("LeaseUntil", "CheckedAt")
-                        .HasFilter("verified_at IS NOT NULL");
-
-                    b.HasIndex("ProjectId", "Domain")
-                        .IsUnique()
-                        .HasFilter("verified_at IS NOT NULL");
-
-                    b.ToTable("project_organization_domains", (string)null);
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationInvitation", b =>
-                {
-                    b.Property<string>("ProjectId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("project_id");
-
-                    b.Property<string>("OrganizationId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("organization_id");
-
-                    b.Property<string>("Id")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("Email")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("email");
-
-                    b.Property<DateTime>("ExpiresAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("expires_at");
-
-                    b.Property<string>("Role")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("role");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("status");
-
-                    b.Property<string>("TokenHash")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("token_hash");
-
-                    b.Property<string>("Version")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(26)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("version");
-
-                    b.HasKey("ProjectId", "OrganizationId", "Id");
-
-                    b.HasIndex("TokenHash")
-                        .IsUnique();
-
-                    b.ToTable("project_organization_invitations", (string)null);
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationMembership", b =>
-                {
-                    b.Property<string>("ProjectId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("project_id");
-
-                    b.Property<string>("OrganizationId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("organization_id");
-
-                    b.Property<string>("UserId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("user_id");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("Role")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("role");
-
-                    b.Property<string>("Version")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(26)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("version");
-
-                    b.HasKey("ProjectId", "OrganizationId", "UserId");
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("ProjectId", "UserId");
-
-                    b.ToTable("project_organization_memberships", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_project_organization_memberships_role", "role IN ('admin', 'member')");
-                        });
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", b =>
-                {
-                    b.Property<string>("ProjectId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("project_id");
-
-                    b.Property<string>("Id")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
-
-                    b.Property<int>("Admins")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("admins");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("DomainJoin")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("domain_join");
-
-                    b.Property<string>("ImageUrl")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("image_url");
-
-                    b.Property<int?>("MaxMembers")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("max_members");
-
-                    b.Property<int>("Members")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("members");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("name");
-
-                    b.Property<string>("PrivateMetadata")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("private_metadata");
-
-                    b.Property<string>("PublicMetadata")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("public_metadata");
-
-                    b.Property<string>("Slug")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("slug");
-
-                    b.Property<string>("Version")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(26)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("version");
-
-                    b.HasKey("ProjectId", "Id");
-
-                    b.HasIndex("ProjectId", "Slug")
-                        .IsUnique();
-
-                    b.ToTable("project_organizations", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_project_organizations_counts", "admins >= 0 AND (members = 0 OR admins >= 1) AND members >= admins AND (max_members IS NULL OR members <= max_members)");
-
-                            t.HasCheckConstraint("ck_project_organizations_join", "domain_join IN ('off', 'suggest', 'auto')");
-
-                            t.HasCheckConstraint("ck_project_organizations_slug", "length(slug) BETWEEN 3 AND 63 AND slug = lower(slug)");
-                        });
-                });
-
             modelBuilder.Entity("TerraScale.Authentication.Features.ProjectTenants.ProjectAuthSettingsRecord", b =>
                 {
                     b.Property<string>("InstanceId")
@@ -2522,13 +2074,15 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("logo_url");
 
-                    b.Property<bool>("MagicLink")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("magic_link");
-
                     b.Property<string>("Name")
                         .HasColumnType("TEXT")
                         .HasColumnName("name");
+
+                    b.Property<bool>("OrganizationPicker")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("organization_picker");
 
                     b.Property<bool>("Passcode")
                         .HasColumnType("INTEGER")
@@ -2567,10 +2121,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<int?>("TitleSize")
                         .HasColumnType("INTEGER")
                         .HasColumnName("title_size");
-
-                    b.Property<bool>("Username")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("username");
 
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
@@ -2881,106 +2431,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
-            modelBuilder.Entity("TerraScale.Authentication.Features.UserApiKeys.UserApiKeyPolicyRecord", b =>
-                {
-                    b.Property<string>("ProjectId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("project_id");
-
-                    b.Property<string>("AllowedScopes")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("allowed_scopes");
-
-                    b.Property<string>("Version")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(26)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("version");
-
-                    b.HasKey("ProjectId");
-
-                    b.ToTable("user_api_key_policies", (string)null);
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.UserApiKeys.UserApiKeyRecord", b =>
-                {
-                    b.Property<string>("ProjectId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("project_id");
-
-                    b.Property<string>("Id")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
-
-                    b.Property<long>("AuthEpoch")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("auth_epoch");
-
-                    b.Property<string>("AuthStamp")
-                        .IsRequired()
-                        .HasMaxLength(26)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("auth_stamp");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("created_at");
-
-                    b.Property<DateTime?>("ExpiresAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("expires_at");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("name");
-
-                    b.Property<string>("Prefix")
-                        .IsRequired()
-                        .HasMaxLength(12)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("prefix");
-
-                    b.Property<string>("Scopes")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("scopes");
-
-                    b.Property<string>("SecretHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("secret_hash");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("user_id");
-
-                    b.Property<string>("Version")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(26)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("version");
-
-                    b.HasKey("ProjectId", "Id");
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("ProjectId", "Prefix")
-                        .IsUnique();
-
-                    b.HasIndex("ProjectId", "UserId");
-
-                    b.ToTable("user_api_keys", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_user_api_keys_expiry", "expires_at IS NULL OR expires_at > created_at");
-                        });
-                });
-
             modelBuilder.Entity("TerraScale.Authentication.Features.Webhooks.WebhookAttemptRecord", b =>
                 {
                     b.Property<string>("Id")
@@ -3199,10 +2649,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("event_id");
 
-                    b.Property<string>("ActorId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("actor_id");
-
                     b.Property<int>("Attempts")
                         .HasColumnType("INTEGER")
                         .HasColumnName("attempts");
@@ -3233,14 +2679,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("occurred_at");
 
-                    b.Property<string>("OrganizationId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("organization_id");
-
-                    b.Property<string>("OrganizationRole")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("organization_role");
-
                     b.Property<string>("ProjectId")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -3249,10 +2687,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<string>("Provider")
                         .HasColumnType("TEXT")
                         .HasColumnName("provider");
-
-                    b.Property<string>("Reason")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("reason");
 
                     b.Property<string>("SessionId")
                         .HasColumnType("TEXT")
@@ -3468,21 +2902,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("TerraScale.Authentication.Features.Impersonation.ImpersonationRecord", b =>
-                {
-                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ActorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("TerraScale.Authentication.Features.Platform.EmailChangeRecord", b =>
                 {
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
@@ -3506,63 +2925,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationDismissal", b =>
-                {
-                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProjectId", "OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationDomain", b =>
-                {
-                    b.HasOne("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProjectId", "OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationInvitation", b =>
-                {
-                    b.HasOne("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProjectId", "OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationMembership", b =>
-                {
-                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProjectId", "OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.ProjectOrganizations.ProjectOrganizationRecord", b =>
-                {
-                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -3599,30 +2961,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.OrganizationRecord", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.UserApiKeys.UserApiKeyPolicyRecord", b =>
-                {
-                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProjectId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("TerraScale.Authentication.Features.UserApiKeys.UserApiKeyRecord", b =>
-                {
-                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProjectId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
