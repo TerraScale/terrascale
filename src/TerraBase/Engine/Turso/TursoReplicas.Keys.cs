@@ -4,39 +4,60 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoReplicas : IWrappedKeyFiles
 {
-    Task<IReadOnlyDictionary<string, long>> IWrappedKeyFiles.RewrapAsync(CancellationToken cancellationToken)
+    Task IWrappedKeyFiles.RewrapAsync(KeyInventory inventory, CancellationToken cancellationToken)
     {
-        Dictionary<string, long> counts = new(StringComparer.Ordinal);
-        lock (KeyRecords)
+        if (!Directory.Exists(Root))
         {
-            if (!Directory.Exists(Root))
+            return Task.CompletedTask;
+        }
+        foreach (var file in ReplicaKeyFiles(Root, inventory).Where(file => !file.EndsWith(".promote.db.key", StringComparison.Ordinal)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (KeyRecords)
             {
-                return Task.FromResult<IReadOnlyDictionary<string, long>>(counts);
-            }
-
-            foreach (var file in ReplicaKeyFiles(Root))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var wrapped = DataKeyRecord(file[..^DatabaseKeys.Suffix.Length])
-                    ?? throw new InvalidDataException("the replica wrapped key record is missing");
-                var id = WrappedKeyFile.Rewrap(file, KeyHeader, wrapped, master, cancellationToken);
-                counts[id] = counts.GetValueOrDefault(id) + 1;
+                try
+                {
+                    DatabaseKeys.RejectLink(file);
+                    if (!File.Exists(file))
+                    {
+                        continue;
+                    }
+                    var wrapped = DataKeyRecord(file[..^DatabaseKeys.Suffix.Length])
+                        ?? throw new InvalidDataException("the replica wrapped key record is missing");
+                    var header = master.ActiveId == "k0" ? PreviousKeyHeader : KeyHeader;
+                    inventory.Count(WrappedKeyFile.Rewrap(file, header, wrapped, master, cancellationToken));
+                }
+                catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+                {
+                    inventory.Unreadable(file);
+                }
             }
         }
-        return Task.FromResult<IReadOnlyDictionary<string, long>>(counts);
+        return Task.CompletedTask;
     }
 
-    private static IEnumerable<string> ReplicaKeyFiles(string directory)
+    private static IEnumerable<string> ReplicaKeyFiles(string directory, KeyInventory inventory)
     {
-        DatabaseKeys.RejectLink(directory);
-        foreach (var file in Directory.EnumerateFiles(directory, "*" + DatabaseKeys.Suffix))
+        string[] files;
+        string[] children;
+        try
         {
-            DatabaseKeys.RejectLink(file);
+            DatabaseKeys.RejectLink(directory);
+            files = Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix);
+            children = Directory.GetDirectories(directory);
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            inventory.Unreadable(directory);
+            yield break;
+        }
+        foreach (var file in files)
+        {
             yield return file;
         }
-        foreach (var child in Directory.EnumerateDirectories(directory))
+        foreach (var child in children)
         {
-            foreach (var file in ReplicaKeyFiles(child))
+            foreach (var file in ReplicaKeyFiles(child, inventory))
             {
                 yield return file;
             }

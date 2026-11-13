@@ -28,6 +28,7 @@ public static class EngineExtensions
         });
         services.TryAddSingleton<IKeyring>(provider => provider.GetRequiredKeyedService<IKeyring>(DatabaseMasterKey));
         services.AddSingleton<CredentialKeyRewrap>();
+        services.AddSingleton<KeySnapshotInventory>();
         services.AddHostedService<KeyRewrap>();
         services.TryAddSingleton<DatabaseLifecycleCheckpoint>(_ => static (_, _) => { });
         services.AddMetrics();

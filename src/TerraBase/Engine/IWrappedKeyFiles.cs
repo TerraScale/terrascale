@@ -1,6 +1,8 @@
+using TerraBase.Features.Backup;
+
 namespace TerraBase.Engine;
 
 internal interface IWrappedKeyFiles
 {
-    Task<IReadOnlyDictionary<string, long>> RewrapAsync(CancellationToken cancellationToken);
+    Task RewrapAsync(KeyInventory inventory, CancellationToken cancellationToken);
 }

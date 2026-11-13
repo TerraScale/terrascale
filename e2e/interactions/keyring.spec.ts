@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import { production, stateDir } from '../support/stack';
@@ -23,7 +23,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
   let log = '';
   let run = 0;
   const files = (path: string): string[] => readdirSync(path, { withFileTypes: true }).flatMap(entry =>
-    entry.isDirectory() ? files(join(path, entry.name)) : entry.name.endsWith('.db.key') ? [join(path, entry.name)] : []);
+    entry.isDirectory() ? entry.name === '.replicas' ? [] : files(join(path, entry.name)) : entry.name.endsWith('.db.key') ? [join(path, entry.name)] : []);
 
   async function stop(): Promise<void> {
     if (child && child.exitCode === null && child.signalCode === null) {
@@ -139,6 +139,13 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     expect(existsSync(catalogKey)).toBe(true);
     const paths = [catalogKey, ...files(data).filter(path => path !== catalogKey)];
     expect(paths.length).toBeGreaterThanOrEqual(3);
+    const originalBytes = paths.map(path => readFileSync(path));
+    await start('k0', { k0: k0.toString('base64') });
+    await ready();
+    await expect.poll(async () => Number((await (await fetch('http://127.0.0.1:18383/metrics')).text())
+      .match(/terrabase_keys_last_complete[^\n]* (\d+)/)?.[1] ?? '0')).toBeGreaterThan(0);
+    await stop();
+    for (const [index, path] of paths.entries()) expect(readFileSync(path).equals(originalBytes[index])).toBe(true);
     const originalKeys = paths.map(path => createHash('sha256').update(process.env.E2E_KEYRING_BASELINE ? dataKey(path) : legacy(path)).digest('hex'));
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await rotated(paths.length);
@@ -147,6 +154,26 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await rotated(paths.length);
     await stop();
+    const replicaDirectory = join(data, '.replicas', 'inventory');
+    mkdirSync(replicaDirectory, { recursive: true });
+    const orphan = join(replicaDirectory, 'orphan.promote.db.key');
+    const malformed = join(replicaDirectory, 'aaa.key');
+    const later = join(replicaDirectory, 'zzz.key');
+    writeFileSync(orphan, 'interrupted promote', { mode: 0o600 });
+    writeFileSync(malformed, 'malformed replica key', { mode: 0o600 });
+    legacy(paths[0]);
+    const existingWrapped = readFileSync(paths[0], 'ascii').split('\n')[1];
+    writeFileSync(later, `TERRABASE-REPLICA-KEY-1\n${existingWrapped}\n`, { mode: 0o600 });
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+    await ready();
+    await expect.poll(async () => (await (await fetch('http://127.0.0.1:18383/metrics')).text())
+      .match(/terrabase_keys_wrapped[^\n]*status="unreadable"[^\n]*\} (\d+)/)?.[1]).toBe('1');
+    expect(readFileSync(later, 'ascii').startsWith('TERRABASE-REPLICA-KEY-2\nv2.k1.')).toBe(true);
+    expect(readFileSync(orphan, 'ascii')).toBe('interrupted promote');
+    expect(readFileSync(log, 'utf8').split('\n').filter(line =>
+      line.includes('"component":"TerraBase.Features.Backup.KeyRewrap"') && line.includes(malformed))).toHaveLength(1);
+    await stop();
+    rmSync(replicaDirectory, { recursive: true });
     await start('k1', { k1: k1.toString('base64') });
     await ready();
     await stop();
@@ -174,7 +201,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await start('absent', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await expect.poll(() => child?.exitCode).toBe(2);
     expect(readFileSync(log, 'utf8').includes('configured active key')).toBe(true);
-    console.log(`keyring: ${paths.length} existing encrypted databases opened; mixed k0/k1 sidecars resumed; k0=0 k1=${paths.length}; k0 retired; missing, wrong and unknown ids refused; missing active key rejected`);
+    console.log(`keyring: ${paths.length} existing encrypted databases opened; mixed k0/k1 sidecars resumed; k0=0 k1=${paths.length}; unchanged k0 upgrade; malformed item counted and later replica rotated; promote orphan skipped; k0 retired; missing, wrong and unknown ids refused; missing active key rejected`);
   } finally {
     await stop();
     k0.fill(0);

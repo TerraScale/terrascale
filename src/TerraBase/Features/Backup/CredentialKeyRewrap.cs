@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Features.Replicas;
@@ -9,9 +10,8 @@ namespace TerraBase.Features.Backup;
 
 internal sealed class CredentialKeyRewrap(SystemCatalog catalog, RegionalOwners owners, IKeyring keyring)
 {
-    internal async Task<IReadOnlyDictionary<string, long>> RunAsync(CancellationToken cancellationToken)
+    internal async Task RunAsync(KeyInventory inventory, CancellationToken cancellationToken)
     {
-        Dictionary<string, long> counts = new(StringComparer.Ordinal);
         string? after = null;
         while (true)
         {
@@ -23,55 +23,76 @@ internal sealed class CredentialKeyRewrap(SystemCatalog catalog, RegionalOwners 
                 if (kind.Name.StartsWith("backup_destination_history/", StringComparison.Ordinal)
                     || kind.Name.StartsWith("projects/", StringComparison.Ordinal) && kind.Name.EndsWith("/backup_destination", StringComparison.Ordinal))
                 {
-                    await RewrapKindAsync(kind.Name, counts, cancellationToken).ConfigureAwait(false);
+                    await RewrapKindAsync(kind.Name, inventory, cancellationToken).ConfigureAwait(false);
                 }
             }
             if (!page.HasMore)
             {
-                return counts;
+                return;
             }
             after = page.Kinds[^1].Name;
         }
     }
 
-    private async Task RewrapKindAsync(string kind, Dictionary<string, long> counts, CancellationToken cancellationToken)
+    private async Task RewrapKindAsync(string kind, KeyInventory inventory, CancellationToken cancellationToken)
     {
         string? after = null;
         while (true)
         {
-            async ValueTask<RecordPage> ReadAsync(IStorageTransaction transaction)
+            var page = await catalog.ReadAsync(transaction => transaction.ListAsync(kind, after, 100, 1024 * 1024, cancellationToken),
+                static error => throw new IOException(error.Message), cancellationToken).ConfigureAwait(false);
+            foreach (var stored in page.Records)
             {
-                var page = await transaction.ListAsync(kind, after, 100, 1024 * 1024, cancellationToken).ConfigureAwait(false);
-                foreach (var stored in page.Records)
+                try
                 {
-                    var record = EntityPayload.Read(stored, BackupJsonContext.Default.ProjectBackupDestinationRecord)
-                        ?? throw new InvalidDataException("backup destination credentials are malformed");
+                    var record = EntityPayload.Read(stored, BackupJsonContext.Default.ProjectBackupDestinationRecord);
+                    if (record is not { Version: 1, Credentials.WrappedKey.Length: > 0 })
+                    {
+                        throw new InvalidDataException("backup destination credentials are malformed");
+                    }
                     var wrapped = record.Credentials.WrappedKey;
                     var key = keyring.Unwrap(wrapped);
                     try
                     {
                         var id = keyring.KeyId(wrapped);
-                        if (owners.Writer && (id != keyring.ActiveId || !wrapped.StartsWith("v2.", StringComparison.Ordinal)))
+                        if (owners.Writer && keyring.NeedsRewrap(wrapped))
                         {
-                            await PutAsync(transaction, kind, stored.Id, record with
+                            id = await catalog.WriteDurableAsync(async transaction =>
                             {
-                                Credentials = record.Credentials with { WrappedKey = keyring.Wrap(key) },
-                            }, BackupJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
-                            id = keyring.ActiveId;
+                                var current = await GetAsync(transaction, kind, stored.Id, BackupJsonContext.Default.ProjectBackupDestinationRecord,
+                                    cancellationToken).ConfigureAwait(false);
+                                if (current is null)
+                                {
+                                    return null;
+                                }
+                                if (current.Credentials.WrappedKey != wrapped)
+                                {
+                                    var currentKey = keyring.Unwrap(current.Credentials.WrappedKey);
+                                    CryptographicOperations.ZeroMemory(currentKey);
+                                    return keyring.KeyId(current.Credentials.WrappedKey);
+                                }
+                                await PutAsync(transaction, kind, stored.Id, current with
+                                {
+                                    Credentials = current.Credentials with { WrappedKey = keyring.Wrap(key) },
+                                }, BackupJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
+                                return keyring.ActiveId;
+                            }, static error => throw new IOException(error.Message), cancellationToken).ConfigureAwait(false);
                         }
-                        counts[id] = counts.GetValueOrDefault(id) + 1;
+                        if (id is not null)
+                        {
+                            inventory.Count(id);
+                        }
                     }
                     finally
                     {
                         CryptographicOperations.ZeroMemory(key);
                     }
                 }
-                return page;
+                catch (Exception error) when (error is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
+                {
+                    inventory.Unreadable(kind + "/" + stored.Id);
+                }
             }
-
-            var page = owners.Writer
-                ? await catalog.WriteDurableAsync(ReadAsync, static error => throw new IOException(error.Message), cancellationToken).ConfigureAwait(false)
-                : await catalog.ReadAsync(ReadAsync, static error => throw new IOException(error.Message), cancellationToken).ConfigureAwait(false);
             if (!page.HasMore)
             {
                 return;

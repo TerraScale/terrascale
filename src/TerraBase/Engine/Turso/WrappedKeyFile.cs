@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 
 using TerraBase.Features.Backup;
+using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Turso;
 
@@ -13,7 +14,7 @@ internal static class WrappedKeyFile
         var key = keyring.Unwrap(wrapped);
         try
         {
-            if (keyring.KeyId(wrapped) == keyring.ActiveId && wrapped.StartsWith("v2.", StringComparison.Ordinal))
+            if (!keyring.NeedsRewrap(wrapped))
             {
                 return keyring.ActiveId;
             }
@@ -28,6 +29,7 @@ internal static class WrappedKeyFile
                     file.Flush(flushToDisk: true);
                 }
                 File.Move(temporary, path, overwrite: true);
+                DirectorySync.Sync(Path.GetDirectoryName(path)!);
             }
             finally
             {

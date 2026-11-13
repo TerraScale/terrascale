@@ -10,6 +10,8 @@ internal interface IKeyring
 
     IReadOnlyCollection<string> KeyIds { get; }
 
+    bool NeedsRewrap(string wrapped);
+
     string KeyId(string wrapped);
 
     string Wrap(ReadOnlySpan<byte> key);
@@ -96,6 +98,8 @@ internal sealed class Keyring(KeyringSettings settings) : IKeyring
             : throw new InvalidDataException("wrapped data key version or key id is malformed");
     }
 
+    public bool NeedsRewrap(string wrapped) => KeyId(wrapped) != ActiveId;
+
     public string Wrap(ReadOnlySpan<byte> key)
     {
         if (key.Length != KeyBytes)
@@ -106,8 +110,9 @@ internal sealed class Keyring(KeyringSettings settings) : IKeyring
         var wrapped = new byte[NonceBytes + KeyBytes + TagBytes];
         RandomNumberGenerator.Fill(wrapped.AsSpan(0, NonceBytes));
         using var aes = new AesGcm(settings.Keys[ActiveId], TagBytes);
+        var versioned = ActiveId != "k0";
         aes.Encrypt(wrapped.AsSpan(0, NonceBytes), key, wrapped.AsSpan(NonceBytes, KeyBytes), wrapped.AsSpan(NonceBytes + KeyBytes),
-            Encoding.ASCII.GetBytes("v2." + ActiveId));
-        return $"v2.{ActiveId}.{Convert.ToBase64String(wrapped)}";
+            versioned ? Encoding.ASCII.GetBytes("v2." + ActiveId) : []);
+        return versioned ? $"v2.{ActiveId}.{Convert.ToBase64String(wrapped)}" : Convert.ToBase64String(wrapped);
     }
 }

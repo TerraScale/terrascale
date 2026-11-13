@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Text;
 using TerraBase.Engine.Turso;
 
 namespace TerraBase.Features.Backup;
@@ -6,6 +7,22 @@ namespace TerraBase.Features.Backup;
 internal static class SnapshotBundle
 {
     private static ReadOnlySpan<byte> Magic => "TERRABASE-SNAPSHOT-1\n"u8;
+
+    internal static string WrappedKey(ReadOnlySpan<byte> bundle)
+    {
+        if (bundle.Length < Magic.Length + sizeof(int) || !bundle.StartsWith(Magic))
+        {
+            throw new InvalidDataException("encrypted snapshot header is malformed");
+        }
+        var size = BinaryPrimitives.ReadInt32BigEndian(bundle[Magic.Length..]);
+        if (size is <= 0 or > DatabaseKeys.MaxFileBytes || bundle.Length < Magic.Length + sizeof(int) + size)
+        {
+            throw new InvalidDataException("encrypted snapshot key record is malformed");
+        }
+        var record = bundle.Slice(Magic.Length + sizeof(int), size);
+        DatabaseKeys.ValidateRecord(record);
+        return Encoding.ASCII.GetString(record[DatabaseKeys.Header.Length..^1]);
+    }
 
     internal static async Task WriteAsync(string database, Stream output, CancellationToken cancellationToken)
     {

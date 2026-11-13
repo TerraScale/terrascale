@@ -331,38 +331,69 @@ Configure a versioned keyring with `TERRABASE_MASTER_KEYS_FILE`, a protected JSO
 `active` and `keys` properties. The keys object maps ids to base64-encoded 32-byte keys.
 Ids contain 1–63 ASCII letters, digits, underscores or hyphens; at most 32 keys are accepted.
 The active id must exist. Supply either this file or `TERRABASE_MASTER_KEY_FILE`, never both.
-The single-key configuration assigns the id `k0`.
+The single-key configuration assigns the id `k0`. When adopting a keyring, `k0` must contain
+exactly the existing master key. Key ids are permanent: never reuse an id for different key material.
 
-New wrappers use `v2.<keyId>.<base64(nonce|ciphertext|tag)>`, with the version and id authenticated
-as AES-GCM associated data. Unprefixed wrappers use only `k0`. Database and replica sidecars
-use version 2 headers; version 1 sidecars remain readable under `k0`. Missing, malformed,
-unknown or unauthentic ids fail closed without trying other keys. The encrypted database bytes,
-storage format identity and backup payloads do not change. Existing data directories reopen without
-a storage-format reset; the key sidecar versions are independent of the native database format.
+While `k0` is active, new wrappers and database/replica sidecars retain their existing unprefixed
+body and version 1 header. Inventory does not rewrite wrappers already using the active key.
+Upgrading with the existing key changes no key files, custody objects or stored credentials,
+including during a rolling release. Rolling back before the first rotation remains supported.
 
-Rotate in stages: distribute the new key to every node while retaining the current active id;
-restart all nodes; then select the new active id and restart them again. New wraps immediately
-use the active key. The always-running key maintenance pass runs at startup and every minute.
-It atomically replaces database and replica sidecars without changing their data keys, conditionally
-rewraps the shared custody objects, and updates current and historical customer-backup credential
-wrappers through catalog transactions. Interrupted passes resume from the wrappers still naming an
-older key. Custody replacements require the entity tag read with the wrapper, so deletion or another
-rotation cannot be overwritten.
+Selecting a different active id starts rotation. New wrappers then use
+`v2.<keyId>.<base64(nonce|ciphertext|tag)>`, with the version and id authenticated as AES-GCM
+associated data, and sidecars use version 2 headers. Unprefixed wrappers use only `k0`.
+Both sidecar versions remain readable. Missing, malformed, unknown or unauthentic ids fail
+closed without trying other keys. The native database format identity and encrypted data pages
+do not change; key sidecars have their own version. **After the first rotation, rollback to a
+build that cannot read version 2 wrappers is unsupported.**
 
-`terrabase.keys.wrapped{key_id}` counts wrapped items after a complete successful pass. It includes
-local database and replica sidecars, custody keys, and current and historical customer credentials.
-A failed or incomplete inventory publishes no counts. Check every node, require fresh successful
-inventories with the old id at zero, and keep all nodes on the same active id before retiring a key.
-Shared custody and catalog items are counted on multiple nodes; do not sum those copies to infer
-unique item counts. A zero local count alone does not prove that another node has finished.
-Retain the old key until every backup needing it has also passed the 7-day retention and 14-day bucket
-snapshot window; use a longer wait where the configured retention is longer. Historical catalog
-backups still contain the credential wrappers from their capture time. Never delete custody keys
-while retained backups need them; database deletion remains the operation that destroys data keys.
+Before selecting a different active id, the operator must verify that **every node in every
+region** runs a build that reads version 2 wrappers. There is no fleet keyring-capability signal;
+this is an operator precondition, not an automatically enforced rollout gate. First upgrade all
+nodes with the original `k0` active. Distribute the new key to every node while retaining the
+current active id, restart all nodes, and only then select the new active id and restart again.
+Keyring configuration is immutable for the process lifetime, so every active-id change starts
+a new process and a startup inventory. Never return to `k0` after rotating away from it.
 
-This rotation preserves the existing backup bytes, bucket layout and database files. Live database files, WAL files, local
-managed snapshots and restore scratch files still require encryption of the node's storage; TS-702's disk-encryption
-and in-place migration work follows separately.
+The full maintenance pass runs at startup (after the catalog opens), on an active-id change
+through restart, and hourly thereafter. It atomically replaces only sidecars needing a different
+key, syncs the parent directory after each rename, conditionally replaces shared custody objects,
+and updates current and historical customer credential wrappers only when they must change.
+The creation lock is taken per local file; a scan never holds it across the whole directory.
+Interrupted passes resume from remaining old wrappers. Custody replacements require the ETag
+read with the wrapper, so deletion or another rotation cannot be overwritten. Detached
+`*.promote.db.key` files in the replica directory are excluded: a subsequent promote discards
+these crash leftovers before making its own detached database. They are not live replica keys.
+
+`terrabase.keys.wrapped{key_id}` counts local database and replica sidecars, custody keys, and
+current and historical customer credentials after a complete inventory. Unreadable items are
+skipped, logged once per item during the process lifetime (up to 65536 distinct items), and
+counted separately as `terrabase.keys.wrapped{status="unreadable"}`. They never prevent later
+items from being processed. A complete pass may include unreadable items; retirement requires
+that count to be zero. An inventory that cannot finish publishes no wrapper counts.
+`terrabase.keys.last_complete` is the Unix timestamp of the last complete pass, initially zero;
+a stale timestamp exposes a node whose passes keep failing. Require fresh complete inventories
+on every node with the same active id, the old key at zero, and unreadable at zero. Shared items
+are counted on multiple nodes; do not sum those copies to infer unique counts.
+
+The wrapper count **does not cover snapshot bundles or volume backups**: a bundle embeds its
+original database key file, and a historical catalog also embeds its credential wrappers.
+`terrabase.keys.oldest_snapshot_age{key_id}` reports the age in seconds of the oldest retained
+platform snapshot bundle embedding that id. The inventory authenticates the first backup chunk,
+including snapshots visible only in retained bucket snapshots, without downloading whole databases.
+Zero means none remain; minus one or an absent sample means unknown and blocks retirement.
+A failed snapshot read also increments the unreadable count. Customer-bucket snapshots and
+volume backups require a separate operator inventory; the platform gauge does not inspect them.
+An operator must verify that neither retains material requiring the old key.
+
+Start the retirement waiting period when the **last wrapper on the last node leaves the old key**,
+not when rotation begins. Retain the key for the longest retention any plan allows (currently
+30 days), plus the bucket snapshot window (currently 14 days), plus any restore lease that
+extends the lifetime of that material. Extend this bound for longer customer-bucket or volume
+backup retention. A 21-day wait is insufficient. The old key may be removed only after this
+whole period, fresh old-key and unreadable counts are zero everywhere, the oldest-snapshot-age
+gauge for that key is zero everywhere, no restore lease still needs it, and customer/volume
+backup inventories show no remaining dependency. A zero wrapper count alone never permits retirement.
 
 ## Bucket layout (version 1)
 

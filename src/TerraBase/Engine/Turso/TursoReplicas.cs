@@ -156,7 +156,7 @@ internal sealed partial class TursoReplicas(
 
             using (var file = new FileStream(detached + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
-                file.Write(Encoding.ASCII.GetBytes(DatabaseKeys.Header + wrapped + "\n"));
+                file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? DatabaseKeys.Header : DatabaseKeys.PreviousHeader) + wrapped + "\n"));
                 file.Flush(flushToDisk: true);
             }
 
@@ -381,7 +381,7 @@ internal sealed partial class TursoReplicas(
                     var temporary = path + DatabaseKeys.Suffix + ".tmp";
                     using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
-                        file.Write(Encoding.ASCII.GetBytes(KeyHeader + wrapped + "\n"));
+                        file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? KeyHeader : PreviousKeyHeader) + wrapped + "\n"));
                         file.Flush(flushToDisk: true);
                     }
 

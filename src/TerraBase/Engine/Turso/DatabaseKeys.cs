@@ -12,7 +12,7 @@ internal sealed class DatabaseKeys(IKeyring master)
     internal const string Suffix = ".key";
     internal const int MaxFileBytes = 16 * 1024;
     internal const string Header = "TERRABASE-DB-KEY-2\n";
-    private const string PreviousHeader = "TERRABASE-DB-KEY-1\n";
+    internal const string PreviousHeader = "TERRABASE-DB-KEY-1\n";
 
     internal async Task<string> CreateAsync(string path, TursoRunner io, CancellationToken cancellationToken)
     {
@@ -20,7 +20,7 @@ internal sealed class DatabaseKeys(IKeyring master)
         try
         {
             ValidateKey(key);
-            var record = Encoding.UTF8.GetBytes(Header + wrapped + "\n");
+            var record = Encoding.UTF8.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? Header : PreviousHeader) + wrapped + "\n");
             ValidateRecord(record);
             await io.RunAsync(() =>
             {
