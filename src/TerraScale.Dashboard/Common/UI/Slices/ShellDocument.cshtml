@@ -21,7 +21,7 @@
       data-page-url="@(HttpContext?.Request.Path.StartsWithSegments("/api") == true ? Model.ReturnUrl : null)" data-init="el.dataset.pageUrl &amp;&amp; history.replaceState(null, '', el.dataset.pageUrl)">
     <a class="ts-skip-link" href="#ts-main" data-attr:inert="$navOpen">Skip to main content</a>
     <div class="ts-shell" data-class:nav-open="$navOpen"
-         data-on:keydown__window="evt.key === 'Escape' &amp;&amp; $navOpen &amp;&amp; !document.querySelector('dialog[open]') &amp;&amp; ($navOpen = false, setTimeout(() => document.getElementById('ts-nav-toggle').focus()))"
+         data-on:keydown__window="evt.key === 'Escape' &amp;&amp; $navOpen &amp;&amp; !document.querySelector('dialog[open], :popover-open') &amp;&amp; ($navOpen = false, setTimeout(() => document.getElementById('ts-nav-toggle').focus()))"
          data-on:resize__window__debounce.150ms="innerWidth >= 768 &amp;&amp; $navOpen &amp;&amp; ($navOpen = false, setTimeout(() => document.getElementById('ts-navigation').focus()))">
         <button type="button" id="ts-nav-toggle" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen = true; setTimeout(() => document.getElementById('ts-nav-close').focus())" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">@ShellIcons.Svg("panel-left", 18)</button>
         <div class="ts-nav-backdrop" aria-hidden="true" data-on:click="$navOpen = false; setTimeout(() => document.getElementById('ts-nav-toggle').focus())"></div>
