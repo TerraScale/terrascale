@@ -24,7 +24,7 @@ build = (
     if "E2E_BUILD" in os.environ else root / "src/TerraBase/bin/Release/net11.0"
 )
 baseline = pathlib.Path(sys.argv[1]).resolve()
-state = pathlib.Path(tempfile.mkdtemp(prefix="922cbdaa-C6-engine-crash-"))
+state = pathlib.Path(tempfile.mkdtemp(prefix="engine-crash-"))
 capacity = shutil.disk_usage(state)
 assert capacity.used + 24_000_000_000 < capacity.total * 0.8
 ports = []
@@ -243,7 +243,7 @@ def hook(operation, database_id, count=None):
         result = client.recv(65536).decode().strip()
         if not result:
             raise RuntimeError("hook interrupted by process exit")
-        if operation == "ledger":
+        if operation in ("ledger", "pending"):
             return [int(value) for value in result.split()]
         assert result == "ok", result
 
@@ -274,6 +274,7 @@ def unavailable(database_id, code):
 
 class Postgres:
     def __init__(self, database_id):
+        self.startup_error = None
         self.socket = socket.create_connection(("127.0.0.1", ports[3]), timeout=35)
         parameters = f"user\0probe\0database\0{project}/{database_id}\0\0".encode()
         self.socket.sendall(struct.pack("!II", len(parameters) + 8, 196608) + parameters)
@@ -282,7 +283,9 @@ class Postgres:
         self.send(b"p", api_key.encode() + b"\0")
         while True:
             kind, body = self.receive()
-            assert kind != b"E", body
+            if kind == b"E":
+                self.startup_error = {field[:1].decode(): field[1:].decode() for field in body.split(b"\0") if field}
+                return
             if kind == b"Z":
                 break
 
@@ -301,6 +304,8 @@ class Postgres:
         self.socket.sendall(kind + struct.pack("!I", len(body) + 4) + body)
 
     def query(self, statement):
+        if self.startup_error is not None:
+            return self.startup_error
         self.send(b"Q", statement.encode() + b"\0")
         return self.result()
 
@@ -323,7 +328,7 @@ class Postgres:
 def wait_for_proofs():
     deadline = time.monotonic() + 90
     with proof_finished:
-        while gauge("terrabase_storage_proof_pending") != 0:
+        while hook("pending", "*") != [0]:
             remaining = deadline - time.monotonic()
             assert remaining > 0, "proofs did not finish"
             proof_finished.wait(remaining)
@@ -336,6 +341,105 @@ def recovered(identities):
         assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
         with Postgres(identity) as client:
             assert client.query("SELECT 1;") == {}
+
+
+def admission_cases():
+    added_started = time.perf_counter()
+    start()
+    request("PUT", f"/v1/management/organizations/{organization}/plan", {"plan": "enterprise"})
+    marked = request("POST", f"/v1/projects/{project}/databases", {"name": "marked"})["id"]
+    with Postgres(marked) as existing:
+        assert existing.query("BEGIN;") == {}
+        assert existing.query("SELECT 1;") == {}
+        hook("fault", marked)
+        before = files(marked)
+        response = existing.query("SELECT 1;")
+        assert response["C"] == "57P03" and "copy_faulted" in response["M"], response
+        unavailable(marked, "copy_faulted")
+        assert hook("ledger", marked) == [1, 1]
+        assert files(marked) == before, (before, files(marked))
+    end()
+    assert files(marked) == before, ("shutdown", before, files(marked))
+    start()
+    unavailable(marked, "copy_faulted")
+    assert hook("ledger", marked) == [1, 0]
+    assert gauge("terrabase_storage_faulted_databases") == hook("ledger", "*")[0] >= 1
+    assert files(marked) == before, (before, files(marked))
+    print("FAULTED: existing Postgres transaction and new SELECT -> 57P03 copy_faulted; HTTP read -> 503 copy_faulted; files/key unchanged; fault gauge survives restart", flush=True)
+    end()
+
+    for kind in ("locked", "io"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "proof-" + kind})["id"]
+        hook("intent", identity)
+        end(hard=True, rollback=False)
+        before = files(identity)
+        control = state / "proof-control"
+        control.write_text(kind)
+        lock = (state / "data" / organization / project / (identity + ".db")).open("rb")
+        if kind == "locked":
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        start(proof_target=identity + ".db" if kind == "io" else None)
+        unavailable(identity, "recovery_pending")
+        assert hook("ledger", identity) == [0, 1]
+        assert gauge("terrabase_storage_proof_pending") == 1
+        assert files(identity) == before
+        control.unlink()
+        lock.close()
+        recovered([identity])
+        print(f"{kind}: INCOMPLETE, no fault, intent retained, files/key unchanged; PostgreSQL 57P03 recovery_pending and HTTP 503 recovery_pending; PASSED after removal, both protocols read", flush=True)
+        end()
+
+    start()
+    unreadable = [
+        request("POST", f"/v1/projects/{project}/databases", {"name": f"key-{index}"})["id"]
+        for index in range(24)
+    ]
+    for identity in unreadable:
+        hook("intent", identity)
+    end(hard=True, rollback=False)
+    before = {identity: files(identity) for identity in unreadable}
+    for identity in unreadable:
+        (state / "data" / organization / project / (identity + ".db.key")).chmod(0)
+    try:
+        start()
+        assert gauge("terrabase_storage_proof_pending") == 24
+        for identity in unreadable:
+            unavailable(identity, "recovery_pending")
+            assert hook("ledger", identity) == [0, 1]
+            path = state / "data" / organization / project
+            assert {file.name: file.stat().st_size for file in path.glob(identity + ".db*")} == {
+                name: value[0] for name, value in before[identity].items()
+            }
+        end()
+        start()
+        assert gauge("terrabase_storage_proof_pending") == 24
+        for identity in unreadable:
+            assert hook("ledger", identity) == [0, 1]
+    finally:
+        for identity in unreadable:
+            (state / "data" / organization / project / (identity + ".db.key")).chmod(0o600)
+    for identity in unreadable:
+        assert files(identity) == before[identity]
+    recovered(unreadable)
+    print("24 unreadable keys: INCOMPLETE, zero new faults, 24 intents and unchanged files; each protocol unavailable; all 24 PASSED and readable after key access restored", flush=True)
+    end()
+
+    start()
+    empty = request("POST", f"/v1/projects/{project}/databases", {"name": "empty-after-kill"})["id"]
+    hook("hold", empty)
+    end(hard=True, rollback=False)
+    path = state / "data" / organization / project / (empty + ".db")
+    assert pathlib.Path(str(path) + "-wal").exists()
+    path.write_bytes(b"")
+    before = files(empty)
+    start()
+    unavailable(empty, "copy_faulted")
+    assert hook("ledger", empty) == [1, 0]
+    assert files(empty) == before
+    print("zero-length main with WAL after kill: DAMAGED; main/WAL/key unchanged; PostgreSQL 57P03 copy_faulted, HTTP 503 copy_faulted", flush=True)
+    end()
+    return time.perf_counter() - added_started
 
 
 references = {}
@@ -544,101 +648,9 @@ try:
     print("damaged wrapped key and inaccessible key: INCOMPLETE, no faults, intents retained; healthy database readable; both recover after key repair", flush=True)
     end()
     assert rollback_count == 9, rollback_count
-    added_started = time.perf_counter()
-    start()
-    marked = request("POST", f"/v1/projects/{project}/databases", {"name": "marked"})["id"]
-    with Postgres(marked) as existing:
-        assert existing.query("BEGIN;") == {}
-        assert existing.query("SELECT 1;") == {}
-        hook("fault", marked)
-        before = files(marked)
-        response = existing.query("SELECT 1;")
-        assert response["C"] == "57P03" and "copy_faulted" in response["M"], response
-        unavailable(marked, "copy_faulted")
-        assert hook("ledger", marked) == [1, 1]
-        assert files(marked) == before
-    end()
-    start()
-    unavailable(marked, "copy_faulted")
-    assert hook("ledger", marked) == [1, 0]
-    assert gauge("terrabase_storage_faulted_databases") == hook("ledger", "*")[0] >= 1
-    assert files(marked) == before
-    print("FAULTED: existing Postgres transaction and new SELECT -> 57P03 copy_faulted; HTTP read -> 503 copy_faulted; files/key unchanged; fault gauge survives restart", flush=True)
-    end()
-
-    for kind in ("locked", "io"):
-        start()
-        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "proof-" + kind})["id"]
-        hook("intent", identity)
-        end(hard=True, rollback=False)
-        before = files(identity)
-        control = state / "proof-control"
-        control.write_text(kind)
-        lock = (state / "data" / organization / project / (identity + ".db")).open("rb")
-        if kind == "locked":
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        start(proof_target=identity + ".db" if kind == "io" else None)
-        unavailable(identity, "recovery_pending")
-        assert hook("ledger", identity) == [0, 1]
-        assert gauge("terrabase_storage_proof_pending") == 1
-        assert files(identity) == before
-        control.unlink()
-        lock.close()
-        recovered([identity])
-        print(f"{kind}: INCOMPLETE, no fault, intent retained, files/key unchanged; PostgreSQL 57P03 recovery_pending and HTTP 503 recovery_pending; PASSED after removal, both protocols read", flush=True)
-        end()
-
-    start()
-    unreadable = [
-        request("POST", f"/v1/projects/{project}/databases", {"name": f"key-{index}"})["id"]
-        for index in range(24)
-    ]
-    for identity in unreadable:
-        hook("intent", identity)
-    end(hard=True, rollback=False)
-    before = {identity: files(identity) for identity in unreadable}
-    for identity in unreadable:
-        (state / "data" / organization / project / (identity + ".db.key")).chmod(0)
-    try:
-        start()
-        assert gauge("terrabase_storage_proof_pending") == 24
-        for identity in unreadable:
-            unavailable(identity, "recovery_pending")
-            assert hook("ledger", identity) == [0, 1]
-            path = state / "data" / organization / project
-            assert {file.name: file.stat().st_size for file in path.glob(identity + ".db*")} == {
-                name: value[0] for name, value in before[identity].items()
-            }
-        end()
-        start()
-        assert gauge("terrabase_storage_proof_pending") == 24
-        for identity in unreadable:
-            assert hook("ledger", identity) == [0, 1]
-    finally:
-        for identity in unreadable:
-            (state / "data" / organization / project / (identity + ".db.key")).chmod(0o600)
-    for identity in unreadable:
-        assert files(identity) == before[identity]
-    recovered(unreadable)
-    print("24 unreadable keys: INCOMPLETE, zero new faults, 24 intents and unchanged files; each protocol unavailable; all 24 PASSED and readable after key access restored", flush=True)
-    end()
-
-    start()
-    empty = request("POST", f"/v1/projects/{project}/databases", {"name": "empty-after-kill"})["id"]
-    hook("hold", empty)
-    end(hard=True, rollback=False)
-    path = state / "data" / organization / project / (empty + ".db")
-    assert pathlib.Path(str(path) + "-wal").exists()
-    path.write_bytes(b"")
-    before = files(empty)
-    start()
-    unavailable(empty, "copy_faulted")
-    assert hook("ledger", empty) == [1, 0]
-    assert files(empty) == before
-    print("zero-length main with WAL after kill: DAMAGED; main/WAL/key unchanged; PostgreSQL 57P03 copy_faulted, HTTP 503 copy_faulted", flush=True)
-    end()
+    added_duration = admission_cases()
     assert rollback_count == 9, rollback_count
-    print(f"added crash cases: {time.perf_counter() - added_started:.3f}s; original nine rollback snapshots retained", flush=True)
+    print(f"added crash cases: {added_duration:.3f}s; original nine rollback snapshots retained", flush=True)
 
     for name in ("_system.db", "_intents.db"):
         path = state / "data" / name

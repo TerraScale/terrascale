@@ -185,7 +185,7 @@ internal sealed class SqlSocket(
         }
 
         _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded;
-        switch (await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false))
+        switch (await CheckTenantAsync(cancellationToken).ConfigureAwait(false))
         {
             case TenantContext found:
                 _database = found;
@@ -408,14 +408,19 @@ internal sealed class SqlSocket(
             return CredentialRevoked;
         }
 
+        return await CheckTenantAsync(cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantContext found when found.DatabaseId == Database.DatabaseId && found.OrganizationId == Database.OrganizationId => null,
+            Unavailable error => error,
+            _ => CredentialRevoked,
+        };
+    }
+
+    private async ValueTask<TenantResult> CheckTenantAsync(CancellationToken cancellationToken)
+    {
         try
         {
-            return await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false) switch
-            {
-                TenantContext found when found.DatabaseId == Database.DatabaseId && found.OrganizationId == Database.OrganizationId => null,
-                Unavailable error => error,
-                _ => CredentialRevoked,
-            };
+            return await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false);
         }
         catch (StorageCopyFaultedException)
         {

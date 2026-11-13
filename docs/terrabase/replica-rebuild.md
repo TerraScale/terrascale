@@ -1,6 +1,6 @@
 # Copy faults
 
-A faulted database copy must stop serving until its integrity and recovery authority are established. Regional placement does not certify a replacement automatically. Backup recovery and replica publication preserve source identity and catalog fences; see [copy placement](recovery-copy-placement.md).
+A faulted database copy stops serving permanently; no later integrity check clears its fault. Regional placement does not certify a replacement automatically. Backup recovery and replica publication preserve source identity and catalog fences; see [copy placement](recovery-copy-placement.md).
 
 ## The fault ledger
 

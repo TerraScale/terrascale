@@ -65,6 +65,13 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                 {
                     var engine = services.GetRequiredService<IStorageEngine>();
                     var tenant = new TenantContext(parts[1], PlanTier.Hobby, parts[2], parts[3]);
+                    if (parts[0] == "pending")
+                    {
+                        var ledger = engine.GetType().GetProperty("Ledger", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
+                        var count = ledger.GetType().GetProperty("PendingCount", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(ledger);
+                        await writer.WriteLineAsync(count!.ToString().AsMemory(), cancellationToken);
+                        continue;
+                    }
                     if (parts[0] == "ledger")
                     {
                         var system = await engine.OpenSystemDatabaseAsync(cancellationToken);

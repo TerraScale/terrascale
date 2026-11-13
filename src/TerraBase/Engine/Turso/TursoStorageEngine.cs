@@ -1022,7 +1022,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 foreach (var store in _stores.Values.Concat(_system is { } system ? [system] : [])
                     .Concat(_intents is { } intents ? [intents] : []))
                 {
-                    files.Add(store.FilePath);
+                    if (store.CloseRefusal is null)
+                    {
+                        files.Add(store.FilePath);
+                    }
                     try
                     {
                         store.Dispose();

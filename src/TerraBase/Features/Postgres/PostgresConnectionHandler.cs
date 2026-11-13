@@ -90,6 +90,16 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 await ServeAsync(session, input, output, closed).ConfigureAwait(false);
             }
         }
+        catch (StorageCopyFaultedException)
+        {
+            output.Error("57P03", "copy_faulted: Storage requires recovery.", fatal: true);
+            await output.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (StorageProofPendingException)
+        {
+            output.Error("57P03", "recovery_pending: Storage recovery proof is pending; retry.", fatal: true);
+            await output.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+        }
         catch (Exception error) when (error is InvalidDataException or QosMemoryException)
         {
             output.Error(error is QosMemoryException ? "53200" : "08P01", error.Message, fatal: true);
