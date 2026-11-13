@@ -336,6 +336,9 @@ test('R5 replace the writer under twenty acknowledged commits per second', async
           acknowledged.push(id++);
         } else if (response.status() === 409) {
           await answer(response, 409, 'serialization_conflict');
+        } else if (response.status() === 503) {
+          await answer(response, 503, 'unavailable');
+          expect(response.headers()['retry-after']).toBe('1');
         } else {
           await answer(response, 200, '200 write through the former writer');
         }

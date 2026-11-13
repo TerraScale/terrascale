@@ -15,6 +15,7 @@ to identify the same entry region; invalid pins are refused before database rout
 
 A request is never proxied twice. Stale placement at the destination returns `503 unavailable` with
 `Retry-After: 1`. An unknown writer or unreachable destination gives the same refusal without an internal host.
+A REST request that reaches the old writer's fence after admission also returns `503 unavailable` with `Retry-After: 1`.
 REST connection establishment is bounded by five seconds. A write already sent without an answer can return
 `503 write_outcome_unknown`; reconcile by immutable identity before resending it.
 
