@@ -40,7 +40,7 @@ internal sealed class LocateHomeEndpoint(IProjectCatalog catalog, IManagementSer
         }
 
         return await management.FindDatabaseRecordAsync(organization, project, database, cancellationToken).ConfigureAwait(false) is ManagedDatabase record
-            && record.PlacedIn(options.Region)
+            && record.PlacedIn(options.Region) && record.Home(options.Region) == options.Region
             ? Results.Ok()
             : ErrorResponse.From(new NotFound());
     }

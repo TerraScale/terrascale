@@ -840,7 +840,7 @@ func (r *runner) placementSet() (result error) {
 	if _, err := db.Execute(r.ctx, "INSERT INTO placement_rows VALUES (2)"); err != nil {
 		return err
 	}
-	retained, err := db.Query(r.ctx, "SELECT value FROM placement_rows ORDER BY value")
+	retained, err := placed.Database(r.project, created.ID).Query(r.ctx, "SELECT value FROM placement_rows ORDER BY value")
 	if err != nil {
 		return err
 	}

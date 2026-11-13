@@ -116,14 +116,14 @@ internal sealed class SqlSocket(
 
             try
             {
-                if (_closing)
-                {
-                    continue;
-                }
-
                 await _frame.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
+                    if (_closing)
+                    {
+                        continue;
+                    }
+
                     if (!await AnswerAsync(frame.Value.Bytes.AsMemory(0, frame.Value.Length), cancellationToken).ConfigureAwait(false))
                     {
                         return;
@@ -610,6 +610,10 @@ internal sealed class SqlSocket(
         await _frame.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (_session is { } session)
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+            }
             await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
         }
         finally

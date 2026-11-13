@@ -55,6 +55,8 @@ internal sealed class DatabaseFences
 
     public IDisposable WatchMoved(string database, string? previousHome, Action moved) => new MoveWatch(this, database, previousHome, moved);
 
+    public void Moving(string database) => WriterMoved?.Invoke(database);
+
     public void Moved(string database, string home)
     {
         Set(database, new Fence(Paused: false, Home: home));
@@ -147,7 +149,7 @@ internal sealed class DatabaseFences
         {
             lock (_gate)
             {
-                if (!_disposed && database == _database && _fences.MovedTo(database) is not null)
+                if (!_disposed && database == _database)
                 {
                     _moved();
                 }

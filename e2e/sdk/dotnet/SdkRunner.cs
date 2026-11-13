@@ -539,8 +539,8 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
             var rows = await client.Database(project, created.Id).QueryAsync("SELECT value FROM placement_rows", cancellationToken: cancellationToken);
             if (rows.Count != 1 || rows[0].GetInt64(0) != 1) throw new InvalidOperationException("Data did not survive placement.");
             await client.Database(project, created.Id).ExecuteAsync("INSERT INTO placement_rows VALUES (2)", cancellationToken: cancellationToken);
-            var retained = await client.Database(project, created.Id).QueryAsync("SELECT value FROM placement_rows ORDER BY value", cancellationToken: cancellationToken);
-            if (retained.Count != 2 || retained[1].GetInt64(0) != 2) throw new InvalidOperationException("An acknowledged proxied write was lost.");
+            var retained = await regional.Database(project, created.Id).QueryAsync("SELECT value FROM placement_rows ORDER BY value", cancellationToken: cancellationToken);
+            if (retained.Count != 2 || retained[1].GetInt64(0) != 2) throw new InvalidOperationException($"An acknowledged proxied write was lost: [{string.Join(",", retained.Select(row => row.GetInt64(0)))}].");
             Console.WriteLine("dotnet placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]");
         }
         finally

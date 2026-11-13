@@ -99,6 +99,7 @@ internal sealed class HomeMoves(
     private async Task<MoveHomeResult> MoveAsync(HomeMoveMarker marker, long started, CancellationToken cancellationToken)
     {
         var database = marker.Database;
+        fences.Moving(marker.DatabaseId);
         var peer = await PeerAsync(marker.Target, cancellationToken).ConfigureAwait(false);
         var caughtUpAnswer = peer is null ? null : await PostAsync(peer, marker, "catch-up", null, CancellationToken.None).ConfigureAwait(false);
         using (caughtUpAnswer)

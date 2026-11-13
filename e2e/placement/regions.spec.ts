@@ -3,7 +3,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:http2';
-import { request as httpsRequest } from 'node:https';
+import { request as httpRequest } from 'node:http';
 import { extendPeers, startRegion, type RegionProcess } from './fleet';
 import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -1117,9 +1117,10 @@ test('R19 an unprimed non-writer in the home region cannot confirm deletion', as
 
 
 multiple('R20 receiving admission isolates organizations before any proxy work', async ({ cells, owner, request }) => {
-  const first = await create(cells, ['fra']);
+  const first = await named(cells, replica, name('receiving-admission'), ['fra'], journey().projectId);
   const second = await named(owner.cells, replica, name('isolated-admission'), ['fra'], owner.projectId);
-  const holding: ReturnType<typeof httpsRequest>[] = [];
+  const holding: ReturnType<typeof httpRequest>[] = [];
+  const responses: number[] = [];
   try {
     await sql(cells, replica, first.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
     expect(postgresRows(first.id), 'a never-holding region validates and proxies a new Postgres session').toBe('');
@@ -1131,13 +1132,14 @@ multiple('R20 receiving admission isolates organizations before any proxy work',
     }));
     saveSecret('admission-isolation-token', grant.access_token);
     for (let index = 0; index < 4; index++) {
-      const pending = httpsRequest(`${home}${database(first.id)}/sql/execute`, {
-        method: 'POST', ca: readFileSync(join(stateDir, 'pki', 'ca.pem')),
+      const pending = httpRequest(`http://127.0.0.1:8080${database(first.id)}/sql/execute`, {
+        method: 'POST',
         headers: { authorization: `Bearer ${grant.access_token}`, 'content-type': 'application/json', 'content-length': '1024' },
       });
-      pending.on('response', response => response.resume());
+      pending.on('response', response => { responses.push(response.statusCode ?? 0); response.resume(); });
       pending.on('error', error => { expect(['ECONNRESET', 'EPIPE']).toContain((error as NodeJS.ErrnoException).code); });
       holding.push(pending);
+      pending.flushHeaders();
       pending.write('{');
     }
     await expect.poll(async () => {
@@ -1146,17 +1148,37 @@ multiple('R20 receiving admission isolates organizations before any proxy work',
       await answer(response, 429, 'tenant_busy');
       expect(Number(response.headers()['retry-after'])).toBeGreaterThan(0);
       return true;
-    }, { message: 'four incomplete requests occupy only their organization admission' }).toBe(true);
+    }, { message: `four incomplete requests occupy only their organization admission; holder responses ${JSON.stringify(responses)}` }).toBe(true);
     expect((await sql(owner.cells, home, second.id, 'SELECT value FROM placement_rows', owner.projectId)).results[0].rows).toEqual([[7]]);
     console.log('R20 admission: first organization has 4 receiving requests, next is 429 tenant_busy with Retry-After; second organization proxy is 200, rows [[7]]');
   } finally {
-    const closed = holding.map(pending => new Promise<void>(resolve => pending.once('close', resolve)));
+    const closed = holding.map(pending => pending.closed ? Promise.resolve() : new Promise<void>(resolve => pending.once('close', resolve)));
     for (const pending of holding) pending.destroy();
     await Promise.all(closed);
+    console.log(`R20 incomplete holder responses: ${JSON.stringify(responses)}`);
     await removeDatabase(cells, first.id);
     await removeDatabase(owner.cells, second.id, owner.projectId);
   }
 });
+
+
+async function publishPlacementPlan(organization: string): Promise<void> {
+  const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
+  const session = connect('http://127.0.0.1:8081');
+  const stream = session.request({ ':method': 'PUT', ':path': `/admin/organizations/${organization}/plan`, 'x-terrabase-peer-credential': credential, 'content-type': 'application/json' });
+  session.on('error', error => stream.destroy(error));
+  try {
+    const response = once(stream, 'response');
+    stream.end(JSON.stringify({ plan: 'hobby' }));
+    const [headers] = await response;
+    let body = '';
+    stream.setEncoding('utf8');
+    for await (const chunk of stream) body += chunk;
+    expect(Number(headers[':status']), body).toBe(200);
+  } finally {
+    session.close();
+  }
+}
 
 test('R21 five-region writer moves retain every acknowledged write and refresh stale routes', async ({ cells }) => {
   const extra = ['sjc', 'sin', 'syd'];
@@ -1170,7 +1192,8 @@ test('R21 five-region writer moves retain every acknowledged write and refresh s
       nodes.push(node);
       endpoints.set(region, node.endpoint);
     }
-    const selected = ['gru', 'fra', ...extra];
+    await publishPlacementPlan(journey().organizationId);
+    const selected = ['gru', 'fra', 'sin', 'sjc', 'syd'];
     created = await create(cells, selected);
     await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
     const acknowledged: number[] = [];
@@ -1181,23 +1204,17 @@ test('R21 five-region writer moves retain every acknowledged write and refresh s
     for (const region of selected.slice(1)) {
       await expect.poll(async () => {
         const response = await cells.post(`${endpoints.get(region)!}${database(created!.id)}/sql/execute`, { data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] } });
-        if (response.status() !== 200 || response.headers()['x-terrabase-region'] !== region) return [];
-        return (await response.json()).results[0].rows;
-      }, { message: `${region} holds all acknowledged rows`, timeout: 45_000, intervals: [250, 500, 1000] }).toEqual([[1], [2], [3]]);
+        return { status: response.status(), region: response.headers()['x-terrabase-region'], body: await response.json() };
+      }, { message: `${region} holds all acknowledged rows`, timeout: 45_000, intervals: [250, 500, 1000] }).toMatchObject({ status: 200, region, body: { results: [{ rows: [[1], [2], [3]] }] } });
     }
     let writer = 'gru';
     let refreshed = 0;
     for (const [index, target] of selected.slice(1).entries()) {
       const remaining = selected.slice(index + 1);
-      await expect.poll(async () => {
-        const response = await cells.patch(`${endpoints.get(writer)!}${database(created!.id)}`, { data: { regions: remaining } });
-        if (response.status() === 503) {
-          await answer(response, 503, 'replica_not_ready');
-          return false;
-        }
-        await answer(response, 200, '200 writer moved');
-        return true;
-      }, { message: `the writer moves from ${writer} to ${target}`, intervals: [1000] }).toBe(true);
+      await expect.poll(async () => (await progress(cells, created!.id, endpoints.get(writer)!)).regions.find(row => row.region === target),
+        { message: `${writer} observed a completed pull by ${target}`, timeout: 45_000, intervals: [250, 500, 1000] })
+        .toMatchObject({ revision: expect.any(String), lastPulledAt: expect.any(String), lagMs: expect.any(Number) });
+      await answer(await cells.patch(`${endpoints.get(writer)!}${database(created.id)}`, { data: { regions: remaining } }), 200, '200 writer moved');
       writer = target;
       const value = acknowledged.length + 1;
       const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: `INSERT INTO placement_rows VALUES (${value})` }] } });
@@ -1209,7 +1226,7 @@ test('R21 five-region writer moves retain every acknowledged write and refresh s
     const found = (await sql(cells, endpoints.get(writer)!, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows.map(row => row[0]);
     expect(found).toEqual(acknowledged);
     expect(refreshed, 'a stale route was refused, refreshed and sent to a different region within the original request').toBeGreaterThan(0);
-    console.log(`R21 five-region move: gru -> fra -> sjc -> sin -> syd; acknowledged ${acknowledged.length}; found ${found.length}; stale routes refreshed ${refreshed}; at most two one-hop attempts per request`);
+    console.log(`R21 five-region move: gru -> fra -> sin -> sjc -> syd; acknowledged ${acknowledged.length}; found ${found.length}; stale routes refreshed ${refreshed}; at most two one-hop attempts per request`);
   } finally {
     if (created) await removeDatabase(cells, created.id);
     for (const node of nodes.reverse()) await node.stop();

@@ -176,7 +176,7 @@ const operations = {
       same(proxied.regions.map(row => row.region), ['fra'], 'proxied nonmember endpoint');
       same(cells(await client.database(created.id).query('SELECT value FROM placement_rows')), [[1]], 'data survived placement');
       await client.database(created.id).execute('INSERT INTO placement_rows VALUES (2)');
-      same(cells(await client.database(created.id).query('SELECT value FROM placement_rows ORDER BY value')), [[1], [2]], 'acknowledged proxied write retained');
+      same(cells(await placed.database(created.id).query('SELECT value FROM placement_rows ORDER BY value')), [[1], [2]], 'acknowledged proxied write retained');
       console.log('js placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]');
     } finally { await placed.deleteDatabase(project, created.id); }
   },

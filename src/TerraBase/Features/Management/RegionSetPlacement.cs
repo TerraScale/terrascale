@@ -9,12 +9,17 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class RegionSetPlacement(IManagementService management, TerraBaseOptions options, IHomeApply apply, HomeMoves moves, IRegionPeers peers, IDatabaseRevisions revisions)
+internal sealed class RegionSetPlacement(IManagementService management, TerraBaseOptions options, IHomeApply apply, HomeMoves moves, IRegionPeers peers, IDatabaseRevisions revisions, DatabaseFences fences)
 {
     internal static readonly Unavailable PlacementNotReady = new("requested regions remain members; retry when a requested region can take over", "replica_not_ready");
 
     public async ValueTask<IResult> UpdateAsync(HttpContext context, ManagedDatabase database, IReadOnlyList<string> selected, CancellationToken cancellationToken)
     {
+        if (database.Home(options.Region) == options.Region && !selected.Contains(options.Region, StringComparer.Ordinal))
+        {
+            fences.Moving(database.Id);
+        }
+
         var user = ManagementRoute.UserId(context);
         var organization = ManagementRoute.OrganizationId(context);
         var placed = await apply.PrepareReplicatedAsync(organization, options.Region,

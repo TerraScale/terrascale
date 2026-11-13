@@ -458,7 +458,7 @@ def placement_set(op):
         same([row.region for row in proxied.regions], ["fra"], "proxied nonmember endpoint")
         same(cells(client.database(created.id).query("SELECT value FROM placement_rows")), [[1]], "data survived placement")
         client.database(created.id).execute("INSERT INTO placement_rows VALUES (2)")
-        same(cells(client.database(created.id).query("SELECT value FROM placement_rows ORDER BY value")),
+        same(cells(placed.database(created.id).query("SELECT value FROM placement_rows ORDER BY value")),
              [[1], [2]], "acknowledged proxied write retained")
         print("python placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]")
     finally:
