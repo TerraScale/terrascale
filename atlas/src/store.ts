@@ -75,10 +75,18 @@ export class AtlasStore extends DurableObject<Env> {
 
   private async writePlacement(placement: Placement): Promise<"updated" | "stale"> {
     const { project, database, region, updated } = placement;
-    const stored = await this.env.ATLAS_DB.prepare("SELECT updated FROM placements WHERE project = ? AND database = ?")
+    const stored = await this.env.ATLAS_DB.prepare(
+      "SELECT updated, region FROM placements WHERE project = ? AND database = ?",
+    )
       .bind(project, database)
-      .first<{ updated: number }>();
-    if (stored !== null && stored.updated >= updated) return "stale";
+      .first<{ updated: number; region: string | null }>();
+    if (stored !== null && stored.updated >= updated) {
+      if (stored.updated === updated && stored.region === region) {
+        await this.refreshCache(placementKey(project, database), placement);
+        return "updated";
+      }
+      return "stale";
+    }
     const result = await this.env.ATLAS_DB.prepare(
       "INSERT INTO placements (project, database, region, updated) VALUES (?, ?, ?, ?) ON CONFLICT(project, database) DO UPDATE SET region = excluded.region, updated = excluded.updated",
     )

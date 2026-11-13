@@ -196,12 +196,22 @@ export async function publish(request: Request, env: Env): Promise<Response> {
       400,
     );
   }
-  const stub = env.ATLAS_STORE.get(env.ATLAS_STORE.idFromName("atlas"));
-  const response = await stub.fetch("https://atlas-store/publish", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(parsed.request),
-  });
-  invalidateMemory();
-  return response;
+  try {
+    const stub = env.ATLAS_STORE.get(env.ATLAS_STORE.idFromName("atlas"));
+    return await stub.fetch("https://atlas-store/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(parsed.request),
+    });
+  } catch (error) {
+    console.error("atlas store publish failed", error);
+    return failure(
+      "store_unavailable",
+      "The Atlas store could not complete the publish",
+      "Publish again; earlier items may have landed.",
+      502,
+    );
+  } finally {
+    invalidateMemory();
+  }
 }

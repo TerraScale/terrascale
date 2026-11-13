@@ -3,6 +3,7 @@ import type { Env } from "./env";
 
 const MEMORY_TTL_MS = 5_000;
 const KV_TTL_MS = 60_000;
+const D1_TIMEOUT_MS = 2_500;
 export const placementKey = (project: string, database: string) => `placement:${project}:${database}`;
 
 type AtlasRecord = Topology | Placement;
@@ -65,11 +66,28 @@ async function load<T extends AtlasRecord>(
     }
   }
   let doc: T | null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    doc = await read();
+    doc = await Promise.race([
+      read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("D1 read timed out")), D1_TIMEOUT_MS);
+      }),
+    ]);
   } catch (error) {
-    if (!fresh && cached !== undefined) return { doc: cached.doc as T | null, cache: "HIT", stale: true };
+    cached = memory.get(key) ?? cached;
+    if (cached === undefined) {
+      try {
+        const kv = await env.ATLAS_KV.get<CacheEntry<T>>(key, "json");
+        if (kv !== null && typeof kv.at === "number" && "doc" in kv) cached = { ...kv, remembered: 0 };
+      } catch (kvError) {
+        console.error("atlas KV recovery read failed", kvError);
+      }
+    }
+    if (cached !== undefined) return { doc: cached.doc as T | null, cache: "HIT", stale: true };
     throw error;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
   const entry = cacheRecord(doc);
   remember(key, entry);

@@ -137,7 +137,7 @@ async function resolve(request: Request, env: Env, ctx: ExecutionContext, url: U
     targetId === null
       ? (ranked.find((entry) => entry.health !== "down")?.region ?? null)
       : (topology.regions.find((region) => region.id === targetId) ?? null);
-  const placementState = targetId === null ? "any" : "placed";
+  const placementState = targetId === null ? "any" : "known";
   if (selected === null) {
     return errorResponse(
       "no_eligible_region",

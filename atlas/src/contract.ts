@@ -48,7 +48,7 @@ const SERVICE_ID_RE = REGION_ID_RE;
 const API_ORIGIN_RE = /^https:\/\/[a-z0-9-]+\.api\.terrascale\.tech$/;
 const TERRASCALE_ORIGIN_RE = /^https:\/\/([a-z0-9-]+\.)*terrascale\.tech$/;
 const LOOPBACK_ORIGIN_RE = /^http:\/\/(127\.0\.0\.1|localhost):[1-9][0-9]{0,4}$/;
-const DATABASE_NAME_RE = REGION_ID_RE;
+const DATABASE_NAME_RE = /^[a-z][a-z0-9_-]{0,62}$/;
 const REQUIRED_SERVICES = ["terrabase", "auth", "dashboard", "status", "docs"] as const;
 const FUTURE_S = 300;
 
@@ -65,7 +65,7 @@ function acceptedUrl(url: unknown, env: { DEV_ORIGINS?: string }, api = false, o
       return false;
     if (origin && host !== url) return false;
     if ((api ? API_ORIGIN_RE : TERRASCALE_ORIGIN_RE).test(host)) return true;
-    return env.DEV_ORIGINS !== undefined && LOOPBACK_ORIGIN_RE.test(host);
+    return env.DEV_ORIGINS === "1" && LOOPBACK_ORIGIN_RE.test(host);
   } catch {
     return false;
   }
