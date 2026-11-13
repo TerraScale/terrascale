@@ -25,7 +25,7 @@ async function signInToken(context: APIRequestContext, label: string): Promise<s
   return token;
 }
 
-async function stepUp(context: APIRequestContext, token: string, purpose: string): Promise<string> {
+export async function stepUp(context: APIRequestContext, token: string, purpose: string): Promise<string> {
   const started = await context.post(auth + '/v1/terrascale/step-up', {
     headers: { Authorization: 'Bearer ' + token },
     data: { purpose, audience: 'ts-auth', return_uri: dash + '/auth/step-up/callback' },

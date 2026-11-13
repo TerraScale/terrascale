@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Metadata;
@@ -43,14 +44,14 @@ public sealed record TokenBody(
     [property: JsonPropertyName("id_token")] string? IdToken,
     [property: JsonPropertyName("refresh_token")] string? RefreshToken);
 
-/// <summary>Claims about the signed-in user (OpenID Connect Core §5.3).</summary>
-/// <param name="Subject">The user id.</param>
-/// <param name="Email">The user's email, with the <c>email</c> scope.</param>
-/// <param name="EmailVerified">Always true with the <c>email</c> scope: sign-in proves the address.</param>
 public sealed record UserInfoBody(
     [property: JsonPropertyName("sub")] string Subject,
     [property: JsonPropertyName("email"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Email,
-    [property: JsonPropertyName("email_verified"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? EmailVerified);
+    [property: JsonPropertyName("email_verified"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? EmailVerified,
+    [property: JsonPropertyName("given_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FirstName,
+    [property: JsonPropertyName("family_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LastName,
+    [property: JsonPropertyName("picture"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ImageUrl,
+    [property: JsonPropertyName("public_metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? PublicMetadata);
 
 /// <summary><c>GET /{slug}/.well-known/openid-configuration</c>: OpenID Provider metadata, served by OpenIddict.</summary>
 public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
@@ -445,7 +446,10 @@ public abstract class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutReq
         }
 
         var email = principal.HasScope(Scopes.Email);
-        return Results.Ok(new UserInfoBody(user.Id, email ? user.Email : null, email ? true : null));
+        var profile = principal.HasScope(Scopes.Profile);
+        return Results.Ok(new UserInfoBody(user.Id, email ? user.Email : null, email ? user.EmailVerified : null,
+            profile ? user.FirstName : null, profile ? user.LastName : null, profile ? user.ImageUrl : null,
+            profile ? JsonElement.Parse(user.PublicMetadata) : null));
     }
 }
 
@@ -649,7 +653,11 @@ internal static class OidcResults
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, user.Id)
             .SetClaim(Claims.Email, user.Email)
-            .SetClaim(Claims.EmailVerified, true)
+            .SetClaim(Claims.EmailVerified, user.EmailVerified)
+            .SetClaim(Claims.GivenName, user.FirstName)
+            .SetClaim(Claims.FamilyName, user.LastName)
+            .SetClaim(Claims.Picture, user.ImageUrl)
+            .SetClaim("public_metadata", JsonElement.Parse(user.PublicMetadata))
             .SetClaim(Claims.AuthenticationTime, authenticatedAt.ToUnixTimeSeconds())
             .SetClaim(OidcIssuer.EpochClaim, user.AuthEpoch)
             .SetClaim(OidcIssuer.StateClaim, user.AuthStamp)
@@ -666,10 +674,12 @@ internal static class OidcResults
             identity.SetClaim(PlatformRoleClaim, PlatformRoleAdmin);
         }
 
+        var profile = identity.HasScope(Scopes.Profile);
         var email = identity.HasScope(Scopes.Email);
         identity.SetDestinations(claim => claim.Type switch
         {
             Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
+            Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
             "ts_auth_session" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],

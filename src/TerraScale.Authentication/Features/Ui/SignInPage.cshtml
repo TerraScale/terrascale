@@ -396,6 +396,8 @@ case SignInStep.Mfa:
 <div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.StartOver</a></div>
 break;
 case SignInStep.Security:
+@if (Model.ProfileImage is { } profileImage) { <img src="@profileImage" alt="" width="64" height="64" referrerpolicy="no-referrer" /> }
+@if (Model.ProfileName is { Length: > 0 } profileName) { <p id="account-profile-name"><strong>@profileName</strong></p> }
 <dl class="facts">
 <div><dt>@Model.Copy.Account</dt><dd>@Model.Account</dd></div>
 <div><dt>@Model.Copy.TitleMfa</dt><dd>@(Model.MfaEnabled ? Model.Copy.MfaOn : Model.Copy.MfaOff)</dd></div>

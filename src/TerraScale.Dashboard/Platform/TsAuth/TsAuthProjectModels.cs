@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.Dashboard.Platform.TsAuth
@@ -84,7 +85,26 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("email")] string Email,
         [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-        [property: JsonPropertyName("disabled")] bool Disabled);
+        [property: JsonPropertyName("disabled")] bool Disabled)
+    {
+        [JsonPropertyName("first_name")]
+        public string? FirstName { get; init; }
+        [JsonPropertyName("last_name")]
+        public string? LastName { get; init; }
+        [JsonPropertyName("image_url")]
+        public string? ImageUrl { get; init; }
+        [JsonPropertyName("external_id")]
+        public string? ExternalId { get; init; }
+        [JsonPropertyName("email_verified")]
+        public bool EmailVerified { get; init; }
+        [JsonPropertyName("public_metadata")]
+        public JsonElement PublicMetadata { get; init; }
+        [JsonPropertyName("private_metadata")]
+        public JsonElement PrivateMetadata { get; init; }
+        [JsonPropertyName("unsafe_metadata")]
+        public JsonElement UnsafeMetadata { get; init; }
+    }
+
 
     public sealed record TsAuthUserExportPage(
         [property: JsonPropertyName("items")] IReadOnlyList<TsAuthDirectoryUser> Items,

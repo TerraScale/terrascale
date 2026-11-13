@@ -70,4 +70,8 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthCreateProjectInvitation))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthProjectInvitation>))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthWaitlistEntry>))]
+[JsonSerializable(typeof(TerraScaleAuthCreateUser))]
+[JsonSerializable(typeof(TerraScaleAuthUpdateUser))]
+[JsonSerializable(typeof(TerraScaleAuthImportUsers))]
+[JsonSerializable(typeof(TerraScaleAuthImportUsersResult))]
 internal sealed partial class TerraScaleAuthIntegrationJsonContext : JsonSerializerContext;

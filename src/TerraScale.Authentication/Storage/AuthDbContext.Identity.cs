@@ -42,6 +42,15 @@ public sealed partial class AuthDbContext
             user.Property(row => row.Id).HasMaxLength(26);
             user.Property(row => row.InstanceId).HasMaxLength(26);
             user.Property(row => row.Email).HasMaxLength(254);
+            user.Property(row => row.FirstName).HasMaxLength(255);
+            user.Property(row => row.LastName).HasMaxLength(255);
+            user.Property(row => row.ImageUrl).HasMaxLength(2048);
+            user.Property(row => row.ExternalId).HasMaxLength(255);
+            user.Property(row => row.EmailVerified).HasDefaultValue(true);
+            user.Property(row => row.PublicMetadata).HasDefaultValue("{}");
+            user.Property(row => row.PrivateMetadata).HasDefaultValue("{}");
+            user.Property(row => row.UnsafeMetadata).HasDefaultValue("{}");
+            user.HasIndex(row => new { row.InstanceId, row.ExternalId }).IsUnique();
             user.Property(row => row.AuthStamp).IsRequired().HasMaxLength(26);
             user.Property(row => row.Version).IsRequired().HasMaxLength(26).IsConcurrencyToken();
             user.HasIndex(row => new { row.InstanceId, row.Email }).IsUnique();

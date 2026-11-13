@@ -18,10 +18,12 @@ import (
 
 // ProjectUser is an end user of a project's hosted sign-in tenant.
 type ProjectUser struct {
-	ID        string    `json:"id" ulid:"required"`
-	Email     string    `json:"email"`
-	CreatedAt time.Time `json:"created_at"`
-	Disabled  bool      `json:"disabled"`
+	UserProfile
+	EmailVerified bool      `json:"email_verified"`
+	ID            string    `json:"id" ulid:"required"`
+	Email         string    `json:"email"`
+	CreatedAt     time.Time `json:"created_at"`
+	Disabled      bool      `json:"disabled"`
 }
 
 func (*ProjectUser) requiredAuthMembers() string { return "id email created_at disabled" }
@@ -154,12 +156,12 @@ func (t projectDirectoryTransport) RoundTrip(req *http.Request) (*http.Response,
 		return nil, err
 	}
 	defer res.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(res.Body, (8<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(res.Body, (16<<20)+1))
 	if err != nil {
 		return nil, err
 	}
 	invalid := errors.New("tsauth: invalid project directory response")
-	if len(data) > 8<<20 {
+	if len(data) > 16<<20 {
 		return nil, invalid
 	}
 	if res.StatusCode >= 200 && res.StatusCode <= 299 {

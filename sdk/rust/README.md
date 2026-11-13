@@ -242,3 +242,6 @@ Pass the project secret API key as the credential to `client.projects()?.disable
 
 Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.
 Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.
+Project user profile creation, merge-patch updates, and partial password-hash imports
+are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
+for fields, scope requirements, hash encodings and the next-release API names.

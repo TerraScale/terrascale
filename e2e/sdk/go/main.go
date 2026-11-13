@@ -21,6 +21,7 @@ import (
 )
 
 type operation struct {
+	PasswordHash  string         `json:"password_hash"`
 	ID            string         `json:"id"`
 	Group         string         `json:"group"`
 	Needs         string         `json:"needs"`
@@ -209,6 +210,51 @@ func (r *runner) do(op operation) error {
 			return err
 		}
 		return same(enabled.Disabled, false, "write key enables")
+	case "auth.user_profiles":
+		auth, err := tsauth.New(tsauth.Config{})
+		if err != nil {
+			return err
+		}
+		write := auth.WithToken(os.Getenv("E2E_AUTH_WRITE_KEY"))
+		first := "SDK"
+		created, err := write.CreateProjectUser(ctx, r.project, tsauth.CreateProjectUserRequest{
+			Email:       "profile-go-" + r.run + "@example.com",
+			UserProfile: tsauth.UserProfile{FirstName: &first, PublicMetadata: map[string]any{"keep": 1, "remove": true}},
+		})
+		if err != nil {
+			return err
+		}
+		if created.FirstName == nil || *created.FirstName != first {
+			return errors.New("created profile differs")
+		}
+		changed, err := write.UpdateProjectUser(ctx, r.project, created.ID, tsauth.UpdateProjectUserRequest{
+			PublicMetadata: map[string]any{"remove": nil, "added": "yes"}, PrivateMetadata: map[string]any{"backend": true},
+		})
+		if err != nil {
+			return err
+		}
+		if changed.PublicMetadata["keep"] != float64(1) || changed.PublicMetadata["added"] != "yes" {
+			return errors.New("metadata merge differs")
+		}
+		if _, exists := changed.PublicMetadata["remove"]; exists {
+			return errors.New("metadata was not removed")
+		}
+		hash := op.PasswordHash
+		malformed := "malformed"
+		imported, err := write.ImportProjectUsers(ctx, r.project, tsauth.ImportProjectUsersRequest{Users: []tsauth.ImportProjectUser{
+			{Email: "import-go-" + r.run + "@example.com", EmailVerified: true, PasswordHash: &hash},
+			{Email: "invalid-go-" + r.run + "@example.com", PasswordHash: &malformed},
+		}})
+		if err != nil {
+			return err
+		}
+		if len(imported.Items) != 1 || len(imported.Errors) != 1 || imported.Errors[0].Index != 1 {
+			return errors.New("partial import differs")
+		}
+		if err := write.DeleteProjectUser(ctx, r.project, imported.Items[0].User.ID); err != nil {
+			return err
+		}
+		return write.DeleteProjectUser(ctx, r.project, created.ID)
 	case "sql.execute.positional":
 		if _, err := r.db.Execute(ctx, r.fill(op.Setup)); err != nil {
 			return err

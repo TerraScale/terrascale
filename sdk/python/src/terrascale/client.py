@@ -22,6 +22,8 @@ from .auth import (
     create_api_key_call,
     create_project_client_call,
     create_project_invitation_call,
+
+    create_user_call,
     delete_project_client_call,
     delete_provider_call,
     delete_user_call,
@@ -30,6 +32,7 @@ from .auth import (
     export_users_call,
     get_settings_call,
     get_user_call,
+    import_users_call,
     list_api_keys_call,
     list_project_clients_call,
     list_project_invitations_call,
@@ -46,6 +49,7 @@ from .auth import (
     sign_out_user_call,
     update_project_client_call,
     update_settings_call,
+    update_user_call,
 )
 from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
 from .ids import is_valid_id, validate_id
@@ -429,6 +433,17 @@ class TerraScale:
         """List the project's end users in creation order; ``search`` matches an email substring."""
         return self._send(list_users_call(self._issuer, project if project is not None else self.project, search,
                                           limit, after))
+
+    def create_user(self, request: models.CreateProjectUser, *, project: str | None = None) -> models.ProjectUser:
+        return self._send(create_user_call(self._issuer, project if project is not None else self.project, request))
+
+    def update_user(self, user_id: str, request: models.UpdateProjectUser, *, project: str | None = None) -> models.ProjectUser:
+        return self._send(update_user_call(self._issuer, project if project is not None else self.project, user_id, request))
+
+    def import_users(
+        self, users: list[models.ImportProjectUser], *, project: str | None = None
+    ) -> models.ImportProjectUsersResult:
+        return self._send(import_users_call(self._issuer, project if project is not None else self.project, users))
 
     def get_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
         """Read one end user by id."""

@@ -14,6 +14,12 @@
       "needs": "project end user; exercised by hosted/project-mfa.spec.ts and the auth-management journey with auth:write keys"
     },
     {
+      "id": "auth.user_profiles",
+      "group": "a",
+      "title": "create and update profile metadata; import a valid hash and refuse a malformed row",
+      "password_hash": "$2b$10$abcdefghijklmnopqrstuuB5higg1tp13mgPBqluztPkYplq4K0O6"
+    },
+    {
       "id": "sql.execute.positional",
       "group": "a",
       "title": "execute with positional arguments",

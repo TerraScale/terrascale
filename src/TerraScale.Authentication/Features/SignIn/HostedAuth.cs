@@ -22,7 +22,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// password and code attempts are also limited per email, which is what stops guessing against one account. Limits are shared by every replica and apply alike to addresses with and without an
 /// account, and every failure answers the same whatever the account state, so nothing tells an account from a stranger.
 /// </summary>
-public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, IHttpContextAccessor http, ILogger<HostedAuth> logger)
+public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, IHttpContextAccessor http, ILogger<HostedAuth> logger)
 {
     /// <summary>Calls an end-user IP may burst; one more is regained every <see cref="IpInterval"/>.</summary>
     public const int PerIp = 120;
@@ -87,7 +87,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         }
 
         // Hashed whether or not the address has an account, so both take the same time.
-        var hash = await passwords.HashAsync(password, cancellationToken);
+        var hash = await passwords.HashAsync(this.Tenant, password, cancellationToken);
         var pending = Tokens.RandomToken(43);
         var tenant = this.Tenant;
         cancellationToken.ThrowIfCancellationRequested();
@@ -130,7 +130,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         }
 
         // Hashed before the code is consumed, so a busy replica never burns the user's code.
-        var hash = await passwords.HashAsync(password, cancellationToken);
+        var hash = await passwords.HashAsync(this.Tenant, password, cancellationToken);
         if (await passcodes.ResetPasswordAsync(this.Tenant, email, code, hash, cancellationToken) is not { } user)
         {
             logger.ZLogInformation($"Audit: hosted {method:@Method} refused");
@@ -177,16 +177,29 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
             return (null, wait);
         }
 
-        return (Users.NormalizeEmail(email) is { } normalized ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null, null);
+        var started = passwords.StartPasswordCheck();
+        var user = Users.NormalizeEmail(email) is { } normalized ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null;
+        if (user is null)
+        {
+            await passwords.PadFailureAsync(started, cancellationToken);
+        }
+
+        return (user, null);
     }
 
     private async Task<UserRecord?> VerifyPasswordAsync(string email, string password, CancellationToken cancellationToken)
     {
         var user = await users.FindByEmailAsync(this.Tenant, email, cancellationToken);
-        var valid = PasswordPolicy.Verifiable(password) && await passwords.VerifyAsync(password, user?.PasswordHash, cancellationToken);
+        var valid = PasswordPolicy.Verifiable(password) && await passwords.VerifyAsync(this.Tenant, password, user?.PasswordHash, cancellationToken);
         var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
-        return await context.RequestServices.GetRequiredService<AccountProtection>()
-            .PasswordAttemptAsync(this.Tenant, email, user, valid, AuthEmails.Locale(context.Request), cancellationToken) ? user : null;
+        if (!await context.RequestServices.GetRequiredService<AccountProtection>()
+            .PasswordAttemptAsync(this.Tenant, email, user, valid, AuthEmails.Locale(context.Request), cancellationToken) || user is null)
+        {
+            return null;
+        }
+
+        return user.PasswordHash is { } hash && ImportedPasswords.NeedsUpgrade(hash)
+            ? await profiles.UpgradePasswordAsync(user, password, cancellationToken) : user;
     }
 
     // The first bytes of an IPv6 address, the rest zeroed.

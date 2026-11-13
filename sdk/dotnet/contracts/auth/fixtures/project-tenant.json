@@ -86,5 +86,8 @@
     "method": "DELETE", "path": "/v1/{project}/clients/{client}", "status": 204,
     "request": null,
     "response": null
-  }
+  },
+  "create_user": {"method":"POST","path":"/v1/{project}/users","status":201,"scope":"auth:write","request":{"email":"user@example.com","first_name":"Ada"},"response":{"id":"{user}","email":"user@example.com","created_at":"2026-11-12T00:00:00Z","disabled":false,"first_name":"Ada","last_name":null,"image_url":null,"external_id":null,"email_verified":false,"public_metadata":{},"private_metadata":{},"unsafe_metadata":{}}},
+  "update_user": {"method":"PATCH","path":"/v1/{project}/users/{user}","status":200,"scope":"auth:write","request":{"public_metadata":{"team":"compiler"}},"response":{"id":"{user}","email":"user@example.com","created_at":"2026-11-12T00:00:00Z","disabled":false,"first_name":"Ada","last_name":null,"image_url":null,"external_id":null,"email_verified":false,"public_metadata":{"team":"compiler"},"private_metadata":{},"unsafe_metadata":{}}},
+  "import_users": {"method":"POST","path":"/v1/{project}/users/import","status":200,"scope":"auth:write","request":{"users":[{"email":"user@example.com"}]},"response":{"items":[{"index":0,"user":{"id":"{user}","email":"user@example.com","created_at":"2026-11-12T00:00:00Z","disabled":false,"first_name":"Ada","last_name":null,"image_url":null,"external_id":null,"email_verified":false,"public_metadata":{},"private_metadata":{},"unsafe_metadata":{}}}],"errors":[]}}
 }

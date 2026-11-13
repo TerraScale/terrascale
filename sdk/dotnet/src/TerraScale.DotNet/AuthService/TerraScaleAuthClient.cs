@@ -14,6 +14,7 @@ namespace TerraScale.DotNet;
 public sealed partial class TerraScaleAuthClient
 {
     private const int MaxOperationBytes = 1_048_576;
+    private const int MaxResponseBytes = 16 * 1024 * 1024;
     private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
 
     // Immutable header values shared by every request: one allocation, not one per call.
@@ -344,9 +345,9 @@ public sealed partial class TerraScaleAuthClient
         }
 
         // Bound successful bodies before deserialization, including unknown-length responses.
-        using var destination = new BoundedHttpBodyStream(MaxOperationBytes,
+        using var destination = new BoundedHttpBodyStream(MaxResponseBytes,
             () => new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response), cancellationToken);
-        if (response.Content.Headers.ContentLength > MaxOperationBytes)
+        if (response.Content.Headers.ContentLength > MaxResponseBytes)
         {
             throw new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response);
         }

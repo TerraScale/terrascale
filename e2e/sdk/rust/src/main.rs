@@ -314,6 +314,105 @@ impl Runner {
                     .map_err(|error| error.to_string())?;
                 same(json!(enabled.disabled), &json!(false), "write key enables")
             }
+            "auth.user_profiles" => {
+                use terrascale::auth_projects::{
+                    CreateProjectUser, ImportProjectUser, ImportProjectUsers, UpdateProjectUser,
+                    UserProfile,
+                };
+                let config = ClientConfig::builder()
+                    .auth_base_url("https://auth.terrascale.tech")
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                let transport =
+                    terrascale::transport::ReqwestTransport::with_root_certificates(&self.ca)
+                        .map_err(|error| error.to_string())?;
+                let auth = terrascale::TerraScaleClient::with_transport(
+                    config,
+                    std::sync::Arc::new(transport),
+                )
+                .projects()
+                .map_err(|error| error.to_string())?;
+                let write =
+                    std::env::var("E2E_AUTH_WRITE_KEY").map_err(|error| error.to_string())?;
+                let created = auth
+                    .create_user(
+                        &write,
+                        &self.project,
+                        &CreateProjectUser {
+                            email: format!("profile-rust-{}@example.com", self.run),
+                            profile: UserProfile {
+                                first_name: Some("SDK".into()),
+                                public_metadata: Some(
+                                    serde_json::from_value(json!({"keep": 1, "remove": true}))
+                                        .unwrap(),
+                                ),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(json!(created.first_name), &json!("SDK"), "created profile")?;
+                let changed = auth
+                    .update_user(
+                        &write,
+                        &self.project,
+                        &created.id,
+                        &UpdateProjectUser {
+                            public_metadata: Some(
+                                serde_json::from_value(json!({"remove": null, "added": "yes"}))
+                                    .unwrap(),
+                            ),
+                            private_metadata: Some(
+                                serde_json::from_value(json!({"backend": true})).unwrap(),
+                            ),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(
+                    json!(changed.public_metadata),
+                    &json!({"keep": 1, "added": "yes"}),
+                    "metadata merge",
+                )?;
+                let imported = auth
+                    .import_users(
+                        &write,
+                        &self.project,
+                        &ImportProjectUsers {
+                            users: vec![
+                                ImportProjectUser {
+                                    email: format!("import-rust-{}@example.com", self.run),
+                                    email_verified: true,
+                                    password_hash: Some(text(op, "password_hash")),
+                                    ..Default::default()
+                                },
+                                ImportProjectUser {
+                                    email: format!("invalid-rust-{}@example.com", self.run),
+                                    password_hash: Some("malformed".into()),
+                                    ..Default::default()
+                                },
+                            ],
+                        },
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(json!(imported.items.len()), &json!(1), "import valid row")?;
+                same(
+                    json!(imported.errors[0].index),
+                    &json!(1),
+                    "refuse malformed row",
+                )?;
+                auth.delete_user(&write, &self.project, &imported.items[0].user.id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                auth.delete_user(&write, &self.project, &created.id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            }
             "sql.execute.positional" => {
                 let sql = self.db().sql();
                 sql.execute(&fill("setup"), &[]).await.map_err(e)?;

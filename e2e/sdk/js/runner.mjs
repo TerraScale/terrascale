@@ -79,6 +79,22 @@ const operations = {
     const enabled = await auth.enableUser(write, project, user);
     check(enabled.ok && !enabled.value.disabled, 'write key enables');
   },
+  async 'auth.user_profiles'(op) {
+    const auth = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: 'terrascale' }).projects;
+    const write = process.env.E2E_AUTH_WRITE_KEY;
+    const created = await auth.createUser(write, project, { email: `profile-js-${run}@example.com`, first_name: 'SDK', public_metadata: { keep: 1, remove: true } });
+    check(created.ok && created.value.first_name === 'SDK', 'created profile');
+    if (!created.ok) throw new Error('create failed');
+    const changed = await auth.updateUser(write, project, created.value.id, { public_metadata: { remove: null, added: 'yes' }, private_metadata: { backend: true } });
+    check(changed.ok && changed.value.public_metadata.keep === 1 && changed.value.public_metadata.added === 'yes' && !('remove' in changed.value.public_metadata), 'metadata merge');
+    const imported = await auth.importUsers(write, project, { users: [
+      { email: `import-js-${run}@example.com`, email_verified: true, password_hash: op.password_hash },
+      { email: `invalid-js-${run}@example.com`, password_hash: 'malformed' },
+    ] });
+    check(imported.ok && imported.value.items.length === 1 && imported.value.errors[0]?.index === 1, 'partial import');
+    if (imported.ok) for (const row of imported.value.items) check((await auth.deleteUser(write, project, row.user.id)).ok, 'delete imported');
+    check((await auth.deleteUser(write, project, created.value.id)).ok, 'delete created');
+  },
   async 'placement.create'() {
     const created = await client.createDatabase(project, `e2e-js-${run}-placed`, { regions: ['gru', 'fra'] });
     try {

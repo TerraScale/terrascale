@@ -95,7 +95,8 @@ public static partial class OpenApiSetup
                     }
                 }
 
-                if (context.Description.RelativePath?.StartsWith("v1/{project}/", StringComparison.Ordinal) == true)
+                if (operation.OperationId != "update_self_profile"
+                    && context.Description.RelativePath?.StartsWith("v1/{project}/", StringComparison.Ordinal) == true)
                 {
                     var personOnly = operation.OperationId is "create_project_client" or "update_project_client"
                         or "rotate_project_client_secret" or "create_webhook_endpoint" or "rotate_webhook_secret";
@@ -266,7 +267,7 @@ public static partial class OpenApiSetup
     // so renaming a parent property first would hide its entire subtree from that traversal.
     private static void MatchProjectWireSchema(IOpenApiSchema input, JsonTypeInfo type)
     {
-        var wire = ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type);
+        var wire = ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? UserProfileJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type);
         if (wire is null || (input is OpenApiSchemaReference reference ? reference.Target : input) is not OpenApiSchema schema)
         {
             return;

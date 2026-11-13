@@ -9,6 +9,8 @@ const chartWindows = new Set(['range', 'reads', 'writes', 'storage', 'latency'])
 const journeyPages: readonly PagePattern[] = [
   { path: /^\/auth\/mfa-sessions$/, query: { saved: /^1$/ } },
   { path: /^\/auth\/(restrictions|invitations|waitlist)$/, query: { saved: /^1$/ } },
+  { path: /^\/auth\/sessions$/, query: { user: /^[0-9A-HJKMNP-TV-Z]{26}$/ } },
+  { path: /^\/auth\/users$/, query: { user: /^[0-9A-HJKMNP-TV-Z]{26}$/, saved: /^(1)?$/ } },
   { path: /^\/databases\/[0-9A-HJKMNP-TV-Z]{26}\/settings$/, query: { renamed: /^1$/ } },
   { path: /^\/organization$/, query: { newOrganization: /^(payment|project)$/, payment: /^(success|canceled)$/, draft_id: /^([0-9A-HJKMNP-TV-Z]{26})?$/ } },
   { path: /^\/onboarding$/ },

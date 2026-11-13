@@ -140,6 +140,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     /// <summary>The signed-in account's email, shown before approving a device.</summary>
     public string? Account { get; init; }
+    public string? ProfileName { get; init; }
+    public string? ProfileImage { get; init; }
 
     /// <summary>The registered client's display name, shown before approving a device.</summary>
     public string ClientName { get; init; } = "TerraScale CLI";

@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 ["invitations", _, "revoke"] or ["waitlist", _, "approve" or "reject"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
-                ["users", _, "disable" or "enable" or "delete" or "sign-out"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
+                ["users", _, "disable" or "enable" or "delete" or "sign-out" or "profile"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
                 _ => false
             };
             if (!known)
@@ -184,6 +184,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case ["webhooks", var id, "delete"]: await projects.DeleteWebhookEndpointAsync(session, project, id, cancel); break;
                     case ["sessions", var id, _]: await projects.RevokeSessionAsync(session, project, id, cancel); break;
                     case ["users", var id, "sign-out"]: await projects.SignOutUserAsync(session, project, id, cancel); break;
+                    case ["users", var id, "profile"]:
+                        await projects.UpdateUserAsync(session, project, id, new(Value(form["first_name"].ToString()), Value(form["last_name"].ToString()),
+                            Value(form["image_url"].ToString()), Value(form["external_id"].ToString()), ProfileMetadata(form["public_metadata"]),
+                            ProfileMetadata(form["private_metadata"]), ProfileMetadata(form["unsafe_metadata"])), cancel);
+                        return HttpRedirects.SeeOther("/auth/users?user=" + Uri.EscapeDataString(id) + "&saved=1");
                     case ["users", var id, "delete"]: await projects.DeleteUserAsync(session, project, id, cancel); break;
                     case ["users", var id, var action]: await projects.SetUserDisabledAsync(session, project, id, action == "disable", cancel); break;
                 }
@@ -298,7 +303,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         public static readonly string[] LifecycleEvents =
-            ["user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled"];
+            ["user.created", "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled"];
 
         public static TsAuthCreateWebhookEndpoint NewWebhook(string? url, IEnumerable<string?> eventTypes)
         {
@@ -397,6 +402,9 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                             Clients = await projects.ListClientsAsync(session, project, cancel)
                         };
                         break;
+                    case "users" when page.User.Length > 0:
+                        page = page with { SelectedUser = await projects.GetUserAsync(session, project, page.User, cancel) };
+                        break;
                     case "users": var users = await projects.ListUsersAsync(session, project, Value(page.Search), Value(page.After), cancel); page = page with { Users = users.Items, Next = users.Next }; break;
                     case "sessions": var live = await projects.ListSessionsAsync(session, project, Value(page.User), Value(page.After), cancel); page = page with { Sessions = live.Items, Next = live.Next }; break;
                     case "invitations": var invitations = await projects.ListInvitationsAsync(session, project, Value(page.After), cancel); page = page with { Invitations = invitations.Items, Next = invitations.Next }; break;
@@ -437,6 +445,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public AccountContext Context => Shell.Context;
         public TsAuthProjectSettings? Settings { get; init; }
         public IReadOnlyList<TsAuthProjectUser>? Users { get; init; }
+        public TsAuthProjectUser? SelectedUser { get; init; }
         public IReadOnlyList<TsAuthProjectSession>? Sessions { get; init; }
         public IReadOnlyList<TsAuthProjectOAuthClient>? Clients { get; init; }
         public IReadOnlyList<TsAuthWebhookEndpoint>? Webhooks { get; init; }
