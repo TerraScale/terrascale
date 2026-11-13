@@ -18,6 +18,7 @@ internal sealed class SqlSocketInput(TimeProvider time)
     private bool _control;
 
     private int _maskBytes;
+    private Stream? _transport;
 
     public Action<int, long>? Progress
     {
@@ -41,6 +42,14 @@ internal sealed class SqlSocketInput(TimeProvider time)
         {
             _messages.TryDequeue(out _);
             Progress = null;
+        }
+    }
+
+    public async Task DrainAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        var transport = _transport ?? throw new InvalidOperationException("the WebSocket transport has not been accepted");
+        while (await transport.ReadAsync(buffer, cancellationToken).ConfigureAwait(false) > 0)
+        {
         }
     }
 
@@ -254,7 +263,7 @@ internal sealed class SqlSocketInput(TimeProvider time)
     {
         public bool IsUpgradableRequest => inner.IsUpgradableRequest;
 
-        public async Task<Stream> UpgradeAsync() => new Transport(await inner.UpgradeAsync().ConfigureAwait(false), input);
+        public async Task<Stream> UpgradeAsync() => input._transport = new Transport(await inner.UpgradeAsync().ConfigureAwait(false), input);
     }
 
     private sealed class Connect(IHttpExtendedConnectFeature inner, SqlSocketInput input) : IHttpExtendedConnectFeature
@@ -262,7 +271,7 @@ internal sealed class SqlSocketInput(TimeProvider time)
         public bool IsExtendedConnect => inner.IsExtendedConnect;
         public string? Protocol => inner.Protocol;
 
-        public async ValueTask<Stream> AcceptAsync() => new Transport(await inner.AcceptAsync().ConfigureAwait(false), input);
+        public async ValueTask<Stream> AcceptAsync() => input._transport = new Transport(await inner.AcceptAsync().ConfigureAwait(false), input);
     }
 
     private sealed class Transport(Stream inner, SqlSocketInput input) : Stream

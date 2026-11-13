@@ -346,6 +346,28 @@ internal sealed class SqlSocket(
             Release();
             return null;
         }
+        catch (WebSocketException error) when (error.WebSocketErrorCode == WebSocketError.Faulted)
+        {
+            try
+            {
+                using var drain = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                drain.CancelAfter(Shutdown.DrainBudget);
+                try
+                {
+                    await input.DrainAsync(buffer, drain.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (drain.IsCancellationRequested)
+                {
+                    return null;
+                }
+
+                return null;
+            }
+            finally
+            {
+                Release();
+            }
+        }
         catch
         {
             Release();

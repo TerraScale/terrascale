@@ -731,7 +731,7 @@ test('verified platform EF transactions bypass new session accounting and retain
   const admitted = (body: string) => body.split('\n').filter(line => /^terrabase_qos_request_duration_seconds_count\{/.test(line))
     .reduce((sum, line) => sum + Number(line.split(' ').at(-1)), 0);
   const before = await metrics();
-  const runner = spawn('dotnet', [join(stateDir, 'build/social/Journey.Social.dll'), 'platform-sessions'], {
+  const runner = spawn('dotnet', [join(process.env.E2E_BUILD!, 'social/Journey.Social.dll'), 'platform-sessions'], {
     env: { ...process.env, E2E_STATE: stateDir }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   const exited = once(runner, 'exit');

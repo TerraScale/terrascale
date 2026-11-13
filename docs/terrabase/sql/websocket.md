@@ -74,7 +74,7 @@ After a failed statement inside a transaction, every `execute` answers `transact
 | An upgrade while that handoff holds the region's ingress, or to a node that was drained for a handoff (the old writer after the hold, or a follower drained for retirement) until that node stops | 503 with `Retry-After: 1` |
 
 The server pings every 20 seconds and drops a peer that does not answer within 20 seconds. After a close for a client
-fault (1003, 1008, 1009, 1011) it drops a peer that does not answer the close within 2 seconds. After a 1001 or 1012 it
+fault (1002, 1003, 1007, 1008, 1009, 1011) it drops a peer that does not answer the close within 2 seconds. After a 1001 or 1012 it
 still sends every answer queued before the close and runs no frame that arrives later. A client that keeps sending after the 1012 instead of answering it gets no answer to those frames and stays connected until the node stops; close the socket when you read a 1012. It waits for a peer that sends nothing until the ping
 timeout drops it, 40 to 50 seconds after the peer's last frame. Every frame counts as one request in usage and
 request logs, with its received and sent bytes.
