@@ -11,7 +11,7 @@ using TerraScale.Endpoints;
 namespace TerraScale.Dashboard.Features.Organizations
 {
     public sealed class OrganizationPageEndpoint(DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement,
-        StripeBilling billing, SpendingService spending, TimeProvider time, InternalBillingService internalBilling) : EndpointWithoutRequest<IResult>
+        StripeBilling billing, SpendingService spending, TimeProvider time, InternalBillingService internalBilling, UsageOverageReporter reporter) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Get("/organization");
 
@@ -60,7 +60,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var page = await OrganizationEndpoints.PageModelAsync(http, context, placement);
             if (page.Tab == "billing" && context.Organization is not null)
             {
-                try { page = page with { Billing = await BillingEndpoints.LoadAsync(page.Shell, billing, spending, http.Request.Query, time.GetUtcNow(), internalBilling, http.RequestAborted) }; }
+                try { page = page with { Billing = await BillingEndpoints.LoadAsync(page.Shell, billing, spending, http.Request.Query, time.GetUtcNow(), internalBilling, reporter, http.RequestAborted) }; }
                 catch (AccountAccessException error) { return Notice(http, context, "billing", error.Message + (error.StatusCode == 403 ? " Ask an owner or admin for access." : ""), error.StatusCode); }
                 catch (Exception error) when (error is IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
                 { return Notice(http, context, "billing", "Billing information could not be loaded. Your organization and projects are still available.", 503); }

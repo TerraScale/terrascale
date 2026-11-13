@@ -12,6 +12,24 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed class UsageOverageReporter(IDbContextFactory<DashboardDbContext> storage, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
     {
+        public async Task<long> OperationUnitOverageAsync(BillingBinding binding, DateTimeOffset now, CancellationToken cancellationToken)
+        {
+            string? after = null;
+            do
+            {
+                var page = await usage.ReadAsync(after, null, cancellationToken);
+                AllowanceNotifications.ValidatedMonth(page, after, now, null);
+                var item = page.Items.FirstOrDefault(item => item.OrganizationId == binding.OrganizationId);
+                if (item is not null)
+                {
+                    var units = item.Operations ?? throw new IOException("Operation usage is unavailable.");
+                    return OperationUnitOverage.Units(PlanCatalog.For(binding.EffectivePlan), units);
+                }
+                after = page.Next;
+            } while (after is not null);
+            return 0;
+        }
+
         public async Task RunCurrentAsync(CancellationToken cancellationToken)
         {
             await using var db = await storage.CreateDbContextAsync(cancellationToken);

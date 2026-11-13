@@ -68,11 +68,4 @@ public sealed partial class StripeBilling
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<long> OperationUnitOverageAsync(BillingBinding binding, DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
-        var rows = await db.OverageCharges.AsNoTracking().Where(row => row.OrganizationId == binding.OrganizationId && row.SubscriptionId == binding.SubscriptionId && row.Month == month && row.Meter == OperationUnitOverage.Kind).ToListAsync(cancellationToken);
-        return rows.Sum(row => row.Quantity);
-    }
 }
