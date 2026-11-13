@@ -3,6 +3,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:http2';
+import { request as httpsRequest } from 'node:https';
+import { extendPeers, startRegion, type RegionProcess } from './fleet';
 import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse, type Page } from '@playwright/test';
@@ -122,6 +124,50 @@ async function headerRows(page: Page, url: string): Promise<number[][]> {
   }), url);
 }
 
+type Meter = { requests: number; operations: number; received: number; sent: number };
+type Usage = { items: { region: string; series: { requests: Record<string, number>; operations: Record<string, number>; clientBandwidth: { bytesReceived: number; bytesSent: number } }[] }[] };
+
+async function usageAt(cells: Cells, id: string, region: string): Promise<Meter> {
+  const url = region === 'gru' ? home : replica;
+  const usage = await json<Usage>(await cells.get(`${url}${project()}/analytics?database=${id}&region=${region}&range=1h`));
+  return usage.items.filter(item => item.region === region).flatMap(item => item.series).reduce((sum, point) => ({
+    requests: sum.requests + Object.values(point.requests).reduce((a, b) => a + b, 0),
+    operations: sum.operations + Object.values(point.operations).reduce((a, b) => a + b, 0),
+    received: sum.received + point.clientBandwidth.bytesReceived,
+    sent: sum.sent + point.clientBandwidth.bytesSent,
+  }), { requests: 0, operations: 0, received: 0, sent: 0 });
+}
+
+async function meteredOnce(cells: Cells, id: string, protocol: string, work: () => Promise<unknown>): Promise<void> {
+  const before = { gru: await usageAt(cells, id, 'gru'), fra: await usageAt(cells, id, 'fra') };
+  await work();
+  let after = before;
+  await expect.poll(async () => {
+    after = { gru: await usageAt(cells, id, 'gru'), fra: await usageAt(cells, id, 'fra') };
+    return { gru: after.gru.requests - before.gru.requests, fra: after.fra.requests - before.fra.requests };
+  }, { message: `${protocol} is metered as one destination request` }).toEqual({ gru: 0, fra: 1 });
+  expect(after.gru, `${protocol} records no receiving-region requests, units or bytes`).toEqual(before.gru);
+  expect(after.fra.sent - before.fra.sent).toBeGreaterThan(0);
+  if (protocol !== 'regions') expect(after.fra.operations - before.fra.operations).toBe(1);
+  console.log(`R3 usage ${protocol}: gru requests +0, operations +0, bytes +0; fra requests +1, operations +${after.fra.operations - before.fra.operations}, received +${after.fra.received - before.fra.received}, sent +${after.fra.sent - before.fra.sent}`);
+}
+
+function postgresRows(id: string): string {
+  const current = journey();
+  return execFileSync('psql', ['-X', '-tA', '-v', 'ON_ERROR_STOP=1', '-c', 'SELECT value FROM placement_rows ORDER BY value',
+    `postgresql://any@pg.terrascale.tech:5432/${current.projectId}/${id}?sslmode=verify-full&sslrootcert=${encodeURIComponent(join(stateDir, 'pki', 'ca.pem'))}`], {
+    env: { PATH: process.env.PATH, HOME: mkdtempSync(join(stateDir, 'postgres-home-')), SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
+    encoding: 'utf8',
+  }).trim();
+}
+
+async function acceptedSockets(request: Cells): Promise<number> {
+  const response = await request.get('http://127.0.0.1:9191/metrics');
+  expect(response.status()).toBe(200);
+  const row = (await response.text()).split('\n').find(line => line.startsWith('terrabase_sql_connections_total{') && line.includes('region="fra"'));
+  return row ? Number(row.slice(row.lastIndexOf(' ') + 1)) : 0;
+}
+
 test('R3 replace the writer and proxy REST and WebSocket through a removed region', async ({ cells, request, page }) => {
   const created = await create(cells, ['gru', 'fra']);
   let pg: ReturnType<typeof spawn> | undefined;
@@ -217,6 +263,33 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     }), { url: `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`, token: grant.access_token });
     expect(result.rows).toEqual([[1], [2], [3], [4]]);
     console.log('R3 nonmember REST: 200 from fra, rows [[1],[2],[3],[4]]; WebSocket header-credential and auth-frame queries: same rows');
+    await expect.poll(() => acceptedSockets(request), { message: "destination has counted both authenticated proxy sessions" }).toBeGreaterThanOrEqual(2);
+    const connectionsBefore = await acceptedSockets(request);
+    const refusedAnonymous = await page.evaluate(url => new Promise<{ error: string; close: number }>((resolve, reject) => {
+      const socket = new WebSocket(url, 'terrascale.sql.v1');
+      let error = '';
+      socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'auth', token: 'invalid-credential' }));
+      socket.onmessage = message => { error = JSON.parse(String(message.data)).error.code; };
+      socket.onclose = event => resolve({ error, close: event.code });
+      socket.onerror = () => reject(new Error('the anonymous upgrade did not reach local authentication'));
+    }), `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`);
+    expect(refusedAnonymous).toEqual({ error: 'unauthorized', close: 1008 });
+    expect(await acceptedSockets(request)).toBe(connectionsBefore);
+    const missingCredentialClose = await page.evaluate(url => new Promise<number>((resolve, reject) => {
+      const socket = new WebSocket(url, 'terrascale.sql.v1');
+      socket.onclose = event => resolve(event.code);
+      socket.onerror = () => reject(new Error('the local anonymous upgrade failed'));
+    }), `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`);
+    expect(missingCredentialClose).toBe(1008);
+    expect(await acceptedSockets(request)).toBe(connectionsBefore);
+    console.log('R3 anonymous browser WebSocket: invalid and absent credential close locally with 1008; destination accepted connections +0');
+    await meteredOnce(cells, created.id, 'REST', () => sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value'));
+    await meteredOnce(cells, created.id, 'regions', () => progress(cells, created.id, home));
+    await page.setExtraHTTPHeaders({ Authorization: `Bearer ${grant.access_token}` });
+    await meteredOnce(cells, created.id, 'WebSocket', () => headerRows(page, `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`));
+    await page.setExtraHTTPHeaders({});
+    await meteredOnce(cells, created.id, 'Postgres', async () => expect(postgresRows(created.id)).toBe('1\n2\n3\n4'));
+
     const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
     for (const socket of [false, true]) {
       const session = connect('http://127.0.0.1:8081');
@@ -271,6 +344,21 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     } finally {
       writeFileSync(peers, original);
     }
+    const paused = Number(readFileSync(join(stateDir, 'pids', 'terrabase-fra.pid'), 'utf8').trim());
+    process.kill(paused, 'SIGSTOP');
+    try {
+      const started = performance.now();
+      const response = await cells.post(`${home}${database(created.id)}/sql/execute`, {
+        data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
+      });
+      const elapsed = performance.now() - started;
+      await answer(response, 503, 'write_outcome_unknown');
+      expect(elapsed).toBeGreaterThan(4000);
+      expect(elapsed).toBeLessThan(10_000);
+      console.log(`R3 connected destination never answers: cut at ${Math.round(elapsed)} ms, 503 write_outcome_unknown; no replay`);
+    } finally {
+      process.kill(paused, 'SIGCONT');
+    }
     const rule = ['OUTPUT', '-p', 'tcp', '-d', '127.0.0.9', '--dport', '8081', '-j', 'DROP'];
     const firewall = { env: { ...process.env, XTABLES_LOCKFILE: join(stateDir, 'iptables.lock') } };
     execFileSync('iptables', ['-A', ...rule], firewall);
@@ -291,6 +379,26 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
       writeFileSync(peers, original);
       execFileSync('iptables', ['-D', ...rule], firewall);
     }
+    const transactionGrant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
+      form: {
+        grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey,
+        project: current.projectId, scope: 'sql:read sql:write databases:read',
+      },
+    }));
+    saveSecret('placement-transaction-token', transactionGrant.access_token);
+    await page.evaluate(({ url, token }) => new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket(url, 'terrascale.sql.v1');
+      const state = window as Window & { proxiedTransaction?: WebSocket; proxyClosed?: Promise<number> };
+      state.proxiedTransaction = socket;
+      state.proxyClosed = new Promise<number>(closed => { socket.onclose = event => closed(event.code); });
+      socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'auth', token }));
+      socket.onmessage = message => {
+        const answer = JSON.parse(String(message.data));
+        if (answer.type === 'error') reject(new Error(JSON.stringify(answer.error)));
+        else resolve();
+      };
+      socket.onerror = () => reject(new Error('the transaction proxy could not open'));
+    }), { url: `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`, token: transactionGrant.access_token });
     await answer(await cells.patch(`${replica}${database(created.id)}`, { data: { regions: ['fra', 'gru'] } }), 200, '200 copy rejoined');
     await replicated(cells, home, created.id, 4);
     const rejoinedGrant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
@@ -305,7 +413,32 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     saveSecret('placement-rejoined-socket-token', rejoinedGrant.access_token);
     await page.setExtraHTTPHeaders({ Authorization: `Bearer ${rejoinedGrant.access_token}`, 'X-TerraScale-Region-Pin': 'gru' });
     expect(await headerRows(page, `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`)).toEqual([[1], [2], [3], [4]]);
-    console.log('R3 rejoined copy: a new header-authenticated session reads current rows despite its historical writer fence');
+    expect(postgresRows(created.id)).toBe('1\n2\n3\n4');
+    console.log('R3 rejoined copy: new header-authenticated WebSocket and Postgres sessions read rows 1,2,3,4 despite the historical writer fence');
+    const transaction = await page.evaluate(() => new Promise<boolean>((resolve, reject) => {
+      const socket = (window as Window & { proxiedTransaction?: WebSocket }).proxiedTransaction!;
+      socket.onmessage = message => {
+        const answer = JSON.parse(String(message.data));
+        if (answer.type === 'error') reject(new Error(JSON.stringify(answer.error)));
+        else if (answer.id === 2) socket.send(JSON.stringify({ id: 3, type: 'execute', statements: [{ sql: 'INSERT INTO placement_rows VALUES (987654)' }] }));
+        else if (answer.id === 3) resolve(answer.transaction);
+      };
+      socket.send(JSON.stringify({ id: 2, type: 'begin' }));
+    }));
+    expect(transaction, 'the proxied session has acknowledged an uncommitted write in an open transaction').toBe(true);
+    await expect.poll(async () => {
+      const response = await cells.patch(`${replica}${database(created.id)}`, { data: { regions: ['gru'] } });
+      if (response.status() === 503) {
+        await answer(response, 503, 'replica_not_ready');
+        return false;
+      }
+      await answer(response, 200, '200 writer returned to gru');
+      return true;
+    }, { message: 'the writer moves while the proxied transaction is open', timeout: 60_000, intervals: [1000] }).toBe(true);
+    expect(await page.evaluate(() => (window as Window & { proxyClosed?: Promise<number> }).proxyClosed)).toBe(1012);
+    expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3], [4]]);
+    console.log('R3 open transaction through proxy: acknowledged uncommitted insert, writer move, close 1012; value 987654 absent');
+
   } finally {
     if (pg && pg.exitCode === null) {
       pg.kill('SIGTERM');
@@ -979,5 +1112,107 @@ test('R19 an unprimed non-writer in the home region cannot confirm deletion', as
     node.kill('SIGTERM');
     await exited;
     await removeDatabase(cells, created.id);
+  }
+});
+
+
+multiple('R20 receiving admission isolates organizations before any proxy work', async ({ cells, owner, request }) => {
+  const first = await create(cells, ['fra']);
+  const second = await named(owner.cells, replica, name('isolated-admission'), ['fra'], owner.projectId);
+  const holding: ReturnType<typeof httpsRequest>[] = [];
+  try {
+    await sql(cells, replica, first.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
+    expect(postgresRows(first.id), 'a never-holding region validates and proxies a new Postgres session').toBe('');
+    await sql(owner.cells, replica, second.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)', owner.projectId);
+    await sql(owner.cells, replica, second.id, 'INSERT INTO placement_rows VALUES (7)', owner.projectId);
+    const current = journey();
+    const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
+      form: { grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey, project: current.projectId, scope: 'sql:read sql:write databases:read' },
+    }));
+    saveSecret('admission-isolation-token', grant.access_token);
+    for (let index = 0; index < 4; index++) {
+      const pending = httpsRequest(`${home}${database(first.id)}/sql/execute`, {
+        method: 'POST', ca: readFileSync(join(stateDir, 'pki', 'ca.pem')),
+        headers: { authorization: `Bearer ${grant.access_token}`, 'content-type': 'application/json', 'content-length': '1024' },
+      });
+      pending.on('response', response => response.resume());
+      pending.on('error', error => { expect(['ECONNRESET', 'EPIPE']).toContain((error as NodeJS.ErrnoException).code); });
+      holding.push(pending);
+      pending.write('{');
+    }
+    await expect.poll(async () => {
+      const response = await cells.post(`${home}${database(first.id)}/sql/execute`, { data: { statements: [{ sql: 'SELECT 1' }] } });
+      if (response.status() === 200) return false;
+      await answer(response, 429, 'tenant_busy');
+      expect(Number(response.headers()['retry-after'])).toBeGreaterThan(0);
+      return true;
+    }, { message: 'four incomplete requests occupy only their organization admission' }).toBe(true);
+    expect((await sql(owner.cells, home, second.id, 'SELECT value FROM placement_rows', owner.projectId)).results[0].rows).toEqual([[7]]);
+    console.log('R20 admission: first organization has 4 receiving requests, next is 429 tenant_busy with Retry-After; second organization proxy is 200, rows [[7]]');
+  } finally {
+    const closed = holding.map(pending => new Promise<void>(resolve => pending.once('close', resolve)));
+    for (const pending of holding) pending.destroy();
+    await Promise.all(closed);
+    await removeDatabase(cells, first.id);
+    await removeDatabase(owner.cells, second.id, owner.projectId);
+  }
+});
+
+test('R21 five-region writer moves retain every acknowledged write and refresh stale routes', async ({ cells }) => {
+  const extra = ['sjc', 'sin', 'syd'];
+  const restore = extendPeers(extra);
+  const nodes: RegionProcess[] = [];
+  const endpoints = new Map<string, string>([['gru', home], ['fra', replica]]);
+  let created: Database | undefined;
+  try {
+    for (const [index, region] of extra.entries()) {
+      const node = await startRegion(region, index);
+      nodes.push(node);
+      endpoints.set(region, node.endpoint);
+    }
+    const selected = ['gru', 'fra', ...extra];
+    created = await create(cells, selected);
+    await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
+    const acknowledged: number[] = [];
+    for (let value = 1; value <= 3; value++) {
+      await sql(cells, home, created.id, `INSERT INTO placement_rows VALUES (${value})`);
+      acknowledged.push(value);
+    }
+    for (const region of selected.slice(1)) {
+      await expect.poll(async () => {
+        const response = await cells.post(`${endpoints.get(region)!}${database(created!.id)}/sql/execute`, { data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] } });
+        if (response.status() !== 200 || response.headers()['x-terrabase-region'] !== region) return [];
+        return (await response.json()).results[0].rows;
+      }, { message: `${region} holds all acknowledged rows`, timeout: 45_000, intervals: [250, 500, 1000] }).toEqual([[1], [2], [3]]);
+    }
+    let writer = 'gru';
+    let refreshed = 0;
+    for (const [index, target] of selected.slice(1).entries()) {
+      const remaining = selected.slice(index + 1);
+      await expect.poll(async () => {
+        const response = await cells.patch(`${endpoints.get(writer)!}${database(created!.id)}`, { data: { regions: remaining } });
+        if (response.status() === 503) {
+          await answer(response, 503, 'replica_not_ready');
+          return false;
+        }
+        await answer(response, 200, '200 writer moved');
+        return true;
+      }, { message: `the writer moves from ${writer} to ${target}`, intervals: [1000] }).toBe(true);
+      writer = target;
+      const value = acknowledged.length + 1;
+      const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: `INSERT INTO placement_rows VALUES (${value})` }] } });
+      await answer(response, 200, '200 one acknowledged write through the original region');
+      expect(response.headers()['x-terrabase-region']).toBe(target);
+      if ((response.headers()['server-timing']?.match(/home;dur=/g) ?? []).length === 2) refreshed++;
+      acknowledged.push(value);
+    }
+    const found = (await sql(cells, endpoints.get(writer)!, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows.map(row => row[0]);
+    expect(found).toEqual(acknowledged);
+    expect(refreshed, 'a stale route was refused, refreshed and sent to a different region within the original request').toBeGreaterThan(0);
+    console.log(`R21 five-region move: gru -> fra -> sjc -> sin -> syd; acknowledged ${acknowledged.length}; found ${found.length}; stale routes refreshed ${refreshed}; at most two one-hop attempts per request`);
+  } finally {
+    if (created) await removeDatabase(cells, created.id);
+    for (const node of nodes.reverse()) await node.stop();
+    restore();
   }
 });

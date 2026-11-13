@@ -18,7 +18,7 @@ namespace TerraBase.Features.UserAuth;
 
 internal sealed record TsAuthTokenResponse([property: JsonPropertyName("access_token")] string? AccessToken);
 
-internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken? Key);
+internal sealed record TsAuthKeyGrant(string Subject, string OrganizationId, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken? Key);
 
 internal readonly union TsAuthKeyResult(TsAuthKeyGrant, NotFound, Unavailable);
 
@@ -200,6 +200,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
 
         if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt
             || !jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || !EntityIds.IsValid(subject)
+            || !jwt.TryGetPayloadValue<string>("org_id", out var organization) || !EntityIds.IsValid(organization)
             || !jwt.TryGetPayloadValue<string>("project_id", out var granted) || !EntityIds.IsValid(granted) || granted != (project ?? granted)
             || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
         {
@@ -244,7 +245,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             }
         }
 
-        return new TsAuthKeyGrant(subject, granted, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
+        return new TsAuthKeyGrant(subject, organization, granted, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
             hasKey ? new KeyToken(subject, generation!, granted, token) { ValidTo = new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero) } : null);
     }
 

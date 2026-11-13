@@ -1056,7 +1056,10 @@ impl Runner {
             same(json!(proxied.regions.iter().map(|row| &row.region).collect::<Vec<_>>()), &json!(["fra"]), "proxied nonmember endpoint")?;
             let rows = db.sql().query("SELECT value FROM placement_rows", &[]).await.map_err(|error| error.to_string())?;
             same(records(&rows), &json!([[1]]), "data survived placement")?;
-            println!("rust placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, nonmember endpoint proxies reads");
+            db.sql().execute("INSERT INTO placement_rows VALUES (2)", &[]).await.map_err(|error| error.to_string())?;
+            let retained = db.sql().query("SELECT value FROM placement_rows ORDER BY value", &[]).await.map_err(|error| error.to_string())?;
+            same(records(&retained), &json!([[1], [2]]), "acknowledged proxied write retained")?;
+            println!("rust placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]");
             Ok(())
         }.await;
         let placed = if moved { &regional } else { &self.client };

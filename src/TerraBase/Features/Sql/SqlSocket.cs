@@ -14,6 +14,7 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Regions;
 using TerraBase.Features.Sql.Routing;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
@@ -161,8 +162,10 @@ internal sealed class SqlSocket(
         }
 
         SqlSocketRequest? request;
+        byte[] authFrame;
         try
         {
+            authFrame = frame.Value.Bytes.AsSpan(0, frame.Value.Length).ToArray();
             request = RequestJson.Read<SqlSocketRequest>(frame.Value.Bytes.AsSpan(0, frame.Value.Length), SqlErrors.InvalidRequest) is SqlSocketRequest read ? read : null;
         }
         finally
@@ -194,6 +197,32 @@ internal sealed class SqlSocket(
         if (!(await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlRead).ConfigureAwait(false)).Succeeded)
         {
             return await RefuseAsync(request.Id, SqlErrors.Auth with { Message = "SQL needs the sql:read scope" }, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (context.Features.Get<ProjectAccess>() is { DatabaseName: not null } restricted
+            && context.Request.RouteValues["database"] as string != restricted.DatabaseId)
+        {
+            var reachable = await context.RequestServices.GetRequiredService<IManagementService>()
+                .FindDatabaseRecordAsync(restricted.OrganizationId, restricted.ProjectId, context.RouteValue("database"), cancellationToken).ConfigureAwait(false);
+            if (reachable is not ManagedDatabase record || restricted.DatabaseId != record.Id)
+            {
+                return await RefuseAsync(request.Id, UnknownDatabase, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (!Listeners.IsForwarded(context)
+            && await HomeForwarding.ForwardBrowserAsync(context, socket, authFrame, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        if (Listeners.IsForwarded(context)
+            && await DatabaseRegions.RecordAsync(context, context.RouteValue("project"), context.RouteValue("database"))
+                .ConfigureAwait(false) is ManagedDatabase placement
+            && !placement.Placement(options.Region).PlacedIn(options.Region))
+        {
+            context.Features.Set(new HomeForwarding.ProxiedRequest());
+            return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable, HomeForwarding.PlacementMissMessage), cancellationToken).ConfigureAwait(false);
         }
 
         _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded;

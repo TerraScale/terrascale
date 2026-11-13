@@ -1,10 +1,17 @@
 using System.Globalization;
+using System.Buffers;
 using System.Net;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Errors;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Shapes;
+using TerraBase.Features.Sql;
+using TerraBase.Features.Qos;
+using TerraBase.Features.Memory;
+using TerraBase.Features.Replicas;
+using System.Net.WebSockets;
+using ZLogger;
 using TerraBase.Tenancy;
 using TerraBase.Features.Management;
 using TerraBase.Features.UserAuth;
@@ -14,6 +21,10 @@ namespace TerraBase.Features.Regions;
 
 internal static class HomeForwarding
 {
+    internal sealed class ProxiedRequest;
+
+    internal const string PlacementMissMessage = "this region no longer holds the database; refresh its placement";
+    internal const string PlacementMissHeader = "X-TerraBase-Placement-Miss";
     internal const string ForwardedForHeader = "X-TerraBase-Forwarded-For";
     internal const string PushThroughHeader = "TerraBase-Push-Through";
     internal const string PublishIdHeader = "TerraBase-Publish-Id";
@@ -22,12 +33,12 @@ internal static class HomeForwarding
     {
         "Host", "Connection", "Keep-Alive", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Proxy-Connection", "Proxy-Authorization",
         "X-TerraScale-Caller", "Content-Length", "Content-Type", "X-TerraScale-Region-Pin", "ts-replay-src", "ts-replay-failed", "X-Forwarded-For", "X-Forwarded-Host",
-        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader,
+        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader, ProxyRequestBudget.RemainingHeader, PlacementMissHeader,
     };
 
     private static readonly HashSet<string> Unreturned = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Connection", "Keep-Alive", "Transfer-Encoding", "Trailer", "Upgrade", "Proxy-Connection", ShapeOverlay.CommitHeader,
+        "Connection", "Keep-Alive", "Transfer-Encoding", "Trailer", "Upgrade", "Proxy-Connection", ShapeOverlay.CommitHeader, PlacementMissHeader,
     };
 
     public static WebApplication UseTerraBaseHomeForwarding(this WebApplication app)
@@ -35,7 +46,19 @@ internal static class HomeForwarding
         ArgumentNullException.ThrowIfNull(app);
         app.Use(async (context, next) =>
         {
-            if (await HomeOfAsync(context).ConfigureAwait(false) is { } home)
+            using var deadline = ProxyRequestBudget.For(context).Link(context.RequestAborted);
+            HomeNode? home;
+            try
+            {
+                home = await HomeOfAsync(context, deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!context.RequestAborted.IsCancellationRequested)
+            {
+                await UnavailableAsync(context, context.RequestServices.GetRequiredService<TerraBaseOptions>().Region).ConfigureAwait(false);
+                return;
+            }
+
+            if (home is not null)
             {
                 if (context.WebSockets.IsWebSocketRequest)
                 {
@@ -70,20 +93,19 @@ internal static class HomeForwarding
     internal static bool Unanswered(HttpContext context, Exception error) =>
         error is HttpRequestException || (error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested);
 
-    internal static Task UnansweredAsync(HttpContext context, string region, Exception error)
+    internal static Task UnansweredAsync(HttpContext context, string region, Exception error, bool sent = true)
     {
         if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)
-            || error is OperationCanceledException { InnerException: TimeoutException }
-            || error is HttpRequestException { HttpRequestError: HttpRequestError.NameResolutionError or HttpRequestError.ConnectionError or HttpRequestError.SecureConnectionError })
+            || !sent)
         {
             return UnavailableAsync(context, region);
         }
 
-        return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "write_outcome_unknown",
+        return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, SqlErrors.WriteOutcomeUnknown,
             $"the request was sent toward the database's writer in {region}, which did not answer; it may have run there", op: null, region: region);
     }
 
-    private static async ValueTask<HomeNode?> HomeOfAsync(HttpContext context)
+    internal static async ValueTask<HomeNode?> HomeOfAsync(HttpContext context, CancellationToken cancellationToken)
     {
         if (Listeners.ArrivedOn(context) != TerraBaseListener.Client || Listeners.IsForwarded(context) || context.GetEndpoint() is null
             || context.Request.RouteValues["project"] is not string project || context.Request.RouteValues.ContainsKey("organization"))
@@ -91,12 +113,36 @@ internal static class HomeForwarding
             return null;
         }
 
-        var socket = context.GetEndpoint()?.Metadata.GetMetadata<Management.DatabaseRegions.ReplicaReads>() is not null
-            && context.WebSockets.IsWebSocketRequest;
-        if (!socket
-            && (context.User.Identity?.IsAuthenticated != true || context.User.FindFirst("project_id")?.Value != project))
+        if (context.User.Identity?.IsAuthenticated != true
+            || context.Features.Get<ProjectAccess>() is null && context.Features.Get<ApiKeys.ApiKey>() is null
+                && context.Features.Get<ProjectToken>() is null)
         {
             return null;
+        }
+
+        if (context.Features.Get<ProjectAccess>() is null && UserAuthExtensions.Identity(context.User) is { } identity)
+        {
+            if (await ProjectGrants.GrantAsync(context, identity, project, bucketCreation: false).ConfigureAwait(false) is not ProjectAccess grant)
+            {
+                return null;
+            }
+            if (grant.DatabaseName is not null && context.Request.RouteValues["database"] as string != grant.DatabaseId
+                && (await context.RequestServices.GetRequiredService<IManagementService>()
+                    .FindDatabaseRecordAsync(grant.OrganizationId, project, context.Request.RouteValues["database"] as string ?? "", cancellationToken)
+                    .ConfigureAwait(false) is not ManagedDatabase restricted || restricted.Id != grant.DatabaseId))
+            {
+                return null;
+            }
+            context.Features.Set(grant);
+        }
+
+        var owners = context.RequestServices.GetRequiredService<RegionalOwners>();
+        if (!owners.Writer)
+        {
+            var local = context.RequestServices.GetRequiredService<TerraBaseOptions>();
+            var node = (await owners.NodesAsync(cancellationToken).ConfigureAwait(false))
+                .FirstOrDefault(node => node.Region == local.Region && node.Name != local.MachineId);
+            return node is null ? null : new HomeNode(local.Region, node.InternalListener(local.InternalPort));
         }
 
         var database = context.Request.RouteValues["database"] as string;
@@ -110,12 +156,12 @@ internal static class HomeForwarding
         var options = services.GetRequiredService<TerraBaseOptions>();
         var management = services.GetRequiredService<IManagementService>();
         var peers = services.GetRequiredService<IRegionPeers>();
-        var organization = await services.GetRequiredService<IProjectCatalog>().ProjectOrganizationAsync(project, context.RequestAborted).ConfigureAwait(false);
+        var organization = await services.GetRequiredService<IProjectCatalog>().ProjectOrganizationAsync(project, cancellationToken).ConfigureAwait(false);
         if (organization is string found)
         {
             if (database is not null && context.GetEndpoint()?.Metadata.GetMetadata<OriginNoStore>() is not null
                 && context.Request.RouteValues.ContainsKey("table")
-                && await management.FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase shapeDatabase
+                && await management.FindDatabaseRecordAsync(found, project, database, cancellationToken).ConfigureAwait(false) is ManagedDatabase shapeDatabase
                 && shapeDatabase.Home(options.Region) is { } shapeHome
                 && shapeHome != options.Region)
             {
@@ -125,18 +171,21 @@ internal static class HomeForwarding
                     return null;
                 }
 
-                return await HomeAtAsync(peers, shapeHome, context.RequestAborted).ConfigureAwait(false);
+                return await HomeAtAsync(peers, shapeHome, cancellationToken).ConfigureAwait(false);
             }
 
             if (database is not null
-                && await management.FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase routedDatabase
-                && !routedDatabase.Placement(options.Region).PlacedIn(options.Region))
+                && await management.FindDatabaseRecordAsync(found, project, database, cancellationToken).ConfigureAwait(false) is ManagedDatabase routedDatabase
+                && (!routedDatabase.Placement(options.Region).PlacedIn(options.Region)
+                    || context.GetEndpoint()?.Metadata.GetMetadata<DatabaseRegions.WriterReads>() is not null
+                        && routedDatabase.Home(options.Region) != options.Region))
             {
-                return await HomeAtAsync(peers, routedDatabase.Home(options.Region), context.RequestAborted).ConfigureAwait(false);
+                var destination = services.GetRequiredService<IHomeLocator>().Cached(project, database)?.Region ?? routedDatabase.Home(options.Region);
+                return await HomeAtAsync(peers, destination, cancellationToken).ConfigureAwait(false);
             }
 
             if (database is null
-                || await management.FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is not NotFound)
+                || await management.FindDatabaseRecordAsync(found, project, database, cancellationToken).ConfigureAwait(false) is not NotFound)
             {
                 return null;
             }
@@ -146,13 +195,31 @@ internal static class HomeForwarding
             return null;
         }
 
-        return await services.GetRequiredService<IHomeLocator>().LocateAsync(project, database, context.RequestAborted).ConfigureAwait(false);
+        return await services.GetRequiredService<IHomeLocator>().LocateAsync(project, database, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<HomeNode?> HomeAtAsync(IRegionPeers peers, string home, CancellationToken cancellationToken)
     {
         var peer = (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(candidate => candidate.Region == home);
         return peer is null ? null : new HomeNode(home, peer.Address);
+    }
+
+    internal static async Task<bool> ForwardBrowserAsync(HttpContext context, WebSocket socket, byte[] frame, CancellationToken cancellationToken)
+    {
+        var auth = RequestJson.Read<SqlSocketRequest>(frame, SqlErrors.InvalidRequest) is SqlSocketRequest parsed ? parsed : null;
+        context.Features.Set(new HomeSocketRelay.BrowserConnection(socket, auth?.Id));
+        HomeNode? destination = null;
+        await QosExtensions.AdmitAsync(context, async admitted =>
+        {
+            using var deadline = ProxyRequestBudget.For(admitted).Link(cancellationToken);
+            destination = await HomeOfAsync(admitted, deadline.Token).ConfigureAwait(false);
+            if (destination is not null)
+            {
+                await admitted.RequestServices.GetRequiredService<HomeSocketRelay>()
+                    .RunAsync(admitted, destination, cancellationToken, socket, frame).ConfigureAwait(false);
+            }
+        }, context.RequestServices.GetRequiredService<IMemoryBudget>()).ConfigureAwait(false);
+        return destination is not null || socket.State != WebSocketState.Open;
     }
 
     internal static void Sign(HttpContext context, HttpRequestMessage request, string region)
@@ -167,6 +234,7 @@ internal static class HomeForwarding
 
         request.Headers.Host = Host(region);
         request.Headers.TryAddWithoutValidation(ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
+        request.Headers.TryAddWithoutValidation(ProxyRequestBudget.RemainingHeader, ProxyRequestBudget.For(context).Milliseconds);
         context.RequestServices.GetRequiredService<InternalCredential>().Sign(request.Headers);
     }
 
@@ -179,64 +247,189 @@ internal static class HomeForwarding
             return;
         }
 
-        var services = context.RequestServices;
-        using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
-            new Uri(home.Address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()))
+        context.Features.Set(new ProxiedRequest());
+        using var deadline = ProxyRequestBudget.For(context).Link(context.RequestAborted);
+        if (body is null && context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
         {
-            Version = HttpVersion.Version20,
-            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-        };
-        if (body is not null || context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
-        {
-            request.Content = body is null ? new StreamContent(context.Request.Body) : new ByteArrayContent(body);
-            if (context.Request.ContentType is { } contentType)
+            try
             {
-                request.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+                body = await ReadBodyAsync(context, deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!context.RequestAborted.IsCancellationRequested)
+            {
+                await UnavailableAsync(context, home.Region).ConfigureAwait(false);
+                return;
+            }
+            if (body is null)
+            {
+                await ErrorResponse.From(new PayloadTooLarge("the request body exceeds the size limit")).ExecuteAsync(context).ConfigureAwait(false);
+                return;
             }
         }
 
-        Sign(context, request, home.Region);
-        if (pushThrough is not null)
+        var first = await AttemptAsync(home).ConfigureAwait(false);
+        if (first is null)
         {
-            request.Headers.TryAddWithoutValidation(PushThroughHeader, pushThrough);
-        }
-
-        if (publishId is not null)
-        {
-            request.Headers.TryAddWithoutValidation(PublishIdHeader, publishId);
-        }
-
-        HttpResponseMessage response;
-        var started = TimeProvider.System.GetTimestamp();
-        try
-        {
-            response = await services.GetRequiredService<IHttpClientFactory>().CreateClient(HomeLocator.HttpClientName)
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted).ConfigureAwait(false);
-        }
-        catch (Exception error) when (Unanswered(context, error))
-        {
-            await UnansweredAsync(context, home.Region, error).ConfigureAwait(false);
             return;
         }
 
-        using (response)
+        using var initial = first;
+        var response = initial;
+        HttpResponseMessage? refreshedResponse = null;
+        if (initial.StatusCode == HttpStatusCode.ServiceUnavailable && initial.Headers.Contains(PlacementMissHeader)
+            && context.Request.RouteValues["project"] is string project)
+        {
+            HomeNode? fresh;
+            try
+            {
+                fresh = await context.RequestServices.GetRequiredService<IHomeLocator>()
+                    .RefreshAsync(project, context.Request.RouteValues["database"] as string, deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!context.RequestAborted.IsCancellationRequested)
+            {
+                await UnavailableAsync(context, home.Region).ConfigureAwait(false);
+                return;
+            }
+            if (fresh is not null && fresh.Region != home.Region)
+            {
+                refreshedResponse = await AttemptAsync(fresh).ConfigureAwait(false);
+                if (refreshedResponse is null)
+                {
+                    return;
+                }
+                (response, home) = (refreshedResponse, fresh);
+            }
+        }
+
+        using (refreshedResponse)
         {
             answered?.Invoke(response);
             context.Response.StatusCode = (int)response.StatusCode;
             foreach (var (name, values) in response.Headers.Concat(response.Content.Headers))
             {
-                if (!Unreturned.Contains(name))
+                if (!Unreturned.Contains(name) && name != PlacementMissHeader)
                 {
-                    context.Response.Headers[name] = values.ToArray();
+                    if (name.Equals("Server-Timing", StringComparison.OrdinalIgnoreCase))
+                    {
+                        context.Response.Headers.Append(name, values.ToArray());
+                    }
+                    else
+                    {
+                        context.Response.Headers[name] = values.ToArray();
+                    }
                 }
             }
 
-            var elapsed = TimeProvider.System.GetElapsedTime(started).TotalMilliseconds;
-            context.Response.Headers.Append("Server-Timing",
-                string.Create(CultureInfo.InvariantCulture, $"home;dur={elapsed:0.0};desc=\"{home.Region}\""));
+            try
+            {
+                await using var answer = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+                await answer.CopyToAsync(context.Response.Body, deadline.Token).ConfigureAwait(false);
+            }
+            catch (Exception error) when (Unanswered(context, error) || error is IOException)
+            {
+                if (context.Response.HasStarted)
+                {
+                    context.Abort();
+                }
+                else
+                {
+                    context.Response.Clear();
+                    await UnansweredAsync(context, home.Region, error, sent: !response.Headers.Contains(PlacementMissHeader)).ConfigureAwait(false);
+                }
+            }
+        }
 
-            await using var answer = await response.Content.ReadAsStreamAsync(context.RequestAborted).ConfigureAwait(false);
-            await answer.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
+        async Task<HttpResponseMessage?> AttemptAsync(HomeNode target)
+        {
+            using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
+                new Uri(target.Address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()))
+            {
+                Version = HttpVersion.Version20,
+                VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+            };
+            SentContent? content = null;
+            if (body is not null || context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
+            {
+                content = new SentContent(body ?? throw new InvalidOperationException("a forwarded body must be buffered"));
+                request.Content = content;
+                if (context.Request.ContentType is { } contentType)
+                {
+                    content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+                }
+            }
+
+            Sign(context, request, target.Region);
+            if (pushThrough is not null)
+            {
+                request.Headers.TryAddWithoutValidation(PushThroughHeader, pushThrough);
+            }
+
+            if (publishId is not null)
+            {
+                request.Headers.TryAddWithoutValidation(PublishIdHeader, publishId);
+            }
+
+            var started = context.RequestServices.GetRequiredService<TimeProvider>().GetTimestamp();
+            try
+            {
+                var result = await context.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient(HomeLocator.HttpClientName)
+                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+                var elapsed = context.RequestServices.GetRequiredService<TimeProvider>().GetElapsedTime(started).TotalMilliseconds;
+                context.Response.Headers.Append("Server-Timing",
+                    string.Create(CultureInfo.InvariantCulture, $"home;dur={elapsed:0.0};desc=\"{target.Region}\""));
+                return result;
+            }
+            catch (Exception error) when (Unanswered(context, error))
+            {
+                context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("TerraBase.Features.Regions.HomeForwarding")
+                    .ZLogWarning(error, $"The proxy leg to {target.Region:@Region} did not answer");
+                await UnansweredAsync(context, target.Region, error, body is not { Length: > 0 } || content?.Sent == true).ConfigureAwait(false);
+                return null;
+            }
+        }
+    }
+
+    private static async Task<byte[]?> ReadBodyAsync(HttpContext context, CancellationToken cancellationToken)
+    {
+        using var body = new MemoryStream();
+        var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        try
+        {
+            for (int read; (read = await context.Request.Body.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0;)
+            {
+                if (body.Length + read > DatabaseRoute.MaxRequestBytes)
+                {
+                    return null;
+                }
+
+                await body.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+            }
+
+            return body.ToArray();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private sealed class SentContent(byte[] body) : HttpContent
+    {
+        internal bool Sent { get; private set; }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            SerializeToStreamAsync(stream, context, CancellationToken.None);
+
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken)
+        {
+            Sent = true;
+            await stream.WriteAsync(body, cancellationToken).ConfigureAwait(false);
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = body.LongLength;
+            return true;
         }
     }
 }

@@ -837,6 +837,16 @@ func (r *runner) placementSet() (result error) {
 	if err := same(cells(rows), [][]any{{int64(1)}}, "data survived placement"); err != nil {
 		return err
 	}
-	fmt.Println("go placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, nonmember endpoint proxies reads")
+	if _, err := db.Execute(r.ctx, "INSERT INTO placement_rows VALUES (2)"); err != nil {
+		return err
+	}
+	retained, err := db.Query(r.ctx, "SELECT value FROM placement_rows ORDER BY value")
+	if err != nil {
+		return err
+	}
+	if err := same(cells(retained), [][]any{{int64(1)}, {int64(2)}}, "acknowledged proxied write retained"); err != nil {
+		return err
+	}
+	fmt.Println("go placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]")
 	return nil
 }

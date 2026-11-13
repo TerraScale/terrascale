@@ -35,6 +35,8 @@ internal static class DatabaseRegions
 
     internal sealed class ReplicaReads;
 
+    internal sealed class WriterReads;
+
     internal static bool SameSet(IReadOnlyList<string>? left, IReadOnlyList<string>? right) =>
         left is not null && right is not null && left.Order(StringComparer.Ordinal).SequenceEqual(right.Order(StringComparer.Ordinal), StringComparer.Ordinal);
 
@@ -117,6 +119,8 @@ internal static class DatabaseRegions
     {
         if (Listeners.IsForwarded(context))
         {
+            context.Features.Set(new HomeForwarding.ProxiedRequest());
+            context.Response.Headers[HomeForwarding.PlacementMissHeader] = "1";
             await HomeForwarding.UnavailableAsync(context, region).ConfigureAwait(false);
             return;
         }
@@ -126,6 +130,8 @@ internal static class DatabaseRegions
             .FirstOrDefault(candidate => candidate.Region == region);
         if (peer is null)
         {
+            context.Features.Set(new HomeForwarding.ProxiedRequest());
+            context.Response.Headers[HomeForwarding.PlacementMissHeader] = "1";
             await HomeForwarding.UnavailableAsync(context, region).ConfigureAwait(false);
             return;
         }

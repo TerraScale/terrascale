@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using TerraBase.Features.Regions;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
@@ -96,7 +97,8 @@ public static class UsageRequestMetering
             {
                 Resolve();
                 ReportLocked();
-                if (_database is { } database)
+                if (_context.Features.Get<HomeForwarding.ProxiedRequest>() is null
+                    && !_context.WebSockets.IsWebSocketRequest && _database is { } database)
                 {
                     _meter.RecordRequest(database, _context.Request.Method, status, elapsed, 0, 0);
                     if (_context.GetEndpoint() is RouteEndpoint { RoutePattern.RawText: { } route })
@@ -144,7 +146,8 @@ public static class UsageRequestMetering
 
         private void ReportLocked()
         {
-            if (_received + _sent > 0 && _database is { } database)
+            if (_context.Features.Get<HomeForwarding.ProxiedRequest>() is null
+                && !_context.WebSockets.IsWebSocketRequest && _received + _sent > 0 && _database is { } database)
             {
                 _meter.RecordClientBytes(database, _received, _sent, _transferredAt);
                 (_received, _sent) = (0, 0);

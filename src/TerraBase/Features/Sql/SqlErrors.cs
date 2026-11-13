@@ -31,6 +31,7 @@ internal static partial class SqlErrors
     public const string TransactionState = "transaction_state";
     public const string TenantBusy = "tenant_busy";
     public const string Unavailable = "unavailable";
+    public const string WriteOutcomeUnknown = "write_outcome_unknown";
     public const string CopyFaulted = "copy_faulted";
     public const string RecoveryPending = "recovery_pending";
     public const string Unauthorized = "unauthorized";
@@ -62,6 +63,7 @@ internal static partial class SqlErrors
         TransactionState => "25000",
         TenantBusy => "53300",
         Unavailable or CopyFaulted or RecoveryPending => "57P03",
+        WriteOutcomeUnknown => "08007",
         Unauthorized => "28000",
         WrongRegion => "08004",
         InternalError => "XX000",

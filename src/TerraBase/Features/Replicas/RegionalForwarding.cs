@@ -33,7 +33,7 @@ internal static class RegionalForwarding
             }
 
             context.Features.Set(request);
-            if (owners.Writer)
+            if (owners.Writer || Listeners.ArrivedOn(context) == TerraBaseListener.Client && context.User.Identity?.IsAuthenticated != true)
             {
                 await next(context).ConfigureAwait(false);
                 return;
