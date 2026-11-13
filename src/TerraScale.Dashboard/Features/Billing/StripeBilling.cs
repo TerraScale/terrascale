@@ -624,7 +624,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     binding.EffectivePlan = previousEffectivePlan;
                     binding.EffectiveInterval = previousEffectiveInterval;
                 }
-                if (PlanCatalog.Plans.FirstOrDefault(candidate => candidate.Key == binding.EffectivePlan) is { } observed)
+                if (!unmappedPrice && PlanCatalog.Plans.FirstOrDefault(candidate => candidate.Key == binding.EffectivePlan) is { } observed)
                 {
                     BillingMonth.Observe(binding, observed, time.GetUtcNow());
                 }

@@ -45,7 +45,7 @@ public sealed class BillingMonth
         var current = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
         var month = current.AddMonths(-1);
         if (binding.EffectivePlanSince is not { } since || since >= current || month < binding.OverageStartsAt ||
-            binding.SubscriptionId.Length == 0 || binding.ObservedPricingVersion.Length == 0 || binding.State == "deleting")
+            binding.SubscriptionId.Length == 0 || binding.EffectivePlan == "free" || binding.ObservedPricingVersion.Length == 0 || binding.State == "deleting")
         {
             return true;
         }
