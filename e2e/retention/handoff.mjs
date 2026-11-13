@@ -248,6 +248,7 @@ try {
   const seed = await request(1, database(owner.databaseId));
   if (seed.status === 200) await checked(1, database(owner.databaseId), 'DELETE', undefined, 204);
   const created = [];
+  const pageIds = [];
   const coldCandidate = nodes.find(node => node.name === 'node-2');
   coldCandidate.process.kill('SIGSTOP');
   try {
@@ -262,6 +263,20 @@ try {
     created.push(record.id);
     console.log('created rows [11,22,33], backup and key present, DELETE 204, client SQL 404: ' + record.id);
   }
+  let retainedCount = 0;
+  let retainedAfter;
+  do {
+    const page = (await checked(1, project + '/deleted-databases?limit=100' + (retainedAfter ? '&after=' + encodeURIComponent(retainedAfter) : ''), 'GET')).json();
+    retainedCount += page.items.length;
+    retainedAfter = page.next;
+  } while (retainedAfter);
+  for (let index = retainedCount; index < 300; index++) {
+    const record = (await checked(1, project + '/databases', 'POST', { name: 'retained-page-' + index, regions: ['gru'] }, 201)).json();
+    await checked(1, database(record.id) + '/sql/execute', 'POST', { statements: [{ sql: 'CREATE TABLE proof (value INTEGER)' }, { sql: 'INSERT INTO proof VALUES (' + index + ')' }] });
+    await checked(1, database(record.id), 'DELETE', undefined, 204);
+    pageIds.push({ id: record.id, value: index });
+  }
+  console.log('prepared 300 retained databases for the first handoff');
   } finally {
     coldCandidate.process.kill('SIGCONT');
   }
@@ -295,9 +310,20 @@ try {
   } finally {
     returnSourceFiles();
   }
+  const handoffStarted = performance.now();
   await checked(1, '/v1/rollout/drain?target=journey-2', 'POST', undefined, 204);
   assert.equal((await checked(2, '/v1/rollout/status')).json().writer, true);
   await routeAuthToWriter(2);
+  const received = [];
+  let receivedAfter;
+  do {
+    const page = (await checked(2, project + '/deleted-databases?limit=100' + (receivedAfter ? '&after=' + encodeURIComponent(receivedAfter) : ''), 'GET')).json();
+    received.push(...page.items.map(record => record.id));
+    receivedAfter = page.next;
+  } while (receivedAfter);
+  assert.equal(received.length, 300);
+  assert(pageIds.every(record => received.includes(record.id)));
+  console.log('300 retained databases crossed handoff in bounded pages; verified manifest; elapsed ms=' + Math.round(performance.now() - handoffStarted));
   assert(files(roots[1], restoreId).some(file => file.endsWith('.db')));
   assert(files(roots[1], purgeId).some(file => file.endsWith('.db')));
   console.log('POST /v1/rollout/drain?target=journey-2 -> 204; peer writer=true; both retained databases have files');
@@ -348,6 +374,14 @@ try {
   await expect.poll(() => files(roots[0], unreachableId).filter(file => file.endsWith('.db') || file.endsWith('.key')), { timeout: 45_000 }).toEqual([]);
   console.log('A returns: repeated purge addresses same job, A files and keys erased');
 
+  for (const record of pageIds) {
+    await checked(2, deleted(record.id) + '/restore', 'POST');
+    const rows = (await checked(2, database(record.id) + '/sql/execute', 'POST', { statements: [{ sql: 'SELECT value FROM proof' }] })).json().results[0].rows;
+    assert.deepEqual(rows, [[record.value]]);
+    await checked(2, database(record.id), 'DELETE', undefined, 204);
+  }
+  console.log('paged retained databases restored with original rows: ' + pageIds.length);
+
   const beforeExpiryKeys = await keys(expiryId);
   setClock(eightDays, 2);
   setClock(eightDays);
@@ -364,22 +398,6 @@ try {
   setClock(0, 1);
   setClock(0, 2);
   setClock(0);
-  await checked(2, database(restoreId), 'DELETE', undefined, 204);
-  const pageIds = [];
-  const beforePages = (await checked(2, project + '/deleted-databases?limit=100', 'GET')).json();
-  let retainedCount = beforePages.items.length;
-  let next = beforePages.next;
-  while (next) {
-    const page = (await checked(2, project + '/deleted-databases?limit=100&after=' + encodeURIComponent(next), 'GET')).json();
-    retainedCount += page.items.length;
-    next = page.next;
-  }
-  for (let index = retainedCount; index < 300; index++) {
-    const record = (await checked(2, project + '/databases', 'POST', { name: 'retained-page-' + index, regions: ['gru'] }, 201)).json();
-    await checked(2, database(record.id) + '/sql/execute', 'POST', { statements: [{ sql: 'CREATE TABLE proof (value INTEGER)' }, { sql: 'INSERT INTO proof VALUES (' + index + ')' }] });
-    await checked(2, database(record.id), 'DELETE', undefined, 204);
-    pageIds.push(record.id);
-  }
   await expect.poll(async () => (await checked(2, deleted(purgeId), 'GET')).json().state, { timeout: 45_000 }).toBe('complete');
   assert.deepEqual((await checked(2, deleted(purgeId), 'GET')).json().outstanding, []);
   assert.deepEqual(await backups(purgeId), []);
@@ -389,21 +407,7 @@ try {
   assert.deepEqual(await backups(unreachableId), []);
   console.log('verified files=0, keys=0, backup objects=0: both purge jobs GET complete; subsequent DELETE 404 gone');
 
-  const handoffStarted = performance.now();
 
-  await checked(2, '/v1/rollout/drain?target=journey-1', 'POST', undefined, 204);
-  assert.equal((await checked(1, '/v1/rollout/status')).json().writer, true);
-  await routeAuthToWriter(1);
-  const received = [];
-  let retainedAfter;
-  do {
-    const page = (await checked(1, project + '/deleted-databases?limit=100' + (retainedAfter ? '&after=' + encodeURIComponent(retainedAfter) : ''), 'GET')).json();
-    received.push(...page.items.map(record => record.id));
-    retainedAfter = page.next;
-  } while (retainedAfter);
-  assert.equal(received.length, 300);
-  assert(pageIds.every(id => received.includes(id)));
-  console.log('300 retained databases crossed handoff in bounded pages; verified manifest; elapsed ms=' + Math.round(performance.now() - handoffStarted));
 
 
 } finally {
