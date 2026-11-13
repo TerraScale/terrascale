@@ -26,7 +26,7 @@ gh workflow run ci.yml --repo TerraScale/terrascale --ref main \
   -f terrabase_arm64=sha256:<arm64>
 ```
 
-`publication=release-only` runs only the `release-only` job. It downloads the current `ci-*` orchestrator binary and calls `release app --service terrabase` once per region. A failed region does not dispatch another run. The default `publication=release` input does not release TerraBase.
+`publication=release-only` runs only the `release-only` job. It downloads the current `ci-*` orchestrator binary and calls `release app --service terrabase` once per region, starting with sjc and finishing with gru. Every region must finish in the `done` state without an error before the next region starts. A failed region stops the release and does not dispatch another run. The default `publication=release` input does not release TerraBase.
 
 ## Roll back to the previous image
 
