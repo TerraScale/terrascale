@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { Nats, putKey as putSealedKey, seal } from './push.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFileSync, openSync, closeSync, readFileSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
+import { appendFileSync, cpSync, openSync, closeSync, readFileSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
 import { connect as http2 } from 'node:http2';
 import { createConnection, createServer } from 'node:net';
 import { setPriority } from 'node:os';
@@ -176,7 +176,7 @@ try {
   writeFileSync(journeyState + '/r2', access + '\n' + secret + '\n', { mode: 0o600 });
   writeFileSync(state + '/peers', 'journey-1 gru 127.0.0.1\njourney-2 fra 127.0.0.2\njourney-3 gru 127.0.0.3\n');
   writeFileSync(state + '/nats.conf', JSON.stringify({ host: '127.0.0.1', port: 4222, authorization: { token }, jetstream: { store_dir: state + '/nats' } }), { mode: 0o600 });
-  const broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
+  let broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
   await logged(broker, 'Server is ready');
   await relay.listen();
   nats = new Nats(token);
@@ -189,7 +189,7 @@ try {
   const gruStarted = Date.now();
   const consuming = nats.event('$JS.EVENT.ADVISORY.CONSUMER.CREATED.TERRABASE_PUSH_FRA.*', created => created.consumer?.startsWith('home-gru-epoch-'));
   let gru = cell('gru');
-  cell('fra');
+  let fra = cell('fra');
   await consuming;
   await logged(gru, 'Application started');
   await logged(gru, 'This node holds a new home lease session');
@@ -512,14 +512,32 @@ try {
   await rounds(relocated, sentA, 2);
   await skipped;
   const moveStarted = Date.now();
+  const fraMark = readFileSync(fra.log, 'utf8').length;
   const relocatedPath = '/v1/projects/' + project.id + '/databases/' + relocated.id;
   const forwarded = await request(home, relocatedPath, { regions: ['fra'] }, user, 'PATCH', [200, 401]);
   assert(forwarded.homeRegion === 'fra' || forwarded.error?.code === 'invalid_key', JSON.stringify(forwarded));
   const relocatedBody = await request(home, relocatedPath, undefined, user, 'GET');
   assert.equal(relocatedBody.homeRegion, 'fra', JSON.stringify(relocatedBody));
   const moveSeconds = (Date.now() - moveStarted) / 1000;
+  const fraHolds = readFileSync(fra.log, 'utf8').slice(fraMark).split('\n').some(line => line.includes('A pushed database is held') && line.includes('"Database":"' + relocated.id + '"')
+    && line.includes('"Origin":"fra"') && line.includes('"Kind":"object_store"'));
+  assert(fraHolds, 'precondition: fra, the new home, started the sequencer of origin fra for ' + relocated.id + ' from its frontier during the move and holds it on sequence ' + sentA.seq + ' (refused data key)');
+  const fraAcked = new Set();
+  const fraWaiting = new Map();
+  const unwatchFra = nats.watch('$JS.ACK.>', reply => {
+    const tokens = reply.subject.split('.');
+    const at = tokens[2] === 'TERRABASE_PUSH_FRA' ? 3 : 5;
+    if (!['+WPI', '+ACK'].includes(reply.raw) || !tokens[at]?.startsWith('home-fra-epoch-')) return;
+    fraAcked.add(tokens[at + 2]);
+    fraWaiting.get(tokens[at + 2])?.();
+  });
+  const ackedByFra = sent => fraAcked.has(String(sent.seq)) ? Promise.resolve() : new Promise((resolveAck, reject) => {
+    const deadline = setTimeout(() => reject(new Error('fra\'s consumer never acknowledged sequence ' + sent.seq)), 90_000);
+    fraWaiting.set(String(sent.seq), () => { clearTimeout(deadline); resolveAck(); });
+  });
   const sentB = await send(relocated, columnB, keyId, 'fra');
-  await progress(sentB, 1, consumer => consumer.startsWith('home-fra-epoch-'));
+  await ackedByFra(sentB);
+  unwatchFra();
   assert.deepEqual(await onFra('SELECT a, b FROM pairs WHERE id = 1'), [[0, 0]]);
   assert.deepEqual(await onFra('SELECT count(*) FROM applications'), [[0]]);
   const aNotice = notice(relocated, columnA);
@@ -782,6 +800,39 @@ try {
   assert.deepEqual(await applications(mixed), [mixedFirst.id, mixedLater.id]);
   console.log('previous-build origin (no build record) removed a database\'s messages through sequence ' + mixedSent.seq + ' without a marker: the new-build home held it with reason origin_previous_build and applied nothing past the removal; once the origin node wrote its build record the later message applied');
 
+  const recordOf = async node => !(await nats.request('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_FRA', { last_by_subj: 'terrabase.push-state.fra.build.' + node })).error;
+  const peersBefore = readFileSync(state + '/peers', 'utf8');
+  const decommissionStream = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
+  assert((await nats.request('$JS.API.STREAM.DELETE.TERRABASE_PUSH_FRA')).success);
+  assert(!(await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_FRA', decommissionStream.config)).error);
+  const retired = await database('retired');
+  const [retiredFirst, retiredRemoved, retiredLater] = series(3);
+  await applied(retired, retiredFirst);
+  const retiredKey = await refusedKey(retired);
+  const retiredSent = await held(retired, send(retired, retiredRemoved, retiredKey));
+  const retiredHeld = logged(gru, 'A pushed database is held', { Database: retired.id, Kind: 'origin_previous_build' }, offset());
+  const retiredPurge = await nats.request('$JS.API.STREAM.PURGE.TERRABASE_PUSH_FRA', { filter: 'terrabase.push.fra.*.' + scope(retired).replaceAll('/', '.'), seq: retiredSent.seq + 1 });
+  assert(retiredPurge.success, JSON.stringify(retiredPurge));
+  let retiredApplied = null;
+  const retiredNotice = notice(retired, retiredLater).then(result => { retiredApplied = result; return result; });
+  await send(retired, retiredLater);
+  release(retired, retiredKey);
+  await retiredHeld;
+  assert.equal(retiredApplied, null);
+  assert.equal(await recordOf('journey-2'), false);
+  const retiredStopped = Date.now();
+  await stop(fra);
+  assert.equal((await retiredNotice).state, 'confirmed');
+  assert.deepEqual(await applications(retired), [retiredFirst.id, retiredLater.id]);
+  assert.equal(await recordOf('journey-2'), false);
+  assert.equal(readFileSync(state + '/peers', 'utf8'), peersBefore);
+  const retiredSeconds = (Date.now() - retiredStopped) / 1000;
+  const recorded = nats.event('terrabase.push-state.fra.build.journey-2');
+  fra = cell('fra');
+  await recorded;
+  assert.equal(await recordOf('journey-2'), true);
+  console.log('a running origin node without a build record held the home (origin_previous_build); once it stopped, still listed in the peers file and without a record, the later message applied ' + retiredSeconds.toFixed(1) + ' s after the stop with no file edited; restarted on this build it wrote its record at its first open of the stream');
+
   const strays = Array.from({ length: 130 }, () => id());
   const strayStarted = Date.now();
   for (const stray of strays) {
@@ -795,6 +846,48 @@ try {
   const strayConsumer = await nats.request('$JS.API.CONSUMER.INFO.TERRABASE_PUSH_FRA.' + (await consumers())[0]);
   assert(strayConsumer.num_ack_pending < 4096, JSON.stringify(strayConsumer));
   console.log('130 unknown databases with 32 messages each (' + strays.length * 32 + ' messages) held on one origin: the healthy database applied after them in ' + ((Date.now() - strayStarted) / 1000).toFixed(1) + ' s; consumer ack pending ' + strayConsumer.num_ack_pending + ', unknown_database holds ' + await scrape(/^terrabase_push_held\{.*reason="unknown_database"/));
+
+  const behind = await database('behind');
+  const [behindFirst, behindSecond, behindThird, behindLate] = series(4);
+  await applied(behind, behindFirst);
+  const streams = state + '/nats/jetstream/$G/streams';
+  const restartBroker = async () => {
+    nats.close();
+    await stop(broker);
+    return async () => {
+      const mark = readFileSync(broker.log, 'utf8').length;
+      broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
+      await logged(broker, 'Server is ready', {}, mark);
+      nats = new Nats(token);
+      await nats.connect();
+    };
+  };
+  const behindIdentity = (await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA')).created;
+  let resume = await restartBroker();
+  rmSync(state + '/fra-snapshot', { recursive: true, force: true });
+  cpSync(streams + '/TERRABASE_PUSH_FRA', state + '/fra-snapshot', { recursive: true });
+  await resume();
+  const snapshotLast = (await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA')).state.last_seq;
+  await applied(behind, behindSecond);
+  await applied(behind, behindThird);
+  const frontierBefore = (await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA')).state.last_seq;
+  resume = await restartBroker();
+  rmSync(streams + '/TERRABASE_PUSH_FRA', { recursive: true });
+  cpSync(state + '/fra-snapshot', streams + '/TERRABASE_PUSH_FRA', { recursive: true });
+  const behindHeld = logged(gru, 'A pushed database is held', { Database: behind.id, Origin: 'fra', Kind: 'stream_behind' }, offset());
+  await resume();
+  const restored = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
+  assert.equal(restored.state.last_seq, snapshotLast);
+  assert.equal(restored.created, behindIdentity);
+  let behindApplied = null;
+  notice(behind, behindLate).then(result => { behindApplied = result; }, () => {});
+  const behindSent = await send(behind, behindLate);
+  assert(behindSent.seq <= frontierBefore, JSON.stringify({ behindSent: behindSent.seq, frontierBefore }));
+  await behindHeld;
+  await applied(other, transaction([effect(302)]));
+  assert.equal(behindApplied, null);
+  assert.deepEqual(await applications(behind), [behindFirst.id, behindSecond.id, behindThird.id]);
+  console.log('origin stream restored from a snapshot under the same identity (last sequence ' + snapshotLast + ' below the frontier ' + frontierBefore + '): held with reason stream_behind, the new message at sequence ' + behindSent.seq + ' not applied');
 } finally {
   rmSync(journeyState + '/r2-unavailable-keys', { force: true });
   nats?.close();

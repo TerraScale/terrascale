@@ -292,7 +292,7 @@ copies hold no frontier, so the origin does not purge them until the home runs t
 | Stream read or acknowledgement fails (`broker`, `io`, `cancelled`) | Retried; database held | Acknowledged at once |
 | The origin's purge marker for the database is ahead of this copy's frontier (`purged`) | Held for an operator; nothing more of the database applies from that stream | Acknowledged at once |
 | The stream's last sequence is below the frontier (`stream_behind`) | Held for an operator; nothing applies from that stream | Acknowledged at once |
-| The origin stream has removed messages (its first sequence is above 1 or it has interior deletions) and a node of the origin region named in the peers file has no build record in it (`origin_previous_build`) | Retried; database held until every node of the origin region runs this build | Acknowledged at once |
+| The origin stream has removed messages (its first sequence is above 1 or it has interior deletions) and a node of the origin region named in the peers file is running (its node lease is live) without a build record in the stream (`origin_previous_build`) | Retried; database held until that node writes its record or stops running | Acknowledged at once |
 | A message the previous build may have seen, older than the 7 day result retention, with no recorded result (`upgrade_ambiguous`) | Held for an operator | Acknowledged at once |
 | The origin stream was recreated | The consumer run ends | The next run reads the new stream from sequence 1 under its new identity |
 | Writer lease lost or lapsed (a renewal after a lapse is a new lease) | The consumer run ends at once; every sequencer of that origin stops and nothing more is dispatched or negatively acknowledged | The next run deletes the consumer and starts a fresh one at sequence 1; deliveries outstanding on the old consumer die with it |
@@ -335,7 +335,7 @@ What an operator does for each hold reason (the warning log line names the datab
 | `purged` | The database's copy at this home is behind what was acknowledged: the origin purged messages this copy never applied. Restore the database from the copy that applied them (the former home, a backup) or accept the loss explicitly; there is no automatic repair. |
 | `stream_behind` | The origin's stream was restored from an older state under the same identity. Compare the stream with the frontier and recreate or repair the stream; nothing applies until the stream's last sequence reaches the frontier again. |
 | `upgrade_ambiguous` | The previous build may have applied the message and its result has expired. Read the message's effects against the database and skip or republish it by hand. |
-| `origin_previous_build` | Nothing during a release while the origin region's nodes still run the previous build. If it lasts, upgrade every node of the origin region, or remove a node that no longer runs from the peers file. |
+| `origin_previous_build` | Nothing during a release while the origin region's nodes still run the previous build. If it lasts, a node of the origin region still runs the previous build: upgrade or stop it. |
 
 To recover a parked record there is no command; the procedure is manual. Read the record with
 `nats stream get TERRABASE_PUSH_PARKED_<HOME> <sequence>`: a JSON record whose `payload` field holds the received
@@ -391,16 +391,30 @@ header, which this build still writes for it.
 
 Release order. The previous build purges its own stream without a purge marker, so a home on this build cannot tell
 a database whose messages that build purged from one that never had them. Every node of this build therefore writes a
-build record, `terrabase.push-state.<origin>.build.<node>`, into its own region's push stream when it opens the stream
-and again before every purge it makes, written only once per stream. A home on this build applies from an origin stream
-that has had messages removed only once every node of that origin region named in its peers file has such a record in
-the stream; until then every database of that origin is held (`origin_previous_build`) and its messages wait in the
-stream. A stream from which nothing was removed holds no gap, so it applies at once. The implied release order: during
-a rolling release, pushed writes from a region apply at their homes on this build only after every node of that region
-runs this build; they are delayed for that window, never skipped. A region's writes to homes still on the previous build
-are not affected. Rolling a node back after it wrote its record lets it purge without a marker again under a record
-that claims otherwise, so before rolling back an origin node, purge its record
-(`nats stream purge TERRABASE_PUSH_<REGION> --subject terrabase.push-state.<region>.build.<node>`).
+build record, `terrabase.push-state.<origin>.build.<node>`, into its own region's push stream at its first open of that
+stream (at startup, before it accepts a local write) and again before every purge it makes (deleted databases and
+decided positions), written only once per stream. A home on this build applies from an origin stream that has had
+messages removed only while no node of that origin region named in its peers file is running without such a record.
+A node is running while its node lease (`node.<name>` in the `terrabase-homes` bucket, which both builds renew every
+2 seconds and which lapses 10 seconds after the last renewal) is live. For each node named in the peers file:
+
+- a node with a build record in the stream never holds the home (the record stays until the stream is recreated);
+- a running node without a record holds every database of that origin (`origin_previous_build`): it may be the previous
+  build, which can purge without a marker at any time;
+- a node without a record that is not running does not hold: a node that never opened its stream purged nothing, and a
+  node that stopped on the previous build purges nothing more; a decommissioned node still listed in the peers file and a
+  node listed before it first starts therefore never hold a home.
+
+The hold ends by itself, without editing any file, when the running node writes its record (its first start on this
+build) or stops running (its lease lapses); the home retries on its own timer (at most 60 seconds apart). A stream from
+which nothing was removed holds no gap, so it applies at once. The implied release order: during a rolling release,
+pushed writes from a region apply at their homes on this build only while every running node of that region runs this
+build; they are delayed while a node of that region runs the previous build, never skipped. A node of the previous build
+that is started again after the region's records exist holds the homes again while it runs. A region's writes to homes
+still on the previous build are not affected. Rolling a node back after it wrote its record lets it purge without a
+marker again under a record that claims otherwise, so before rolling back an origin node, purge its record
+(`nats stream purge TERRABASE_PUSH_<REGION> --subject terrabase.push-state.<region>.build.<node>`); a home reads the
+records again at its next consumer run.
 
 ## Known gaps
 

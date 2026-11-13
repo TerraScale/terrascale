@@ -45,7 +45,7 @@ internal partial class HomePush
         internal string Origin => origin;
         internal string? Source { get; set; }
         internal PreviousFloor Previous { get; set; } = new(0, 0);
-        internal bool OriginMarks { get; set; }
+        internal HashSet<string> Marked { get; } = new(StringComparer.Ordinal);
         internal CancellationTokenSource Stopping => stopping;
         internal CancellationToken Token { get; } = stopping.Token;
         internal bool Ended { get; set; }
@@ -560,14 +560,10 @@ internal partial class HomePush
             return ([], true, "purged");
         }
 
-        if (home && !queue.Run.OriginMarks && (current.Info.State.FirstSeq > 1 || current.Info.State.NumDeleted > 0))
+        if (home && (current.Info.State.FirstSeq > 1 || current.Info.State.NumDeleted > 0)
+            && !await OriginMarksAsync(stream, queue.Run, cancellationToken).ConfigureAwait(false))
         {
-            if (!await OriginMarksAsync(stream, queue.Origin, cancellationToken).ConfigureAwait(false))
-            {
-                return ([], true, "origin_previous_build");
-            }
-
-            queue.Run.OriginMarks = true;
+            return ([], true, "origin_previous_build");
         }
 
         var next = new Dictionary<ulong, StoredMessage?>(starts.Length);

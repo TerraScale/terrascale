@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
+using NATS.Client.KeyValueStore;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -19,6 +21,7 @@ internal sealed partial class PreviousFloorJsonContext : JsonSerializerContext;
 internal partial class HomePush
 {
     private const int WrongLastSequence = 10071;
+    private INatsKVStore? _leases;
 
     private async Task MarkPurgedAsync(NatsJSContext js, TenantContext database, ulong through, CancellationToken cancellationToken)
     {
@@ -50,20 +53,52 @@ internal partial class HomePush
         }
     }
 
-    private async Task<bool> OriginMarksAsync(INatsJSStream stream, string origin, CancellationToken cancellationToken)
+    private async Task<bool> OriginMarksAsync(INatsJSStream stream, ConsumeRun run, CancellationToken cancellationToken)
     {
         IEnumerable<string> nodes = options.PeersFile is null
             ? [options.MachineId]
-            : (await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)).Where(node => node.Region == origin).Select(node => node.Name);
+            : (await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)).Where(node => node.Region == run.Origin).Select(node => node.Name);
         foreach (var node in nodes)
         {
-            if (await LastAsync(stream, PushNames.Build(origin, node), cancellationToken).ConfigureAwait(false) is null)
+            lock (_queuesGate)
+            {
+                if (run.Marked.Contains(node))
+                {
+                    continue;
+                }
+            }
+
+            if (await LastAsync(stream, PushNames.Build(run.Origin, node), cancellationToken).ConfigureAwait(false) is not null)
+            {
+                lock (_queuesGate)
+                {
+                    _ = run.Marked.Add(node);
+                }
+
+                continue;
+            }
+
+            if (await RunningAsync(node, cancellationToken).ConfigureAwait(false))
             {
                 return false;
             }
         }
 
         return true;
+    }
+
+    private async Task<bool> RunningAsync(string node, CancellationToken cancellationToken)
+    {
+        var js = _js ?? throw new IOException("the push connection is not open");
+        var leases = _leases ??= await new NatsKVContext(js).GetStoreAsync(HomeLeases.Bucket, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return (await leases.GetEntryAsync<byte[]>("node." + node, cancellationToken: cancellationToken).ConfigureAwait(false)).Value is { Length: > 0 };
+        }
+        catch (Exception error) when (error is NatsKVKeyNotFoundException or NatsKVKeyDeletedException)
+        {
+            return false;
+        }
     }
 
     private static async Task<ulong?> PurgedThroughAsync(INatsJSStream stream, string origin, TenantContext database, CancellationToken cancellationToken) =>

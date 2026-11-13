@@ -63,6 +63,17 @@ export class Nats {
       this.socket.write('SUB ' + subject + ' ' + sid + '\r\n');
     });
   }
+  watch(subject, onValue) {
+    const sid = String(this.next++);
+    this.persistent.add(sid);
+    this.pending.set(sid, value => { if (!value.error) onValue(value); });
+    this.socket.write('SUB ' + subject + ' ' + sid + '\r\n');
+    return () => {
+      this.pending.delete(sid);
+      this.persistent.delete(sid);
+      this.socket.write('UNSUB ' + sid + '\r\n');
+    };
+  }
   close() {
     for (const deadline of this.deadlines) clearTimeout(deadline);
     this.socket.destroy();
