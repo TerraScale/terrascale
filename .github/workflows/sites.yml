@@ -2,9 +2,11 @@ name: Sites
 
 on:
   workflow_run:
-    workflows: [CI]
+    workflows: [CI, 'Images (GHCR)']
     types: [completed]
     branches: [main]
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -12,24 +14,8 @@ permissions:
   actions: read
 
 jobs:
-  changes:
-    if: >-
-      github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch'
-      || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'
-      && github.event.workflow_run.head_repository.full_name == github.repository))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: ./.github/actions/qualified-main
-        with:
-          revision: ${{ github.event.workflow_run.head_sha || github.sha }}
-
   deploy-docs:
-    needs: changes
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -43,18 +29,19 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: ./.github/actions/qualified-main
-        with:
-          revision: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - name: Record the checked-out revision
-        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          ref: main
       - id: live
-        name: Select changes since the live Worker revision
+        name: Reconcile qualified main with the live Worker revision
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/ci/site-deploy-gate.mjs docs ts-docs
+      - name: Check out the target
+        if: steps.live.outputs.deploy == 'true'
+        run: |
+          cp scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/prove-worker-deploy.mjs"
+          git checkout --detach "$REVISION"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         if: steps.live.outputs.deploy == 'true'
         with:
@@ -81,10 +68,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-docs
+        run: node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" ts-docs
 
   deploy-landing:
-    needs: changes
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -98,18 +85,19 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: ./.github/actions/qualified-main
-        with:
-          revision: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - name: Record the checked-out revision
-        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          ref: main
       - id: live
-        name: Select changes since the live Worker revision
+        name: Reconcile qualified main with the live Worker revision
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/ci/site-deploy-gate.mjs landing ts-landing
+      - name: Check out the target
+        if: steps.live.outputs.deploy == 'true'
+        run: |
+          cp scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/prove-worker-deploy.mjs"
+          git checkout --detach "$REVISION"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         if: steps.live.outputs.deploy == 'true'
         with:
@@ -137,10 +125,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" ts-landing
+        run: node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" ts-landing
 
   deploy-status:
-    needs: changes
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -154,18 +142,19 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: ./.github/actions/qualified-main
-        with:
-          revision: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - name: Record the checked-out revision
-        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          ref: main
       - id: live
-        name: Select changes since the live Worker revision
+        name: Reconcile qualified main with the live Worker revision
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/ci/site-deploy-gate.mjs status ts-status-vantage-sfo ts-status-vantage-gru ts-status
+      - name: Check out the target
+        if: steps.live.outputs.deploy == 'true'
+        run: |
+          cp scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/prove-worker-deploy.mjs"
+          git checkout --detach "$REVISION"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         if: steps.live.outputs.deploy == 'true'
         with:
@@ -200,4 +189,41 @@ jobs:
           WORKERS: ${{ steps.live.outputs.workers }}
         run: |
           read -ra workers <<< "$WORKERS"
-          node scripts/ci/prove-worker-deploy.mjs "$RUNNER_TEMP/deploys.ndjson" "${workers[@]}"
+          node "$RUNNER_TEMP/prove-worker-deploy.mjs" "$RUNNER_TEMP/deploys.ndjson" "${workers[@]}"
+
+  reconcile-services:
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
+    strategy:
+      matrix:
+        thing: [auth, dashboard]
+    concurrency:
+      group: reconcile-request-${{ matrix.thing }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: main
+      - id: live
+        name: Reconcile the current service and qualified main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          THING: ${{ matrix.thing }}
+        run: node scripts/ci/site-deploy-gate.mjs "$THING"
+      - name: Request a release reconcile with a main dispatch identity
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          THING: ${{ matrix.thing }}
+        run: |
+          if [ "$THING" = auth ]; then
+            gh workflow run ci.yml --ref main -f reconcile_auth=true
+          else
+            gh workflow run images-ghcr.yml --ref main
+          fi

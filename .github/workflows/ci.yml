@@ -8,6 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      reconcile_auth:
+        description: Reconcile ts-auth with the newest journey-qualified main commit
+        type: boolean
+        default: false
       native_artifacts:
         description: 'Maintenance: prepare combined native release assets only (no builds, images or publication)'
         type: boolean
@@ -44,8 +48,8 @@ env:
   ASPNETCORE_HTTP_PORTS: ''
 
 jobs:
-  # Runs on every event: a skipped job would skip "test".
   changes:
+    if: ${{ !inputs.reconcile_auth }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -54,7 +58,6 @@ jobs:
     outputs:
       dotnet: ${{ steps.areas.outputs.dotnet }}
       main: ${{ steps.areas.outputs.main }}
-      ordered: ${{ steps.areas.outputs.ordered }}
       sha: ${{ github.sha }}
       sdks: ${{ steps.areas.outputs.sdks }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -200,16 +203,14 @@ jobs:
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
         run: |
-          echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
-          echo "dotnet=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
-          # A push changing both TerraBase's server and what ts-auth calls it with releases TerraBase first (scope
-          # skew, 2026-11-04); every other push releases both services in parallel. Dispatches keep the order.
-          ordered=$(jq 'index("auth-server") != null and index("auth-client") != null' <<< "$CHANGES")
-          [[ $GITHUB_EVENT_NAME != workflow_dispatch ]] || ordered=true
-          echo "ordered=$ordered" >> "$GITHUB_OUTPUT"
-          echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
+          {
+            echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")"
+            echo "dotnet=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")"
+            echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$CHANGES")"
+          } >> "$GITHUB_OUTPUT"
 
   checks:
+    if: ${{ !inputs.reconcile_auth }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -511,40 +512,6 @@ jobs:
           INDEX: ${{ steps.image.outputs.digest }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${ARM64}" | tee -a "$GITHUB_STEP_SUMMARY"
-      # Every region's ts-orch swaps to the linux/arm64 digest, waits for readiness and rolls back on failure. Both
-      # services release; the production-<area> concurrency group keeps one release of each in flight.
-      # Releases converge on the latest main. A run superseded by a newer signed run has nothing left to do. Any other
-      # failure of a push run's release (bake, rollback, timeout, a rerun's rebuilt digest under its already-approved
-      # run id) dispatches one fresh main run, a newer signed run that releases the latest main; dispatched runs never
-      # dispatch again.
-      # Temporary (zdt cold window, remove at cienable): no push run and no default dispatch (including the retry
-      # dispatch below) may release TerraBase while the fleet still runs b443-era executors with no fence. TerraBase
-      # releases only through the explicit release-only job; ts-auth releases as before.
-      - name: Release to every region
-        if: env.AREA != 'terrabase' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publication != 'build-only'))
-        working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-          IMAGE: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
-        run: |
-          set -euo pipefail
-          set +e
-          bash scripts/ci/release-app.sh "$SERVICE" "$IMAGE"
-          status=$?
-          set -e
-          [ "$status" -eq 0 ] && exit 0
-          # Regions not yet on ts-orch #194 answer an older run with "deployment is stale"; a first attempt never
-          # changes its own approved run, so there it can only mean superseded.
-          if grep -q 'superseded by a newer signed run' "${RUNNER_TEMP}/release.log" ||
-            { [ "$GITHUB_RUN_ATTEMPT" = 1 ] && grep -q 'deployment is stale' "${RUNNER_TEMP}/release.log"; }; then
-            echo "Superseded: a newer main run released ${SERVICE}." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
-            echo "Release failed; dispatched a fresh main run to release the latest main." | tee -a "$GITHUB_STEP_SUMMARY"
-          fi
-          exit "$status"
 
   main-build-only:
     needs: [changes, terrabase, test]
@@ -621,46 +588,69 @@ jobs:
           done
           exit "$status"
 
-  # ts-auth releases in parallel with TerraBase, except after it when one push changes both TerraBase's server and
-  # what ts-auth calls it with (changes.outputs.ordered): shared scope and contract changes reach TerraBase first.
   main-auth:
-    needs: [changes, auth, test, journey]
-    if: >-
-      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
-      && needs.journey.result == 'success'
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered != 'true'
+    if: github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && github.ref == 'refs/heads/main'
     concurrency:
       group: production-auth
       cancel-in-progress: false
-    env: &auth-env
-      AREA: auth
-      SERVICE: ts-auth
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions: &release-permissions
+    timeout-minutes: 25
+    permissions:
       contents: read
+      actions: read
       packages: write
       id-token: write
-      actions: write
-    steps: *production-steps
-
-  main-auth-ordered:
-    needs: [changes, auth, test, main, journey]
-    if: >-
-      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
-      && needs.journey.result == 'success'
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered == 'true'
-      && (!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')
-    concurrency:
-      group: production-auth
-      cancel-in-progress: false
-    env: *auth-env
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions: *release-permissions
-    steps: *production-steps
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: main
+      - id: live
+        name: Reconcile qualified main with live ts-auth
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/site-deploy-gate.mjs auth
+      - name: Prepare the qualified target
+        if: steps.live.outputs.deploy == 'true'
+        run: |
+          cp scripts/ci/site-deploy-gate.mjs "$RUNNER_TEMP/reconcile.mjs"
+          cp scripts/ci/reconcile-image.sh "$RUNNER_TEMP/reconcile-image.sh"
+          cp scripts/ci/release-app.sh "$RUNNER_TEMP/release-app.sh"
+          cp scripts/ci/fetch-ts-orch.sh "$RUNNER_TEMP/fetch-ts-orch.sh"
+          git checkout --detach "$REVISION"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        if: steps.live.outputs.deploy == 'true'
+        with:
+          global-json-file: global.json
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        if: steps.live.outputs.deploy == 'true'
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        if: steps.live.outputs.deploy == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build or reuse the target image and publish its main tag
+        if: steps.live.outputs.deploy == 'true'
+        run: bash "$RUNNER_TEMP/reconcile-image.sh" auth
+      - name: Release to every region
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash "$RUNNER_TEMP/release-app.sh" ts-auth "$IMAGE"
+      - name: Prove the live revision
+        if: steps.live.outputs.deploy == 'true'
+        run: node "$RUNNER_TEMP/reconcile.mjs" auth --prove
+      - name: Record the released source for the production journey
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deploy-revision
+          overwrite: true
+          path: ${{ runner.temp }}/deploy-revision
+          if-no-files-found: error
+          retention-days: 1
 
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
@@ -799,7 +789,7 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
       || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
-      || (github.event_name == 'workflow_dispatch' && !inputs.native_artifacts && inputs.publication == 'release')))
+      || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
     uses: ./.github/workflows/journey.yml
 
   all-green:

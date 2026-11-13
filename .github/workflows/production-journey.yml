@@ -26,17 +26,14 @@ jobs:
       commit: ${{ steps.release.outputs.commit }}
     steps:
       - id: release
-        name: Start one journey after the last release of the commit
+        name: Run the journey for the source that was released
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          RUN_UPDATED: ${{ github.event.workflow_run.updated_at }}
           COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
           RELEASE_STEPS: '["Release to every region", "Release the pinned arm64 digest to each region"]'
-          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main-auth", "main-auth-ordered", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
-          PUBLISH_JOBS: '["main"]'
+          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main-auth", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
         run: |
           set -euo pipefail
           [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
@@ -46,41 +43,34 @@ jobs:
             echo "journey=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$RUN_ATTEMPT" -gt 1 ] && [ "$COMMIT" != "$GITHUB_SHA" ]; then
-            echo "$COMMIT: attempt $RUN_ATTEMPT of run $RUN_ID re-ran a commit that is no longer main's head ($GITHUB_SHA); its suite would audit a newer production, so no journey runs"
-            exit 0
-          fi
-          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$COMMIT&per_page=100" --jq '[.workflow_runs[]
-            | select(.head_branch == "main" and (.event == "push" or .event == "workflow_dispatch")
-              and (.path == ".github/workflows/ci.yml" or .path == ".github/workflows/images-ghcr.yml"))
-            | {id, name, path, event, status, updated_at}]')
-          others=$(jq --argjson run "$RUN_ID" '[.[] | select(.id != $run)]' <<< "$runs")
-          running=$(jq -r '[.[] | select(.status != "completed") | "\(.name) run \(.id)"] | join(", ")' <<< "$others")
-          later=$(jq -r --arg at "$RUN_UPDATED" '[.[] | select(.status == "completed" and .updated_at > $at) | "\(.name) run \(.id)"] | join(", ")' <<< "$others")
-          for id in "$RUN_ID" $(jq -r '.[] | select(.status == "completed") | .id' <<< "$others"); do
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --jq "{id: $id, jobs: [.jobs[] | {name, conclusion, steps: [.steps[]? | {name, conclusion}]}]}"
-          done > "$RUNNER_TEMP/jobs.json"
-          released=$(jq -rs --argjson steps "$RELEASE_STEPS" '[.[] | .id as $id | .jobs[]
-            | select(any(.steps[]; .conclusion == "success" and (.name | IN($steps[])))) | "\(.name) in run \($id)"] | join(", ")' "$RUNNER_TEMP/jobs.json")
-          unknown=$(jq -rs --argjson runs "$runs" --argjson known "$RELEASE_JOBS" --argjson publish "$PUBLISH_JOBS" --argjson steps "$RELEASE_STEPS" '[.[] | .id as $id
-            | ($runs[] | select(.id == $id)) as $run | $known[$run.path] as $names | [.jobs[] | select(.name | IN($names[]))] as $jobs
-            | (if $run.event == "push" and (.jobs | length) > 0 and ($jobs | length) == 0 and (any(.jobs[]; .name | IN($publish[])) | not) then "\($run.name) run \($id) has none of the jobs \($names | join(", "))" else empty end),
-              ($jobs[] | select(.conclusion == "success" and (any(.steps[]; .name | IN($steps[])) | not))
-                | "job \(.name) of \($run.name) run \($id) has none of the steps \($steps | join(", "))")] | join("; ")' "$RUNNER_TEMP/jobs.json")
+          jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100")
+          path=$(jq -r '.workflow_run.path' "$GITHUB_EVENT_PATH")
+          names=$(jq -c --arg path "$path" '.[$path]' <<< "$RELEASE_JOBS")
+          jq -e --argjson names "$names" 'any(.jobs[]; .name | IN($names[]))' <<< "$jobs" > /dev/null
+          unknown=$(jq -r --argjson names "$names" --argjson steps "$RELEASE_STEPS" '[.jobs[]
+            | select(.name | IN($names[])) | select(.conclusion == "success")
+            | select(any(.steps[]; .name | IN($steps[])) | not) | .name] | join(", ")' <<< "$jobs")
           if [ -n "$unknown" ]; then
-            echo "::error::production-journey.yml no longer knows how $COMMIT released: $unknown. Name the renamed release jobs and steps in RELEASE_JOBS and RELEASE_STEPS."
+            echo "::error::Release jobs have no recognized release step: $unknown"
             exit 1
           fi
-          if [ -n "$running" ]; then
-            echo "$COMMIT: $running is still running, and its completion starts the journey"
-          elif [ -z "$released" ]; then
-            echo "$COMMIT: no release step succeeded in CI or Images (GHCR), so production did not change"
-          elif [ -n "$later" ]; then
-            echo "$COMMIT: $later completed after this run, and its completion starts the journey"
-          else
-            echo "$COMMIT: released by $released; the journey runs its suite"
-            echo "journey=true" >> "$GITHUB_OUTPUT"
+          released=$(jq -r --argjson steps "$RELEASE_STEPS" '[.jobs[] | .steps[]?
+            | select(.name | IN($steps[])) | select(.conclusion == "success")] | length' <<< "$jobs")
+          if [ "$released" -eq 0 ]; then
+            echo "Run $RUN_ID did not release a service"
+            exit 0
           fi
+          if jq -e '.jobs[] | select(.name == "main-auth" or .name == "Publish and release")
+            | .steps[]? | select(.name == "Release to every region" and .conclusion == "success")' <<< "$jobs" > /dev/null; then
+            artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=deploy-revision&per_page=1" --jq '.artifacts[0].id // empty')
+            test -n "$artifact"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/revision.zip"
+            COMMIT=$(unzip -p "$RUNNER_TEMP/revision.zip" deploy-revision)
+            [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
+            echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Run $RUN_ID released $COMMIT; run its production journey"
+          echo "journey=true" >> "$GITHUB_OUTPUT"
 
   journey:
     needs: release

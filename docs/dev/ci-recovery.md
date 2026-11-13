@@ -1,74 +1,94 @@
 # Recover CI and deployment
 
-Deployments and SDK releases require a successful main-push CI run for their exact
-revision, including both journey shards and `all-green`. A pull-request run or
-maintenance dispatch cannot replace that proof. Re-run failed jobs of the main
-push CI run after fixing its failure. A revision with no main-push CI run cannot
-be qualified by dispatching CI.
+Main-push CI must pass `all-green` and both journey shards for the exact deploy
+revision. A PR run or a dispatch cannot replace that proof. Re-run failed jobs
+of the main-push CI after fixing the failure.
 
-Normal CI dispatches run the journey and both core services. Build-only and
-release-only maintenance dispatches verify the existing main-push proof with
-`qualified-main` instead of running another journey during the maintenance window.
-Native-artifact maintenance does not qualify a revision.
+## Reconcile deployments
 
-## Recover the dashboard
+`Sites` runs after every main CI and Images completion, every 15 minutes, and on
+a dispatch. It reconciles docs, landing, each status Worker, dashboard and auth.
+An event starts reconciliation. Its SHA does not select the deployed source.
 
-The dashboard needs its own push or dispatch Images run. Its `test` job builds
-and checks the application that run publishes. A failed application check cannot
-qualify a deployment. A failed release can be recovered by re-running the Images
-push run:
+Each deploy job holds its own lock while it reads live, selects target and
+deploys. The shared script is `scripts/ci/site-deploy-gate.mjs`. It fetches main
+and walks its newest ten commits, newest first. For each commit it reads the
+latest main-push CI run. A completed green run must also have successful
+`all-green` and both journey shards. The first qualified commit is target.
+No qualified commit within the bound fails the reconcile visibly.
 
-```sh
-gh run rerun <images-push-run-id> --repo TerraScale/terrascale
-```
+Equal live and target needs no work. Live ahead of target on main stays live.
+A strict ancestor advances only when its build inputs differ from target.
+The comparison includes changes from commits whose CI failed. Missing or
+unreadable revision records, split Worker traffic, and live commits outside
+main fail. Only a confirmed absent Worker counts as a first deployment.
+Status Workers are compared separately and only the selected Workers deploy.
 
-CI completion calls `heal`. The Images push run also calls it after the application
-build and its image job finish. If CI finishes first, heal dispatches Images on
-main while the push run is still active. If the build finishes first, the later
-CI completion triggers the handoff. A dispatch already in progress owns the
-handoff. A completed original run can be re-run for the same signed revision.
-Dispatches still run dashboard-ci again.
+Auth and dashboard read their readiness revision. Their release jobs run in
+`ci.yml` and `images-ghcr.yml`, as required by the release service's existing
+OIDC policy. When work is due, Sites requests a main dispatch. That job reads
+live and chooses target again inside its release lock. It checks out target,
+reuses an image labeled with that exact commit, or builds and checks one.
+Only then does it move the mutable main tag and release the pinned arm64 digest.
+The trigger commit and the availability of a prior Images run do not matter.
 
-The recovery dispatch signs the main head at creation. It must pass main-push
-qualification for that exact revision. An older Images run keeps signing its own
-revision after unrelated pushes. The `dashboard-release` lock serializes release
-jobs. Inside it, the release step checks the newest eligible commit and the live
-revision again. A second contender sees the first deployment live and cannot
-deploy it again. A failed readiness read stops deployment.
+Every site deploy records target as the Worker version message. The proof
+requires that version at 100% traffic. Auth and dashboard verify readiness and
+write `deploy-revision`. The production journey reads this receipt, so it uses
+the deployed source even when the dispatch was created on another commit.
+A failing journey or failed release detection opens or updates one alert.
 
-Inspect the CI and Images run URLs and the final live readiness revision before
-reporting recovery. A successful handoff alone is not deployment proof.
+## Force reconciliation
 
-## Recover the sites
-
-Docs, landing and status deploy from `.github/workflows/sites.yml` (`Sites`).
-Recover pending site changes on qualified main with:
+Run all reconcilers now:
 
 ```sh
 gh workflow run sites.yml --repo TerraScale/terrascale --ref main
 ```
 
-Each job waits for its site's lock and checks out the exact qualified revision.
-It reads the live Worker version message under that lock. Only a strict ancestor
-can advance to the candidate revision; an equal or newer live revision is left
-alone. A Worker with no recorded revision deploys the qualified revision.
+Run just dashboard or auth:
 
-The path filter compares the live revision with the candidate. It includes
-changes from earlier commits whose CI failed or whose site deployment never
-completed. Status Workers are selected separately, so recovery after a partial
-deploy advances only the Workers that still need it.
+```sh
+gh workflow run images-ghcr.yml --repo TerraScale/terrascale --ref main
+gh workflow run ci.yml --repo TerraScale/terrascale --ref main -f reconcile_auth=true
+```
 
-The deploy records its commit as the Worker version message.
-`scripts/ci/prove-worker-deploy.mjs` reads Cloudflare's records and requires each
-selected Worker to serve its recorded version at 100%, with that commit as its
-message.
+These requests still require journey-qualified main and changed inputs.
+An equal live revision does not deploy again. Inspect the reconcile decision,
+release proof and production journey before reporting recovery.
 
-## SDK tags and production alerts
+## Read budget
 
-Older tags without a journey-qualified main-push CI run are refused. Push an SDK
-tag only after main CI is green for that exact commit. A tag pushed earlier fails
-and needs a re-run after CI succeeds.
+A reconciler normally makes two GitHub API reads: one candidate run query and
+one jobs query. It makes at most twenty reads across ten candidates, with one
+run query per candidate and at most one jobs query for each green run. There
+are no image-run scans, commit API scans, or paginated history reads. Main
+history and input comparisons use git. Qualification fails if a jobs page
+would exceed 100 jobs.
 
-Production-journey reports update one alert at a time. GitHub retains one pending
-report per concurrency group. A newer pending report replaces an older pending
-report. The newest state wins.
+Live costs two Cloudflare reads per existing Worker, or one readiness request
+per service. With nothing changed and main qualified, a whole scheduled run
+costs ten GitHub reads, ten Cloudflare reads for five Workers, and two readiness
+requests. It installs nothing, builds nothing and dispatches nothing.
+
+A site deploy adds two Cloudflare proof reads per deployed Worker, plus the
+normal deployment requests. A service due at the coordinator adds a second
+reconcile in its release lock: normally four GitHub qualification reads in
+all, at most forty, and three readiness requests including the final proof.
+Image reuse reads the manifest and its labeled arm64 image. A new build adds
+its push and final manifest read. The existing release client also fetches its
+qualified orchestrator release and region list. Those release asset downloads,
+registry traffic and regional rollout requests do not occur on a no-op run.
+
+## Manual releases and rollback
+
+TerraBase release-only and SDK publication retain exact-commit qualification.
+They are not scheduled reconciles. Build-only and release-only maintenance
+reuse main-push proof. Native-artifact maintenance never qualifies a deploy.
+Push SDK tags only after main CI is green for the exact tagged commit.
+
+To undo this deployment rule, revert the PR's squash merge commit in a new PR.
+Merge the revert through normal CI. This restores the prior triggers and gate
+scripts together. Do not change repository rules or required check names.
+To undo application code, revert that code through a PR instead. Once the new
+main commit qualifies, reconciliation deploys the resulting inputs forward.
