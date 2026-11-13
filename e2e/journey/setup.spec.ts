@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { cloudflareSendCount, newAddress, nextMail } from '../support/inbox';
 import { saveJourney, saveSecret, saveSession } from '../support/state';
+import { provisionProjectOwner } from '../support/project-owner';
 import { shell } from '../support/shell';
 import { hostedReady } from '../support/hosted';
 import { regionsSettled } from '../support/overview';
@@ -16,7 +17,7 @@ function stat(page: Page, label: string) {
 const apiKeyFormat = /^[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
 const scopes = ['sql:read', 'sql:write', 'databases:read', 'databases:write', 'auth:read', 'auth:write'];
 
-test('sign up, verify the email, onboard on Free, create a database and an API key', async ({ page, context, audit }) => {
+test('sign up, verify the email, onboard on Free, create a database and an API key', async ({ page, context, audit, browser }, info) => {
   const runId = randomBytes(4).toString('hex');
   const email = await newAddress(`journey-${runId}`);
   const password = randomBytes(24).toString('base64url');
@@ -151,4 +152,5 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
     apiKeyName,
     apiKey,
   });
+  if (info.project.name === 'setup') await provisionProjectOwner(browser, info);
 });

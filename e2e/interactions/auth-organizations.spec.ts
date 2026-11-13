@@ -18,7 +18,7 @@ function value<T>(result: TerraScaleResult<T>): T {
 }
 
 test('project organizations bind invitations, roles and refresh to the chosen organization', async ({ browser }, info) => {
-  const account = await createProjectOwner(browser, info, 'Organizations owner');
+  const account = await createProjectOwner(browser, info);
   const { current } = account;
   const sdk = createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' });
   const organizations = sdk.projects.organizations;

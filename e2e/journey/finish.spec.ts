@@ -4,6 +4,8 @@ import { test, expect } from '../support/remote-database';
 import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
 import { runOperations, sdks } from '../support/sdk';
 import { prepareAuthManagement, closeAuthManagement } from '../support/auth-management';
+import { deleteProjectOwner } from '../support/project-owner';
+import { checkPasswordFairness } from '../support/password-fairness';
 import { shell } from '../support/shell';
 import { onLocalStack } from '../support/stack';
 import { journey, saveSecret, setupFinished } from '../support/state';
@@ -27,6 +29,14 @@ test.describe.configure({ mode: 'default' });
 
 test.beforeAll(({}, info) => {
   expect(setupFinished(info), 'setup did not finish').toBe(true);
+});
+
+test('delete the dedicated auth feature owner after all auth flows', async ({ browser }, info) => {
+  await deleteProjectOwner(browser, info);
+});
+
+test('a tenant at its hashing cap leaves other tenants normal sign-in capacity', async ({ browser }) => {
+  await checkPasswordFairness(browser);
 });
 
 test.describe('SDK group A', () => {

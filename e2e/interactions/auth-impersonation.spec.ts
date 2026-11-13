@@ -8,7 +8,7 @@ import { saveCookies, saveSecret } from '../support/state';
 
 test('project admin impersonates one client with an actor claim and can end it', async ({ browser }, info) => {
   await onLocalStack(async () => {
-    const account = await createProjectOwner(browser, info, 'Impersonation owner');
+    const account = await createProjectOwner(browser, info);
     const { page, audit, current: owner } = account;
     try {
     const management = await prepareAuthManagement(page, 'impersonation-' + randomBytes(4).toString('hex'), owner);
@@ -180,11 +180,18 @@ test('project admin impersonates one client with an actor claim and can end it',
       await expect(customer.getByRole('button', { name: 'End impersonation' })).toHaveCount(0);
       expect((await context.cookies(auth)).some(cookie => cookie.name === '__Host-tsauth_impersonation_' + owner.projectId)).toBe(false);
       await expect.poll(async () => {
-        const response = await page.request.get(root + '/events', { headers, params: { limit: 100 } });
-        expect(response.status()).toBe(200);
-        return (await response.json()).items
-          .filter((event: { type: string; data: { user_id: string } }) => event.type === 'impersonation.ended' && event.data.user_id === management.user)
-          .map((event: { data: { reason: string } }) => event.data.reason);
+        const reasons: string[] = [];
+        let after = '';
+        do {
+          const response = await page.request.get(root + '/events', { headers, params: { limit: 100, after } });
+          expect(response.status()).toBe(200);
+          const body = await response.json();
+          reasons.push(...body.items
+            .filter((event: { type: string; data: { user_id: string } }) => event.type === 'impersonation.ended' && event.data.user_id === management.user)
+            .map((event: { data: { reason: string } }) => event.data.reason));
+          after = body.next ?? '';
+        } while (after);
+        return reasons;
       }).toEqual(expect.arrayContaining(['manual', 'target_deleted']));
     } finally {
       await saveCookies(context);

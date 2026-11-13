@@ -329,9 +329,10 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
 - Step-ups: ts-auth issues at most 10 per user in 15 minutes (`StepUpProofs.cs:60-62,94`); a run spends 1 for the
   desktop owner (account deletion), 9 for the phone-and-flows owner (2 access tokens and 2 API-key rotations in `interactions`, 4 in
   `hosted`, account deletion), and 1 for the paid owner (account deletion). API-key creation and revocation need none.
-  Profile, project organization, impersonation and machine-credential flows use separate owners, including cleanup,
-  so they spend none of the shared owner's proofs. Webhook delivery flows also use separate owners for both failing
-  and healthy projects.
+  Profile, project organization, impersonation and machine-credential flows share one dedicated owner with nine
+  proofs including cleanup, so they spend none of the main owner's proofs and remain within the signup limit.
+  Webhook delivery flows use separate owners for both failing and healthy projects. The hasher fairness measurement
+  runs in the serial finish phase after the browser flows, retaining its latency thresholds and concurrent hashing load.
 - Secrets: every value the run generates is registered through `saveSecret` in `support/state.ts` or in
   `$E2E_STATE/secrets` (the service keys of `env/up.sh`) and masked in the job log: passwords before their first use,
   API keys and the access token right after the test reads them, the owner's cookies when `setup` saves its session,
