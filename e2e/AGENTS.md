@@ -149,6 +149,12 @@ The `multi-region faults` shard of `journey.yml` shares the normal service and S
 the fault specs. Local runs use the same variables and normal prepare/start/up/stop lifecycle, followed by
 `bash env/local.sh exec npx playwright test --project fault` from `e2e/`.
 
+Before booting the stack, the fault shard runs `env/engine-crash.py` against the shared PR service artifact
+and a separate build of the PR base revision. It checks rollback startup on each crash directory, stale rewrite
+intents at both rename boundaries, idle retained-history draining, missing root stores and three large-file
+recovery samples. It requires 24 GB of disk headroom below 80% use and removes its data and baseline source.
+Local runs pass the rollback DLL as the script's only argument, with DOTNET_ROOT and DOTNET_PROCESSOR_COUNT=4.
+
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
 8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
 under the run state. Four-node mode starts a checksum-pinned NATS server with JetStream and a generated credential
