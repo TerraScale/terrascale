@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Features.Callers;
@@ -47,9 +48,11 @@ internal sealed class UserAuthenticationHandler(
             return AuthenticateResult.NoResult();
         }
 
+        Context.Features.Set<TokenKeysPending>(null);
         if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(Context.RequestAborted).ConfigureAwait(false)) is not { } keys)
         {
-            return AuthenticateResult.Fail("ts-auth signing keys are not loaded");
+            Context.Features.Set(TokenKeysPending.Instance);
+            return AuthenticateResult.Fail(TokenKeysPending.Message);
         }
 
         var token = header["Bearer ".Length..].Trim();
@@ -64,6 +67,11 @@ internal sealed class UserAuthenticationHandler(
         if (result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
             var refreshed = await issuerKeys.RefreshAsync(Context.RequestAborted).ConfigureAwait(false);
+            if (refreshed is Unavailable)
+            {
+                Context.Features.Set(TokenKeysPending.Instance);
+                return AuthenticateResult.Fail(TokenKeysPending.Message);
+            }
             if (refreshed is IReadOnlyList<SecurityKey> refreshedKeys && !ReferenceEquals(refreshedKeys, keys))
             {
                 checkedWith = refreshedKeys;

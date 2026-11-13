@@ -5,6 +5,8 @@ using TerraBase.Hosting;
 namespace TerraBase.Features.UserAuth;
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredMaxDepth + 8)]
+[JsonSerializable(typeof(StoredIssuerKeys))]
+[JsonSerializable(typeof(PublicIssuerKeys))]
 [JsonSerializable(typeof(TsAuthProjectAuthority))]
 [JsonSerializable(typeof(TsAuthOrganizationAuthority))]
 [JsonSerializable(typeof(TsAuthAuthoritySubject))]

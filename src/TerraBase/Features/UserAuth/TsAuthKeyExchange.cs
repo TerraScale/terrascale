@@ -175,10 +175,15 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         }
 
         var result = await Tokens.ValidateTokenAsync(token, UserAuthenticationHandler.Parameters(options, keys, time)).ConfigureAwait(false);
-        if (result.Exception is SecurityTokenSignatureKeyNotFoundException
-            && await issuerKeys.RefreshAsync(cancellationToken).ConfigureAwait(false) is IReadOnlyList<SecurityKey> refreshed)
+        if (result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            result = await Tokens.ValidateTokenAsync(token, UserAuthenticationHandler.Parameters(options, refreshed, time)).ConfigureAwait(false);
+            var refreshed = await issuerKeys.RefreshAsync(cancellationToken).ConfigureAwait(false);
+            if (refreshed is not IReadOnlyList<SecurityKey> refreshedKeys)
+            {
+                return Unavailable();
+            }
+
+            result = await Tokens.ValidateTokenAsync(token, UserAuthenticationHandler.Parameters(options, refreshedKeys, time)).ConfigureAwait(false);
         }
 
         if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt

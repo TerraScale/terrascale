@@ -169,7 +169,9 @@ internal sealed class SqlSocket(
         var authenticated = await ApiKeysExtensions.AuthenticateAgainAsync(context).ConfigureAwait(false);
         if (!authenticated.Succeeded)
         {
-            return await RefuseAsync(request.Id, CredentialRevoked, cancellationToken).ConfigureAwait(false);
+            return await RefuseAsync(request.Id, TokenKeysPending.On(context)
+                ? new SqlError(SqlErrors.Unavailable, TokenKeysPending.Code + ": " + TokenKeysPending.Message)
+                : CredentialRevoked, cancellationToken).ConfigureAwait(false);
         }
 
         context.User = authenticated.Principal;
@@ -389,7 +391,9 @@ internal sealed class SqlSocket(
         var authenticated = await ApiKeysExtensions.AuthenticateAgainAsync(context).ConfigureAwait(false);
         if (!authenticated.Succeeded)
         {
-            return CredentialRevoked;
+            return TokenKeysPending.On(context)
+                ? new SqlError(SqlErrors.Unavailable, TokenKeysPending.Code + ": " + TokenKeysPending.Message)
+                : CredentialRevoked;
         }
 
         context.User = authenticated.Principal;

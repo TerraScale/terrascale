@@ -148,7 +148,7 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
   return { sent, outcome: outcome.then(() => ({ error: undefined }), (error: Error) => ({ error })) };
 }
 
-export function restartAfterKill(node: Node): () => Promise<void> {
+export function restartAfterKill(node: Node, observe?: () => Promise<void>): () => Promise<void> {
   const pidFile = join(stateDir, 'pids', `${node.service}.pid`);
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   const environment = Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
@@ -174,6 +174,7 @@ export function restartAfterKill(node: Node): () => Promise<void> {
     await expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
       message: 'the restarted writer opens its listeners',
     }).toBe(true);
+    await observe?.();
     await expect.poll(async () => (await nodeStatus(node)).writer, {
       message: 'the restarted node reacquires its fenced writer lease',
     }).toBe(true);
