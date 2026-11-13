@@ -198,7 +198,7 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
   return { sent, outcome: outcome.then(() => ({ error: undefined }), (error: Error) => ({ error })) };
 }
 
-export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }): (started?: () => Promise<void>) => Promise<void> {
+export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }, observe?: () => Promise<void>): (started?: () => Promise<void>) => Promise<void> {
   const pidFile = join(stateDir, 'pids', `${node.service}.pid`);
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   const environment = Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
@@ -241,6 +241,7 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
     } finally {
       child.off('exit', exited);
     }
+    await observe?.();
     await started?.();
     await expect.poll(() => nodeStatus(node), {
       message: 'the restarted node restores its ready regional role',

@@ -65,6 +65,7 @@ internal sealed class SqlSocket(
     private bool _canWrite;
     private bool _failed;
     private bool _closing;
+    private DateTimeOffset? _tokenExpiry;
 
     private ISqlSession Session => _session!;
 
@@ -84,6 +85,11 @@ internal sealed class SqlSocket(
             return;
         }
 
+        _tokenExpiry = context.Features.Get<ProjectToken>()?.ExpiresAt;
+        using var expiry = _tokenExpiry is { } end
+            ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time)
+            : new CancellationTokenSource();
+        await using var expired = expiry.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the token expired")).ConfigureAwait(false);
         _session = sql.Open(Database, _canWrite);
         _session.Prefer(WritePreference.Parse(context.Request.Headers[WritePreference.Header]) ?? WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))
@@ -169,7 +175,9 @@ internal sealed class SqlSocket(
         var authenticated = await ApiKeysExtensions.AuthenticateAgainAsync(context).ConfigureAwait(false);
         if (!authenticated.Succeeded)
         {
-            return await RefuseAsync(request.Id, CredentialRevoked, cancellationToken).ConfigureAwait(false);
+            return await RefuseAsync(request.Id, TokenKeysPending.On(context)
+                ? new SqlError(SqlErrors.Unavailable, TokenKeysPending.Code + ": " + TokenKeysPending.Message)
+                : CredentialRevoked, cancellationToken).ConfigureAwait(false);
         }
 
         context.User = authenticated.Principal;
@@ -386,10 +394,17 @@ internal sealed class SqlSocket(
 
     private async ValueTask<object?> AuthorizeAsync(CancellationToken cancellationToken)
     {
+        if (_tokenExpiry is { } expires && time.GetUtcNow() >= expires)
+        {
+            return CredentialRevoked;
+        }
+
         var authenticated = await ApiKeysExtensions.AuthenticateAgainAsync(context).ConfigureAwait(false);
         if (!authenticated.Succeeded)
         {
-            return CredentialRevoked;
+            return TokenKeysPending.On(context)
+                ? new Unavailable(TokenKeysPending.Code + ": " + TokenKeysPending.Message)
+                : CredentialRevoked;
         }
 
         context.User = authenticated.Principal;
