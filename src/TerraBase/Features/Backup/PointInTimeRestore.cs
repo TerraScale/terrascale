@@ -54,6 +54,11 @@ internal sealed class PointInTimeRestore(
                 return new NotFound("continuous backup holds nothing of this database");
             }
 
+            if (await LostAsync(database, at, deadline.Token).ConfigureAwait(false) is { } lost)
+            {
+                return lost;
+            }
+
             var file = BackupLayout.File(database, options.MachineId);
             var snapshots = await ScanSnapshotsAsync(backup.Store, file, at, MaxPlanItems, deadline.Token).ConfigureAwait(false);
             if (snapshots is null)
@@ -279,6 +284,11 @@ internal sealed class PointInTimeRestore(
             return Shredded(shredded.ShreddedAt);
         }
 
+        if (await LostAsync(source, at, cancellationToken).ConfigureAwait(false) is { } lost)
+        {
+            return lost;
+        }
+
         var file = BackupLayout.File(source, options.MachineId);
         var snapshots = await ScanSnapshotsAsync(backup.Store, file, at, MaxPlanItems, cancellationToken).ConfigureAwait(false);
         if (snapshots is null)
@@ -377,6 +387,13 @@ internal sealed class PointInTimeRestore(
 
     private static Conflict HistoryIncomplete() =>
         new("continuous backup cannot prove this database's history complete up to pointInTime", "backup_history_incomplete");
+
+    private async Task<Conflict?> LostAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken) =>
+        await shipper.HoleAsync(database, cancellationToken).ConfigureAwait(false) is { FromAt: { } from, ToAt: { } to } && at > from && at < to
+            ? new(string.Create(CultureInfo.InvariantCulture,
+                $"continuous backup cannot prove this database's history complete up to pointInTime: its history from {from:O} to {to:O} was lost before it was stored"),
+                "backup_history_incomplete", new HistoryGap(from, to))
+            : null;
 
     internal static bool Covers(DateTimeOffset readAt, DateTimeOffset at) => at.ToUnixTimeMilliseconds() <= readAt.ToUnixTimeMilliseconds();
 

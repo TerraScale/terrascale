@@ -38,14 +38,12 @@ internal sealed partial class ContinuousBackup
                 return;
             }
 
+            await EnforceCapAsync(file, cancellationToken).ConfigureAwait(false);
+            var due = _time.GetUtcNow() >= file.RetryAt;
             if (!file.Recovered)
             {
-                if (_time.GetUtcNow() < file.RetryAt)
+                if (!due)
                 {
-                    if (file.Continuity is not null && !await WithinRetentionAsync(file, cancellationToken).ConfigureAwait(false))
-                    {
-                        file.Recovered = true;
-                    }
                     return;
                 }
 
@@ -57,43 +55,35 @@ internal sealed partial class ContinuousBackup
                 await RecoverAsync(file, cancellationToken).ConfigureAwait(false);
             }
 
-            await ObserveAsync(file, cancellationToken).ConfigureAwait(false);
-            var due = _time.GetUtcNow() >= file.RetryAt;
             if (!await HoldAsync(file, cancellationToken).ConfigureAwait(false))
             {
-                await EndContinuityAsync(file, "lease", cancellationToken).ConfigureAwait(false);
                 file.LastError = null;
-                return;
-            }
-            if (file.Generation is null && file.Continuity is { EndReason: { } endReason })
-            {
-                if (!due)
-                {
-                    await EndContinuityAsync(file, endReason, cancellationToken).ConfigureAwait(false);
-                    return;
-                }
-            }
-            else if (!await WithinRetentionAsync(file, cancellationToken).ConfigureAwait(false))
-            {
                 return;
             }
 
             var switched = false;
-            if (due)
+            if (due && file.Target.Revision != (file.Configuration?.Revision ?? BackupDestinationNames.Platform))
             {
-                if (file.Target.Revision != (file.Configuration?.Revision ?? BackupDestinationNames.Platform))
-                {
-                    switched = true;
-                    file.Side?.Cancellation.Cancel();
-                    await file.StopSideAsync().ConfigureAwait(false);
-                    var target = await _targets.ShippingAsync(file.Database, file.Configuration, cancellationToken).ConfigureAwait(false);
-                    file.Target.Dispose();
-                    file.Target = target;
-                    await EndContinuityAsync(file, "destination", cancellationToken).ConfigureAwait(false);
-                    (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, default, default, default, null, default);
-                    (file.SnapshotFailures, file.SnapshotRetryAt, file.SnapshotError) = (0, DateTimeOffset.MinValue, null);
-                }
+                switched = true;
+                file.Side?.Cancellation.Cancel();
+                await file.StopSideAsync().ConfigureAwait(false);
+                var target = await _targets.ShippingAsync(file.Database, file.Configuration, cancellationToken).ConfigureAwait(false);
+                file.Target.Dispose();
+                file.Target = target;
+                (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, default, default, default, null, default);
+                (file.SnapshotFailures, file.SnapshotRetryAt, file.SnapshotError) = (0, DateTimeOffset.MinValue, null);
             }
+
+            if (!await ContinueAsync(file, cancellationToken).ConfigureAwait(false))
+            {
+                if (due && (!_stopped || switched))
+                {
+                    await StartGenerationAsync(file, cancellationToken).ConfigureAwait(false);
+                }
+
+                return;
+            }
+
             if (file.Side is { Stored.Task.IsCompleted: true, Collected: false } side)
             {
                 side.Collected = true;
@@ -101,25 +91,6 @@ internal sealed partial class ContinuousBackup
                 {
                     CollectSnapshot(file, side);
                 }
-            }
-
-            if (file.Generation is null)
-            {
-                if (_stopped && !switched)
-                {
-                    return;
-                }
-
-                if (due)
-                {
-                    await StartGenerationAsync(file, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    await EndContinuityAsync(file, file.Continuity?.EndReason ?? "reopen", cancellationToken).ConfigureAwait(false);
-                }
-
-                return;
             }
 
             if (due && file.Unstored is not null)
@@ -144,18 +115,12 @@ internal sealed partial class ContinuousBackup
             catch
             {
                 file.Pending.SetLength(appended);
-                await EndContinuityAsync(file, "read", CancellationToken.None).ConfigureAwait(false);
                 throw;
             }
 
             if (!read.Continuous)
             {
-                await EndContinuityAsync(file, "read", cancellationToken).ConfigureAwait(false);
-                if (due && !_stopped)
-                {
-                    await StartGenerationAsync(file, cancellationToken).ConfigureAwait(false);
-                }
-
+                file.Rebase = "log_unplaceable";
                 return;
             }
 
@@ -218,10 +183,6 @@ internal sealed partial class ContinuousBackup
         finally
         {
             file.PendingBytes = file.Buffered;
-            if (file.Continuity is not null && !file.Tap.Ended)
-            {
-                await ObserveAsync(file, CancellationToken.None).ConfigureAwait(false);
-            }
         }
     }
     private IEnumerable<ShippedFile> Shipped() => _files.Values.Where(file => file.Shipping);
@@ -304,7 +265,7 @@ internal sealed partial class ContinuousBackup
                 : DateTimeOffset.FromUnixTimeSeconds(storedMark.ToUnixTimeSeconds())
             : file.PlatformProgress?.At;
         var stored = new BackupStored(segment.Cursor, file.Generation!.Value, file.GenerationKey!, segment.Position,
-            file.LastSnapshot, segment.At, through, file.Target.Revision);
+            file.LastSnapshot, segment.At, through);
         await StorePositionAsync(file, stored, segment.Key, segment.Sealed, "segment", cancellationToken).ConfigureAwait(false);
 
         file.Unstored = null;
@@ -364,7 +325,7 @@ internal sealed partial class ContinuousBackup
     }
 
     private static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(MaxBackoff.TotalSeconds, Math.Pow(2, Math.Min(failures - 1, 9))));
-    private static void Abandon(ShippedFile file)
+    private static void ResetGeneration(ShippedFile file)
     {
         file.PlatformProgress = null;
         file.DrilledAt = DateTimeOffset.MinValue;

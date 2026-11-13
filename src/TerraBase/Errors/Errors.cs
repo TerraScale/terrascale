@@ -3,7 +3,9 @@ namespace TerraBase.Errors;
 
 public sealed record NotFound(string? Message = null, string Code = "not_found");
 
-public sealed record Conflict(string Message, string Code = "conflict");
+public sealed record Conflict(string Message, string Code = "conflict", HistoryGap? Gap = null);
+
+public sealed record HistoryGap(DateTimeOffset From, DateTimeOffset To);
 
 public sealed record Validation(string Message, string Code = "invalid_request", IReadOnlyList<ValidationDetail>? Details = null);
 

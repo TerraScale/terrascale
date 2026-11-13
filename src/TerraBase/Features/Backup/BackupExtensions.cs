@@ -92,6 +92,10 @@ public static class BackupExtensions
 
         public BackupStatus Status { get; } = new(false, []);
 
+        public bool Healthy => false;
+
+        public Task<BackupHole?> HoleAsync(TenantContext database, CancellationToken cancellationToken) => Task.FromResult<BackupHole?>(null);
+
         public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) => null;
 
         public Task RunOnceAsync(CancellationToken cancellationToken) => Task.CompletedTask;

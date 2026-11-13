@@ -416,7 +416,7 @@ internal sealed partial class ContinuousBackup
 
     private async Task RecordAsync(ShippedFile file, CancellationToken cancellationToken)
     {
-        var record = new BackupStatusRecord(file.Prefix, _node, file.Generation?.ToString(), file.LastShipped, Lag(file, _time.GetUtcNow()),
+        var record = new BackupStatusRecord(file.Prefix, _node, file.Generation?.ToString(), file.LastShipped, Lag(file),
             file.SizeBytes, file.SizedAt == DateTimeOffset.MinValue ? null : file.SizedAt, file.RetentionDays, file.LastDrill, _time.GetUtcNow());
         var (kind, id) = RecordKey(file.Database);
         try

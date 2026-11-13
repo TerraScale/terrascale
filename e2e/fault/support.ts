@@ -6,7 +6,7 @@ import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { database, json, sql, type Cells } from '../placement/support';
-import { stateDir } from '../support/stack';
+import { r2StandIn, stateDir } from '../support/stack';
 
 export const nodes = [
   { name: 'journey-1', region: 'gru', address: '127.0.0.1', port: 8080, service: 'terrabase' },
@@ -178,4 +178,21 @@ export function restartAfterKill(node: Node): () => Promise<void> {
       message: 'the restarted node reacquires its fenced writer lease',
     }).toBe(true);
   };
+}
+
+export async function metric(node: Node, metricName: string): Promise<number> {
+  const response = await fetch(`http://${node.address}:${node.port + 1011}/metrics`);
+  expect(response.status).toBe(200);
+  const line = (await response.text()).split('\n').find(text => new RegExp(`^${metricName}(\\{[^}]*\\})? `).test(text));
+  return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
+}
+
+export async function probe(node: Node, path: '/readyz' | '/backupz'): Promise<number> {
+  return (await fetch(`http://127.0.0.1:${node.port}${path}`)).status;
+}
+
+export async function backupStore(state: 'down' | 'up'): Promise<void> {
+  const response = await fetch(`${r2StandIn}/fault/backups?state=${state}`, { method: 'POST' });
+  expect(response.status).toBe(204);
+  console.log(`backup object store ${state}`);
 }

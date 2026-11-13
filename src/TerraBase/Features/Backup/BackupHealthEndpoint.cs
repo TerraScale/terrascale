@@ -7,14 +7,12 @@ namespace TerraBase.Features.Backup;
 
 public sealed class BackupHealthEndpoint(IContinuousBackup backup, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
-    private const double MaxLagSeconds = 60;
-
     public override void Configure()
     {
         Get("/backupz");
         Name("backupz");
         Summary("Backup probe");
-        Description("503 while continuous backup is not configured, has not found this node's files yet, or a file this node ships has not reached the bucket yet or lags by a minute or more.");
+        Description("503 while continuous backup is not configured, has not yet listed the files this node is responsible for, or any such file has not finished recovery, has no generation or first upload yet, or holds a committed change that has waited a minute or more to be stored; also 503 when the lag observer has not run for 15 seconds. /readyz does not depend on it.");
         Tags("Health");
         Produces<StatusBody>();
         Produces<StatusBody>(StatusCodes.Status503ServiceUnavailable);
@@ -25,10 +23,7 @@ public sealed class BackupHealthEndpoint(IContinuousBackup backup, TerraBaseOpti
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
-        var status = backup.Status;
-        var shipping = status.Shipping && status.Files.Count > 0
-            && status.Files.Where(file => file.Shipping).All(file => file.Generation is not null && file.LastShippedAt is not null && file.LagSeconds < MaxLagSeconds);
-        return ValueTask.FromResult<IResult>(shipping
+        return ValueTask.FromResult<IResult>(backup.Healthy
             ? TypedResults.Ok(StatusBody.For(HttpContext, "shipping", options))
             : TypedResults.Json(StatusBody.For(HttpContext, "unavailable", options), statusCode: StatusCodes.Status503ServiceUnavailable));
     }

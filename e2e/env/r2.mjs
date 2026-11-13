@@ -11,6 +11,7 @@ const projectPrefix = /^app-files\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/$/;
 const listQuery = new Set(['list-type', 'prefix', 'max-keys', 'encoding-type']);
 const objects = new Map();
 const log = { calls: [], unexpected: [] };
+let backupsDown = false;
 
 const sha256 = (data, encoding) => createHash('sha256').update(data).digest(encoding);
 const hmac = (key, data) => createHmac('sha256', key).update(data).digest();
@@ -99,6 +100,12 @@ function list(request, response, name, query) {
 
 createServer((request, response) => {
   const [rawPath, rawQuery = ''] = request.url.split('?', 2);
+  if (request.method === 'POST' && rawPath === '/fault/backups' && /^state=(down|up)$/.test(rawQuery)) {
+    backupsDown = rawQuery === 'state=down';
+    response.writeHead(204);
+    return response.end();
+  }
+  if (backupsDown && /^\/journey-backups(\/|$)/.test(rawPath)) return request.socket.destroy();
   if (request.method === 'GET' && rawPath === '/log') {
     const text = JSON.stringify(log);
     response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) });

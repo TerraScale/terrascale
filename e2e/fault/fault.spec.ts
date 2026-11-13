@@ -2,7 +2,7 @@ import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
 import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
-import { crashWrite, endpoint, Ledger, regions, restartAfterKill, topology } from './support';
+import { backupStore, crashWrite, endpoint, Ledger, metric, probe, regions, restartAfterKill, topology } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -84,6 +84,89 @@ test('restore a backup into another database and compare its rows with the snaps
     console.log(`backup ${backup.id}: restored snapshot ledger in both regions; later source write excluded`);
   } finally {
     if (restored) await removeDatabase(cells, restored);
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('history lost while the backup store is unreachable is one hole, survives a restart and is refused by restores', async ({ cells }) => {
+  const writer = (await topology()).find(node => node.region === 'gru')!;
+  const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+    data: { name: name('backup-hole'), regions: [...regions] },
+  }), 201);
+  const ledger = new Ledger(created.id);
+  const restored: string[] = [];
+  let outage = false;
+  try {
+    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await ledger.write(cells, 'gru', [[1, 'before-outage']]);
+    const storedAt = Date.now();
+    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_blob (id INTEGER PRIMARY KEY, body BLOB NOT NULL)');
+    await sql(cells, endpoint('gru'), created.id, 'INSERT INTO fault_blob (id, body) VALUES (1, zeroblob(1))');
+    await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships every file before the outage' }).toBe(200);
+    const holes = await metric(writer, 'terrabase_backup_holes');
+
+    await backupStore('down');
+    outage = true;
+    let inside = 0;
+    for (let batch = 0; batch < 15; batch++) {
+      if (batch === 8) inside = Date.now();
+      const response = await cells.post(`${endpoint('gru')}${database(created.id)}/sql/execute`, {
+        data: { statements: Array.from({ length: 10 }, (_, index) => ({ sql: `UPDATE fault_blob SET body = zeroblob(${1_048_576 + batch * 10 + index}) WHERE id = 1` })) },
+      });
+      expect(response.status()).toBe(200);
+    }
+    await ledger.write(cells, 'gru', [[2, 'during-outage']]);
+    await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the discarded history becomes exactly one hole' }).toBe(holes + 1);
+    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(1);
+    expect(await probe(writer, '/backupz')).toBe(503);
+    expect(await probe(writer, '/readyz')).toBe(200);
+
+    await backupStore('up');
+    outage = false;
+    await expect.poll(() => probe(writer, '/backupz'), { message: 'a replacement snapshot makes the writer healthy again' }).toBe(200);
+    expect(await probe(writer, '/readyz')).toBe(200);
+    expect(await metric(writer, 'terrabase_backup_holes')).toBe(holes + 1);
+
+    const restart = restartAfterKill(writer);
+    await restart();
+    await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
+    await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the restarted writer publishes the durable hole total' }).toBe(holes + 1);
+    await expect.poll(() => probe(writer, '/backupz'), { message: 'the restarted writer resumes its generation' }).toBe(200);
+    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(0);
+
+    const refused = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+      data: { pointInTime: new Date(inside).toISOString(), name: name('hole-inside') },
+    });
+    expect(refused.status()).toBe(409);
+    const error = (await refused.json() as { error: { code: string; message: string; unavailableFrom: string; unavailableTo: string } }).error;
+    expect(error.code).toBe('backup_history_incomplete');
+    expect(error.message).toContain('was lost before it was stored');
+    const [from, to] = [Date.parse(error.unavailableFrom), Date.parse(error.unavailableTo)];
+    expect(from).toBeLessThan(inside);
+    expect(to).toBeGreaterThan(inside);
+    console.log(`hole of ${created.id}: unavailable ${error.unavailableFrom} to ${error.unavailableTo}; ${holes + 1} on ${writer.name} after its restart`);
+
+    const restore = async (at: number) => {
+      const operation = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+        data: { pointInTime: new Date(at).toISOString(), name: name('hole-restore') },
+      }), 202);
+      let copy = '';
+      await expect.poll(async () => {
+        const state = await json<{ status: string; database: string; errorCode?: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/restores/${operation.id}`));
+        expect(state.status, state.errorCode).not.toBe('failed');
+        if (state.status === 'completed') copy = state.database;
+        return state.status;
+      }, { message: 'the point-in-time restore completes' }).toBe('completed');
+      restored.push(copy);
+      return ledger.read(cells, 'gru', copy);
+    };
+    const before = await restore(from);
+    expect(storedAt < from - from % 1000 ? [[[1, 'before-outage']]] : [[], [[1, 'before-outage']]]).toContainEqual(before);
+    expect(await restore(to)).toEqual([[1, 'before-outage'], [2, 'during-outage']]);
+    console.log(`restores of ${created.id}: ${JSON.stringify(before)} at the hole's start, both rows at the replacement snapshot`);
+  } finally {
+    if (outage) await backupStore('up');
+    for (const copy of restored) await removeDatabase(cells, copy);
     await removeDatabase(cells, created.id);
   }
 });

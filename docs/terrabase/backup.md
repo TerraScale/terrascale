@@ -127,8 +127,8 @@ restored database's name comes from polling `GET …/restores/{operation}` until
 field) or `failed`. A hidden legacy request retains its organization route and the source database's ID in `Location`.
 Encryption and `TBK1` objects are unchanged; restoring either source still requires the master key (`TERRABASE_MASTER_KEY`).
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
-and retains the same segment until both copies are stored. A configured destination change ends the generation
-through the continuity boundary described below. Platform files
+and retains the same segment until both copies are stored. A configured destination change starts a new generation with
+a base snapshot in the new destination: a new lineage, not a hole ([Holes](#holes)). Platform files
 and eligible customer jobs in other organizations continue shipping. Retention scans both configured buckets
 independently, including earlier platform backups in customer-only mode; drills exercise the customer copy.
 Retention processes at most 10,000 expired snapshots per file
@@ -188,12 +188,10 @@ transaction. The backup's tap reads that table:
    object leaves the earlier cursor in place. This accounting is uncaptured engine bookkeeping, so storing the system
    database's cursor does not itself create another change to ship. The periodic public status is advisory.
    Acknowledgement follows the saved stored cursor, allowing the engine to trim older rows while retaining the anchor.
-   On reopen, a matching incarnation and retained anchor resume shipping with the saved schema map and generation.
-   A missing generation, changed incarnation or trimmed anchor ends continuity and requires a snapshot.
-3. Anything that moves the log under the tap is a **hole**: the file starts a new generation, and
-   `terrabase_backup_holes_total` counts it. Two cases:
-   - the anchor row is gone: something else deleted changes the tap had not read;
-   - a schema row the tap cannot place by name: an update (`ALTER`), or a delete of a rowid it does not know.
+   On reopen, the saved account is loaded, an interrupted upload is resolved, and the decision of [Holes](#holes) runs.
+3. A schema row the tap cannot place by name (an update such as `ALTER`, or a delete of a rowid it does not know) cannot
+   be written to the log. Nothing the engine retains is lost, so it is not a hole: the next pass starts a new generation
+   whose base snapshot holds the change (`terrabase_backup_generation_restarts_total{reason="log_unplaceable"}`).
 
    A delete in mode `after` carries only the rowid, and the engine does not capture every schema row (`ANALYZE` adds
    `sqlite_stat1` uncaptured), so `sqlite_schema` rowids differ between a file and a restore of it. The tap keeps the
@@ -206,9 +204,9 @@ A **generation** is one unbroken run of the log from one file on one member. It 
 the database's writer gate, so nothing commits, the tap reads what is left, moves its anchor to the newest change and
 opens a read transaction; then writers go on, and the database is copied row by row, every rowid kept, as of that
 transaction. The copy leaves out the engine's own tables (the native capture table, `sqlite_stat1`).
-An intact generation resumes after a process restart. A new generation starts when no saved generation can resume,
-when the destination changes or a generation key is unavailable, or after continuity ends (below).
-A clean lease handoff preserves its generation; a handoff with unstored commits requires a snapshot. Before a generation's snapshot holds
+An intact generation resumes after a process restart or a lease handoff. A new generation starts for a file that has no
+account yet, after a hole, for a new lineage (below), when a generation key is unavailable, or when the log cannot express
+a schema change. Before a generation's snapshot holds
 writers, the tap reads any backlog to discard it, so the gate covers only what commits meanwhile. Within a generation a
 snapshot is taken daily, but not while a backlog remains, because the snapshot reads what is left while it holds
 writers. The log read in one pass becomes one **segment**. A backlog, such as the writes committed during a long
@@ -232,36 +230,86 @@ next segment, starting where the failed one ends. So two segments never share a 
 segment only repeats its own bytes.
 
 After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. When the attempt
-is due, the failed segment is sent again before anything more is read. Between attempts reads and trimming go on, so
-the native capture table stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
-stays in the native capture table, where the backup's durable anchor keeps it. Each shipping pass checks a per-file cap of
-256 MiB of unacknowledged capture payload and row overhead, using the existing pending-log budget. A pass over
-that cap, or one whose retained bytes cannot pass shared disk admission with protected headroom, ends continuity with
-reason `disk`. The ended generation records at most one hole while the store remains unreachable. During upload
-backoff it does not read or serialize more payload: it only moves the discard acknowledgement to the current committed
-end to bound retention. A due successful snapshot restores continuity; cap checks cannot prevent that snapshot.
-An outage alone never ends a generation when the disk budget permits retaining its log and pending segments.
+is due, the failed segment is sent again before anything more is read. Daily snapshots upload in the background while
+segments ship; a failed upload keeps the segments going, and daily snapshot attempts back off on their own. Shutdown
+ships each file's backlog within its budget and then closes the taps; it writes no accounting of its own.
 
-One continuity-ending function handles lease change/loss, shutdown, failed or cancelled reads, disk-cap loss,
-destination change, missing generation keys, discontinuous reads and reopening without a resumable generation.
-It samples the engine's committed log end against the stored cursor. If unstored committed changes will be discarded,
-or the saved anchor is no longer retained, it saves one hole and its reason, ends the generation, then acknowledges
-the discarded range. Further discards in that ended generation do not count again. If nothing is unstored it preserves the intact generation without a hole, unless its destination changed or its generation key is unavailable. In particular, a clean shutdown, a lease renewal and a cancelled idle capture count none.
-Reasons appear on `terrabase_backup_abandoned_total{reason}`; `terrabase_backup_holes_total` counts the breaks.
-A replacement snapshot must be stored before any new-generation segment ships.
+### The backup account
 
-Shutdown attempts to ship each file's backlog within its budget, then applies that same function to every remaining
-open tap, including files the final flush did not reach. Daily snapshots upload in the background while segments ship;
-a failed upload preserves segment continuity. Their capture failures use the same continuity-ending function.
-Daily snapshot attempts back off independently.
+Each file has one durable account in the node's system database (`_tb_records`, kind `backup_continuity`, keyed by the
+file's bucket directory), replaced whole on every write. It holds:
 
-Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is measured from the stored capture position to the committed log
-end sampled in the current shipping pass. It is zero when those positions match. Otherwise it is the age of the
-oldest remaining COMMIT's captured `change_time`, in whole Unix seconds. When that timestamp is absent, the first
-observation of unstored changes supplies a conservative age and remains until a later observation proves storage
-caught up. Uploading a partial backlog cannot reset lag to the upload time: remaining commits retain their age.
-While continuity is ended, lag remains unproven until a new snapshot is stored. The backup probe retains its
-60-second threshold on this lag.
+- the lineage: the engine file's incarnation and the destination revision it ships to;
+- the stored generation: its id, data key, snapshot time, byte offset, the time of the newest stored read and the
+  proven restore time, and the **stored cursor**, the capture position up to which history is in the object store.
+  It is empty while a new generation waits for its base snapshot;
+- the upload intent: the object key and sealed-content hash of an upload that has not been confirmed yet;
+- the hole history: the number of holes and the last hole's range (stored cursor and retained anchor, with their times).
+
+No path writes an account before it has loaded the existing one, so a file whose recovery has not run is never written
+to, shutdown included. A successful upload is always ordered the same way: the intent is saved, the bucket accepts the
+object, the stored cursor is saved, and only then is the retained history released to the engine.
+
+### Holes
+
+A **hole** is history that the engine no longer retains and that never reached the object store. It is a fact about
+two durable positions, read at any time: the **retained anchor**, the oldest capture position from which the engine can
+still read the file's log forward, and the account's stored cursor. When the retained anchor is beyond the stored
+cursor, the changes in between are gone.
+
+That comparison is made in one place: at the start of every shipping pass of a file, before anything is read (the
+recovery after a start runs the same code). When the anchor is beyond the cursor, one account write records the hole
+(the count plus one, the range from the cursor to the anchor) and replaces the stored generation with an empty one; the
+next due pass takes the new generation's base snapshot, and storing it closes the hole's range at the snapshot's
+position and time. Because the write that counts the hole is the same write that removes the cursor it was measured
+from, a crash at any point leaves either the old account (the next pass makes the same decision) or the new one (there
+is no stored cursor left to compare), so a hole is never counted twice and never missed.
+
+No event records a hole. Shutdown, a cancelled or failed capture or read, a lease or epoch change, a lost upload
+acknowledgement and buffered log waiting in scratch stop the pass or retry it, nothing more. Whatever they cost shows up
+in the two positions, and the next pass finds it. A SIGKILL with the engine's history intact finds the anchor at or
+before the cursor and resumes; a restart after history was trimmed finds the anchor beyond it and records one hole.
+
+A destination change, a restore or a fork gives the file a new lineage (another incarnation or destination than the
+account's). It starts a new generation with a base snapshot and is not a hole, because nothing of the file's history
+was lost; `terrabase_backup_generation_restarts_total{reason="lineage"}` counts it, beside `key_lost` (the
+generation's data key is gone) and `log_unplaceable` (step 3 above). The hole history is kept across lineages.
+
+The hole total of each file is published from its account: `terrabase_backup_holes` is the sum over the files this node
+has loaded, so after a restart it equals the durable total again, and `GET /v1/backup` shows each file's `holes` and
+`lastHole`. `terrabase_backup_holes_recorded_total` counts the account writes that recorded a hole on this process, and
+each one logs a warning with the range.
+
+### The cap
+
+The engine keeps every change after the durable anchor, so an unreachable bucket would grow the file without bound.
+Every pass, before the hole decision and also while the file backs off, the shipper measures the unacknowledged capture
+payload and row overhead. When it exceeds 256 MiB, or the shared disk admission refuses that many bytes with its
+protected headroom, the shipper discards: it moves the engine's durable anchor to the committed end, and the engine
+trims older rows. That is the whole discard; it records nothing. Once the trim passes the stored cursor, the next pass
+finds the anchor beyond it and records the hole. A later discard during the same outage finds no stored cursor (the
+generation waits for its base snapshot) and adds no hole, so an outage of any length is exactly one hole.
+
+### Lag and health
+
+Lag is observed apart from shipping, so a stuck or stopped shipper cannot hide it. An observer runs every 5 s over the
+files this node has open: it reads the engine's committed end (the newest COMMIT position) and the account's stored
+cursor. When the committed end is beyond the cursor the file has a backlog, aged with the monotonic clock from the
+moment this node first saw a committed position beyond the cursor; the age carries across passes and restarts only
+when the stored cursor reaches that position. A wall-clock step cannot shorten it. `terrabase_backup_lag_seconds` is
+the largest age over the files this node ships, `lagSeconds` in `GET /v1/backup` is each file's, and
+`backlogCommittedAt` reports the commit time of the oldest unstored transaction for information only.
+
+`/backupz` answers 200 only when all of these hold, and 503 otherwise:
+
+- discovery has listed the files this node is responsible for, from the catalog and the local files, before any of
+  them recovers (the system database always counts, so the set is never empty while the node has a catalog);
+- every file in that set whose lease this node holds or has not checked yet has finished recovery (account loaded,
+  intent resolved), has a stored generation and a first upload, and has less than 60 s of lag;
+- the lag observer has run within the last 15 s.
+
+A file that failed to open or to recover keeps the probe at 503. `/readyz` does not depend on backups: a backup problem
+must be loud and must stop a rollout, but must not stop customers' queries.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its database's data key, a random salt and the object's
@@ -466,9 +514,12 @@ time by itself.
 - A missing or overlapping segment (a lost upload, a bucket-side deletion, two segments with the same start where the
   first holds log; a segment holding no log ends where it starts, so the next may share its start). Times up to the
   last segment before it can still restore.
-- Nothing after the replayed log proves T: an unshipped or missing final segment, a generation that ended (a hole, a
-  dropped backlog, a shipper move or restart; the next generation's snapshot time restores), or a quiet period not yet
-  closed by a later write or snapshot.
+- Nothing after the replayed log proves T: an unshipped or missing final segment, a generation that ended (a hole or a
+  new generation; the next generation's snapshot time restores), or a quiet period not yet closed by a later write or
+  snapshot.
+- T inside the last recorded hole of the file: after its last proven time and before the snapshot that followed the
+  hole. The 409 `backup_history_incomplete` names that interval in its message and in `unavailableFrom` and
+  `unavailableTo`; it is not retryable. A restore request is refused at admission, before any work starts.
 - A snapshot or segment that disappears between listing and download (retention racing the restore). Admitting a
   point-in-time restore writes a generation lease (source database + the plan's generation, renewed every 5 minutes
   while the restore runs, deleted when it settles); continuous-backup retention skips that generation's snapshot and
@@ -619,7 +670,7 @@ copy waits for a drill. The drill itself then runs beside shipping: the file's s
 downloads and rebuilds. A node runs one platform drill and up to two customer drills at a time, each rebuilding one
 file in scratch, so a stalled customer bucket never holds a platform drill; the others wait their turn. Removal, a new
 destination and shutdown cancel a drill; a cancelled drill records no result. When a generation ends while its drill
-or snapshot upload runs (a hole, a drop, a new shipper), the next generation's snapshot is drilled.
+or snapshot upload runs (a hole or a new generation), the next generation's snapshot is drilled.
 
 A failed drill is logged as an error and counted in `terrabase_backup_drills_total{result="failed"}`.
 
@@ -633,8 +684,7 @@ until R10a.
 
 ## Verify a rollout
 
-`/backupz` answers 200 once backup has found the node's files and every file the
-node ships has reached the bucket with less than a minute of lag, and 503 otherwise.
+`/backupz` answers as [Lag and health](#lag-and-health) defines; `/readyz` does not depend on it.
 A `/backupz` 503 must stop rollout advancement. Verify that the current runtime
 enforces this gate; the requirement is not evidence of an implemented OCI rollout gate.
 A Tigris outage appears on `/backupz` and in backup metrics.
@@ -642,19 +692,21 @@ A Tigris outage appears on `/backupz` and in backup metrics.
 After a rollout, also check:
 
 1. Metrics: `terrabase_backup_lag_seconds` stays under 2 s under writes,
-   `terrabase_backup_last_success_seconds` advances, and failure, hole and abandoned
-   counters do not rise. Lag approximates the recovery point only while holes and drops stay zero.
+   `terrabase_backup_last_success_seconds` advances, the failure counter does not rise and `terrabase_backup_holes`
+   does not change. Lag approximates the recovery point only while the hole total stays the same.
 2. Restore: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check that the first
    write is in the new database and the second is not; delete the restored database.
 
 ## Operations
 
 - `GET /v1/backup` on the loopback admin listener lists each shipped file: generation, log bytes read, last shipped time, lag,
-  pending bytes (read and not yet stored, sealed or not) and the kind of the last error.
-- Metrics, over the files this member ships: `terrabase_backup_lag_seconds` (oldest data not yet in the bucket, not a
-  loss bound), `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and
+  the commit time of the oldest unstored transaction, pending bytes (read and not yet stored, sealed or not), the kind of
+  the last error, and its hole count and last hole.
+- Metrics, over the files this member ships: `terrabase_backup_lag_seconds` (monotonic age of the oldest committed change
+  not yet in the bucket, not a loss bound), `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and
   `terrabase_backup_files`. Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`,
-  `terrabase_backup_holes_total`, `terrabase_backup_abandoned_total{reason}` (unstored log dropped),
+  `terrabase_backup_holes` (durable hole total of the loaded accounts), `terrabase_backup_holes_recorded_total`,
+  `terrabase_backup_generation_restarts_total{reason}` (lineage, key_lost, log_unplaceable),
   `terrabase_backup_snapshots_deferred_total{reason}` (passes that put off a due daily snapshot),
   `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
   and `terrabase_backup_stored_bytes` (bucket bytes of the files this member ships).
