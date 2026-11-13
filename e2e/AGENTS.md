@@ -144,20 +144,34 @@ never for a pull request: once after the last release of each commit (the rule i
 
 What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 
-- Mail: `newAddress` creates a fresh mail.tm inbox for each sign-up on the domain the preflight found
-  (`E2E_INBOX_DOMAIN`), and `nextMail` waits for its mail for at most 120 s (`mailWait`; the test timeout is 60 s plus
-  that wait), reading the message inside that bounded poll. mail.tm refuses bursts from one address (its
-  `RateLimit-Policy` is 10 requests a minute, and one a minute for `POST /accounts`), so every mail.tm call takes the
-  next free slot of one series in the state (`inbox-requests`, slots 7 s apart, in `support/inbox.ts` and
-  `env/production.sh`): eleven consecutive calls span at least ten gaps, 70 s, so they never share a 60-s window even
-  when one reaches mail.tm up to 10 s later than another. Inbox creations take only every tenth slot, 70 s apart. The
-  preflight's `GET /domains` claims the run's first slot and calls at once. A test's wait for its slot is added to
-  its timeout. Inboxes are never deleted: a deleted address can be registered again by anyone, while the
-  account a run leaves behind still uses it, and mail.tm refused deletes under that budget. The inbox's address,
-  password and token are registered secrets. Errors name the "inbox provider" and include the method, path, HTTP status
-  and any `RateLimit-*` / `Retry-After` response headers; a 429 with a valid `Retry-After` of at most 60 s (seconds or
-  HTTP date) reserves one repeat no earlier than that delay in the same slot series, failing immediately if no slot
-  fits before the mail poll deadline, which also bounds its requests.
+- Mail: `newAddress` uses a fresh 20-character lowercase hexadecimal username (80 random bits) on the active
+  mail.tm domain (`E2E_INBOX_DOMAIN`), independently of the caller's label. The public API description does not
+  specify the username validator; long journey labels have been rejected as invalid usernames. The local target
+  keeps its named `@example.com` addresses in Mailpit. `nextMail` waits at most 120 s on production (`mailWait`),
+  including the list poll and the separate message-body request. All provider calls, including preflight, browser
+  specs and SDK preparation in Playwright workers, use `support/inbox-provider.ts` and the same state directory.
+  Language runners receive the prepared user; they do not poll mail themselves.
+  The scheduler atomically claims shared `inbox-requests` slots 7 s apart, with account creations only every tenth
+  slot (70 s apart). A worker that wakes after its slot has ended claims another slot before sending. Each request
+  and response logs its UTC dispatch time, slot, process, spec, worker and response rate headers, without credentials.
+  Preflight uses the same scheduler and logs its source instead of a spec and worker.
+  A 429 publishes a cooldown in `inbox-cooldowns` for every process; workers recheck it after waking. `Retry-After`
+  (seconds or HTTP date) and `RateLimit-Reset` (relative seconds, epoch seconds or HTTP date) determine the earliest
+  next request. With neither, the response's `RateLimit-Policy` window applies, with a 60-s minimum. Requests continue
+  only while a scheduled slot fits inside the original mail deadline; non-poll requests have a 120-s response budget
+  after their first slot. Individual HTTP requests are bounded by 15 s and the remaining budget.
+  Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
+  every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
+  Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.
+  Inboxes are never deleted: a deleted address can be registered again by anyone while the product account still
+  uses it. Address, password and token are registered secrets; provider errors include method, path, status, rate
+  headers and the first 500 characters of the validation body.
+  A successful full production suite needs 15 inboxes and at least 65 provider requests: one domain discovery,
+  15 creations, 15 tokens and 17 mail reads with a list and body request each. Empty polls and 429s add requests.
+  The 15 creations alone span at least 980 s; after the preflight slot and the last token/list/body, even ideal
+  availability needs at least 1,008 s (16 min 48 s). The 25-minute run budget also includes browser and SDK work.
+  The public service advertises 8 QPS per IP, but observed responses advertise 10/minute or 1/minute. Its changing
+  limits and shared public capacity cannot reliably carry this suite inside that bound.
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach
@@ -179,8 +193,8 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   job starts, and kills them itself only when the job ends) and every process those started (Chromium overwrites its
   environment), until none is left; then `env/scrub.py` redacts the files, and they upload only when that step
   succeeded.
-- Accounts: a run signs up three users (`setup`, `desktop-setup`, `invitation`); its last steps delete the two
-  owners, the invitation's second user stays.
+- Accounts: `setup`, `desktop-setup` and `invitation` sign up the main three users; passkey, MFA and SDK scenarios
+  create their additional identities. The last steps delete the two main owners; the invitation's second user stays.
 
 The workflow fetches only `uv` of the pinned tools (`env/tools.sh uv`): production starts no Caddy, no Mailpit and no
 branch action. `env/local.sh` refuses to run when `E2E_TARGET` is set, before it builds anything.
