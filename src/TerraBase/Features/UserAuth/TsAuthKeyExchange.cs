@@ -169,6 +169,18 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
 
     private async ValueTask<TsAuthKeyResult> ValidateAsync(string token, string? project, CancellationToken cancellationToken)
     {
+        if (!UserAuthenticationHandler.CouldBeValid(token, options, time))
+        {
+            return Refused;
+        }
+
+        var candidate = Tokens.ReadJsonWebToken(token);
+        if (!candidate.TryGetPayloadValue<string>("project_id", out var requested) || !EntityIds.IsValid(requested)
+            || requested != (project ?? requested) || candidate.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(candidate.Kid))
+        {
+            return Refused;
+        }
+
         if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(cancellationToken).ConfigureAwait(false)) is not { } keys)
         {
             return Unavailable();
@@ -177,7 +189,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         var result = await Tokens.ValidateTokenAsync(token, UserAuthenticationHandler.Parameters(options, keys, time)).ConfigureAwait(false);
         if (result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            var refreshed = await issuerKeys.RefreshAsync(cancellationToken).ConfigureAwait(false);
+            var refreshed = await issuerKeys.RefreshAsync(Tokens.ReadJsonWebToken(token).Kid, cancellationToken).ConfigureAwait(false);
             if (refreshed is not IReadOnlyList<SecurityKey> refreshedKeys)
             {
                 return Unavailable();

@@ -1,26 +1,52 @@
 # Signing-key recovery
 
 TerraBase validates ts-auth tokens using the last nonempty public key set from its configured issuer. The snapshot
-is stored at `<data-directory>/auth-signing-keys.json`, with issuer, version and original successful-fetch time.
-Writes flush a sibling `.new` file and atomically rename it over the snapshot. Keep this file with the node’s data
-directory across restarts; it contains public verification material only. It is trusted local state: restrict write
-access to the service account as for the rest of the data directory. Never replace it with keys from another issuer.
+is stored at `<data-directory>/auth-signing-keys.json`, with issuer, version, original successful-fetch time and
+last-known-time high-water mark. Writes flush a sibling `.new` file, atomically rename it, then fsync its directory.
+Only public material is stored. The data directory is as trusted as the process: restrict its write access accordingly.
 
-The maximum snapshot age is 24 hours, including time spent stopped. Restart does not renew it. A successful refresh
-replaces the whole set; a failed refresh or empty JWKS retains it without renewing its timestamp. A removed issuer key
-continues verifying until a successful refresh, normally within ten minutes plus a ten-second fetch deadline, and
-potentially until the 24-hour maximum during an outage. Token expiration and API-key status admission still apply.
+A successful nonempty refresh replaces the whole set, including a smaller set; failed, empty or partly unusable sets
+keep the previous keys without renewing their fetch time. Non-signing entries are skipped. Signing entries must be
+usable asymmetric public keys, declared `alg` must match the token algorithm, and declared `key_ops` must include
+`verify`. The platform issuer publishes P-256 / ES256 / sig keys without `key_ops`.
 
-An expired, empty, malformed, future-dated or wrong-issuer snapshot cannot authorize requests. Without usable keys,
-HTTP token requests return `503 auth_unavailable` and `Retry-After: 1`; SDKs retry that response. Unknown key IDs also
-return this response when their refresh fails. Invalid signatures under held keys still return 401. Readiness remains
-independent of issuer availability so the issuer can recover its own database.
+The allowance is 24 hours of monotonic elapsed time within a process. Stored keys load only after the existing
+peer/kernel clock-trust gate opens. UTC before the stored fetch time or high-water mark rejects the entire file.
+Remaining allowance is 24 hours minus (high-water mark minus fetch time), further reduced by time since that mark.
+Checkpoints are written on fetch, load, and every 60 seconds while running; they advance with monotonic time even
+if UTC steps back. A failed write is logged and the process continues. The high-water mark does not decrease.
 
-Without usable keys the node retries forever, two seconds after each attempt, each bounded to ten seconds. When the
-issuer becomes healthy, the current attempt and one following attempt take at most 22 seconds to fetch usable keys.
-Unknown-key refreshes share in-flight work and admit at most one request-triggered refresh per thirty seconds;
-allow forty seconds after issuer recovery for an unknown key to refresh. Known keys validate throughout an outage
-while their snapshot remains younger than 24 hours.
+Across restarts, accounting assumes accurate trusted UTC and durable, unreverted data. A high-water mark detects
+rollback below recorded time; it cannot prove downtime if clocks are wrong but agree, prevent restoration of old
+state, or recover an unwritten checkpoint. A crash can lose up to 60 seconds of checkpoint progress; failed writes
+can lose more. The 24-hour monotonic limit is unconditional within a process, while an unconditional real-time cap
+across arbitrary wall-clock or data rollback is not guaranteed. No stored keys load without established clock trust.
+
+Unreadable, oversized (over 2 MiB), truncated, malformed, wrong-version, wrong-issuer, empty or unusable stored key
+sets are ignored as a whole, logged once without contents and counted; none can prevent the node from starting.
+To explicitly drop stored trust, **stop the node, delete the file, then start it**. Deleting it while running does
+not clear memory and a checkpoint may recreate it.
+
+Without keys, a token that could be valid gets `503 auth_unavailable` and `Retry-After: 1`. Malformed, expired and
+other independently invalid tokens get 401 before keys are requested; unverified claims only reject. Invalid
+signatures under held keys also get 401. Readiness remains independent of issuer availability.
+
+Background refresh uses a two-second start interval without keys, otherwise ten minutes; each fetch has one
+ten-second deadline. Allow 22 seconds for recovery including a current failed attempt and the next healthy fetch.
+With usable keys, unknown IDs share one in-flight fetch and at most two request-triggered fetches per 30-second
+cycle: the first and one follow-up for an ID first seen after the last refresh began. The follow-up starts at least 15 seconds after the
+first. Allow **25 seconds** for an ID first seen after the latest refresh began under random-ID traffic, with
+responsive scheduling and an issuer completing within the ten-second deadline. Tracked IDs are bounded to 1024;
+overflow can request only that same follow-up. An ID first observed after that follow-up began can queue the next cycle's first fetch at its
+boundary; this adds no fetch to the current cycle. Previously observed IDs have the 30-second admission interval
+plus the ten-second deadline (40 seconds). An unsuccessful refresh answers 503, an authoritative absence after
+a successful refresh 401. Expiry of held keys brings queued work forward to the no-key background schedule.
+
+A removed key verifies until the next successful refresh, normally ten minutes plus its deadline, or the remaining
+snapshot allowance during an outage. Token expiry and API-key revocation admission still apply. An established
+WebSocket fails unavailable requests retryably and stays open until its remembered token expiry; idle sockets also
+expire. PostgreSQL renewal and pending Execute preserve retryable `57P03`; actual credential refusals use `28P01`.
+Known token expiries end PostgreSQL sessions independently of issuer/key availability.
 
 ## Metrics and alerts
 
@@ -30,6 +56,7 @@ Scrape the node’s administrative metrics listener. These gauges have no token,
 | --- | --- | --- |
 | `terrabase_auth_signing_keys_loaded` | 1 for a usable snapshot, otherwise 0 | Equal to 0 for one minute |
 | `terrabase_auth_signing_keys_age_seconds` | Seconds since last successful fetch; -1 before any snapshot loads | Above 1200 for five minutes |
+| `terrabase_auth_stored_keys_rejected_total{reason="invalid"}` | Invalid local snapshot ignored (also `clock_backwards`, `expired`) | Investigate local state and clock |
 | `terrabase_auth_key_fetches_total{outcome="failure"}` | Failed discovery, JWKS or unusable-key-set fetches | Investigate alongside increasing age |
 
 The age warning leaves more than 23 hours before validation stops. Check discovery and JWKS availability from the
