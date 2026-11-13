@@ -136,16 +136,22 @@ internal sealed partial class TursoStorageEngine
         }
         finally
         {
-            await EnterCreationAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
-                _ = _migrating.Remove(key);
+                await EnterCreationAsync(CancellationToken.None, admitted: true).ConfigureAwait(false);
+                try
+                {
+                    _ = _migrating.Remove(key);
+                }
+                finally
+                {
+                    ExitCreation(admitted: true);
+                }
             }
             finally
             {
-                ExitCreation();
+                finished.SetResult();
             }
-            finished.SetResult();
         }
     }
 
