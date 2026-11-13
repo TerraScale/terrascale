@@ -283,7 +283,7 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
       expect([await allowed(a), await allowed(b)]).toEqual([0, 0]);
       return previousC.asked() - askedWhenClosed;
     }, { message: 'both stay closed through three more rounds' }).toBeGreaterThanOrEqual(6);
-    observations.push('two disagreeing nodes, third silent: both closed through three more rounds');
+    observations.push('two disagreeing nodes, third on the previous build: both closed through three more rounds');
     set(b, 0);
     await expect.poll(async () => [await allowed(a), await allowed(b)], { message: 'both reopen once they agree' }).toEqual([1, 1]);
     set(a, 0, 64);
