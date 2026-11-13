@@ -53,7 +53,7 @@ node closed. A measurement taken before the close never counts.
 
 | Check | What it catches | How |
 | --- | --- | --- |
-| Kernel | small drift, an unsynchronised clock | Linux `adjtimex` (read-only) reports the clock synchronised and its maximum and estimated error at most 50 ms, on every read. |
+| Kernel | small drift, an unsynchronised clock | Linux `adjtimex` (read-only) reports the clock synchronised and its estimated error at most 50 ms, on every read. The maximum error is not used: the kernel adds 500 µs to it every second between time-daemon updates, so it passes 50 ms on a healthy clock after about 100 s. |
 | Peers | gross errors the kernel cannot see: a clock stepped by minutes, a virtual machine resumed with a stale clock, a restart with a wrong clock | Each round asks every reachable peer for its wall clock (below). At least one peer answered in the last 15 s, and the agreeing peers plus this node are a strict majority of the answering peers plus this node. |
 | No local step | a step between two reads | Between consecutive checks, the wall clock and the monotonic clock advanced by the same amount within 50 ms. A step closes the node at once and latches: only rounds begun after it can reopen it. |
 
@@ -68,7 +68,7 @@ with no peers file has nobody to compare with and no replication to protect; onl
 
 Consequences:
 
-- A healthy node opens about OPEN_AFTER_RESTART after it starts (two rounds), instead of waiting for the time daemon.
+- A healthy node opens about two seconds after its process starts (two rounds: in three journey runs it was trusted 53 to 374 ms after `/readyz`, 1.9 to 3.3 s after a restart began), instead of waiting minutes for the time daemon.
 - One node with a wrong clock among three closes alone: the other two each count one agreeing peer plus themselves.
 - Two nodes that disagree with nobody else answering both close; neither can tell which clock is wrong.
 - During a rollout, the first node on this build has no answering peer: as a replica it forwards its writes home, and

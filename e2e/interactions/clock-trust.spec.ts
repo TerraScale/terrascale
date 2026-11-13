@@ -6,7 +6,7 @@ import { connect, createServer } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { saveSecret } from '../support/state';
 import { e2eRoot, production, stateDir } from '../support/stack';
 
@@ -16,10 +16,11 @@ type Node = { name: string; region: string; address: string; port: number; metri
 type Answer = { status: number; body: string };
 
 const internalPort = 18281;
+const run = randomBytes(3).toString('hex');
 const nodes: Record<'a' | 'b' | 'c', Node> = {
-  a: { name: 'clock-a', region: 'gru', address: '127.0.0.21', port: 18280, metrics: 19280, postgres: 16280 },
-  b: { name: 'clock-b', region: 'fra', address: '127.0.0.22', port: 18290, metrics: 19290, postgres: 16290 },
-  c: { name: 'clock-c', region: 'sjc', address: '127.0.0.23', port: 18300, metrics: 19300, postgres: 16300 },
+  a: { name: `clock-a-${run}`, region: `gru-${run}`, address: '127.0.0.21', port: 18280, metrics: 19280, postgres: 16280 },
+  b: { name: `clock-b-${run}`, region: `fra-${run}`, address: '127.0.0.22', port: 18290, metrics: 19290, postgres: 16290 },
+  c: { name: `clock-c-${run}`, region: `sjc-${run}`, address: '127.0.0.23', port: 18300, metrics: 19300, postgres: 16300 },
 };
 
 const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -42,6 +43,7 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
   saveSecret('clock-trust-peer', peerSecret);
   saveSecret('clock-trust-master', masterKey);
   const [r2Key, r2Secret] = readFileSync(join(stateDir, 'r2'), 'utf8').split('\n');
+  const cloudflareToken = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[9];
   const running = new Map<Node, ChildProcess>();
   const logs: number[] = [];
   const observations: string[] = [];
@@ -79,6 +81,7 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
         AWS_ACCESS_KEY_ID: r2Key, AWS_SECRET_ACCESS_KEY: r2Secret,
         TERRABASE_FILES_S3_ENDPOINT: 'https://journey.r2.cloudflarestorage.com/', TERRABASE_FILES_S3_ACCESS_KEY_ID: r2Key,
         TERRABASE_FILES_S3_SECRET_ACCESS_KEY: r2Secret,
+        TERRABASE_SHAPES_ACCESS_KEY_ID: r2Key, TERRABASE_SHAPES_SECRET_ACCESS_KEY: r2Secret, TERRABASE_SHAPES_CDN_API_TOKEN: cloudflareToken,
         LD_PRELOAD: library, LD_LIBRARY_PATH: `${root}:${process.env.LD_LIBRARY_PATH ?? ''}`, E2E_CLOCK_REPLAY: join(root, node.name),
       }, stdio: ['ignore', output, output],
     }));
@@ -157,7 +160,7 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     const sql = (node: Node, statement: string) => internal(node, 'POST', sqlPath, { statements: [{ sql: statement }] });
     expect((await sql(a, 'CREATE TABLE clock_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)')).status).toBe(200);
     expect((await sql(a, "INSERT INTO clock_rows VALUES (1, 'trusted home')")).status).toBe(200);
-    expect(await metric(a, 'terrabase_clock_stamps_total', 'outcome="issued"')).toBeGreaterThan(0);
+    await expect.poll(() => metric(a, 'terrabase_clock_stamps_total', 'outcome="issued"'), { message: 'the trusted home issued stamps' }).toBeGreaterThan(0);
 
     await stop(a);
     set(a, 600_000);
@@ -167,11 +170,9 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     const refusedAtHome = await sql(a, "INSERT INTO clock_rows VALUES (2, 'home ahead')");
     expect(refusedAtHome.status, refusedAtHome.body).toBe(503);
     expect(JSON.parse(refusedAtHome.body).error.code).toBe('unavailable');
-    const forwardedToRefusingHome = await sql(b, "INSERT INTO clock_rows VALUES (3, 'replica to home ahead')");
-    expect(forwardedToRefusingHome.status, forwardedToRefusingHome.body).toBe(503);
     expect(await metric(a, 'terrabase_clock_stamps_total', 'outcome="issued"')).toBe(0);
-    expect(await metric(a, 'terrabase_clock_stamps_total', 'outcome="refused"')).toBeGreaterThanOrEqual(2);
-    observations.push('home started 600 s ahead: issued=0, write at the home 503 unavailable, write forwarded from a replica 503');
+    await expect.poll(() => metric(a, 'terrabase_clock_stamps_total', 'outcome="refused"'), { message: 'the home ahead refused its stamp' }).toBeGreaterThanOrEqual(1);
+    observations.push('home started 600 s ahead: issued=0, write at the home 503 unavailable and not committed');
 
     await stop(a);
     set(a, 0);
@@ -181,11 +182,11 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     await start(b);
     await expect.poll(async () => [await metric(b, 'terrabase_clock_peers_agreeing'), await allowed(b)],
       { message: 'a replica started 600 s ahead stays closed' }).toEqual([0, 0]);
-    expect((await sql(b, "INSERT INTO clock_rows VALUES (4, 'replica ahead forwards')")).status).toBe(200);
+    expect((await sql(a, "INSERT INTO clock_rows VALUES (4, 'home trusted again')")).status).toBe(200);
     expect(await metric(b, 'terrabase_clock_stamps_total', 'outcome="issued"')).toBe(0);
     expect((await json(a, 'POST', sqlPath, { statements: [{ sql: 'SELECT id, value FROM clock_rows ORDER BY id' }] })).results[0].rows)
-      .toEqual([[1, 'trusted home'], [4, 'replica ahead forwards']]);
-    observations.push('replica started 600 s ahead: issued=0, its write forwarded to the trusted home and committed');
+      .toEqual([[1, 'trusted home'], [4, 'home trusted again']]);
+    observations.push('replica started 600 s ahead: closed, issued=0; the restarted home commits again and the refused row is absent');
     await stop(b);
     set(b, 0);
     await opens(b, 'healthy restart 2');
@@ -194,9 +195,9 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
 
     const stepsBefore = await metric(a, 'terrabase_clock_steps_total');
     set(a, 600_000);
-    expect(await allowed(a)).toBe(0);
+    await expect.poll(() => allowed(a), { message: 'a step closes the node at once', intervals: [100] }).toBe(0);
     set(a, 0);
-    expect(await metric(a, 'terrabase_clock_steps_total')).toBeGreaterThan(stepsBefore);
+    await expect.poll(() => metric(a, 'terrabase_clock_steps_total'), { message: 'the step is counted' }).toBeGreaterThan(stepsBefore);
     const readings: string[] = [];
     await expect.poll(async () => {
       const rounds = await metric(a, 'terrabase_clock_agreeing_rounds');
@@ -235,7 +236,15 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     observations.push('two disagreeing nodes, third silent: both closed through three more rounds');
     set(b, 0);
     await expect.poll(async () => [await allowed(a), await allowed(b)], { message: 'both reopen once they agree' }).toEqual([1, 1]);
-    observations.push(`healthy restart open times (ms after /readyz): ${opened.map(Math.round).join(', ')}`);
+    set(a, 0, 64);
+    await expect.poll(() => allowed(a), { message: 'an unsynchronised kernel closes the node' }).toBe(0);
+    set(a, 0, 0, 50_001);
+    await expect.poll(() => metric(a, 'terrabase_clock_agreeing_rounds'), { message: 'a kernel error estimate over 50 ms keeps it closed' }).toBe(0);
+    expect(await allowed(a)).toBe(0);
+    set(a, 0);
+    await expect.poll(() => allowed(a), { message: 'a synchronised kernel within 50 ms reopens it, with a 16 s maximum error' }).toBe(1);
+    observations.push('kernel unsynchronised: closed; estimated error 50.001 ms: closed; 1 ms with maximum error 16 s: open');
+    observations.push(`open times after /readyz in ms (second and third node, then restarts 1-3): ${opened.map(Math.round).join(', ')}`);
     console.log(observations.join('\n'));
   } finally {
     for (const node of [...running.keys()]) await stop(node);

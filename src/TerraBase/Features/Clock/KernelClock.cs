@@ -15,17 +15,15 @@ internal static partial class KernelClock
 
             var reading = new Timex();
             var result = Read(ref reading);
-            return result < 0 || result == 5 || (reading.Status & 0x1040) != 0 || reading.MaximumError < 0 || reading.EstimatedError < 0
+            return result < 0 || result == 5 || (reading.Status & 0x1040) != 0 || reading.EstimatedError < 0
                 ? double.PositiveInfinity
-                : Math.Max(reading.MaximumError, reading.EstimatedError) / 1000d;
+                : reading.EstimatedError / 1000d;
         }
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 208)]
     private struct Timex
     {
-        [FieldOffset(24)]
-        internal long MaximumError;
         [FieldOffset(32)]
         internal long EstimatedError;
         [FieldOffset(40)]

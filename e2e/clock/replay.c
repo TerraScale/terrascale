@@ -49,7 +49,7 @@ int adjtimex(struct timex *value)
     int status;
     replay(&offset, &status, &error);
     value->status = status;
-    value->maxerror = error;
+    value->maxerror = 16000000;
     value->esterror = error;
     return (status & STA_UNSYNC) ? TIME_ERROR : TIME_OK;
 }
