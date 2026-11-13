@@ -8,6 +8,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
 
@@ -234,10 +235,12 @@ internal static class EmailApi
         ExpiresIn = kind switch
         {
             AuthEmailKind.Invitation => TimeSpan.FromDays(7),
+            AuthEmailKind.SocialLinkCode => PendingSocialLinks.Lifetime,
             AuthEmailKind.NewDevice or AuthEmailKind.Lockout => null,
             AuthEmailKind.EmailChangeCode or AuthEmailKind.EmailChangeNotice => EmailChanges.Lifetime,
             _ => Passcodes.Lifetime,
         },
+        Provider = kind == AuthEmailKind.SocialLinkCode ? "Google" : null,
         NewEmail = kind is AuthEmailKind.EmailChangeCode or AuthEmailKind.EmailChangeNotice ? "new." + email : null,
         Organization = "Acme",
         Inviter = "Alex Silva",

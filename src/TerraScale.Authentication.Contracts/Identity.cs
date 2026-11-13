@@ -24,6 +24,7 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     public string PrivateMetadata { get; init; } = "{}";
     public string UnsafeMetadata { get; init; } = "{}";
     public bool EmailVerified { get; init; } = true;
+    public string? Username { get; init; }
 
     /// <summary>Identity of the last authentication-state change; equal numeric epochs can race across regions.</summary>
     public string? AuthStamp { get; init; }
@@ -129,6 +130,8 @@ public sealed record PasscodeRecord(
     string? PasswordHash = null,
     string? PendingTokenHash = null)
 {
+    public string? Username { get; init; }
+
     /// <summary>The authentication-state identity at issue.</summary>
     public string? AuthStamp { get; init; }
 

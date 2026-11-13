@@ -7,7 +7,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
 public sealed record HostedTheme(string? Name = null, string? LogoUrl = null, string? ThemeColor = null, bool Passcode = true, bool Password = true, string SignUpMode = "public",
-    int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null)
+    int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null, bool MagicLink = false, bool Username = false)
 {
     public IReadOnlyList<string> Providers { get; init; } = [];
 
@@ -31,7 +31,7 @@ public static class HostedThemes
             var settings = await services.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, context.RequestAborted);
             var project = await services.GetRequiredService<AuthData>().ReadAsync((db, token) => db.Projects.SingleOrDefaultAsync(row => row.Id == tenant, token), context.RequestAborted);
             context.Items[HostedTheme.ItemKey] = new HostedTheme(settings.Name ?? project?.Name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUpMode,
-                settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor)
+                settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.MagicLink, settings.Username)
             {
                 BotChallenge = settings.AttackProtection.BotChallenge,
                 RedirectUrls = settings.Configuration?.RedirectUrls ?? [],

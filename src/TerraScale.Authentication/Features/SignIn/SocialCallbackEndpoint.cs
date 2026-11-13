@@ -1,11 +1,14 @@
 using System.Security.Cryptography;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
+using TerraScale.Authentication.Security;
 using TerraScale.Endpoints;
 using ZLogger;
 
@@ -39,7 +42,7 @@ public sealed class SocialCallbackEndpoint(SocialFlow flow) : EndpointWithoutReq
 /// <summary>The callback logic both callback endpoints share.</summary>
 public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessions, TotpCredentials mfa, HostedAuth hosted, ILogger<SocialFlow> logger)
 {
-    internal const string CallbackDescription = "The redirect URI registered at the provider; Apple posts it (form_post). Needs the start's state cookie and matching state, then redeems the code with the project's stored secret. The validated external subject selects its bound account. An unknown subject creates an account only with an unused verified email when the project allows sign-up; matching email never links accounts. An account with an active authenticator app gets the hosted second-factor step before any session. Success sets the project's session cookie and continues to next; any failure answers 401 without a session. Shares the hosted IP budget.";
+    internal const string CallbackDescription = "The redirect URI registered at the provider; Apple posts it (form_post). Needs the start's state cookie and matching state, then redeems the code with the project's stored secret. The validated external subject selects its bound account. An unknown subject creates an account immediately only with an unused verified email when the project allows sign-up; matching email never links accounts. An account with an active authenticator app gets the hosted second-factor step before any session. Success sets the project's session cookie and continues to next; any failure answers 401 without a session. Unverified email uses a sealed ten-minute pending link and a single-use emailed code for new and existing accounts. Proof atomically creates an allowed account and connects the subject. Shares the hosted IP and sign-up budgets.";
 
     /// <summary>Redeems the provider's answer and signs the browser in.</summary>
     public async Task<IResult> CompleteAsync(HttpContext context, string? code, string? state, CancellationToken cancellationToken)
@@ -86,9 +89,36 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
             return await this.CompleteLinkAsync(context, provider, identity, link, cancellationToken);
         }
 
-        var user = identity is null ? null : await users.FromProviderAsync(tenant,
-            new LinkedProvider(provider.Provider, identity.Issuer, identity.ClientId, identity.Subject),
-            identity.Email, cancellationToken);
+        var external = identity is null ? null : new LinkedProvider(provider.Provider, identity.Issuer, identity.ClientId, identity.Subject);
+        var user = external is null ? null : await users.FindByProviderAsync(tenant, external, cancellationToken);
+        if (user is null && identity is { EmailVerified: true })
+        {
+            user = await users.FromProviderAsync(tenant, external!, identity.Email, cancellationToken);
+        }
+
+        if (user is null && identity is { EmailVerified: false } && Users.NormalizeEmail(identity.Email) is { } email)
+        {
+            using var reservation = context.RequestServices.GetRequiredService<SignInMail>().Reserve();
+            if ((await hosted.LimitSocialSignUpAsync(SignInFlow.Ip(context), cancellationToken)
+                ?? await hosted.LimitMailAsync(email, SignInFlow.Ip(context), cancellationToken)) is { } refusal)
+            {
+                return SignInFlow.Limited(context, SignInStep.Code, refusal.Wait, email, resumed.Next);
+            }
+
+            var clock = context.RequestServices.GetRequiredService<TimeProvider>();
+            var options = context.RequestServices.GetRequiredService<AuthOptions>();
+            var pending = new PendingSocialLink(Tokens.RandomToken(32), email, external!, SocialSignIn.ConfigurationHash(provider),
+                (clock.GetUtcNow() + PendingSocialLinks.Lifetime).ToUnixTimeSeconds());
+            var token = PendingSocialLinks.Seal(options, tenant, pending);
+            if (!PendingSocialLinks.Write(context, tenant, token))
+            {
+                return Failed(context, resumed.Next, StatusCodes.Status400BadRequest, "The provider returned an identity that is too large to connect. Use another sign-in method.");
+            }
+
+            await reservation.EnqueueSocialAsync(tenant, email, token, SocialProviders.Label(provider.Provider), AuthEmails.Locale(context.Request));
+            return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Code, tenant, email, resumed.Next)
+            { CodeRequest = "sign-in", LinkProvider = SocialProviders.Label(provider.Provider) });
+        }
 
         // An active local factor gets the hosted second step; the provider's own amr/acr never count as one.
         if (user is not null && await SignInFlow.SecondFactorAsync(context, mfa, user, resumed.Next, cancellationToken) is { } factor)

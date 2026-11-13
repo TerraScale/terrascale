@@ -785,6 +785,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("user_id");
 
+                    b.Property<string>("Username")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("username");
+
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
                         .IsRequired()
@@ -1338,6 +1342,11 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasDefaultValue("{}")
                         .HasColumnName("unsafe_metadata");
 
+                    b.Property<string>("Username")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("username");
+
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
                         .IsRequired()
@@ -1353,6 +1362,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasIndex("InstanceId", "ExternalId")
                         .IsUnique();
 
+                    b.HasIndex("InstanceId", "Username")
+                        .IsUnique();
+
                     b.ToTable("users", null, t =>
                         {
                             t.HasCheckConstraint("ck_users_auth_epoch", "auth_epoch >= 0");
@@ -1360,6 +1372,8 @@ namespace TerraScale.Authentication.Storage.Migrations
                             t.HasCheckConstraint("ck_users_email", "length(email) BETWEEN 3 AND 254 AND email = lower(email)");
 
                             t.HasCheckConstraint("ck_users_platform_role", "platform_role IS NULL OR platform_role = 'admin'");
+
+                            t.HasCheckConstraint("ck_users_username", "username IS NULL OR (length(username) BETWEEN 3 AND 32 AND username = lower(username) AND username NOT GLOB '*[^a-z0-9_.]*')");
                         });
                 });
 
@@ -2505,6 +2519,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("logo_url");
 
+                    b.Property<bool>("MagicLink")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("magic_link");
+
                     b.Property<string>("Name")
                         .HasColumnType("TEXT")
                         .HasColumnName("name");
@@ -2546,6 +2564,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<int?>("TitleSize")
                         .HasColumnType("INTEGER")
                         .HasColumnName("title_size");
+
+                    b.Property<bool>("Username")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("username");
 
                     b.Property<string>("Version")
                         .IsConcurrencyToken()

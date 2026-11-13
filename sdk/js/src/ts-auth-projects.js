@@ -21,6 +21,8 @@ import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
  *   readonly passcode: boolean;
  *   readonly password: boolean;
  *   readonly sign_up_mode: "public" | "restricted" | "waitlist";
+ *   readonly magic_link?: boolean;
+ *   readonly username?: boolean;
  * }} TsAuthProjectMethods
  */
 
@@ -73,6 +75,8 @@ import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
  *   readonly team_id: string | null;
  *   readonly key_id: string | null;
  *   readonly callback_url: string;
+ *   readonly tenant?: string | null;
+ *   readonly oauth2?: TsAuthProjectOAuth2 | null;
  * }} TsAuthProjectProvider
  */
 
@@ -180,6 +184,8 @@ import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
  *   readonly issuer?: string | undefined;
  *   readonly team_id?: string | undefined;
  *   readonly key_id?: string | undefined;
+ *   readonly tenant?: string | undefined;
+ *   readonly oauth2?: TsAuthProjectOAuth2 | undefined;
  * }} TsAuthProjectProviderUpdate
  */
 
@@ -472,7 +478,7 @@ export class TsAuthProjectsClient {
     return this.#http.request({
       ...(options.signal === undefined ? {} : {signal: options.signal}),
       method: "GET", path: `v1/${requireId(projectId, "projectId")}/invitations`,
-      routeName: "tsauth.projects.list_invitations", projectAccessToken: signInToken(signIn),
+      routeName: "tsauth.projects.list_invitations", projectAccessToken: managementCredential(signIn),
       query: { ...(options.limit === undefined ? {} : {limit: options.limit}), ...(options.after === undefined ? {} : {after: options.after}) },
     });
   }
@@ -489,7 +495,7 @@ export class TsAuthProjectsClient {
     return this.#http.request({
       ...(options.signal === undefined ? {} : {signal: options.signal}),
       method: "GET", path: `v1/${requireId(projectId, "projectId")}/waitlist`,
-      routeName: "tsauth.projects.list_waitlist", projectAccessToken: signInToken(signIn),
+      routeName: "tsauth.projects.list_waitlist", projectAccessToken: managementCredential(signIn),
       query: { ...(options.limit === undefined ? {} : {limit: options.limit}), ...(options.after === undefined ? {} : {after: options.after}) },
     });
   }
@@ -505,7 +511,7 @@ export class TsAuthProjectsClient {
     return this.#http.request({
       ...(options.signal === undefined ? {} : {signal: options.signal}),
       method: "POST", path: `v1/${requireId(projectId, "projectId")}/invitations`,
-      routeName: "tsauth.projects.create_invitation", projectAccessToken: signInToken(signIn), body: request,
+      routeName: "tsauth.projects.create_invitation", projectAccessToken: managementCredential(signIn), body: request,
     });
   }
 
@@ -520,7 +526,7 @@ export class TsAuthProjectsClient {
     return this.#http.request({
       ...(options.signal === undefined ? {} : {signal: options.signal}),
       method: "DELETE", path: `v1/${requireId(projectId, "projectId")}/invitations/${requireId(id, "id")}`,
-      routeName: "tsauth.projects.revoke_invitation", projectAccessToken: signInToken(signIn),
+      routeName: "tsauth.projects.revoke_invitation", projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -535,7 +541,7 @@ export class TsAuthProjectsClient {
     return this.#http.request({
       ...(options.signal === undefined ? {} : {signal: options.signal}),
       method: "POST", path: `v1/${requireId(projectId, "projectId")}/waitlist/${requireId(id, "id")}/approve`,
-      routeName: "tsauth.projects.approve_waitlist", projectAccessToken: signInToken(signIn),
+      routeName: "tsauth.projects.approve_waitlist", projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -550,7 +556,7 @@ export class TsAuthProjectsClient {
     return this.#http.request({
       ...(options.signal === undefined ? {} : {signal: options.signal}),
       method: "POST", path: `v1/${requireId(projectId, "projectId")}/waitlist/${requireId(id, "id")}/reject`,
-      routeName: "tsauth.projects.reject_waitlist", projectAccessToken: signInToken(signIn),
+      routeName: "tsauth.projects.reject_waitlist", projectAccessToken: managementCredential(signIn),
     });
   }
 
@@ -777,7 +783,7 @@ export class TsAuthProjectsClient {
    * stored one. The answered settings list every provider.
    * @param {string} signIn
    * @param {string} projectId
-   * @param {"google" | "github" | "apple" | "oidc"} provider
+   * @param {"google" | "github" | "apple" | "oidc" | "microsoft" | "gitlab" | "linkedin" | "slack" | "discord" | "facebook" | "x" | "oauth2"} provider
    * @param {TsAuthProjectProviderUpdate} request
    * @param {TsAuthProjectsRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthProjectSettings>>}
@@ -788,12 +794,20 @@ export class TsAuthProjectsClient {
       provider !== "google" &&
       provider !== "github" &&
       provider !== "apple" &&
-      provider !== "oidc"
+      provider !== "oidc" &&
+      provider !== "microsoft" &&
+      provider !== "gitlab" &&
+      provider !== "linkedin" &&
+      provider !== "slack" &&
+      provider !== "discord" &&
+      provider !== "facebook" &&
+      provider !== "x" &&
+      provider !== "oauth2"
     )
       throw new TypeError(
-        "provider must be google, github, apple or oidc.",
+        "provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.",
       );
-    members(request, ["client_id", "client_secret", "issuer", "team_id", "key_id"]);
+    members(request, ["client_id", "client_secret", "issuer", "team_id", "key_id", "tenant", "oauth2"]);
     if (typeof request.client_id !== "string" || request.client_id.length === 0)
       throw new TypeError("client_id must be a non-empty string.");
     return this.#http.request({
@@ -811,7 +825,7 @@ export class TsAuthProjectsClient {
    * carry the provider.
    * @param {string} signIn
    * @param {string} projectId
-   * @param {"google" | "github" | "apple" | "oidc"} provider
+   * @param {"google" | "github" | "apple" | "oidc" | "microsoft" | "gitlab" | "linkedin" | "slack" | "discord" | "facebook" | "x" | "oauth2"} provider
    * @param {TsAuthProjectsRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthProjectSettings>>}
    */
@@ -821,10 +835,18 @@ export class TsAuthProjectsClient {
       provider !== "google" &&
       provider !== "github" &&
       provider !== "apple" &&
-      provider !== "oidc"
+      provider !== "oidc" &&
+      provider !== "microsoft" &&
+      provider !== "gitlab" &&
+      provider !== "linkedin" &&
+      provider !== "slack" &&
+      provider !== "discord" &&
+      provider !== "facebook" &&
+      provider !== "x" &&
+      provider !== "oauth2"
     )
       throw new TypeError(
-        "provider must be google, github, apple or oidc.",
+        "provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.",
       );
     return this.#http.request({
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -1045,3 +1067,15 @@ export class TsAuthProjectsClient {
     });
   }
 }
+
+/**
+ * @typedef {{
+ *   readonly authorize_url: string;
+ *   readonly token_url: string;
+ *   readonly userinfo_url: string;
+ *   readonly scopes: string;
+ *   readonly id_claim?: string;
+ *   readonly email_claim?: string;
+ *   readonly email_verified_claim?: string;
+ * }} TsAuthProjectOAuth2
+ */

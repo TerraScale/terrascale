@@ -359,3 +359,7 @@ reads status, proves the retained data and the removed endpoint's 421, and delet
 The two-region group B books an upper bound of 110 requests to cover the bounded repeat loop; the metrics check
 still refuses tenant_busy and verifies that every operation ran. The local edge does not implement production's
 421 replay, so the runners explicitly use fra after verifying wrong_region.
+
+## Social provider stand-in
+
+The OAuth2 provider at identity.journey.terrascale.tech is served by env/oauth2.mjs behind the same edge. It validates redirect, state, one-use authorization code and PKCE, and supplies verified or unverified email claims through userinfo. Only inside the isolated namespace, 93.184.215.14/32 is assigned to loopback and this hostname resolves to it; every other hostname keeps its existing mapping. This exercises the production public-address SSRF checks without permitting loopback providers or any external route. The browser journey proves email ownership before creating or linking a user, replay refusal, and subsequent subject-based sign-in.

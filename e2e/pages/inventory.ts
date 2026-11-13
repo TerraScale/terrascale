@@ -348,7 +348,7 @@ export const dashboardStates: readonly PageState[] = [
     ([section, label]): PageState => ({
       name: `authentication ${label.toLowerCase()}`,
       url: () => `/auth/${section}`,
-      covers: { path: new RegExp(`^/auth/${section}$`), ...(section === 'logs' ? { query: { after: optionalId } } : section === 'users' ? { query: { user: optionalId, saved: /^(1)?$/ } } : section === 'sessions' ? { query: { user: optionalId } } : section === 'organizations' ? { query: { org: optionalId, after: optionalId, view: /^(members|invitations|domains)?$/ } } : {}), ...(section === 'attack-protection' ? { query: { saved: /^(1)?$/ } } : {}) },
+      covers: { query: { saved: /^1?$/ }, path: new RegExp(`^/auth/${section}$`), ...(section === 'logs' ? { query: { after: optionalId } } : section === 'users' ? { query: { user: optionalId, saved: /^(1)?$/ } } : section === 'sessions' ? { query: { user: optionalId } } : section === 'organizations' ? { query: { org: optionalId, after: optionalId, view: /^(members|invitations|domains)?$/ } } : {}), ...(section === 'attack-protection' ? { query: { saved: /^(1)?$/ } } : {}) },
       heading: section === 'overview' ? title('Project authentication', 2) : title(`Authentication: ${label}`),
       data: async (page, journey) => {
         if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
@@ -376,6 +376,11 @@ export const dashboardStates: readonly PageState[] = [
           await expect(page.locator('#signup-mode')).toHaveValue('public');
           await expect(page.locator('#signup-allowlist')).toHaveValue('');
         }
+        else if (section === 'sign-in') {
+          await expect(page.locator('#auth-sign-in-form [role=switch]')).toHaveCount(4);
+          await expect(page.locator('#auth-method-magic_link')).toBeVisible();
+          await expect(page.locator('#auth-method-username')).toBeVisible();
+        } else if (section === 'social') await expect(page.locator('.ts-idp-provider')).toHaveCount(12);
         else if (section === 'danger') {
           await expect(page.getByText('No records.', { exact: true })).toHaveCount(3);
           await expect(page.locator('main')).toHaveAttribute('data-auth-section', 'danger');

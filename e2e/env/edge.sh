@@ -20,6 +20,7 @@ start cloudflare-sink node "$here/cloudflare-sink.mjs"
 start stripe node "$here/stripe.mjs"
 start r2 node "$here/r2.mjs"
 start attack-protection node "$here/attack-protection.mjs"
+start oauth2 node "$here/oauth2.mjs"
 start pg-edge env E2E_EDGE_CERT="$pki/edge.pem" E2E_EDGE_KEY="$pki/edge.key" node "$here/pg-edge.mjs"
 start caddy env XDG_DATA_HOME="$state/caddy" XDG_CONFIG_HOME="$state/caddy" E2E_EDGE_CERT="$pki/edge.pem" E2E_EDGE_KEY="$pki/edge.key" \
   "$tools/caddy" run --config "$here/Caddyfile" --adapter caddyfile
@@ -27,5 +28,6 @@ ready mailpit curl -fsS --max-time 2 http://127.0.0.1:8025/readyz
 ready cloudflare-sink curl -fsS --max-time 2 http://127.0.0.1:8026/messages
 ready stripe curl -fsS --max-time 2 http://127.0.0.1:8027/log
 ready r2 curl -fsS --max-time 2 http://127.0.0.1:8028/log
+ready oauth2 curl -fsS --max-time 2 http://127.0.0.1:8030/readyz
 ready caddy edge_serves
 ready pg-edge pg_edge_serves

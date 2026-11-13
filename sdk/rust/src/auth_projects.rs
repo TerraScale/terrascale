@@ -58,7 +58,7 @@ pub struct ProjectWaitlistPage {
 
 const MAX_EXPORT_CURSOR_BYTES: usize = 8192;
 
-/// Sign-in methods; at least one of passcode and password stays on.
+/// Sign-in methods; at least one of passcode, password and magic_link stays on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectMethods {
     /// Whether the email passcode method is on.
@@ -67,6 +67,12 @@ pub struct ProjectMethods {
     pub password: bool,
     /// Whether sign-up is allowed.
     pub sign_up_mode: String,
+    /// Browser-bound magic links.
+    #[serde(default)]
+    pub magic_link: bool,
+    /// Username and password sign-in.
+    #[serde(default)]
+    pub username: bool,
 }
 
 /// A labelled link underneath the hosted sign-in card.
@@ -161,6 +167,10 @@ pub struct ProjectProvider {
     pub key_id: Option<String>,
     /// The callback URL to register at the provider.
     pub callback_url: String,
+    /// Microsoft account audience.
+    pub tenant: Option<String>,
+    /// Custom OAuth2 endpoints and claims.
+    pub oauth2: Option<ProjectOAuth2>,
 }
 
 /// A project's settings.
@@ -373,6 +383,12 @@ pub struct ProjectProviderUpdate {
     /// Key id, for the `apple` provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_id: Option<String>,
+    /// Microsoft account audience.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+    /// Custom OAuth2 endpoints and claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth2: Option<ProjectOAuth2>,
 }
 
 /// One live end-user session; revoking it signs the session out.
@@ -493,13 +509,27 @@ fn validate_cursor(cursor: &str) -> Result<()> {
 }
 
 fn provider_name(provider: &str) -> Result<String> {
-    if matches!(provider, "google" | "github" | "apple" | "oidc") {
+    if matches!(
+        provider,
+        "google"
+            | "github"
+            | "apple"
+            | "oidc"
+            | "microsoft"
+            | "gitlab"
+            | "linkedin"
+            | "slack"
+            | "discord"
+            | "facebook"
+            | "x"
+            | "oauth2"
+    ) {
         Ok(provider.to_owned())
     } else {
         Err(Error::new(
             ErrorKind::Validation,
             "invalid_provider",
-            "provider must be one of google, github, apple, oidc.",
+            "provider must be one of google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc, oauth2.",
         ))
     }
 }
@@ -1372,4 +1402,23 @@ impl ProjectsClient {
         )
         .await
     }
+}
+
+/// Custom OAuth2 endpoints, scopes and dot-separated claim paths.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectOAuth2 {
+    /// Authorization URL.
+    pub authorize_url: String,
+    /// Token URL.
+    pub token_url: String,
+    /// Userinfo URL.
+    pub userinfo_url: String,
+    /// Space-separated scopes.
+    pub scopes: String,
+    /// Subject claim path.
+    pub id_claim: String,
+    /// Email claim path.
+    pub email_claim: String,
+    /// Boolean email verification claim path.
+    pub email_verified_claim: String,
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -130,6 +131,12 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>Whole seconds until the disabled resend control re-enables when <see cref="CodeBudgetExhausted"/>.</summary>
     public long? WaitSeconds { get; init; }
 
+    public string? CodeRequest { get; init; }
+
+    public string? LinkProvider { get; init; }
+
+    public string? Username { get; init; }
+
     public string? ErrorId => this.Error is null ? null : "sign-in-error";
 
     /// <summary>The pending sign-up's token, carried from the sign-up form to its code form.</summary>
@@ -199,7 +206,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     public string Title => this.Step switch
     {
         SignInStep.Password => this.Copy.TitlePassword,
-        SignInStep.Code or SignInStep.EnrollmentInbox => this.Copy.TitleCode,
+        SignInStep.EnrollmentInbox => this.Copy.TitleCode,
+        SignInStep.Code => this.LinkProvider is { } provider ? string.Format(CultureInfo.InvariantCulture, this.Copy.TitleSocialLink, provider) : this.Copy.TitleCode,
         SignInStep.SignUp => this.Copy.TitleSignUp,
         SignInStep.SignUpCode => this.Copy.TitleSignUpCode,
         SignInStep.Reset => this.Copy.TitleReset,
@@ -290,7 +298,16 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
         var located = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = AuthEmails.UiLocales(context.Request) };
-        var rendered = located with { Refresh = NavigationTarget(ContinueTo(located)) };
+        var pending = located.Step == SignInStep.Code
+            ? PendingSocialLinks.Open(context.RequestServices.GetRequiredService<AuthOptions>(), located.Slug,
+                PendingSocialLinks.Read(context, located.Slug), context.RequestServices.GetRequiredService<TimeProvider>()) : null;
+        pending = pending?.Email == located.Email ? pending : null;
+        var rendered = located with
+        {
+            Refresh = NavigationTarget(ContinueTo(located)),
+            CodeRequest = located.CodeRequest ?? (pending is not null ? "sign-in" : null),
+            LinkProvider = located.LinkProvider ?? (pending is not null ? SocialProviders.Label(pending.Identity.Provider) : null),
+        };
         var page = SignInPage.Create(rendered);
         page.StatusCode = statusCode;
         return page;

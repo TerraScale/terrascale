@@ -81,3 +81,7 @@ https://cloudflare-dns.com {
 	import edge
 	reverse_proxy 127.0.0.1:8032
 }
+https://identity.journey.terrascale.tech {
+	import edge
+	reverse_proxy 127.0.0.1:8031
+}

@@ -432,6 +432,7 @@ internal static class SecurityFlow
             Account = user.Email,
             ProfileName = string.Join(" ", new[] { user.FirstName, user.LastName }.Where(value => !string.IsNullOrWhiteSpace(value))),
             ProfileImage = user.ImageUrl,
+            Username = user.Username,
             MfaEnabled = enabled,
             RecoveryRemaining = remaining,
             Passkeys = passkeys,

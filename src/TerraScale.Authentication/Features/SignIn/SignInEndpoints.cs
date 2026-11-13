@@ -23,7 +23,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// <param name="Password">The account password (password sign-in, sign-up and reset only).</param>
 /// <param name="PendingToken">The pending sign-up's token (sign-up verification only).</param>
 /// <param name="Challenge">The sealed second-factor challenge (second-factor step only).</param>
-public sealed record SignInForm(string? Email, string? Code, string? Next, string? Password = null, string? PendingToken = null, string? Challenge = null);
+public sealed record SignInForm(string? Email, string? Code, string? Next, string? Password = null, string? PendingToken = null, string? Challenge = null, string? Username = null);
 
 /// <summary><c>GET /ui/{slug}/sign-in</c>: asks for the email address to send a sign-in code to.</summary>
 public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
@@ -87,7 +87,11 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
             return SignInFlow.Refused(this.HttpContext);
         }
 
-        var address = form.Email?.Trim() ?? string.Empty;
+        var tenant = SignInFlow.Tenant(this.HttpContext);
+        var pendingToken = PendingSocialLinks.Read(this.HttpContext, tenant);
+        var pendingIdentity = PendingSocialLinks.Open(options, tenant, pendingToken, this.HttpContext.RequestServices.GetRequiredService<TimeProvider>());
+        pendingIdentity = pendingIdentity?.Email == Users.NormalizeEmail(form.Email ?? string.Empty) ? pendingIdentity : null;
+        var address = pendingIdentity?.Email ?? form.Email?.Trim() ?? string.Empty;
         if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
         {
             throw ApiException.Unavailable();
@@ -107,9 +111,16 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
                 : SignInFlow.Limited(this.HttpContext, SignInStep.Code, refusal.Wait, address, SignInFlow.SafeNext(this.HttpContext, form.Next));
         }
 
-        var tenant = SignInFlow.Tenant(this.HttpContext);
         cancellationToken.ThrowIfCancellationRequested();
-        await reservation.EnqueueCodeAsync(tenant, address, PasscodePurpose.SignIn, AuthEmails.Locale(this.HttpContext.Request));
+        if (pendingIdentity is not null)
+        {
+            await reservation.EnqueueSocialAsync(tenant, address, pendingToken!, SocialProviders.Label(pendingIdentity.Identity.Provider), AuthEmails.Locale(this.HttpContext.Request));
+        }
+        else
+        {
+            PendingSocialLinks.Delete(this.HttpContext, tenant);
+            await reservation.EnqueueCodeAsync(tenant, address, PasscodePurpose.SignIn, AuthEmails.Locale(this.HttpContext.Request));
+        }
 
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(this.HttpContext), address, SignInFlow.SafeNext(this.HttpContext, form.Next)));
     }
@@ -127,7 +138,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Post("/ui/{slug}/sign-in/verify");
         Name("ui_sign_in_verify_code");
         Summary("Sign in with an emailed code");
-        Description("Same-origin form post. A code works once, for 30 minutes, until a newer code replaces it, and dies after 5 wrong guesses. Hosted sign-in pages share the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
+        Description("Same-origin form post. A code works once, for 30 minutes (ten minutes for magic links and pending social links), until a newer code replaces it, and dies after 5 wrong guesses. Hosted sign-in pages share the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
             + " An account with an active authenticator app gets the second-factor step (no session cookie yet); corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
         // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
@@ -148,7 +159,13 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
             return SignInFlow.Refused(this.HttpContext);
         }
 
-        var address = form.Email?.Trim() ?? string.Empty;
+        var magic = MagicLinks.Open(options, SignInFlow.Tenant(this.HttpContext), form.Challenge,
+            this.HttpContext.RequestServices.GetRequiredService<TimeProvider>());
+        var tenant = SignInFlow.Tenant(this.HttpContext);
+        var pendingSocial = PendingSocialLinks.Read(this.HttpContext, tenant);
+        var pendingIdentity = PendingSocialLinks.Open(options, tenant, pendingSocial, this.HttpContext.RequestServices.GetRequiredService<TimeProvider>());
+        pendingIdentity = pendingIdentity?.Email == Users.NormalizeEmail(form.Email ?? string.Empty) ? pendingIdentity : null;
+        var address = pendingIdentity?.Email ?? magic?.Email ?? form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
         {
@@ -160,10 +177,18 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
                 AuthEmails.Locale(this.HttpContext.Request))) is { } wait)
         {
             AuthMetrics.SignIn("hosted_code", "rate_limited");
-            return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, next);
+            return magic is null
+                ? SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, next)
+                : MagicLinks.CodePage(this.HttpContext, magic, form.Challenge!, "Too many attempts. Try again later.", StatusCodes.Status429TooManyRequests);
         }
 
-        var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, form.Code ?? string.Empty, PasscodePurpose.SignIn, cancellationToken);
+        var user = pendingIdentity is not null
+            ? await passcodes.RedeemSocialAsync(tenant, pendingSocial!, form.Code ?? string.Empty, cancellationToken)
+            : await passcodes.RedeemAsync(tenant, address, form.Code ?? string.Empty, PasscodePurpose.SignIn, cancellationToken: cancellationToken);
+        if (user is not null && pendingIdentity is not null)
+        {
+            PendingSocialLinks.Delete(this.HttpContext, tenant);
+        }
         if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user with { InboxProven = true }, next, cancellationToken) is { } step)
         {
             return step;
@@ -172,7 +197,9 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_code", "refused");
-            return SignInFlow.WrongCode(this.HttpContext, SignInStep.Code, address, next);
+            return magic is null
+                ? SignInFlow.WrongCode(this.HttpContext, SignInStep.Code, address, next)
+                : MagicLinks.CodePage(this.HttpContext, magic, form.Challenge!, "This code is invalid or expired.", StatusCodes.Status401Unauthorized);
         }
 
         AuthMetrics.SignIn("hosted_code", "succeeded");
@@ -292,7 +319,7 @@ public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
 /// <c>POST /ui/{slug}/sign-up</c>: starts a sign-up and asks for the emailed code. The page is
 /// the same whether or not the address has an account; an existing account is mailed a sign-in code instead.
 /// </summary>
-public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options, SignUpRestrictions restrictions) : EndpointWithoutRequest<IResult>
+public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options, SignUpRestrictions restrictions, Users users) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -359,8 +386,25 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options, 
             }, joined ? StatusCodes.Status200OK : StatusCodes.Status403Forbidden);
         }
 
+        if (await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken) is { } usernameWait)
+        {
+            return SignInFlow.Limited(this.HttpContext, SignInStep.SignUp, usernameWait, address, next);
+        }
+
+        var username = HostedTheme.Of(this.HttpContext).Username ? Users.NormalizeUsername(form.Username) : null;
+        if (HostedTheme.Of(this.HttpContext).Username && username is null)
+        {
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
+                Error: "Use a username of 3 to 32 letters, digits, underscores or dots."), StatusCodes.Status400BadRequest);
+        }
+
+        if (username is not null && await users.FindByUsernameAsync(SignInFlow.Tenant(this.HttpContext), username, cancellationToken) is not null)
+        {
+            return SignInFlow.UsernameTaken(this.HttpContext, address, next);
+        }
+
         var (pending, refusal) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext),
-            AuthEmails.Locale(this.HttpContext.Request), cancellationToken);
+            AuthEmails.Locale(this.HttpContext.Request), username, cancellationToken);
         return refusal is { } limited
             ? limited.BudgetExhausted
                 ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.SignUpCode, limited.Wait, address, next)
@@ -471,7 +515,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
             return SignInFlow.Limited(this.HttpContext, SignInStep.SignUpCode, wait, address, next, form.PendingToken);
         }
 
-        var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, code, PasscodePurpose.SignIn, cancellationToken);
+        var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, code, PasscodePurpose.SignIn, cancellationToken: cancellationToken);
         if (user is null && form.PendingToken is { Length: > 0 } pending
             && await passcodes.RedeemSignUpAsync(SignInFlow.Tenant(this.HttpContext), address, code, pending, cancellationToken) is { } created)
         {
@@ -489,7 +533,10 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_sign_up", "refused");
-            return SignInFlow.WrongCode(this.HttpContext, SignInStep.SignUpCode, address, next, form.PendingToken);
+            return form.PendingToken is { Length: > 0 and <= 256 } token
+                && await passcodes.PendingUsernameTakenAsync(SignInFlow.Tenant(this.HttpContext), address, token, cancellationToken)
+                ? SignInFlow.UsernameTaken(this.HttpContext, address, next)
+                : SignInFlow.WrongCode(this.HttpContext, SignInStep.SignUpCode, address, next, form.PendingToken);
         }
 
         AuthMetrics.SignIn("hosted_sign_up", "succeeded");
@@ -877,7 +924,10 @@ internal static class SignInFlow
             ? SignInPageModel.Render(context, new SignInPageModel(SignInStep.Sso, Tenant(context), email, next) { SsoUrl = SsoSignIn.StartUrl(email, next) })
             : null;
 
-    /// <summary>Whether the page's slug is not a tenant: <c>terrascale</c> or an existing project (<see cref="Tenancy"/>).</summary>
+    public static IResult UsernameTaken(HttpContext context, string email, string? next) =>
+        SignInPageModel.Render(context, new SignInPageModel(SignInStep.SignUp, Tenant(context), email, next,
+            Error: "Username taken. Choose another username."), StatusCodes.Status400BadRequest);
+
     public static bool WrongSlug(HttpContext context) => Tenancy.Resolved(context) is not { } tenant
         || !string.Equals(context.GetRouteValue("slug") as string, tenant, StringComparison.Ordinal)
         || !Allowed(context);
@@ -889,8 +939,12 @@ internal static class SignInFlow
         var page = (context.Request.Path.Value ?? string.Empty).Split('/', 4) is [_, _, _, var rest] ? rest.TrimEnd('/') : string.Empty;
         return page switch
         {
-            "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method),
-            "sign-in/verify" => theme.Passcode,
+            "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method)
+                || PendingSocialLinks.Open(context.RequestServices.GetRequiredService<AuthOptions>(), Tenant(context),
+                    PendingSocialLinks.Read(context, Tenant(context)), context.RequestServices.GetRequiredService<TimeProvider>()) is not null,
+            "sign-in/verify" => theme.Passcode || theme.MagicLink
+                || PendingSocialLinks.Open(context.RequestServices.GetRequiredService<AuthOptions>(), Tenant(context),
+                    PendingSocialLinks.Read(context, Tenant(context)), context.RequestServices.GetRequiredService<TimeProvider>()) is not null,
             "sign-in/password" or "reset" or "reset/complete" or "reset/resend" => theme.Password,
             _ => true,
         };
@@ -939,7 +993,22 @@ internal static class SignInFlow
         }
 
         var form = await context.Request.ReadFormAsync(cancellationToken);
-        return new SignInForm(form["email"], form["code"], form["next"], form["password"], form["pending_token"], form["challenge"]);
+        if (!HostedTheme.Of(context).Passcode && (context.Request.Path.Value ?? string.Empty).TrimEnd('/') is var path
+            && (path.EndsWith("/sign-in", StringComparison.Ordinal) || path.EndsWith("/sign-in/verify", StringComparison.Ordinal)))
+        {
+            var tenant = Tenant(context);
+            var clock = context.RequestServices.GetRequiredService<TimeProvider>();
+            var pending = PendingSocialLinks.Open(options, tenant, PendingSocialLinks.Read(context, tenant), clock);
+            var matchesPending = pending is not null && pending.Email == Users.NormalizeEmail(form["email"].ToString());
+            var magic = path.EndsWith("/sign-in/verify", StringComparison.Ordinal) && HostedTheme.Of(context).MagicLink
+                ? MagicLinks.Open(options, tenant, form["challenge"], clock) : null;
+            if (!matchesPending && magic is null)
+            {
+                return null;
+            }
+        }
+
+        return new SignInForm(form["email"], form["code"], form["next"], form["password"], form["pending_token"], form["challenge"], form["username"]);
     }
 
     /// <summary>

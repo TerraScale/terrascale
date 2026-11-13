@@ -102,13 +102,13 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         [McpServerTool(Name = "auth_update_settings", Title = "Update sign-in methods and branding", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
          Description("Set the hosted pages' sign-in methods (passcode, password, signUp; passcode or password stays on) and, when any branding argument is given, their branding (name up to 64 characters, https logoUrl, #rrggbb themeColor; an empty string clears a value). Omitted arguments keep their current value. Requires the admin project role.")]
         public async Task<TsAuthProjectSettings> UpdateSettings(bool? passcode = null, bool? password = null, string? signUpMode = null,
-            string? name = null, string? logoUrl = null, string? themeColor = null, string? organizationId = null, string? projectId = null)
+            string? name = null, string? logoUrl = null, string? themeColor = null, string? organizationId = null, string? projectId = null, bool? magicLink = null, bool? username = null)
         {
             var context = await Fresh(organizationId, projectId, true);
             // Omitted arguments keep their current value, so read the settings first.
             var current = await projects.GetSettingsAsync(context.Session, context.Project!.Id, Cancellation);
-            var methods = passcode is null && password is null && signUpMode is null ? null
-                : AuthenticationConsole.Methods(passcode ?? current.Methods.Passcode, password ?? current.Methods.Password, signUpMode ?? current.Methods.SignUpMode);
+            var methods = passcode is null && password is null && signUpMode is null && magicLink is null && username is null ? null
+                : AuthenticationConsole.Methods(passcode ?? current.Methods.Passcode, password ?? current.Methods.Password, signUpMode ?? current.Methods.SignUpMode, magicLink ?? current.Methods.MagicLink, username ?? current.Methods.Username);
             var validated = AuthenticationConsole.Branding(name ?? current.Branding.Name, logoUrl ?? current.Branding.LogoUrl, themeColor ?? current.Branding.ThemeColor);
             var branding = name is null && logoUrl is null && themeColor is null ? null
                 : current.Branding with { Name = validated.Name, LogoUrl = validated.LogoUrl, ThemeColor = validated.ThemeColor };
@@ -116,23 +116,23 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         [McpServerTool(Name = "auth_set_provider", Title = "Configure a social sign-in provider", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
-         Description("Configure or update social sign-in: provider is google, github, apple or oidc. All take clientId (Apple: the Services ID) and clientSecret (Apple: the .p8 private key text), which is required the first time and kept when omitted. Apple also takes 10-character teamId and keyId; oidc takes an https issuer. Register the provider's callback_url from auth_get_overview at the provider. The secret is never returned. Requires the admin project role.")]
+         Description("Configure or update social sign-in: provider is google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2. All take clientId (Apple: the Services ID) and clientSecret (Apple: the .p8 private key text), which is required the first time and kept when omitted. Apple also takes 10-character teamId and keyId; oidc takes an https issuer; microsoft takes tenant common, organizations or consumers; oauth2 takes HTTPS authorize, token and userinfo URLs, scopes and dotted id, email and email_verified claim paths in oauth2. Register the provider's callback_url from auth_get_overview at the provider. The secret is never returned. Requires the admin project role.")]
         public async Task<TsAuthProjectSettings> SetProvider(string provider, string clientId, string? clientSecret = null, string? issuer = null, string? teamId = null,
-            string? keyId = null, string? organizationId = null, string? projectId = null)
+            string? keyId = null, string? organizationId = null, string? projectId = null, string? tenant = null, TsAuthProjectOAuth2? oauth2 = null)
         {
             var context = await Fresh(organizationId, projectId, true);
-            var update = AuthenticationConsole.Provider(provider, clientId, clientSecret, issuer, teamId, keyId);
+            var update = AuthenticationConsole.Provider(provider, clientId, clientSecret, issuer, teamId, keyId, tenant, oauth2);
             return await projects.SetProviderAsync(context.Session, context.Project!.Id, provider, update, Cancellation);
         }
 
         [McpServerTool(Name = "auth_remove_provider", Title = "Remove a social sign-in provider", UseStructuredContent = true, Destructive = true, OpenWorld = false, Idempotent = true),
-         Description("Remove a social sign-in provider (google, github, apple or oidc) and its stored secret. Requires the admin project role.")]
+         Description("Remove a social sign-in provider (google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2) and its stored secret. Requires the admin project role.")]
         public async Task<TsAuthProjectSettings> RemoveProvider(string provider, string? organizationId = null, string? projectId = null)
         {
             var context = await Fresh(organizationId, projectId, true);
             if (AuthenticationProvider.Find(provider) is null)
             {
-                throw new AccountAccessException("Choose google, github, apple or oidc.", 422);
+                throw new AccountAccessException("Choose google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.", 422);
             }
 
             return await projects.DeleteProviderAsync(context.Session, context.Project!.Id, provider, Cancellation);

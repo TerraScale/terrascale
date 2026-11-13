@@ -51,9 +51,9 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
     public async Task<UserRecord?> CreateAsync(string instanceId, string email, string? passwordHash, CancellationToken cancellationToken)
         => await this.CreateAccountAsync(instanceId, email, passwordHash, AuthIds.New(), cancellationToken).ConfigureAwait(false);
 
-    internal (UserRecord User, Change[] Changes) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, Change? lifecycleEvent = null)
+    internal (UserRecord User, Change[] Changes) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, Change? lifecycleEvent = null, string? username = null)
     {
-        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New() };
+        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New(), Username = username };
         return (user, lifecycleEvent is null ? [Change.Insert(user)] : [Change.Insert(user), lifecycleEvent]);
     }
 
@@ -79,6 +79,16 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
         NormalizeEmail(email) is { } normalized
             ? await this.ReadAsync(db => db.Users.Where(user => user.InstanceId == instanceId && user.Email == normalized), cancellationToken).ConfigureAwait(false)
             : null;
+
+    public static string? NormalizeUsername(string? username) => username is { Length: >= 3 and <= 32 }
+        && username.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '.')
+        && username.ToLowerInvariant() is not ("admin" or "administrator" or "root" or "support" or "security" or "help" or "terrascale" or "system" or "owner" or "staff")
+        ? username.ToLowerInvariant() : null;
+
+    public Task<UserRecord?> FindByUsernameAsync(string instanceId, string username, CancellationToken cancellationToken) =>
+        NormalizeUsername(username) is { } normalized
+            ? this.ReadAsync(db => db.Users.Where(user => user.InstanceId == instanceId && user.Username == normalized), cancellationToken)
+            : Task.FromResult<UserRecord?>(null);
 
     public Task<UserRecord?> GetAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
         TerraScaleIds.IsValid(userId)
@@ -165,6 +175,11 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
                 changes.Add(lifecycleEvent);
             }
 
+            if (await outbox.CreateAsync(caller.InstanceId, "user.updated", caller.Id, current.Email, identity.Provider, cancellationToken).ConfigureAwait(false) is { } updatedEvent)
+            {
+                changes.Add(updatedEvent);
+            }
+
             if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
             {
                 return true;
@@ -199,6 +214,18 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
         }
 
         return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<bool> SetUsernameAsync(UserRecord caller, string username, Change session, CancellationToken cancellationToken)
+    {
+        if (NormalizeUsername(username) is not { } normalized
+            || await this.GetAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { Disabled: false } current
+            || current.AuthEpoch != caller.AuthEpoch || current.AuthStamp != caller.AuthStamp)
+        {
+            return false;
+        }
+
+        return await data.SaveAsync([Change.Update(current with { Username = normalized }), session], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<bool> SetPasswordAsync(UserRecord caller, string passwordHash, CancellationToken cancellationToken = default)
@@ -349,7 +376,7 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
         AuthenticationBindings = [.. BindAuthenticationState(user).AuthenticationBindings, new CredentialBinding(Credentials.SocialKind, Credentials.SocialKey(identity), user.Id)],
     };
 
-    private static ProviderLinkRecord Link(UserRecord user, LinkedProvider identity) =>
+    internal static ProviderLinkRecord Link(UserRecord user, LinkedProvider identity) =>
         new(user.InstanceId, user.Id, identity.Provider, identity.Issuer, identity.ClientId, identity.Subject);
 
     private static bool Complete(LinkedProvider identity) =>

@@ -19,6 +19,8 @@ The served `/openapi/v1.json` and `/scalar` describe current HTTP operations. Pu
 - [Machine tokens and user-owned API keys](machine-tokens-and-user-api-keys.md).
 - [Scoped end-user tokens](scoped-end-user-tokens.md) for authorized SQL shapes.
 - [Project social sign-in](project-social-sign-in.md).
+- [Extended social providers](social-providers/README.md).
+- [Magic links and usernames](project-sign-in-methods.md).
 - [End-user lifecycle webhooks](webhooks.md).
 - [API-key lifecycle](regional/api-key-lifecycle.md).
 - [Signing keys](signing-keys.md), [MFA](mfa.md), [MFA sign-in](mfa-sign-in.md) and [Passkeys](passkeys.md).

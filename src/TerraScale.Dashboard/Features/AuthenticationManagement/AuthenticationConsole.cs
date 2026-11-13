@@ -107,7 +107,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         await projects.EndImpersonationAsync(session, project, impersonationId, cancel);
                         break;
                     case ["settings"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString())), cancel);
+                        await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString(), form["magic_link"] == "on", form["username"] == "on")), cancel);
                         break;
                     case ["attack-protection"]:
                         await projects.UpdateSettingsAsync(session, project, new(AttackProtection: new(
@@ -153,7 +153,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
                         break;
                     case ["providers", var provider]:
-                        await projects.SetProviderAsync(session, project, provider, Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"]), cancel);
+                        await projects.SetProviderAsync(session, project, provider, Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"], form["tenant"], provider == "oauth2" ? new TsAuthProjectOAuth2(form["authorize_url"].ToString(), form["token_url"].ToString(), form["userinfo_url"].ToString(), form["scopes"].ToString(), form["id_claim"].ToString(), form["email_claim"].ToString(), form["email_verified_claim"].ToString()) : null), cancel);
                         break;
                     case ["providers", var provider, _]: await projects.DeleteProviderAsync(session, project, provider, cancel); break;
                     case ["clients"]:
@@ -233,9 +233,9 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         private static string[] RestrictionList(string? value) =>
             (value ?? "").Split(['\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        public static TsAuthProjectMethods Methods(bool passcode, bool password, string signUpMode)
+        public static TsAuthProjectMethods Methods(bool passcode, bool password, string signUpMode, bool magicLink = false, bool username = false)
         {
-            return passcode || password ? new(passcode, password, signUpMode) : throw new AccountAccessException("Keep email passcode or password sign-in on.", 422);
+            return passcode || password || magicLink ? new(passcode, password, signUpMode, magicLink, username) : throw new AccountAccessException("Keep email passcode, password or magic-link sign-in on.", 422);
         }
 
         // Empty values clear a branding field.
@@ -266,7 +266,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         // A blank secret keeps the stored one; ts-auth requires it the first time. Never log the update.
-        public static TsAuthProjectProviderUpdate Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId)
+        public static TsAuthProjectProviderUpdate Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId, string? tenant = null, TsAuthProjectOAuth2? oauth2 = null)
         {
             static string? Clean(string? value)
             {
@@ -276,7 +276,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var (id, secret, url, team, key) = (Clean(clientId), Clean(clientSecret), Clean(issuer), Clean(teamId)?.ToUpperInvariant(), Clean(keyId)?.ToUpperInvariant());
             if (AuthenticationProvider.Find(provider) is not { } known)
             {
-                throw new AccountAccessException("Choose google, github, apple or oidc.", 422);
+                throw new AccountAccessException("Choose google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.", 422);
             }
 
             if (id is null or { Length: > 256 })
@@ -303,6 +303,8 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             {
                 "apple" => new(id, secret, TeamId: team, KeyId: key),
                 "oidc" => new(id, secret, Issuer: url),
+                "microsoft" => new(id, secret, Tenant: Clean(tenant) ?? "common"),
+                "oauth2" => new(id, secret, OAuth2: oauth2),
                 _ => new(id, secret)
             };
         }
@@ -566,7 +568,15 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             new("google", "Google", "Client ID", "Google Cloud console credentials", "https://console.cloud.google.com/apis/credentials"),
             new("github", "GitHub", "Client ID", "GitHub Developer settings, OAuth Apps", "https://github.com/settings/developers"),
             new("apple", "Apple", "Services ID", "Apple Developer Certificates, IDs & Profiles", "https://developer.apple.com/account/resources/identifiers/list/serviceId"),
-            new("oidc", "OpenID Connect", "Client ID", "", "")
+            new("microsoft", "Microsoft", "Client ID", "Microsoft Entra admin center", "https://entra.microsoft.com/"),
+            new("gitlab", "GitLab", "Client ID", "GitLab applications", "https://gitlab.com/-/user_settings/applications"),
+            new("linkedin", "LinkedIn", "Client ID", "LinkedIn Developers", "https://www.linkedin.com/developers/apps"),
+            new("slack", "Slack", "Client ID", "Slack applications", "https://api.slack.com/apps"),
+            new("discord", "Discord", "Client ID", "Discord Developer Portal", "https://discord.com/developers/applications"),
+            new("facebook", "Facebook", "Client ID", "Meta for Developers", "https://developers.facebook.com/apps/"),
+            new("x", "X", "Client ID", "X Developer Portal", "https://developer.x.com/"),
+            new("oidc", "OpenID Connect", "Client ID", "", ""),
+            new("oauth2", "Custom OAuth2", "Client ID", "", "")
         ];
     }
 }

@@ -221,7 +221,8 @@ def delete_user_call(issuer: str | None, project: str, user_id: str) -> _spec.Ca
                       success=(204,), base_url=_origin(issuer))
 
 
-PROVIDERS = ("google", "github", "apple", "oidc")
+PROVIDERS = ("google", "github", "apple", "oidc", "microsoft", "gitlab", "linkedin", "slack",
+             "discord", "facebook", "x", "oauth2")
 
 
 def _provider(value: str) -> str:

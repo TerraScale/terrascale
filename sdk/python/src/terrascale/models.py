@@ -3,7 +3,7 @@ stay compatible."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .ids import validate_id
@@ -23,6 +23,7 @@ __all__ = [
     "ProjectDirectoryUser",
     "ProjectLinkedProvider",
     "ProjectProviderUpdate",
+    "ProjectOAuth2",
     "ProjectSession",
     "ProjectSessionPage",
     "ProjectSettings",
@@ -394,12 +395,16 @@ class ProjectSettingsMethods:
     passcode: bool
     password: bool
     sign_up_mode: str
+    magic_link: bool = False
+    username: bool = False
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettingsMethods:
         return cls(passcode=_bool(body, "passcode", "project sign-in methods"),
                    password=_bool(body, "password", "project sign-in methods"),
-                   sign_up_mode=_signup_mode(body))
+                   sign_up_mode=_signup_mode(body),
+                   magic_link=_bool(body, "magic_link", "project sign-in methods"),
+                   username=_bool(body, "username", "project sign-in methods"))
 
 
 @dataclass(frozen=True)
@@ -452,6 +457,19 @@ class ProjectSettingsCounts:
 
 
 @dataclass(frozen=True)
+class ProjectOAuth2:
+    """Custom OAuth2 endpoints, scopes and dot-separated claim paths."""
+
+    authorize_url: str
+    token_url: str
+    userinfo_url: str
+    scopes: str
+    id_claim: str = "id"
+    email_claim: str = "email"
+    email_verified_claim: str = "email_verified"
+
+
+@dataclass(frozen=True)
 class ProjectSettingsProvider:
     """One federated sign-in provider's configuration state."""
 
@@ -462,6 +480,8 @@ class ProjectSettingsProvider:
     team_id: str | None
     key_id: str | None
     callback_url: str
+    tenant: str | None = None
+    oauth2: ProjectOAuth2 | None = None
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettingsProvider:
@@ -473,7 +493,8 @@ class ProjectSettingsProvider:
                    issuer=_text(body, "issuer", "project provider issuer"),
                    team_id=_text(body, "team_id", "project provider team id"),
                    key_id=_text(body, "key_id", "project provider key id"),
-                   callback_url=body["callback_url"])
+                   callback_url=body["callback_url"], tenant=_text(body, "tenant", "Microsoft tenant"),
+                   oauth2=ProjectOAuth2(**body["oauth2"]) if body.get("oauth2") else None)
 
 
 @dataclass(frozen=True)
@@ -551,7 +572,7 @@ class ProjectSettingsUpdate:
             body["restrictions"] = self.restrictions.to_body()
         if self.methods is not None:
             body["methods"] = {"passcode": self.methods.passcode, "password": self.methods.password,
-                               "sign_up_mode": self.methods.sign_up_mode}
+                               "sign_up_mode": self.methods.sign_up_mode, "magic_link": self.methods.magic_link, "username": self.methods.username}
         if self.branding is not None:
             branding: dict[str, Any] = {}
             for key in ("name", "logo_url", "theme_color", "default_theme", "background_color", "text_color",
@@ -688,13 +709,17 @@ class ProjectProviderUpdate:
     issuer: str | None = None
     team_id: str | None = None
     key_id: str | None = None
+    tenant: str | None = None
+    oauth2: ProjectOAuth2 | None = None
 
     def to_body(self) -> dict[str, Any]:
         body: dict[str, Any] = {"client_id": self.client_id}
-        for key in ("client_secret", "issuer", "team_id", "key_id"):
+        for key in ("client_secret", "issuer", "team_id", "key_id", "tenant"):
             value = getattr(self, key)
             if value:
                 body[key] = value
+        if self.oauth2 is not None:
+            body["oauth2"] = asdict(self.oauth2)
         return body
 
 

@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Features.ProjectTenants;
 using System.Globalization;
 using TerraScale.Authentication.Features.AttackProtection;
 using System.Net;
@@ -7,6 +6,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
@@ -71,7 +71,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
     /// must accompany a sign-up code's redemption; or how long to wait. The token is random either way, so it reveals
     /// nothing, and only its hash is stored.
     /// </summary>
-    public async Task<(string? PendingToken, MailRefusal? Refusal)> SignUpAsync(string email, string password, string ip, string locale, CancellationToken cancellationToken)
+    public async Task<(string? PendingToken, MailRefusal? Refusal)> SignUpAsync(string email, string password, string ip, string locale, string? username, CancellationToken cancellationToken)
     {
         // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
         using var reservation = mail.Reserve();
@@ -91,7 +91,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
         var pending = Tokens.RandomToken(43);
         var tenant = this.Tenant;
         cancellationToken.ThrowIfCancellationRequested();
-        await reservation.EnqueueSignUpAsync(tenant, email, hash, pending, locale);
+        await reservation.EnqueueSignUpAsync(tenant, email, hash, pending, locale, username);
         return (pending, null);
     }
 
@@ -170,6 +170,12 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
     /// </summary>
     public async Task<(UserRecord? User, TimeSpan? Wait)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
+        if (Users.NormalizeEmail(email) is null && HostedTheme.Of(http.HttpContext ?? throw new InvalidOperationException("Hosted authentication requires an HTTP context.")).Username
+            && await users.FindByUsernameAsync(this.Tenant, email, cancellationToken) is { } named)
+        {
+            email = named.Email;
+        }
+
         var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
         if ((!Tenancy.IsProject(this.Tenant) || !(await context.RequestServices.GetRequiredService<ProjectAuthSettings>()
             .GetAsync(this.Tenant, cancellationToken)).AttackProtection.AccountLockout) && await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken, locale) is { } wait)
@@ -210,7 +216,10 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
         return new IPAddress(raw).ToString();
     }
 
-    /// <summary>Charges the shared IP, per-email cooldown and hourly budgets before any hosted code mail is issued.</summary>
+    internal async Task<MailRefusal?> LimitSocialSignUpAsync(string ip, CancellationToken cancellationToken) =>
+        await limiter.AcquireWithDeadlineAsync(this.Tenant, "hosted-signup-ip", limiter.Fold(ip), SignUpsPerIp, SignUpWindow, cancellationToken) is { } limit
+            ? new MailRefusal(limit.RetryAfter, BudgetExhausted: false) : null;
+
     public async Task<MailRefusal?> LimitMailAsync(string email, string ip, CancellationToken cancellationToken)
     {
         if (await this.LimitIpAsync(ip, mails: true, cancellationToken) is { } wait)
