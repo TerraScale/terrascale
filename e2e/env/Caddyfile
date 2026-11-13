@@ -22,8 +22,11 @@ https://auth.terrascale.tech {
 		method POST
 		path /v1/terrascale/organizations
 	}
-	reverse_proxy @organizationCreate 127.0.0.1:8027
+	reverse_proxy @organizationCreate 127.0.0.1:8027 {
+		header_up X-Forwarded-For {remote_host}
+	}
 	reverse_proxy 127.0.0.1:8090 {
+		header_up X-Forwarded-For {remote_host}
 		flush_interval -1
 	}
 }
@@ -84,4 +87,9 @@ https://cloudflare-dns.com {
 https://identity.journey.terrascale.tech {
 	import edge
 	reverse_proxy 127.0.0.1:8031
+}
+
+https://login.journey-idp.example {
+	import edge
+	reverse_proxy 127.0.0.1:8033
 }

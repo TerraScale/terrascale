@@ -28,27 +28,57 @@ internal sealed partial class EngineManagementService
     public async ValueTask<DeleteDatabaseResult> DeleteDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken)
     {
-        var result = await WriteRetentionAsync<SoftDeletionResult>(databaseId, async transaction =>
-        {
-            return await DeletableAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, cancellationToken).ConfigureAwait(false) switch
+        var target = await ReadAsync<DeletableDatabaseResult>(
+            async transaction => await DeletableAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, cancellationToken).ConfigureAwait(false) switch
             {
-                DeletableDatabase found => await RetainDeletedAsync(transaction, found.Storage, found.Record, cancellationToken).ConfigureAwait(false),
+                DeletableDatabase deletable => deletable,
                 NotFound error => error,
                 Forbidden error => error,
                 Conflict error => error,
-            };
-        }, static error => error, cancellationToken).ConfigureAwait(false);
-        return result switch
+            },
+            static error => error, cancellationToken).ConfigureAwait(false);
+        if (target is not DeletableDatabase deletable)
         {
-            DeletedDatabaseRecord deleted => await ForgetReplicaRegionsAsync(deleted.Storage, deleted.Database, CancellationToken.None).ConfigureAwait(false),
-            NotFound error => error,
-            Forbidden error => error,
-            Conflict error => error,
-            Unavailable error => error,
+            return target switch
+            {
+                NotFound error => error,
+                Forbidden error => error,
+                Conflict error => error,
+                Unavailable error => error,
+                DeletableDatabase => throw new UnreachableException(),
+            };
+        }
+
+        ManagedDatabase? committed = null;
+        Conflict? moveRefusal = null;
+        bool Unregistered(ManagedDatabase record)
+        {
+            committed = record;
+            return true;
+        }
+
+        bool MovedDuringCommit(Conflict error)
+        {
+            moveRefusal = error;
+            return false;
+        }
+
+        return await DeleteRecordedAsync(
+            deletable.Storage,
+            async (transaction, token) =>
+                await UnregisterDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, token).ConfigureAwait(false) switch
+                {
+                    DeletableDatabase unregistered => Unregistered(unregistered.Record),
+                    Conflict error => MovedDuringCommit(error),
+                    _ => false,
+                },
+            cancellationToken).ConfigureAwait(false) switch
+        {
+            bool deleted => moveRefusal is { } refused ? refused : !deleted ? ManagementErrors.NotFound
+                : await ForgetReplicaRegionsAsync(deletable.Storage, committed ?? deletable.Record, CancellationToken.None).ConfigureAwait(false),
+            Unavailable refused => refused,
         };
     }
-
-    private readonly union SoftDeletionResult(DeletedDatabaseRecord, NotFound, Forbidden, Conflict, Unavailable);
 
     private async ValueTask<DeleteDatabaseResult> ForgetReplicaRegionsAsync(TenantContext storage, ManagedDatabase record, CancellationToken cancellationToken)
     {
@@ -72,11 +102,18 @@ internal sealed partial class EngineManagementService
             logger.ZLogWarning(error, $"Telling replica regions to forget deleted database {storage.DatabaseId:@Database} failed ({error.GetType().Name:@Error}); their own sweeps forget it");
         }
 
+        return await shredding.Value.DestroyAsync(storage, DateTimeOffset.MaxValue, cancellationToken).ConfigureAwait(false) ? new Done()
+            : new Unavailable("database deletion committed; key destruction is pending and will retry");
+    }
+
+    private Done Shredded(TenantContext storage)
+    {
+        shredding.Value.Shred(storage);
         return new Done();
     }
 
     private async ValueTask<RecordedDeletion> DeleteRecordedAsync(
-        TenantContext storage, Func<IStorageTransaction, CancellationToken, ValueTask<bool>> unregister, CancellationToken cancellationToken, RetentionAuthority.Lease? admission = null)
+        TenantContext storage, Func<IStorageTransaction, CancellationToken, ValueTask<bool>> unregister, CancellationToken cancellationToken)
     {
         var recording = false;
         RecordedDeletion decision = false;
@@ -111,7 +148,6 @@ internal sealed partial class EngineManagementService
             return decision;
         }
 
-        admission?.Dispose();
         checkpoint("delete.intent", storage);
         var cleanup = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
         if (cleanup is Unavailable error)
@@ -167,6 +203,25 @@ internal sealed partial class EngineManagementService
         return new DeletableDatabase(tenant with { DatabaseId = database.Id }, database);
     }
 
+    private async ValueTask<UnregisterResult> UnregisterDatabaseAsync(
+        IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, string region, CancellationToken cancellationToken)
+    {
+        var deletable = await DeletableAsync(transaction, userId, organizationId, projectId, databaseId, region, cancellationToken).ConfigureAwait(false) switch
+        {
+            DeletableDatabase found => (UnregisterResult)found,
+            NotFound error => error,
+            Forbidden error => error,
+            Conflict error => error,
+        };
+        if (deletable is DeletableDatabase record)
+        {
+            _ = await UnregisterRecordAsync(transaction, record.Storage, record.Record, cancellationToken, customerDeletion: true).ConfigureAwait(false);
+            return record;
+        }
+
+        return deletable;
+    }
+
     private async ValueTask<TenantContext> UnregisterRecordAsync(
         IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool customerDeletion = false, bool retireIdentity = true)
     {
@@ -198,4 +253,8 @@ internal sealed partial class EngineManagementService
     private sealed record DeletableDatabase(TenantContext Storage, ManagedDatabase Record);
 
     private readonly union DeletableDatabaseCheck(DeletableDatabase, NotFound, Forbidden, Conflict);
+
+    private readonly union DeletableDatabaseResult(DeletableDatabase, NotFound, Forbidden, Conflict, Unavailable);
+
+    private readonly union UnregisterResult(DeletableDatabase, NotFound, Forbidden, Conflict);
 }

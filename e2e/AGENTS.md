@@ -35,6 +35,50 @@ To iterate: `bash e2e/env/local.sh prepare`, `bash e2e/env/local.sh start`,
 `bash e2e/env/local.sh exec bash e2e/env/up.sh`, then from `e2e/`
 `bash env/local.sh exec npx playwright test --project pages-desktop`, and `bash e2e/env/local.sh stop`.
 
+## Client addresses and sign-up budgets
+
+The local namespace runs `env/client-proxy.mjs` on port 8089. Global setup allocates an invocation number by
+creating a directory under `$E2E_STATE/client-runs`. Each spec gets one stable address for that invocation:
+`127.(64 + invocation).specIndex.repeatEachIndex`, where `specIndex` is its one-based position in the sorted
+list of spec paths. All workers executing that spec share its address. Repeated cases get separate addresses.
+The proxy binds its outgoing socket to the address on which it accepted the connection. Caddy listens on those
+loopback addresses and replaces `X-Forwarded-For` with the actual socket source. Auth trusts exactly one rightmost
+hop from the edge's loopback socket peer (`App.cs`), as it does behind the production edge. Client-supplied
+forwarding headers cannot select an address; `signup-address-limit.spec.ts` proves that forged headers still
+exhaust the same stored bucket. This proxy exists only inside the isolated journey namespace.
+
+The `phone and flows` shard charges the platform tenant's `hosted-signup-ip` budget as follows. The product limit
+is 20 attempts per address per hour (`HostedAuth.SignUpsPerIp` and `SignUpWindow`), including starts that leave an
+email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; imported users consume none.
+
+| Spec address | Platform sign-up charges per run | Limit |
+| --- | ---: | ---: |
+| `journey/setup.spec.ts` | 2 | 20/hour |
+| `hosted/hosted.spec.ts` | 5 | 20/hour |
+| `hosted/attack-protection.spec.ts` | 1 | 20/hour |
+| `hosted/imported-password-race.spec.ts` | 1 | 20/hour |
+| `hosted/project-mfa.spec.ts` | 2 | 20/hour |
+| `hosted/project-sign-in.spec.ts` | 2 | 20/hour |
+| `hosted/user-profiles.spec.ts` | 1 | 20/hour |
+| `interactions/auth-organizations.spec.ts` | 1 | 20/hour |
+| `interactions/auth-webhooks.spec.ts` | 6 | 20/hour |
+| `journey/invitation.spec.ts` | 1 | 20/hour |
+| `journey/finish.spec.ts` | 1 | 20/hour |
+| `hosted/signup-address-limit.spec.ts` | 20 admitted, attempt 21 refused | 20/hour |
+| Each other spec's own address | 0 | 20/hour |
+
+Teardown prints `signup address <address> <spec>: <stored count>/20 per hour`, reading the limiter's persisted
+counts with the same keyed subject derivation. Ordinary addresses spend at most 6 of 20 slots. Each invocation
+allocates a fresh address range, so consecutive runs on the same stack do not inherit a previous run's budget.
+Attack protection and sign-in limit specs retain one dedicated address per spec across every browser context and
+API client; the sign-up limit spec alone exhausts its dedicated address.
+
+Add a sign-up to the address of its spec, keep that spec's complete ordinary run below 20, and update this table
+from the stored counts. Open browser contexts through `auditedContext`; create standalone API clients through
+`support/client-address.request`. The normal `page`, `context` and `request` fixtures already use the spec address.
+Keep limit probes in their dedicated spec and use its single address throughout. New specs automatically get their
+own address without a product setting or a special header. Production uses the machine's real address directly.
+
 ## Two local TerraBase regions
 
 Placement work uses an opt-in pair of real cells, with the same builds and namespaces:
@@ -86,8 +130,7 @@ for the project, list no bucket and hold neither the object nor the database; th
 no closure of its project. Its second test upgrades its owner to Pro at the Stripe stand-in for a second project,
 creates a database of that project through fra, sees the console's project deletion refused with 409 while a `GET`
 of the closure on each internal listener shows no fence in gru or fra, then deletes the database, deletes the project
-and deletes the account. The deleted databases are listed as retained in both regions before project deletion;
-that explicit permanent deletion then prevents restoring either database. Its third test signs up nobody: it sends a closure, the same closure with the header
+and deletes the account. Its third test signs up nobody: it sends a closure, the same closure with the header
 `X-TerraBase-Closure-Scope: region` and the check of the dashboard's platform project to fra's internal listener, for
 both versions, and each answers 409 `platform_project_protected`.
 
@@ -105,6 +148,25 @@ The `multi-region faults` shard of `journey.yml` shares the normal service and S
 `E2E_REGIONS=2 E2E_NODES_PER_REGION=2` before prepare/start and selects `--project fault`, with one worker for
 the fault specs. Local runs use the same variables and normal prepare/start/up/stop lifecycle, followed by
 `bash env/local.sh exec npx playwright test --project fault` from `e2e/`.
+
+The shard also builds a journey-only receipt driver from the same product sources.
+Its exporter copy includes receipt kinds only inside that driver; the shipped exporter
+is unchanged. The driver uses the real engine, catalog schema, serializers and importer
+to prove receipt bytes and holder/authority bindings through the real importer,
+atomic refusal of invalid or conflicting evidence, and byte-preserving receipt-free
+import retention. Isolated pairs of real driver nodes with their own NATS exercise
+the real drain and preparation endpoints: retained receipt bytes and unapplied
+snapshot sentinels prove refusal while background maintenance runs; the source
+resumes management writes and reads after receipt or
+row/byte-limit rejection. Only the journey copy sends receipts; the product
+importer and handoff refusal path are unchanged in the driver. It adds no runtime
+product setting.
+
+Alongside the journey shards, the separately selected `engine crash recovery` job runs `env/engine-crash.py` against the shared PR service artifact
+and a separate build of the PR base revision. It checks rollback startup on each crash directory, stale rewrite
+intents at both rename boundaries, idle retained-history draining, missing root stores and three large-file
+recovery samples. It requires 24 GB of disk headroom below 80% use and removes its data and baseline source.
+Local runs pass the rollback DLL as the script's only argument, with DOTNET_ROOT and DOTNET_PROCESSOR_COUNT=4.
 
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
 8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
@@ -394,8 +456,10 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
 - Step-ups: ts-auth issues at most 10 per user in 15 minutes (`StepUpProofs.cs:60-62,94`); a run spends 1 for the
   desktop owner (account deletion), 9 for the phone-and-flows owner (2 access tokens and 2 API-key rotations in `interactions`, 4 in
   `hosted`, account deletion), and 1 for the paid owner (account deletion). API-key creation and revocation need none.
-  Profile, project organization, impersonation and machine-credential flows share one dedicated owner with nine
-  proofs including cleanup, so they spend none of the main owner's proofs and remain within the signup limit.
+  Impersonation and machine-credential flows share a dedicated auth-feature owner. Profiles and project
+  organization policy each provision and delete their own owner and project, keeping verified domains,
+  organization suggestions and proof budgets independent of parallel flows. They spend none of the main
+  owner's proofs and remain within their spec's signup limit.
   Webhook delivery flows use separate owners for both failing and healthy projects. The hasher fairness measurement
   runs in the serial finish phase after the browser flows, retaining its latency thresholds and concurrent hashing load.
 - Secrets: every value the run generates is registered through `saveSecret` in `support/state.ts` or in
@@ -430,3 +494,11 @@ still refuses tenant_busy and verifies that every operation ran. The local edge 
 ## Social provider stand-in
 
 The OAuth2 provider at identity.journey.terrascale.tech is served by env/oauth2.mjs behind the same edge. It validates redirect, state, one-use authorization code and PKCE, and supplies verified or unverified email claims through userinfo. Only inside the isolated namespace, 93.184.215.14/32 is assigned to loopback and this hostname resolves to it; every other hostname keeps its existing mapping. This exercises the production public-address SSRF checks without permitting loopback providers or any external route. The browser journey proves email ownership before creating or linking a user, replay refusal, and subsequent subject-based sign-in.
+
+## SQL session lost replies
+
+The SQL sessions case of `journey/finish.spec.ts` runs each SDK's public session through a loopback network proxy
+(`sdk/session-proxy.ts`) forwarding to the real HTTPS edge. It discards a successful COMMIT or autocommit
+answer before delivering it, checks the persisted row through REST, and counts frames and upgrades to refuse
+replays and fresh transactions. The control closes the connection before COMMIT and verifies rollback.
+Python runs both its synchronous and asynchronous session. No SDK or server contains a fault hook.

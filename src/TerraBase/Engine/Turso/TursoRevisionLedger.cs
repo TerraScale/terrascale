@@ -99,17 +99,6 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         }
     }
 
-    internal void AdoptReplica(SqliteConnection writer, DatabaseRevision revision)
-    {
-        lock (_gate)
-        {
-            ThrowIfFenced();
-            _attached = null;
-            _manifest = new RevisionManifest(revision.Incarnation, checked(revision.Generation + 1), null, null, [], []);
-            Attach(writer);
-        }
-    }
-
     internal void Catch(SqliteConnection writer)
     {
         if (!IsAttachedTo(writer))
@@ -310,6 +299,10 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
 
     private bool CheckpointLocked(SqliteConnection writer)
     {
+        if (writer.CloseRefusal?.Invoke() is { } refusal)
+        {
+            throw new StorageCopyFaultedException(refusal);
+        }
         ThrowIfFenced();
         Refresh(writer);
         if (_live.MaxFrame == 0 && !_live.Full)
@@ -323,6 +316,10 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         bool truncated;
         try
         {
+            if (writer.CloseRefusal?.Invoke() is { } currentRefusal)
+            {
+                throw new StorageCopyFaultedException(currentRefusal);
+            }
             truncated = writer.TryCheckpointTruncate(end);
         }
         catch

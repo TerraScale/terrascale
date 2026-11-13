@@ -248,7 +248,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
                     }
                 }
 
-                node.Value = node.Value with { Finish = finish + (StorageWork.IsBulk ? 65536L * 64 : 65536 / weight) };
+                node.Value = node.Value with { Finish = finish + 65536 / weight };
                 _work.AddLast(node);
                 Monitor.PulseAll(_queueGate);
             }

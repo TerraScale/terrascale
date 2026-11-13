@@ -694,6 +694,12 @@ func sameOrigin(sent *url.URL, want *string) bool {
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	if os.Getenv("E2E_SESSION_FAULT") != "" {
+		if err := sessionFault(ctx); err != nil {
+			panic(err)
+		}
+		return
+	}
 	raw, err := os.ReadFile(os.Getenv("E2E_OPERATIONS"))
 	if err != nil {
 		panic(err)

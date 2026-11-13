@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { test, expect, Audit, auditedContext } from '../support/audit';
+import { budgetWindow, waitForBudgetWindow } from '../support/budget-window';
 import { hostedReady, signUp, verify, onboard } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
@@ -160,8 +161,17 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
     await page.locator('input[name=account_lockout]').uncheck();
     await page.getByRole('button', { name: 'Save attack protection', exact: true }).click();
     await expect(page.locator('input[name=account_lockout]')).not.toBeChecked();
-    for (let index = 0; index < 10; index++) expect((await attempt('wrong-unlocked-' + index, challenge())).status()).toBe(401);
-    expect((await attempt(password, challenge())).status()).toBe(429);
+    const window = 15 * 60_000;
+    await waitForBudgetWindow(page.request, window);
+    let firstWindow: number | undefined;
+    for (let index = 0; index < 10; index++) {
+      const wrong = await attempt('wrong-unlocked-' + index, challenge());
+      firstWindow ??= budgetWindow(wrong, window);
+      expect(wrong.status()).toBe(401);
+    }
+    const limited = await attempt(password, challenge());
+    expect(budgetWindow(limited, window)).toBe(firstWindow);
+    expect(limited.status()).toBe(429);
     await audit.finish();
     await context.storageState({ path: join(stateDir, 'attack-protection.session.json') });
     writeFileSync(join(stateDir, 'attack-protection.json'), JSON.stringify({ tenant, email, ownerEmail }), { mode: 0o600 });

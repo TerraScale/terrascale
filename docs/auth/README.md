@@ -51,3 +51,5 @@ Use `make auth-build` and `make auth-check` from the monorepo root. CI builds an
 Deploy only green main. SDK publishing, legal terms and secret rotation for launch remain [deferred](../decisions/go-live.md).
 
 - [Project organizations](project-organizations.md)
+
+[Single sign-on account proof](sso-account-proof.md) describes local proof and MFA at the organization OIDC boundary.

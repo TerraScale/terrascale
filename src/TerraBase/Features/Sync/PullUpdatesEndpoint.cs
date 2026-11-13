@@ -85,7 +85,6 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         {
             return ErrorResponse.From(missing);
         }
-        using var bulk = StorageWork.Bulk();
         var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
         var address = HttpContext.Connection.RemoteIpAddress?.MapToIPv4();
         if (!nodes.Any(node => node.Region == options.Region && node.Name != options.MachineId && node.Address.Equals(address)))

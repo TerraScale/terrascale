@@ -19,8 +19,6 @@ internal interface IDatabaseRevisions
 
     ValueTask<bool> StartIncarnationAsync(TenantContext database, CancellationToken cancellationToken);
 
-    ValueTask<bool> AdoptReplicaRevisionAsync(TenantContext database, DatabaseRevision revision, CancellationToken cancellationToken);
-
     ValueTask<bool> DrainWritersAsync(TenantContext database, CancellationToken cancellationToken);
     ValueTask<DatabaseRevision?> CurrentRevisionAsync(TenantContext database, CancellationToken cancellationToken);
 }

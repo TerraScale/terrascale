@@ -2,7 +2,7 @@ import type { APIRequestContext } from '@playwright/test';
 import { deleteAccount } from '../support/account';
 import { test, expect } from '../support/remote-database';
 import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
-import { runOperations, sdks } from '../support/sdk';
+import { runOperations, runSessionFault, sdks } from '../support/sdk';
 import { prepareAuthManagement, closeAuthManagement } from '../support/auth-management';
 import { deleteProjectOwner } from '../support/project-owner';
 import { checkPasswordFairness } from '../support/password-fairness';
@@ -38,6 +38,27 @@ test('delete the dedicated auth feature owner after all auth flows', async ({ br
 test('a tenant at its hashing cap leaves other tenants normal sign-in capacity', async ({ browser }) => {
   await checkPasswordFairness(browser);
 });
+
+test('SQL sessions retain uncertainty after lost committing replies', async () => {
+  const failures: string[] = [];
+  for (const sdk of sdks) {
+    for (const asynchronous of sdk === 'python' ? [false, true] : [false]) {
+      const modes = ['commit', 'before', 'autocommit', 'batch', 'read'];
+      if (sdk === 'go') modes.push('overtake-commit', 'overtake-rollback', 'overtake-begin', 'overtake-batch', 'sql-error');
+      if (sdk === 'go' || sdk === 'rust') modes.push('retry');
+      if (sdk !== 'js') modes.push('cancel');
+      if (sdk === 'python' && !asynchronous) modes.push('dbapi');
+      for (const mode of modes) {
+        await test.step(`${sdk} ${mode}${asynchronous ? ' async' : ''}`, async () => {
+          try { await runSessionFault(sdk, mode, asynchronous); }
+          catch (error) { failures.push(`${sdk} ${mode}${asynchronous ? ' async' : ''}: ${String(error)}`); }
+        });
+      }
+    }
+  }
+  expect(failures).toEqual([]);
+});
+
 
 test.describe('SDK group A', () => {
   for (const sdk of sdks) {
@@ -96,65 +117,6 @@ test.describe('database deletion', () => {
     await expect(page.locator('main tr').filter({ hasText: current.databaseName })).toHaveCount(0);
     await audit.check('databases after deletion');
   });
-  test('a deleted database is unreachable, listed for seven days, and restores its rows', async ({ request }) => {
-    const current = journey();
-    const headers = await placementHeaders(request);
-    const databases = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases`;
-    const created = await request.post(databases, { headers, data: { name: `undo-${current.runId}`, ttlSeconds: 3600 } });
-    expect(created.status()).toBe(201);
-    const database = await created.json();
-    const url = `${databases}/${database.id}`;
-    const deletedUrl = `https://api.terrascale.tech/v1/projects/${current.projectId}/deleted-databases`;
-    try {
-      const written = await request.post(`${url}/sql/execute`, {
-        headers,
-        data: { statements: [{ sql: 'CREATE TABLE kept (value TEXT)' }, { sql: "INSERT INTO kept VALUES ('retained')" }] },
-      });
-      expect(written.status()).toBe(200);
-      const deployed = await request.put(`${url}/functions/kept`, {
-        headers, data: { source: 'function handler() { console.log("kept function"); return { kept: true }; }', cron: '* * * * *' },
-      });
-      expect(deployed.status()).toBe(200);
-      expect((await request.post(`${url}/functions/kept/invoke`, { headers, data: {} })).status()).toBe(200);
-      const deleted = await request.delete(url, { headers });
-      expect(deleted.status()).toBe(204);
-      expect(deleted.headers()['terrabase-storage-released']).toBe('at-purge');
-      expect((await request.get(url, { headers })).status()).toBe(404);
-      expect((await request.post(`${url}/functions/kept/invoke`, { headers, data: {} })).status()).toBe(404);
-      expect((await request.post(`${url}/sql/execute`, { headers, data: { statements: [{ sql: 'SELECT * FROM kept' }] } })).status()).toBe(404);
-      const listed = await request.get(`${deletedUrl}?limit=100`, { headers });
-      expect(listed.status()).toBe(200);
-      const retained = (await listed.json()).items.find((item: { id: string }) => item.id === database.id);
-      expect(retained.name).toBe(database.name);
-      expect(Date.parse(retained.purgeAt) - Date.parse(retained.deletedAt)).toBe(7 * 24 * 60 * 60 * 1000);
-      const restored = await request.post(`${deletedUrl}/${database.id}/restore`, { headers });
-      expect(restored.status()).toBe(200);
-      expect(await restored.json()).toMatchObject({ id: database.id, name: database.name, expiresAt: null });
-      const read = await request.post(`${url}/sql/execute`, { headers, data: { statements: [{ sql: 'SELECT value FROM kept' }] } });
-      expect(read.status()).toBe(200);
-      expect((await read.json()).results[0].rows).toEqual([['retained']]);
-      expect((await request.post(`${url}/functions/kept/invoke`, { headers, data: {} })).status()).toBe(200);
-      const after = await request.get(`${deletedUrl}?limit=100`, { headers });
-      expect(after.status()).toBe(200);
-      expect((await after.json()).items.some((item: { id: string }) => item.id === database.id)).toBe(false);
-      expect((await request.delete(url, { headers })).status()).toBe(204);
-      const purging = await request.delete(`${deletedUrl}/${database.id}`, { headers });
-      expect([202, 204]).toContain(purging.status());
-      if (purging.status() === 202) {
-        expect(await purging.json()).toMatchObject({ id: database.id, state: 'destroying' });
-      }
-      const job = await request.get(`${deletedUrl}/${database.id}`, { headers });
-      expect(job.status()).toBe(200);
-      expect(await job.json()).toMatchObject({ id: database.id });
-      const repeated = await request.delete(`${deletedUrl}/${database.id}`, { headers });
-      expect([202, 204, 404]).toContain(repeated.status());
-      expect((await request.post(`${deletedUrl}/${database.id}/restore`, { headers })).status()).toBe(404);
-    } finally {
-      await request.delete(url, { headers });
-      await request.delete(`${deletedUrl}/${database.id}`, { headers });
-    }
-  });
-
   test('the dashboard creates, renames and deletes a database outside its own region', async ({ remoteDatabase }) => {
     await remoteDatabase();
   });

@@ -2,6 +2,7 @@ using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using TerraBase.Configuration;
@@ -9,11 +10,8 @@ using TerraBase.Engine.Revisions;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
-using TerraBase.Features.Management;
-using TerraBase.Features.HomePush;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -29,7 +27,7 @@ internal readonly union DrainReservation(NatsKVEntry<byte[]>, Unavailable);
 
 internal sealed partial class RegionalHandoff(
     TerraBaseOptions options, RegionalOwners owners, HomeLeaseGate gate, InternalCredential credential,
-    IServiceProvider services, ILogger<RegionalHandoff> logger) : BackgroundService
+    IServiceProvider services, IMeterFactory meters, ILogger<RegionalHandoff> logger) : BackgroundService
 {
     internal const string Bucket = "terrabase-region-owners";
     private readonly SemaphoreSlim _changing = new(1, 1);
@@ -52,7 +50,6 @@ internal sealed partial class RegionalHandoff(
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         gate.RegionalWriter = () => owners.Writer;
-        gate.RegionalEpoch = () => owners.Find(options.Region)?.Epoch ?? 0;
         return base.StartAsync(cancellationToken);
     }
 
@@ -63,7 +60,7 @@ internal sealed partial class RegionalHandoff(
             return;
         }
 
-        _nats = new NatsConnection(new NatsOpts
+        var connectionOptions = new NatsOpts
         {
             Url = url.ToString(),
             AuthOpts = new NatsAuthOpts { Token = token },
@@ -71,91 +68,60 @@ internal sealed partial class RegionalHandoff(
             MaxReconnectRetry = -1,
             ReconnectWaitMin = TimeSpan.FromMilliseconds(100),
             ReconnectWaitMax = TimeSpan.FromSeconds(1),
-        });
+        };
+        _nats = new NatsConnection(connectionOptions);
         var js = new NatsJSContext(_nats);
-        while (!stoppingToken.IsCancellationRequested)
+        Task? observations = null;
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                await _nats.ConnectAsync().ConfigureAwait(false);
-                _kv ??= await new NatsKVContext(js).CreateOrUpdateStoreAsync(new NatsKVConfig(Bucket)
+                try
                 {
-                    History = 1,
-                    Storage = NatsKVStorageType.File,
-                    NumberOfReplicas = _nats.ServerInfo?.Cluster is { Length: > 0 } ? 3 : 1,
-                }, stoppingToken).ConfigureAwait(false);
-                if (_writerLease is null)
-                {
-                    var writers = await new NatsKVContext(js).CreateOrUpdateStoreAsync(new NatsKVConfig(RegionalWriterLease.Bucket)
+                    if (_kv is null || _writerLease is null)
                     {
-                        History = 1,
-                        Storage = NatsKVStorageType.File,
-                        NumberOfReplicas = _nats.ServerInfo?.Cluster is { Length: > 0 } ? 3 : 1,
-                        LimitMarkerTTL = RegionalWriterLease.Ttl,
-                    }, stoppingToken).ConfigureAwait(false);
-                    _writerLease = new RegionalWriterLease(js, writers, options.Region, options.MachineId, _session);
+                        await _nats.ConnectAsync().AsTask().WaitAsync(stoppingToken).ConfigureAwait(false);
+                        _kv ??= await new NatsKVContext(js).CreateOrUpdateStoreAsync(new NatsKVConfig(Bucket)
+                        {
+                            History = 1,
+                            Storage = NatsKVStorageType.File,
+                            NumberOfReplicas = _nats.ServerInfo?.Cluster is { Length: > 0 } ? 3 : 1,
+                        }, stoppingToken).ConfigureAwait(false);
+                        if (_writerLease is null)
+                        {
+                            var writers = await new NatsKVContext(js).CreateOrUpdateStoreAsync(new NatsKVConfig(RegionalWriterLease.Bucket)
+                            {
+                                History = 1,
+                                Storage = NatsKVStorageType.File,
+                                NumberOfReplicas = _nats.ServerInfo?.Cluster is { Length: > 0 } ? 3 : 1,
+                                LimitMarkerTTL = RegionalWriterLease.Ttl,
+                            }, stoppingToken).ConfigureAwait(false);
+                            _writerLease = new RegionalWriterLease(js, writers, options.Region, options.MachineId, _session);
+                        }
+                    }
+                    using var attempt = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    attempt.CancelAfter(AttemptBudget);
+                    await RefreshAsync(_kv, attempt.Token).ConfigureAwait(false);
+                    if (_renewalFailure is not null)
+                    {
+                        _renewalFailure = null;
+                        LogRenewalRecovered(logger, options.Region);
+                    }
+                    observations ??= ObserveRegionsAsync(connectionOptions, stoppingToken);
                 }
-                await RefreshAsync(_kv, stoppingToken).ConfigureAwait(false);
-            }
-            catch (Exception error) when (error is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
-            {
-                logger.ZLogWarning($"Regional ownership could not be confirmed; customer writes remain fenced after the lease expires: {error.GetType().Name:@Error}");
-            }
+                catch (Exception error) when (error is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
+                {
+                    RenewalFailed(error);
+                }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(250), stoppingToken).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromMilliseconds(250), stoppingToken).ConfigureAwait(false);
+            }
         }
-    }
-
-    private async Task RefreshAsync(INatsKVStore kv, CancellationToken cancellationToken)
-    {
-        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var region in nodes.Select(node => node.Region).Distinct(StringComparer.Ordinal))
+        finally
         {
-            await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
+            if (observations is not null)
             {
-                var entry = await ReadAsync(kv, region, cancellationToken).ConfigureAwait(false);
-                if (entry is null && region == options.Region)
-                {
-                    var first = new RegionalOwner(region, nodes.Where(node => node.Region == region).MinBy(node => node.Name, StringComparer.Ordinal)!.Name, 1, Version: ProtocolVersion);
-                    try
-                    {
-                        _ = await kv.CreateAsync(region, Encode(first), cancellationToken: cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (NatsKVCreateException)
-                    {
-                    }
-
-                    entry = await ReadAsync(kv, region, cancellationToken).ConfigureAwait(false);
-                }
-
-                if (entry is { } observed)
-                {
-                    var owner = Decode(observed.Value!);
-                    if (owner.Region != region || !nodes.Any(node => node.Region == region && node.Name == owner.Node))
-                    {
-                        throw new InvalidDataException("regional owner is outside admitted peers");
-                    }
-
-                    if (region == options.Region)
-                    {
-                        _startupOwner ??= owner;
-                    }
-
-                    if (region == options.Region && await RecoverTransferAsync(kv, observed, owner, cancellationToken).ConfigureAwait(false))
-                    {
-                        continue;
-                    }
-                    Observe(owner);
-                    if (region == options.Region && owner.Node == options.MachineId)
-                    {
-                        await RenewWriterAsync(kv, observed, owner, cancellationToken).ConfigureAwait(false);
-                    }
-                }
-            }
-            finally
-            {
-                _changing.Release();
+                await observations.ConfigureAwait(false);
             }
         }
     }
@@ -200,14 +166,13 @@ internal sealed partial class RegionalHandoff(
             _activationAfter = page.Next;
         }
         while (true);
-        while (owner.Transfer is { Phase: Activating })
+        do
         {
             var retained = await RegionalRetention.RecordsAsync(services.GetRequiredService<IStorageEngine>(), _activationRetainedAfter, cancellationToken).ConfigureAwait(false);
             foreach (var stored in retained.Records)
             {
                 var record = RegionalRetention.Read(stored);
-                if (services.GetRequiredService<IStorageEngine>().HasDatabaseFiles(record.Storage, cancellationToken)
-                    && !await leases.TakeRetainedRegionalAsync(record, source, cancellationToken).ConfigureAwait(false))
+                if (!await leases.TakeRetainedRegionalAsync(record, source, cancellationToken).ConfigureAwait(false))
                 {
                     return false;
                 }
@@ -218,6 +183,7 @@ internal sealed partial class RegionalHandoff(
                 break;
             }
         }
+        while (true);
         _activeEpoch = owner.Epoch;
         _activatingEpoch = 0;
         _activationAfter = null;
@@ -312,7 +278,7 @@ internal sealed partial class RegionalHandoff(
         {
             return Refuse("preparation catalog missing");
         }
-        await RegionalCatalog.ImportAsync(services.GetRequiredService<IStorageEngine>(), request.Catalog, cancellationToken).ConfigureAwait(false);
+        await RegionalCatalog.ImportAsync(services.GetRequiredService<IStorageEngine>(), request.Catalog, services.GetRequiredService<RegionalReceiptImports>(), cancellationToken).ConfigureAwait(false);
         await services.GetRequiredService<RegionReplication>().SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
 
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
@@ -376,7 +342,7 @@ internal sealed partial class RegionalHandoff(
             }
         }
 
-        if (request.Retained is not null && !await CertifyRetainedAsync(request.Retained, cancellationToken).ConfigureAwait(false))
+        if (request.Retained is not null && !await ReceiveRetainedAsync(request, cancellationToken).ConfigureAwait(false))
         {
             return Refuse("retained manifest or certified positions did not verify");
         }
@@ -540,19 +506,6 @@ internal sealed partial class RegionalHandoff(
             return DrainRefused(progress, "target is outside admitted regional peers");
         }
 
-        if (owners.Writer)
-        {
-            var manifest = await RegionalRetention.ManifestAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false);
-            using var certification = await _http.GetAsync(new Uri(peer.InternalListener(options.InternalPort), "/v1/rollout/retained/certification"), cancellationToken).ConfigureAwait(false);
-            var proof = certification.IsSuccessStatusCode
-                ? await certification.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.RetainedCertification, cancellationToken).ConfigureAwait(false) : null;
-            if (proof is null || proof.Missing != 0 || proof.Count != manifest.Count || proof.Digest != manifest.Digest)
-            {
-                var missing = proof is null ? manifest.Count : Math.Max(proof.Missing, Math.Abs(manifest.Count - proof.Count));
-                return new Unavailable($"candidate is still catching up: at least {Math.Max(1, missing)} retained copies missing or behind", "retained_catching_up");
-            }
-        }
-
         IDisposable? admission = null;
         await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -637,14 +590,9 @@ internal sealed partial class RegionalHandoff(
                 while (after is not null);
             }
 
-            var snapshot = promoting
-                ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null;
-            var retainedManifest = promoting
-                ? await RegionalRetention.ManifestAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false)
-                : null;
-
             var address = peer.InternalListener(options.InternalPort);
-            var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, snapshot, transfer.Id, retainedManifest), ReplicasJsonContext.Default.RegionalPrepare);
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, promoting
+                ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null, transfer.Id), ReplicasJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
             {
                 return DrainRefused(progress, "preparation payload bound reached");
@@ -730,8 +678,18 @@ internal sealed partial class RegionalHandoff(
 
     private static byte[] Encode(RegionalOwner owner) => JsonSerializer.SerializeToUtf8Bytes(owner, ReplicasJsonContext.Default.RegionalOwner);
 
-    private static RegionalOwner Decode(byte[] value) => JsonSerializer.Deserialize(value, ReplicasJsonContext.Default.RegionalOwner)
-        ?? throw new InvalidDataException("invalid regional owner");
+    private static RegionalOwner Decode(byte[] value)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize(value, ReplicasJsonContext.Default.RegionalOwner)
+                ?? throw new OwnershipRecordException("record_invalid", value.Length);
+        }
+        catch (JsonException)
+        {
+            throw new OwnershipRecordException("record_invalid", value.Length);
+        }
+    }
 
     private async Task<ServingNode?> SelfRegionPeerAsync(string node, CancellationToken cancellationToken)
     {

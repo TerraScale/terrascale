@@ -177,8 +177,8 @@ internal sealed partial class EngineManagementService
                 recording = true;
                 decision = await WriteAsync<RecordedDeletion>(async transaction =>
                 {
-                    if (await DatabasePurge.IsPermanentlyPurgedAsync(transaction, storage.DatabaseId!, token).ConfigureAwait(false)
-                        || source is not null && await DatabasePurge.IsPermanentlyPurgedAsync(transaction, source.DatabaseId!, token).ConfigureAwait(false))
+                    if (await DatabasePurge.IsDeletedAsync(transaction, storage.DatabaseId!, token).ConfigureAwait(false)
+                        || source is not null && await DatabasePurge.IsDeletedAsync(transaction, source.DatabaseId!, token).ConfigureAwait(false))
                     {
                         return false;
                     }
@@ -223,7 +223,7 @@ internal sealed partial class EngineManagementService
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, ManagedDatabase database,
         AllowanceCheck? allowance, CancellationToken cancellationToken)
     {
-        if (await DatabasePurge.IsPermanentlyPurgedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
+        if (await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
         {
             return ManagementErrors.IdTaken;
         }

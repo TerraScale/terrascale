@@ -22,6 +22,14 @@ internal static class BearerChallenge
             return Task.CompletedTask;
         });
         await next().ConfigureAwait(false);
+        if (context.Response.StatusCode == StatusCodes.Status401Unauthorized && !context.Response.HasStarted && TokenKeysPending.On(context))
+        {
+            context.Response.Headers.RetryAfter = "1";
+            await BadRequests.WriteAsync(
+                context, StatusCodes.Status503ServiceUnavailable, TokenKeysPending.Code, TokenKeysPending.Message, op: null).ConfigureAwait(false);
+            return;
+        }
+
         if (Listeners.ArrivedOn(context) == TerraBaseListener.Client
             && context.Response.StatusCode == StatusCodes.Status401Unauthorized
             && !context.Response.HasStarted

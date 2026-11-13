@@ -1,10 +1,8 @@
 # Crypto-shredding of deleted databases
 
-A successful database DELETE enters the [seven-day deleted state](database-deletion.md) before returning 204.
-Wrapped envelope keys and backups remain available until the restoration deadline. Permanent cleanup after that
-deadline destroys the keys; if custody cannot confirm absence, durable erasure work remains pending.
-Explicit project erasure and account deletion apply permanent authority to every database they own, including
-retained deleted databases; a project closure answers `accepted` only once those keys are destroyed, by its own
+A successful database DELETE destroys its wrapped envelope keys before returning 204. If custody cannot confirm
+absence, DELETE returns 503 and durable erasure work retries. Project and account deletion apply the same authority
+to every database they own; a project closure answers `accepted` only once those keys are destroyed, by its own
 request when they fit in its 10-second erasure budget, otherwise by the purge passes or a later request.
 
 The [F11 deletion contract](crypto-shredding-f11.md) specifies key custody, persisted-copy protection, regional

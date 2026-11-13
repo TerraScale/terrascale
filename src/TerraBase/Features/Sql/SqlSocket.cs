@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Net.WebSockets;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.Json;
+using TerraBase.Engine;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -65,6 +66,7 @@ internal sealed class SqlSocket(
     private bool _canWrite;
     private bool _failed;
     private bool _closing;
+    private DateTimeOffset? _tokenExpiry;
 
     private ISqlSession Session => _session!;
 
@@ -84,6 +86,11 @@ internal sealed class SqlSocket(
             return;
         }
 
+        _tokenExpiry = context.Features.Get<ProjectToken>()?.ExpiresAt;
+        using var expiry = _tokenExpiry is { } end
+            ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time)
+            : new CancellationTokenSource();
+        await using var expired = expiry.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the token expired")).ConfigureAwait(false);
         _session = sql.Open(Database, _canWrite);
         _session.Prefer(WritePreference.Parse(context.Request.Headers[WritePreference.Header]) ?? WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))
@@ -169,7 +176,9 @@ internal sealed class SqlSocket(
         var authenticated = await ApiKeysExtensions.AuthenticateAgainAsync(context).ConfigureAwait(false);
         if (!authenticated.Succeeded)
         {
-            return await RefuseAsync(request.Id, CredentialRevoked, cancellationToken).ConfigureAwait(false);
+            return await RefuseAsync(request.Id, TokenKeysPending.On(context)
+                ? new SqlError(SqlErrors.Unavailable, TokenKeysPending.Code + ": " + TokenKeysPending.Message)
+                : CredentialRevoked, cancellationToken).ConfigureAwait(false);
         }
 
         context.User = authenticated.Principal;
@@ -184,13 +193,13 @@ internal sealed class SqlSocket(
         }
 
         _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded;
-        switch (await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false))
+        switch (await CheckTenantAsync(cancellationToken).ConfigureAwait(false))
         {
             case TenantContext found:
                 _database = found;
                 break;
             case Unavailable unavailable:
-                return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable, unavailable.Message), cancellationToken).ConfigureAwait(false);
+                return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);
             default:
                 return await RefuseAsync(request.Id, UnknownDatabase, cancellationToken).ConfigureAwait(false);
         }
@@ -204,7 +213,7 @@ internal sealed class SqlSocket(
                     $"the database is served in {string.Join(", ", record.Regions(region))}, not {region}; connect through its home region {record.Home(region)}"),
                     cancellationToken).ConfigureAwait(false);
             case Unavailable unavailable:
-                return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable, unavailable.Message), cancellationToken).ConfigureAwait(false);
+                return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);
         }
 
         await SendAsync(new SqlSocketResult(request.Id, "result", [], false), SqlJsonContext.Default.SqlSocketResult, cancellationToken).ConfigureAwait(false);
@@ -325,7 +334,7 @@ internal sealed class SqlSocket(
                 await CloseAsync(WebSocketCloseStatus.PolicyViolation, refused.Message).ConfigureAwait(false);
                 return false;
             case Unavailable unavailable:
-                await SendErrorAsync(request.Id, new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, unavailable.Message), 0), cancellationToken).ConfigureAwait(false);
+                await SendErrorAsync(request.Id, new SqlBatchFailure(new SqlError(unavailable.Code, unavailable.Message), 0), cancellationToken).ConfigureAwait(false);
                 return true;
         }
 
@@ -348,6 +357,14 @@ internal sealed class SqlSocket(
             try
             {
                 outcome = await RunAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (StorageCopyFaultedException)
+            {
+                outcome = new SqlBatchFailure(new SqlError(SqlErrors.CopyFaulted, "copy_faulted: Storage requires recovery."), 0);
+            }
+            catch (StorageProofPendingException)
+            {
+                outcome = new SqlBatchFailure(new SqlError(SqlErrors.RecoveryPending, "recovery_pending: Storage recovery proof is pending; retry."), 0);
             }
             catch (QosMemoryException)
             {
@@ -386,10 +403,17 @@ internal sealed class SqlSocket(
 
     private async ValueTask<object?> AuthorizeAsync(CancellationToken cancellationToken)
     {
+        if (_tokenExpiry is { } expires && time.GetUtcNow() >= expires)
+        {
+            return CredentialRevoked;
+        }
+
         var authenticated = await ApiKeysExtensions.AuthenticateAgainAsync(context).ConfigureAwait(false);
         if (!authenticated.Succeeded)
         {
-            return CredentialRevoked;
+            return TokenKeysPending.On(context)
+                ? new Unavailable(TokenKeysPending.Code + ": " + TokenKeysPending.Message)
+                : CredentialRevoked;
         }
 
         context.User = authenticated.Principal;
@@ -399,12 +423,28 @@ internal sealed class SqlSocket(
             return CredentialRevoked;
         }
 
-        return await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false) switch
+        return await CheckTenantAsync(cancellationToken).ConfigureAwait(false) switch
         {
             TenantContext found when found.DatabaseId == Database.DatabaseId && found.OrganizationId == Database.OrganizationId => null,
             Unavailable error => error,
             _ => CredentialRevoked,
         };
+    }
+
+    private async ValueTask<TenantResult> CheckTenantAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false);
+        }
+        catch (StorageCopyFaultedException)
+        {
+            return new Unavailable("Storage requires recovery.", SqlErrors.CopyFaulted);
+        }
+        catch (StorageProofPendingException)
+        {
+            return new Unavailable("Storage recovery proof is pending; retry.", SqlErrors.RecoveryPending);
+        }
     }
 
     private async ValueTask<SqlBatchOutcome> RunAsync(SqlSocketRequest request, CancellationToken cancellationToken)

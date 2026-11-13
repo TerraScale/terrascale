@@ -9,9 +9,9 @@ namespace TerraScale.DotNet.TerraBase;
 /// <summary>
 /// A SQL WebSocket session (<c>terrascale.sql.v1</c>). Outside a transaction every call runs as its own transaction;
 /// <see cref="BeginAsync"/> opens one that lasts at most 5 seconds. Calls may overlap; the server answers them in order.
-/// Nothing is resent. When the socket drops, calls in flight fail and the next call opens a new socket; a transaction
-/// open at the drop rolled back, and every call but <see cref="RollbackAsync"/> throws
-/// <see cref="TerraBaseSqlErrorCodes.TransactionRolledBack"/> until the caller rolls back. Dispose closes the socket,
+/// Nothing is resent. A lost committing answer closes the session with <c>write_outcome_unknown</c> (08007),
+/// retained for every later call. Without a committing request, a lost open transaction throws
+/// <see cref="TerraBaseSqlErrorCodes.TransactionRolledBack"/> until <see cref="RollbackAsync"/>. Dispose closes the socket,
 /// rolls back an open transaction and ends the session.
 /// </summary>
 public sealed class TerraBaseSqlSession : IAsyncDisposable
@@ -29,6 +29,8 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
     private readonly SemaphoreSlim sending = new(1, 1);
     private readonly SemaphoreSlim connecting = new(1, 1);
     private readonly CancellationTokenSource closing = new();
+    private readonly Lock stateGate = new();
+    private volatile TerraBaseSqlException? uncertain;
     private Link link;
     private long nextId;
     private volatile bool transaction;
@@ -188,6 +190,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         await connecting.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (uncertain is { } failure) throw failure;
             ObjectDisposedException.ThrowIf(disposed, this);
             current = link;
             if (Volatile.Read(ref current.Failure) is null) return current;
@@ -206,46 +209,60 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
 
     private async Task<TerraBaseSqlSocketAnswer> SendAsync(string type, IReadOnlyList<TerraBaseSqlStatement>? statements, CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(disposed, this);
-        if (lostTransaction)
+        lock (stateGate)
         {
-            if (type != "rollback")
+            if (uncertain is { } failure) throw failure;
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (lostTransaction)
             {
-                throw new TerraBaseSqlException(null, "The SQL session lost its connection during a transaction, which rolled back; call RollbackAsync.",
-                    TerraBaseSqlErrorCodes.TransactionRolledBack, 0, "40000");
-            }
+                if (type != "rollback")
+                {
+                    throw new TerraBaseSqlException(null, "The SQL session lost its connection during a transaction, which rolled back; call RollbackAsync.",
+                        TerraBaseSqlErrorCodes.TransactionRolledBack, 0, "40000");
+                }
 
-            lostTransaction = false;
-            return Cleared;
+                lostTransaction = false;
+                return Cleared;
+            }
         }
 
         var id = Interlocked.Increment(ref nextId);
         var frame = TerraBaseRequestJson.Serialize(new TerraBaseSqlSocketRequest(id, type, statements), TerraBaseSqlJsonContext.Wire.TerraBaseSqlSocketRequest);
         if (frame.Length > MaxFrameBytes) throw new ArgumentException("A SQL frame is at most 1 MiB.", nameof(statements));
         var current = await CurrentAsync(cancellationToken).ConfigureAwait(false);
-        var answer = new TaskCompletionSource<TerraBaseSqlSocketAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
-        current.Pending[id] = answer;
+        var pending = new Pending(type);
+        current.Pending[id] = pending;
         try
         {
             await sending.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                lock (stateGate)
+                {
+                    if (uncertain is { } failure) throw failure;
+                    if (Volatile.Read(ref current.Failure) is { } dropped) throw Closed(dropped);
+                    pending.Committing = type == "commit" || type == "execute" && (!transaction || current.Pending.Values.Any(other => other.Sent && other.Control));
+                    pending.Sent = true;
+                }
                 await current.Socket.SendAsync(frame, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception sendError) when (sendError is WebSocketException or ObjectDisposedException && Volatile.Read(ref current.Failure) is { } dropped)
-            {
-                throw Closed(dropped);
             }
             finally
             {
                 sending.Release();
             }
 
-            if (Volatile.Read(ref current.Failure) is { } lost) answer.TrySetException(Closed(lost));
-            var received = await answer.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (Volatile.Read(ref current.Failure) is { } lost) pending.Answer.TrySetException(uncertain ?? Closed(lost));
+            var received = await pending.Answer.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             return received.Error is { } error
                 ? throw new TerraBaseSqlException(null, error.Message, error.Code, error.Statement, error.Sqlstate)
                 : received;
+        }
+        catch (Exception error) when (pending.Sent && !pending.Answer.Task.IsCompletedSuccessfully)
+        {
+            Drop(current, error);
+            current.Socket.Abort();
+            throw uncertain ?? Closed(error);
         }
         finally
         {
@@ -288,18 +305,44 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
                     throw new TerraBaseException(null, "TerraBase sent an invalid SQL frame.", "invalid_response", null);
                 }
 
-                transaction = answer.Transaction;
-                if (answer.Id is { } id && current.Pending.TryGetValue(id, out var waiter)) waiter.TrySetResult(answer);
-                else if (answer.Error is { } error) throw new TerraBaseSqlException(null, error.Message, error.Code, error.Statement, error.Sqlstate);
+                lock (stateGate)
+                {
+                    transaction = answer.Transaction;
+                    if (answer.Error is { Code: "write_outcome_unknown" or "commit_uncertain" } unknown)
+                        uncertain = new TerraBaseSqlException(null, unknown.Message, unknown.Code, unknown.Statement, unknown.Sqlstate);
+                    if (answer.Id is { } id && current.Pending.TryRemove(id, out var pending)) pending.Answer.TrySetResult(answer);
+                    else if (answer.Error is { } error) throw new TerraBaseSqlException(null, error.Message, error.Code, error.Statement, error.Sqlstate);
+                    if (uncertain is { } failure) throw failure;
+                }
             }
         }
         catch (Exception error)
         {
-            if (transaction) lostTransaction = true;
+            Drop(current, error);
+            socket.Abort();
+        }
+    }
+
+    private void Drop(Link current, Exception error)
+    {
+        lock (stateGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref link), current)) return;
+            if (current.Pending.Values.Any(pending => pending.Sent && pending.Committing))
+                uncertain ??= new TerraBaseSqlException(null, "The SQL session lost a committing answer; reconcile before repeating.", "write_outcome_unknown", 0, "08007", error);
+            if (transaction && uncertain is null) lostTransaction = true;
             transaction = false;
             Volatile.Write(ref current.Failure, error);
-            foreach (var waiter in current.Pending.Values) waiter.TrySetException(Closed(error));
+            foreach (var pending in current.Pending.Values) pending.Answer.TrySetException(uncertain ?? Closed(error));
         }
+    }
+
+    private sealed class Pending(string type)
+    {
+        public readonly TaskCompletionSource<TerraBaseSqlSocketAnswer> Answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly bool Control = type is "begin" or "commit" or "rollback";
+        public bool Sent;
+        public bool Committing;
     }
 
     private static Exception Closed(Exception cause) => cause switch
@@ -312,7 +355,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
     private sealed class Link(WebSocket socket) : IDisposable
     {
         public readonly WebSocket Socket = socket;
-        public readonly ConcurrentDictionary<long, TaskCompletionSource<TerraBaseSqlSocketAnswer>> Pending = new();
+        public readonly ConcurrentDictionary<long, Pending> Pending = new();
         public Task Receiving = Task.CompletedTask;
         public Exception? Failure;
 

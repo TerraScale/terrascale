@@ -40,7 +40,7 @@ The public listener serves `/openapi/v1.json` and `/scalar/`. `/healthz` is live
 ## Operations
 
 - [Zero-configuration contract](zero-configuration.md), [OCI hosting](../oci.md) and [ts-orch](ts-orch.md).
-- [Local host](local-host.md) and [region discovery](region-catalog.md).
+- [Local host](local-host.md), [process crash recovery](crash-recovery.md) and [region discovery](region-catalog.md).
 - [Regional rollout authority and recovery](regional-rollout-handoff.md): exclusive writer leases, durable drains and activation recovery.
 - [Continuous backup](backup.md), [crypto-shredding](crypto-shredding.md), [complete deletion](crypto-shredding-f11.md) and [deletion retention](deletion-retention.md).
 - [Regional organization plans](regional-organization-plans.md): publication and admission in every region.
@@ -54,4 +54,4 @@ Derive region, node and peers from `TS_REGION`, `TS_NODE` and `TS_PEERS_FILE`. O
 
 Use the exact SDK in `global.json` and the root Makefile (`make terrabase-build`). Ship from an isolated checkout with plain git ([Shipping](../dev/shipping.md)); see [CI](ci.md). Deployment requires green main; launch formalities remain [deferred](../decisions/go-live.md).
 
-- [Database deletion and restoration](database-deletion.md)
+- [Signing-key recovery and alerts](signing-key-operations.md).

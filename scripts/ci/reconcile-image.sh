@@ -24,7 +24,7 @@ else
     dotnet restore scripts/dashboard/TerraScale.Dashboard.slnx --locked-mode
     npm ci --prefix src/TerraScale.Dashboard/web
     dotnet build scripts/dashboard/TerraScale.Dashboard.slnx --configuration Release --no-restore
-    make dashboard-lint
+    Configuration=Release make dashboard-lint
     context=$RUNNER_TEMP/dashboard-publish
     dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore \
       --output "$context" -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$REVISION"

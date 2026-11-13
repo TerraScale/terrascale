@@ -247,7 +247,7 @@ internal sealed partial class RegionReplication
         timeout.CancelAfter(PlacementTimeout);
         try
         {
-            var observed = owners.Find(peer.Region);
+            var observed = owners.Confirmed(peer.Region);
             var writer = observed is { Activated: true } && observed.Node == peer.Name;
             if (options.NatsUrl is null)
             {
@@ -258,7 +258,7 @@ internal sealed partial class RegionReplication
             using var response = await _http.GetAsync(new Uri(peer.Internal, ReplicaRoutes.DatabasePath(database, "placement")), timeout.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                return writer && owners.Find(peer.Region) == observed ? new NotFound() : PlacementUnanswered;
+                return writer && owners.Confirmed(peer.Region) == observed ? new NotFound() : PlacementUnanswered;
             }
 
             return response.IsSuccessStatusCode
@@ -376,7 +376,7 @@ internal sealed partial class RegionReplication
                     if (home.Region == options.Region
                         && await remote.RetentionAsync(home.Internal, database, cancellationToken).ConfigureAwait(false) is not false)
                     {
-                        await SuspendAsync(database).ConfigureAwait(false);
+                        await StopFollowerAsync(Key(database)).ConfigureAwait(false);
                     }
                     else
                     {
@@ -414,6 +414,12 @@ internal sealed partial class RegionReplication
 
     private async Task StopFollowingAsync((string, string, string) key, TenantContext database, CancellationToken cancellationToken)
     {
+        await StopFollowerAsync(key).ConfigureAwait(false);
+        _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task StopFollowerAsync((string, string, string) key)
+    {
         Follower? follower;
         lock (_gate)
         {
@@ -425,7 +431,6 @@ internal sealed partial class RegionReplication
             await follower.StopAsync().ConfigureAwait(false);
         }
 
-        _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
     }
 
 }

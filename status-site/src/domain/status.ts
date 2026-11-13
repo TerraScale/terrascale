@@ -127,7 +127,11 @@ export const CANARY_QUOTA_EXHAUSTED = "Canary quota exhausted";
 export const EMAIL_INBOX_UNAVAILABLE = "Probe inbox unavailable";
 
 /** Notes of checks the monitor itself could not run. */
-const MONITOR_FAULTS: ReadonlySet<string> = new Set([CANARY_QUOTA_EXHAUSTED, EMAIL_INBOX_UNAVAILABLE]);
+const MONITOR_FAULTS: ReadonlySet<string> = new Set([
+  CANARY_CREDENTIAL_INVALID,
+  CANARY_QUOTA_EXHAUSTED,
+  EMAIL_INBOX_UNAVAILABLE,
+]);
 
 export const isMonitorFault = (note: string | null | undefined): note is string =>
   typeof note === "string" && MONITOR_FAULTS.has(note);

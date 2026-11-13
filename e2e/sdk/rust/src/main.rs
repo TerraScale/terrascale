@@ -1070,6 +1070,8 @@ impl Runner {
     }
 }
 
+mod session_fault;
+
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1079,6 +1081,15 @@ fn main() {
 }
 
 async fn run() -> i32 {
+    if std::env::var_os("E2E_SESSION_FAULT").is_some() {
+        return match session_fault::run().await {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("{error}");
+                1
+            }
+        };
+    }
     let env = |name: &str| std::env::var(name).unwrap_or_default();
     let spec: Value = serde_json::from_str(
         &std::fs::read_to_string(env("E2E_OPERATIONS")).expect("operations.json"),

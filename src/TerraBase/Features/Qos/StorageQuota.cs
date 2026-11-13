@@ -3,7 +3,6 @@ using Microsoft.Extensions.Caching.Memory;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.FileStorage;
-using TerraBase.Features.Management;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Qos;
@@ -28,15 +27,13 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
     private readonly MemoryCache _usage = new(new MemoryCacheOptions { SizeLimit = 1024 });
     private readonly IStorageEngine _engine;
     private readonly ITenantDirectory _directory;
-    private readonly SystemCatalog _catalog;
     private readonly Func<PlanTier, long> _limit;
 
-    public StorageQuota(IStorageEngine engine, ITenantDirectory directory, SystemCatalog catalog) : this(engine, directory, catalog, plan => QosPolicy.For(plan).StorageBytes) { }
-    private StorageQuota(IStorageEngine engine, ITenantDirectory directory, SystemCatalog catalog, Func<PlanTier, long> limit)
+    public StorageQuota(IStorageEngine engine, ITenantDirectory directory) : this(engine, directory, plan => QosPolicy.For(plan).StorageBytes) { }
+    internal StorageQuota(IStorageEngine engine, ITenantDirectory directory, Func<PlanTier, long> limit)
     {
         _engine = engine;
         _directory = directory;
-        _catalog = catalog;
         _limit = limit;
     }
 
@@ -215,18 +212,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
 
         if (!known)
         {
-            var retained = await _catalog.ReadAsync<RegisteredDatabaseResult>(async transaction =>
-                await SystemCatalog.GetAsync(transaction, DeletedDatabases.Kind, candidate.DatabaseId!, ManagementJsonContext.Default.DeletedDatabaseRecord,
-                    cancellationToken).ConfigureAwait(false) is { } record && DatabasePurge.SameDatabase(record.Storage, candidate),
-                static error => error, cancellationToken).ConfigureAwait(false);
-            if (retained is Unavailable error)
-            {
-                return error;
-            }
-            if (retained is false)
-            {
-                return null;
-            }
+            return null;
         }
 
         return await _engine.OpenDatabaseAsync(candidate, cancellationToken).ConfigureAwait(false) is { } store

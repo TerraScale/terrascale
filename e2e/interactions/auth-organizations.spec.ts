@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { Audit, auditedContext, expect, test } from '../support/audit';
-import { createProjectOwner } from '../support/project-owner';
+import { createDedicatedProjectOwner } from '../support/project-owner';
 import { signInToken } from '../support/auth-management';
 import { confirmWithPassword, hostedReady } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
@@ -18,7 +18,7 @@ function value<T>(result: TerraScaleResult<T>): T {
 }
 
 test('project organizations bind invitations, roles and refresh to the chosen organization', async ({ browser }, info) => {
-  const account = await createProjectOwner(browser, info);
+  const account = await createDedicatedProjectOwner(browser, info, 'Organization policy owner');
   const { current } = account;
   const sdk = createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' });
   const organizations = sdk.projects.organizations;
@@ -369,6 +369,6 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     for (const extra of extraOrganizations) value(await organizations.deleteOrganization(key, current.projectId, extra));
     if (client) value(await sdk.projects.deleteClient(key, current.projectId, client));
     await Promise.all([admin.close(), invited.close(), outsider.close()]);
-    await account.close();
+    await account.remove();
   }
 });

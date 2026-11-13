@@ -1,8 +1,10 @@
+using System.Globalization;
 using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json;
+using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Configuration;
@@ -10,27 +12,22 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Security;
+using TerraScale.Authentication.Storage;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.Sso;
 
-/// <summary>The browser's pending SSO sign-in, sealed into a short-lived cookie.</summary>
-/// <param name="State">The OAuth state.</param>
-/// <param name="Nonce">The ID token's nonce.</param>
-/// <param name="Verifier">The PKCE code verifier.</param>
-/// <param name="Domain">The connection.</param>
-/// <param name="Issuer">The issuer the request went to.</param>
-/// <param name="Next">The validated page to resume.</param>
-/// <param name="ExpiresAt">When the sign-in lapses.</param>
-public sealed record SsoState(string State, string Nonce, string Verifier, string Domain, string Issuer, string? Next, DateTimeOffset ExpiresAt);
+public sealed record SsoState(string State, string Nonce, string Verifier, string Domain, string Issuer, string? Next, DateTimeOffset ExpiresAt, string OrganizationId, DateTimeOffset ConnectionUpdatedAt);
 
 /// <summary>
 /// Platform sign-in through an organization's OpenID Connect identity provider: authorization code with PKCE, state and
 /// nonce, the ID token checked against the issuer's keys, and its email in the connection's verified domain. A first
 /// sign-in creates the account and joins the organization with the connection's default role.
 /// </summary>
-public sealed class SsoSignIn(SsoConnections connections, Users users, PlatformDirectory platform, AuthOptions options, IHttpClientFactory clients, TimeProvider clock, ILogger<SsoSignIn> logger)
+public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users users, PlatformDirectory platform, AuthOptions options, IHttpClientFactory clients, TimeProvider clock, ILogger<SsoSignIn> logger)
 {
     /// <summary>The page that starts an SSO sign-in.</summary>
     public const string StartPath = $"/ui/{OidcIssuer.Slug}/sso";
@@ -69,7 +66,7 @@ public sealed class SsoSignIn(SsoConnections connections, Users users, PlatformD
             return null;
         }
 
-        var state = new SsoState(Tokens.RandomToken(43), Tokens.RandomToken(43), Tokens.RandomToken(64), connection.Domain, issuer, next, clock.GetUtcNow() + Lifetime);
+        var state = new SsoState(Tokens.RandomToken(43), Tokens.RandomToken(43), Tokens.RandomToken(64), connection.Domain, issuer, next, clock.GetUtcNow() + Lifetime, connection.OrganizationId, connection.UpdatedAt);
         var location = QueryHelpers.AddQueryString(discovery.AuthorizationEndpoint, new Dictionary<string, string?>
         {
             ["response_type"] = "code",
@@ -102,15 +99,12 @@ public sealed class SsoSignIn(SsoConnections connections, Users users, PlatformD
         }
     }
 
-    /// <summary>
-    /// Redeems <paramref name="code"/> at the identity provider and returns the signed-in account (created and joined
-    /// on first use), or null when the response, the token or its email fails any check.
-    /// </summary>
-    public async Task<UserRecord?> CompleteAsync(SsoState pending, string code, CancellationToken cancellationToken)
+    public async Task<SsoCompletion?> CompleteAsync(SsoState pending, string code, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(pending);
         if (await connections.ForDomainAsync(pending.Domain, cancellationToken).ConfigureAwait(false) is not { Value: { VerifiedAt: not null, Protocol: SsoConnections.Oidc } connection }
-            || connection.Issuer != pending.Issuer || await platform.OrganizationAsync(connection.OrganizationId, cancellationToken).ConfigureAwait(false) is null
+            || connection.Issuer != pending.Issuer || connection.OrganizationId != pending.OrganizationId || connection.UpdatedAt != pending.ConnectionUpdatedAt
+            || await platform.OrganizationAsync(connection.OrganizationId, cancellationToken).ConfigureAwait(false) is null
             || await connections.DiscoverAsync(pending.Issuer, cancellationToken).ConfigureAwait(false) is not { } discovery)
         {
             return null;
@@ -157,9 +151,9 @@ public sealed class SsoSignIn(SsoConnections connections, Users users, PlatformD
         }).ConfigureAwait(false);
         var claims = result is { IsValid: true } ? result.Claims : null;
         string? Text(string name) => claims is not null && claims.TryGetValue(name, out var value) ? value as string : null;
-        var verified = claims is null || !claims.TryGetValue("email_verified", out var flag) || flag is true || flag is string text && text == "true";
-        // An identity provider that omits email_verified speaks for the domain its organization proved; an explicit false is refused.
+        var verified = claims is not null && claims.TryGetValue("email_verified", out var flag) && (flag is true || flag is string text && text == "true");
         if (claims is null || Text("nonce") is not { } nonce || !Tokens.FixedTimeEquals(nonce, pending.Nonce)
+            || Text("sub") is not { Length: > 0 and <= 1024 } subject
             || Text("azp") is { } azp && azp != connection.ClientId || !verified
             || Users.NormalizeEmail(Text("email")) is not { } email || SsoConnections.EmailDomain(email) != connection.Domain)
         {
@@ -167,20 +161,314 @@ public sealed class SsoSignIn(SsoConnections connections, Users users, PlatformD
             return null;
         }
 
-        var user = await users.FindByEmailAsync(PlatformDirectory.Instance, email, cancellationToken).ConfigureAwait(false)
-            ?? await users.CreateAsync(PlatformDirectory.Instance, email, cancellationToken).ConfigureAwait(false)
-            ?? await users.FindByEmailAsync(PlatformDirectory.Instance, email, cancellationToken).ConfigureAwait(false);
-        if (user is not null && await platform.RoleAsync(connection.OrganizationId, user.Id, cancellationToken).ConfigureAwait(false) is null
-            && await platform.AddMemberAsync(connection.OrganizationId, user.Id, connection.DefaultRole, cancellationToken).ConfigureAwait(false))
+        var user = await users.FindByEmailAsync(PlatformDirectory.Instance, email, cancellationToken).ConfigureAwait(false);
+        if (user is null)
         {
-            logger.ZLogInformation($"Audit: SSO sign-in joined user {user.Id:@UserId} to organization {connection.OrganizationId:@OrganizationId} as {connection.DefaultRole:@Role}");
+            var found = await connections.ForDomainAsync(connection.Domain, cancellationToken).ConfigureAwait(false);
+            var organization = await platform.OrganizationAsync(connection.OrganizationId, cancellationToken).ConfigureAwait(false);
+            if (found is null || found.Value != connection || organization is null)
+            {
+                return null;
+            }
+
+            var account = users.NewAccount(PlatformDirectory.Instance, email, null, AuthIds.New());
+            await platform.FenceAsync(connection.OrganizationId, null, null, cancellationToken).ConfigureAwait(false);
+            var link = Link(account.User, connection, subject);
+            if (await data.SaveAsync(
+                [.. account.Changes, Change.Assert(found), Change.Assert(organization),
+                    Change.Insert(new MembershipRecord(PlatformDirectory.Instance, connection.OrganizationId, account.User.Id, connection.DefaultRole, clock.GetUtcNow())),
+                    Change.Insert(link), platform.Audit(connection.OrganizationId, account.User.Id, "member.joined_sso", account.User.Id, connection.Domain)],
+                cancellationToken).ConfigureAwait(false))
+            {
+                logger.ZLogInformation($"Audit: user {account.User.Id:@UserId} joined organization {connection.OrganizationId:@OrganizationId} through SSO");
+                user = await users.GetAsync(PlatformDirectory.Instance, account.User.Id, cancellationToken).ConfigureAwait(false)
+                    ?? throw ApiException.Unavailable();
+                return await this.LinkedAsync(user, connection, subject, cancellationToken).ConfigureAwait(false) is { } createdLink
+                    ? new SsoLinked(user with { InboxProven = true }, subject, createdLink.Version) : null;
+            }
+
+            user = await users.FindByEmailAsync(PlatformDirectory.Instance, email, cancellationToken).ConfigureAwait(false);
         }
 
-        return user;
+        if (user is null || user.Disabled)
+        {
+            return null;
+        }
+
+        return await this.LinkedAsync(user, connection, subject, cancellationToken).ConfigureAwait(false) is { } heldLink
+            ? new SsoLinked(user with { InboxProven = true }, subject, heldLink.Version)
+            : new SsoUnlinked(user, subject);
     }
+
+    internal const string ProofCookie = "tsauth_sso_proof";
+
+    public const string LinkPath = $"/ui/{OidcIssuer.Slug}/sso/link";
+
+    internal void BeginProof(HttpContext context, SsoCompletion completed, SsoState pending)
+    {
+        var user = completed.User;
+        this.WriteProof(context, new SsoProof(user.Id, user.Email, user.AuthEpoch, user.AuthStamp, pending.Domain, pending.Issuer,
+            completed.Subject, completed.Match<string?>(linked => linked.LinkVersion, _ => null), pending.Next, clock.GetUtcNow() + Lifetime,
+            pending.OrganizationId, pending.ConnectionUpdatedAt, false));
+    }
+
+    internal async Task<IResult> LinkPromptAsync(HttpContext context, CancellationToken cancellationToken) =>
+        this.Proof(context) is { LinkVersion: null, Confirmed: false } proof
+        && await platform.OrganizationAsync(proof.OrganizationId, cancellationToken).ConfigureAwait(false) is { } organization
+            ? SignInPageModel.Render(context, new SignInPageModel(SignInStep.SsoLink, PlatformDirectory.Instance, proof.Email, proof.Next)
+            {
+                SsoOrganization = DisplayName(organization.Value.Name),
+                SsoIssuer = proof.Issuer,
+                SsoConfirmation = Digest(proof),
+            })
+            : SignInFlow.Refused(context);
+
+    internal SsoProof? Confirm(HttpContext context, string? confirmation)
+    {
+        if (this.Proof(context) is not { LinkVersion: null, Confirmed: false } proof
+            || confirmation is not { Length: 64 } || !Tokens.FixedTimeEquals(Digest(proof), confirmation))
+        {
+            return null;
+        }
+
+        var confirmed = proof with { Confirmed = true };
+        this.WriteProof(context, confirmed);
+        return confirmed;
+    }
+
+    private static string Digest(SsoProof proof) => Tokens.Sha256Hex(JsonSerializer.Serialize(proof, SsoStateJson.Default.SsoProof));
+
+    private static string DisplayName(string name) => string.Concat(name.EnumerateRunes()
+        .Where(rune => Rune.GetUnicodeCategory(rune) is not (UnicodeCategory.Control or UnicodeCategory.Format))
+        .Select(rune => rune.ToString()));
+
+    internal bool HasProof(HttpContext context) => this.Proof(context) is { LinkVersion: not null } or { Confirmed: true };
+
+    private void WriteProof(HttpContext context, SsoProof proof)
+    {
+        context.Items[ProofCookie] = proof;
+        var cookieOptions = ProofOptions;
+        cookieOptions.MaxAge = proof.ExpiresAt - clock.GetUtcNow();
+        context.Response.Cookies.Append(ProofCookie,
+            SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(proof, SsoStateJson.Default.SsoProof), ProofCookie), cookieOptions);
+    }
+
+    private SsoProof? Proof(HttpContext context)
+    {
+        if (context.Items.TryGetValue(ProofCookie, out var held))
+        {
+            return held as SsoProof;
+        }
+
+        SsoProof? proof;
+        try
+        {
+            proof = context.Request.Cookies[ProofCookie] is { Length: > 0 and <= 4096 } value
+                ? JsonSerializer.Deserialize(SecretBox.Open(options.MasterKey, value, ProofCookie), SsoStateJson.Default.SsoProof) : null;
+        }
+        catch (Exception error) when (error is CryptographicException or FormatException or JsonException or ArgumentException)
+        {
+            proof = null;
+        }
+
+        proof = proof is { Subject.Length: > 0 } && proof.ExpiresAt > clock.GetUtcNow() ? proof : null;
+        context.Items[ProofCookie] = proof;
+        if (proof is null)
+        {
+            Clear(context);
+        }
+
+        return proof;
+    }
+
+    internal static void Clear(HttpContext context)
+    {
+        if (context.Items.TryGetValue(ProofCookie, out var held) && held is not null || context.Request.Cookies.ContainsKey(ProofCookie))
+        {
+            context.Response.Cookies.Delete(ProofCookie, ProofOptions);
+            context.Response.OnStarting(() =>
+            {
+                if (context.Items[ProofCookie] is null)
+                {
+                    context.Response.Cookies.Delete(ProofCookie, ProofOptions);
+                }
+
+                return Task.CompletedTask;
+            });
+        }
+
+        context.Items[ProofCookie] = null;
+    }
+
+    internal SsoProof? ProofFor(HttpContext context, string? userId, long? epoch, string? stamp)
+    {
+        var proof = this.Proof(context);
+        if (proof is null)
+        {
+            return null;
+        }
+
+        if (SignInFlow.Tenant(context) == PlatformDirectory.Instance
+            && context.Request.Path.StartsWithSegments($"/ui/{OidcIssuer.Slug}")
+            && (proof.LinkVersion is not null || proof.Confirmed)
+            && proof.UserId == userId && proof.AuthEpoch == epoch && proof.AuthStamp == stamp)
+        {
+            return proof;
+        }
+
+        Clear(context);
+        return null;
+    }
+
+    internal async Task<bool> ContinuesAsync(HttpContext context, string email, CancellationToken cancellationToken)
+    {
+        if (this.Proof(context) is null)
+        {
+            return false;
+        }
+
+        var user = await users.FindByEmailAsync(PlatformDirectory.Instance, email, cancellationToken).ConfigureAwait(false);
+        return this.ProofFor(context, user?.Id, user?.AuthEpoch, user?.AuthStamp) is not null;
+    }
+
+    internal string? FactorProofFor(HttpContext context, UserRecord user) =>
+        this.ProofFor(context, user.Id, user.AuthEpoch, user.AuthStamp) is { } proof
+            ? Digest(proof)
+            : null;
+
+    internal void AdvanceEnrollment(HttpContext context, UserRecord previous, UserRecord enrolled)
+    {
+        if (this.ProofFor(context, previous.Id, previous.AuthEpoch, previous.AuthStamp) is { } proof)
+        {
+            this.WriteProof(context, proof with { AuthEpoch = enrolled.AuthEpoch, AuthStamp = enrolled.AuthStamp });
+        }
+    }
+
+    internal async Task<bool> RequiresMfaAsync(HttpContext context, UserRecord user, CancellationToken cancellationToken) =>
+        this.ProofFor(context, user.Id, user.AuthEpoch, user.AuthStamp) is { } proof
+        && await platform.OrganizationAsync(proof.OrganizationId, cancellationToken).ConfigureAwait(false) is { Value.RequireMfa: true };
+
+    internal async Task<bool> CanFinishAsync(HttpContext context, UserRecord user, CancellationToken cancellationToken) =>
+        this.ProofFor(context, user.Id, user.AuthEpoch, user.AuthStamp) is { } proof
+        && await this.PlanAsync(proof, true, cancellationToken).ConfigureAwait(false) is not null;
+
+    internal async Task<bool> FinishProofAsync(HttpContext context, IssuedSession session, CancellationToken cancellationToken)
+    {
+        var proof = this.ProofFor(context, session.Session.UserId, session.Session.AuthEpoch, session.Session.AuthStamp);
+        Clear(context);
+        if (session.Session.InstanceId != PlatformDirectory.Instance || SignInFlow.Tenant(context) != PlatformDirectory.Instance
+            || session.Session.Bindings.Any(binding => binding.Kind == "credential:impersonation-ticket")
+            || proof is null
+            || await this.PlanAsync(proof, session.Session.Mfa, cancellationToken).ConfigureAwait(false) is not { } plan
+            || !await data.SaveAsync(plan.Changes, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        if (plan.Joining)
+        {
+            logger.ZLogInformation($"Audit: user {proof.UserId:@UserId} joined organization {proof.OrganizationId:@OrganizationId} through SSO");
+        }
+
+        return true;
+    }
+
+    private async Task<SsoLinkPlan?> PlanAsync(SsoProof proof, bool mfa, CancellationToken cancellationToken)
+    {
+        if (await connections.ForDomainAsync(proof.Domain, cancellationToken).ConfigureAwait(false) is not { Value: { VerifiedAt: not null } connection } found
+            || connection.Issuer != proof.Issuer || connection.OrganizationId != proof.OrganizationId || connection.UpdatedAt != proof.ConnectionUpdatedAt
+            || await platform.OrganizationAsync(connection.OrganizationId, cancellationToken).ConfigureAwait(false) is not { } organization
+            || organization.Value.RequireMfa && !mfa
+            || await users.GetAsync(PlatformDirectory.Instance, proof.UserId, cancellationToken).ConfigureAwait(false) is not { Disabled: false } user
+            || user.AuthEpoch != proof.AuthEpoch || user.AuthStamp != proof.AuthStamp)
+        {
+            return null;
+        }
+
+        var joining = await platform.RoleAsync(connection.OrganizationId, user.Id, cancellationToken).ConfigureAwait(false) is null;
+        List<Change>? changes = joining
+            ? await platform.JoinAsync(connection.OrganizationId, user.Id, connection.DefaultRole, cancellationToken).ConfigureAwait(false)
+            : [];
+        if (changes is null)
+        {
+            return null;
+        }
+
+        var linked = await data.ReadAsync((db, token) => db.SsoIdentityLinks.Where(link => link.Domain == proof.Domain && link.Issuer == proof.Issuer
+            && link.Subject == proof.Subject).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        if (linked is not null && linked.Value.UserId != user.Id
+            || proof.LinkVersion is { } expected && (linked is null || linked.Version != expected))
+        {
+            return null;
+        }
+
+        changes.Add(Change.Assert(user));
+        changes.Add(Change.Assert(found));
+        changes.Add(Change.Assert(organization));
+        var record = Link(user, connection, proof.Subject);
+        changes.Add(linked is null ? Change.Insert(record)
+            : linked.Value == record ? Change.Assert(linked) : Change.Update(linked, record));
+        if (joining)
+        {
+            changes.Add(platform.Audit(connection.OrganizationId, user.Id, "member.joined_sso", user.Id, connection.Domain));
+        }
+
+        return new(changes, joining);
+    }
+
+    private Task<Versioned<SsoIdentityLinkRecord>?> LinkedAsync(UserRecord user, SsoConnectionRecord connection, string subject, CancellationToken cancellationToken) =>
+        data.ReadAsync((db, token) => db.SsoIdentityLinks.Where(link => link.Domain == connection.Domain && link.OrganizationId == connection.OrganizationId
+            && link.Issuer == connection.Issuer && link.Subject == subject && link.UserId == user.Id && link.ConnectionUpdatedAt == connection.UpdatedAt)
+            .WithVersion().SingleOrDefaultAsync(token), cancellationToken);
+
+    private static SsoIdentityLinkRecord Link(UserRecord user, SsoConnectionRecord connection, string subject) =>
+        new(connection.Domain, connection.OrganizationId, connection.Issuer!, subject, user.Id, connection.UpdatedAt);
+
+    private static CookieOptions ProofOptions => new()
+    {
+        Path = $"/ui/{OidcIssuer.Slug}",
+        Secure = true,
+        HttpOnly = true,
+        SameSite = SameSiteMode.Strict,
+        MaxAge = Lifetime,
+        IsEssential = true,
+    };
 
     private string RedirectUri => new Uri(options.PublicOrigin, CallbackPath).AbsoluteUri;
 }
 
+public abstract record SsoCompletion
+{
+    private protected SsoCompletion(UserRecord user, string subject)
+    {
+        this.User = user;
+        this.Subject = subject;
+    }
+
+    public UserRecord User { get; }
+
+    public string Subject { get; }
+
+    public abstract T Match<T>(Func<SsoLinked, T> linked, Func<SsoUnlinked, T> unlinked);
+}
+
+public sealed record SsoLinked(UserRecord User, string Subject, string LinkVersion) : SsoCompletion(User, Subject)
+{
+    public override T Match<T>(Func<SsoLinked, T> linked, Func<SsoUnlinked, T> unlinked) => linked(this);
+}
+
+public sealed record SsoUnlinked(UserRecord User, string Subject) : SsoCompletion(User, Subject)
+{
+    public override T Match<T>(Func<SsoLinked, T> linked, Func<SsoUnlinked, T> unlinked) => unlinked(this);
+}
+
+public sealed record SsoIdentityLinkRecord(string Domain, string OrganizationId, string Issuer, string Subject, string UserId, DateTimeOffset ConnectionUpdatedAt);
+
+internal sealed record SsoProof(string UserId, string Email, long AuthEpoch, string? AuthStamp, string Domain, string Issuer, string Subject, string? LinkVersion,
+    string? Next, DateTimeOffset ExpiresAt, string OrganizationId, DateTimeOffset ConnectionUpdatedAt, bool Confirmed);
+
+internal sealed record SsoLinkPlan(IReadOnlyList<Change> Changes, bool Joining);
+
 [JsonSerializable(typeof(SsoState))]
+[JsonSerializable(typeof(SsoProof))]
 internal sealed partial class SsoStateJson : JsonSerializerContext;

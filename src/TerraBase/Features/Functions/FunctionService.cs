@@ -131,11 +131,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
     internal async ValueTask<FunctionResult> RunAsync(TenantContext tenant, string name, string trigger, string eventJson,
         CancellationToken cancellationToken, string? requestId = null)
     {
-        var found = await catalog.ReadAsync<FunctionResult>(async transaction =>
-            await CatalogTables.DatabaseAsync(transaction, tenant.ProjectId!, tenant.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null
-                && await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false) is { } record
-                    ? Body(record, withSource: true) : new NotFound(), static error => error, cancellationToken).ConfigureAwait(false);
-        if (found is not FunctionBody { Source: { } source })
+        if (await GetAsync(tenant, name, cancellationToken).ConfigureAwait(false) is not FunctionBody { Source: { } source })
         {
             return new NotFound();
         }

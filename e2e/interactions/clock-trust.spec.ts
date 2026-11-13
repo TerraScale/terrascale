@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -15,18 +15,18 @@ test.describe.configure({ mode: 'default' });
 
 type Node = { name: string; region: string; address: string; port: number; metrics: number; postgres: number };
 type Answer = { status: number; body: string; retryAfter?: string };
-type StandIn = { asked: () => number; close: () => Promise<void> };
+type StandIn = { asked: () => number; answeredAt: () => number; close: () => Promise<void> };
 
-const internalPort = 18281;
+const portOffset = Number(process.env.TEST_PARALLEL_INDEX ?? '0') * 100;
+const internalPort = 18281 + portOffset;
 const run = randomBytes(3).toString('hex');
-const masterKey = randomBytes(32).toString('base64');
 const nodes: Record<'a' | 'b' | 'c', Node> = {
-  a: { name: `clock-a-${run}`, region: `gru-${run}`, address: '127.0.0.21', port: 18280, metrics: 19280, postgres: 16280 },
-  b: { name: `clock-b-${run}`, region: `fra-${run}`, address: '127.0.0.22', port: 18290, metrics: 19290, postgres: 16290 },
-  c: { name: `clock-c-${run}`, region: `sjc-${run}`, address: '127.0.0.23', port: 18300, metrics: 19300, postgres: 16300 },
+  a: { name: `clock-a-${run}`, region: `gru-${run}`, address: '127.0.0.21', port: 18280 + portOffset, metrics: 19280 + portOffset, postgres: 16280 + portOffset },
+  b: { name: `clock-b-${run}`, region: `fra-${run}`, address: '127.0.0.22', port: 18290 + portOffset, metrics: 19290 + portOffset, postgres: 16290 + portOffset },
+  c: { name: `clock-c-${run}`, region: `sjc-${run}`, address: '127.0.0.23', port: 18300 + portOffset, metrics: 19300 + portOffset, postgres: 16300 + portOffset },
 };
 const lone = (letter: string, octet: number, port: number, partners: 'near' | 'far'): Record<'node' | 'first' | 'second', Node> => ({
-  node: { name: `clock-${letter}-${run}`, region: `gru${letter}-${run}`, address: `127.0.0.${octet}`, port, metrics: port + 1000, postgres: port - 2000 },
+  node: { name: `clock-${letter}-${run}`, region: `gru${letter}-${run}`, address: `127.0.0.${octet}`, port: port + portOffset, metrics: port + 1000 + portOffset, postgres: port - 2000 + portOffset },
   first: { name: `clock-${letter}1-${run}`, region: partners === 'near' ? `gru${letter}-${run}` : `fra${letter}-${run}`, address: `127.0.0.${octet + 1}`, port: 0, metrics: 0, postgres: 0 },
   second: { name: `clock-${letter}2-${run}`, region: partners === 'near' ? `gru${letter}-${run}` : `sjc${letter}-${run}`, address: `127.0.0.${octet + 2}`, port: 0, metrics: 0, postgres: 0 },
 });
@@ -45,14 +45,23 @@ function id(): string {
 async function cluster(request: APIRequestContext, members: Node[], label: string) {
   const root = mkdtempSync(join(tmpdir(), `terrabase-clock-trust-${label}-`));
   const library = join(root, 'libclock-replay.so');
+  const masterKey = randomBytes(32).toString('base64');
+  const r2Key = randomBytes(16).toString('hex');
+  const r2Secret = randomBytes(32).toString('hex');
+  const account = join(stateDir, 'r2-accounts', createHash('sha256').update(r2Key).digest('hex'));
+  mkdirSync(join(stateDir, 'r2-accounts'), { recursive: true, mode: 0o700 });
+  writeFileSync(account, `${r2Key}\n${r2Secret}\n`, { mode: 0o600 });
+  saveSecret(`clock-r2-key-${label}`, r2Key);
+  saveSecret(`clock-r2-secret-${label}`, r2Secret);
+  const started = new Set<Node>();
   const peers = join(root, 'peers');
   const peerSecret = randomBytes(32).toString('hex');
   saveSecret(`clock-trust-peer-${label}`, peerSecret);
-  saveSecret('clock-trust-master', masterKey);
-  const [r2Key, r2Secret] = readFileSync(join(stateDir, 'r2'), 'utf8').split('\n');
+  saveSecret(`clock-trust-master-${label}`, masterKey);
   const cloudflareToken = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[9];
   const running = new Map<Node, ChildProcess>();
   const logs: number[] = [];
+  const readiness = new Map<Node, string>();
   const observations: string[] = [];
   const opened: number[] = [];
   const standIns = new Set<StandIn>();
@@ -65,7 +74,7 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
   const setPeers = (configured: Node[]) => writeFileSync(peers, configured.map((node) => `${node.name} ${node.region} ${node.address}\n`).join(''));
   const log = (node: Node) => readFileSync(join(root, `${node.name}.log`), 'utf8');
   const metric = async (node: Node, name: string, label = '') => {
-    expect(running.get(node)?.exitCode, log(node)).toBeNull();
+    expect(running.get(node)?.exitCode, `${node.name} is running`).toBeNull();
     const response = await request.get(`http://127.0.0.1:${node.metrics}/metrics`);
     expect(response.ok()).toBe(true);
     const lines = (await response.text()).split('\n').filter((line) => line.startsWith(`${name}{`) || line.startsWith(`${name} `));
@@ -74,11 +83,27 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
   };
   const allowed = (node: Node) => metric(node, 'terrabase_clock_local_writes_allowed');
   const mode = async (node: Node) => {
-    expect(running.get(node)?.exitCode, log(node)).toBeNull();
+    expect(running.get(node)?.exitCode, `${node.name} is running`).toBeNull();
     const response = await request.get(`http://127.0.0.1:${node.metrics}/metrics`);
     expect(response.ok()).toBe(true);
     const line = (await response.text()).split('\n').find((candidate) => candidate.startsWith('terrabase_clock_mode{') && candidate.endsWith(' 1'));
     return `${line?.match(/mode="([a-z_]+)"/)?.[1]}/${line?.match(/reason="([a-z_]+)"/)?.[1]}`;
+  };
+  const clockState = async (node: Node) => {
+    const at = new Date().toISOString();
+    const response = await request.get(`http://127.0.0.1:${node.metrics}/metrics`);
+    expect(response.ok()).toBe(true);
+    const lines = (await response.text()).split('\n');
+    const value = (name: string) => {
+      const line = lines.find((candidate) => candidate.startsWith(`${name}{`) || candidate.startsWith(`${name} `));
+      return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
+    };
+    const mode = lines.find((line) => line.startsWith('terrabase_clock_mode{') && line.endsWith(' 1'));
+    return {
+      at, allowed: value('terrabase_clock_local_writes_allowed'), rounds: value('terrabase_clock_agreeing_rounds'),
+      mode: `${mode?.match(/mode="([a-z_]+)"/)?.[1]}/${mode?.match(/reason="([a-z_]+)"/)?.[1]}`,
+      steps: value('terrabase_clock_steps_total'), answering: value('terrabase_clock_peers_answering'), agreeing: value('terrabase_clock_peers_agreeing'),
+    };
   };
   const transitions = (node: Node) => log(node).split('\n').filter((line) => line.includes('Clock trust mode')).slice(-2)
     .map((line) => JSON.parse(line.slice(line.indexOf('{')))).map((entry: { Mode: string; Reason: string }) => `${entry.Mode}/${entry.Reason}`);
@@ -88,6 +113,7 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
   const proxy = () => ({ status: 404, body: undefined });
   const standIn = async (node: Node, answer: (headers: IncomingHttpHeaders) => { status: number; body: unknown }) => {
     let asked = 0;
+    let answeredAt = 0;
     const sessions = new Set<ServerHttp2Session>();
     const server = createServer();
     server.on('session', (session) => {
@@ -97,6 +123,7 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     server.on('stream', (stream: ServerHttp2Stream, headers: IncomingHttpHeaders) => {
       asked++;
       const { status, body } = answer(headers);
+      if (status === 200) answeredAt = performance.now();
       stream.respond({ ':status': status, ...(body === undefined ? {} : { 'content-type': 'application/json' }) });
       stream.end(body === undefined ? undefined : JSON.stringify(body));
     });
@@ -104,6 +131,7 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     await once(server, 'listening');
     const handle: StandIn = {
       asked: () => asked,
+      answeredAt: () => answeredAt,
       close: async () => {
         standIns.delete(handle);
         for (const session of sessions) session.destroy();
@@ -137,9 +165,10 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     const output = openSync(join(root, `${node.name}.log`), 'a');
     logs.push(output);
     const spawned = performance.now();
-    running.set(node, spawn('nice', ['-n', '19', 'dotnet', join(build, 'terrabase.dll')], {
+    started.add(node);
+    running.set(node, spawn('dotnet', [join(build, 'terrabase.dll')], {
       env: {
-        ...environment, DOTNET_ENVIRONMENT: 'Production', DOTNET_PROCESSOR_COUNT: '2',
+        ...environment, DOTNET_ENVIRONMENT: 'Production', DOTNET_PROCESSOR_COUNT: '4',
         TS_PEERS_FILE: peers, TS_REGION: node.region, TS_NODE: node.name,
         TERRABASE_DATA_DIRECTORY: join(root, `${node.name}-data`), TERRABASE_PORT: String(node.port),
         TERRABASE_INTERNAL_PORT: String(internalPort), TERRABASE_METRICS_PORT: String(node.metrics), TERRABASE_POSTGRES_PORT: String(node.postgres),
@@ -154,10 +183,23 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
       }, stdio: ['ignore', output, output],
     }));
     await expect.poll(async () => {
-      expect(running.get(node)?.exitCode, log(node)).toBeNull();
-      return request.get(`http://127.0.0.1:${node.port}/readyz`).then((response) => response.status(), () => 0);
-    }, { message: `${node.name} ready` }).toBe(200);
-    return { spawned, ready: performance.now() };
+      expect(running.get(node)?.exitCode, `${node.name} is running`).toBeNull();
+      return request.get(`http://127.0.0.1:${node.port}/readyz`).then(async (response) => {
+        const status = response.status();
+        const body = await response.text();
+        const metrics = status === 503 ? await request.get(`http://127.0.0.1:${node.metrics}/metrics`).then(async (answer) =>
+          (await answer.text()).split('\n').filter((line) => /^terrabase_(clock_mode|catalog_verified|catalog_bucket_missing|platform_seed_pending)/.test(line)).join('\n'),
+        (error: Error) => error.message) : '';
+        readiness.set(node, `${status} ${body}\n${metrics}`);
+        return { status, body, metrics };
+      }, (error: Error) => {
+        readiness.set(node, error.message);
+        return { status: 0, body: error.message };
+      });
+    }, { message: `${node.name} ready` }).toMatchObject({ status: 200 });
+    const ready = performance.now();
+    observations.push(`${node.name} ready ${Math.round(ready - spawned)} ms after start`);
+    return { spawned, ready };
   };
   const stop = async (node: Node) => {
     const child = running.get(node);
@@ -173,6 +215,10 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     const at = performance.now();
     opened.push(at - ready);
     observations.push(`${label}: ${node.name} trusted ${Math.round(at - ready)} ms after /readyz, ${Math.round(at - spawned)} ms after start`);
+  };
+  const ready = async (node: Node) => {
+    const response = await request.get(`http://127.0.0.1:${node.port}/readyz`);
+    expect(response.status(), `${node.name}: ${await mode(node)}; ${await response.text()}`).toBe(200);
   };
   const internal = (node: Node, method: string, path: string, body?: unknown, user?: string) => new Promise<Answer>((resolveAnswer, reject) => {
     const session = connect(`http://${node.address}:${internalPort}`);
@@ -225,22 +271,27 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     return { sql, applyPath, rows };
   };
   const finish = async (info: TestInfo) => {
-    for (const node of [...running.keys()]) await stop(node);
+    for (const node of started) {
+      await info.attach(`${node.name}-readiness`, { body: readiness.get(node) ?? 'not requested', contentType: 'text/plain' });
+      await info.attach(`${node.name}-log`, { body: log(node), contentType: 'text/plain' });
+    }
+    await info.attach(`clock-trust-${label}`, { body: observations.join('\n'), contentType: 'text/plain' });
+    await Promise.all([...running.keys()].map(stop));
     for (const stand of [...standIns]) await stand.close();
     for (const output of logs) closeSync(output);
-    await info.attach(`clock-trust-${label}`, { body: observations.join('\n'), contentType: 'text/plain' });
+    rmSync(account);
     rmSync(root, { recursive: true, force: true });
   };
   return {
-    set, stepAfterKernel, setPeers, log, metric, allowed, mode, transitions, previousBuild, proxy, standIn, holds, start, stop, opens, internal, json, clockPeer, refused, prepare,
-    database, finish, observations, opened,
+    set, stepAfterKernel, setPeers, log, metric, allowed, mode, transitions, previousBuild, proxy, standIn, holds, start, stop, opens, ready, internal, json, clockPeer, refused, prepare,
+    database, finish, observations, opened, clockState,
   };
 }
 
-test('a node stamps writes only while its peers and kernel agree with its clock', async ({ request }, info) => {
+test('a lone node opens on agreeing peers and a clock step requires two new rounds', async ({ request }, info) => {
   const { a, b, c } = nodes;
-  const { set, metric, allowed, mode, transitions, previousBuild, proxy, standIn, holds, start, stop, opens, internal, json, refused, prepare, finish, observations, opened } =
-    await cluster(request, [a, b, c], 'main');
+  const { set, metric, allowed, mode, proxy, standIn, holds, start, stop, opens, prepare, finish, observations } =
+    await cluster(request, [a, b, c], 'opening');
   try {
     await prepare();
 
@@ -257,6 +308,42 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     await opens(b, 'second node');
     await expect.poll(() => allowed(a), { message: 'the first node opens once a second node answers' }).toBe(1);
     await opens(c, 'third node');
+
+    await stop(c);
+    await opens(c, 'healthy third-node restart');
+
+    const stepsBefore = await metric(a, 'terrabase_clock_steps_total');
+    set(a, 600_000);
+    await expect.poll(() => allowed(a), { message: 'a step closes the node at once', intervals: [100] }).toBe(0);
+    set(a, 0);
+    await expect.poll(() => metric(a, 'terrabase_clock_steps_total'), { message: 'the step is counted' }).toBeGreaterThan(stepsBefore);
+    const readings: string[] = [];
+    await expect.poll(async () => {
+      const open = await allowed(a);
+      const rounds = await metric(a, 'terrabase_clock_agreeing_rounds');
+      readings.push(`${open}@${rounds}`);
+      if (open === 1) expect(rounds).toBeGreaterThanOrEqual(2);
+      return open;
+    }, { message: 'a step reopens only after two agreeing rounds begun after it', intervals: [100] }).toBe(1);
+    expect(readings[0]).toMatch(/^0@[01]$/);
+    observations.push(`step while open: closed at once, readings (allowed@rounds) ${readings.join(' ')}`);
+    expect(await allowed(b)).toBe(1);
+    expect(await allowed(c)).toBe(1);
+    observations.push('one wrong clock among three closed alone: b and c stayed open');
+
+    console.log(observations.join('\n'));
+  } finally {
+    await finish(info);
+  }
+});
+
+test('a home and replica started ahead never stamp, and healthy restarts recover', async ({ request }, info) => {
+  const { a, b, c } = nodes;
+  const { set, metric, allowed, start, stop, opens, internal, json, refused, prepare, finish, observations, opened } =
+    await cluster(request, [a, b, c], 'writes');
+  try {
+    await prepare();
+    await Promise.all([opens(a, 'first node'), opens(b, 'second node'), opens(c, 'third node')]);
 
     const user = id();
     const organization = await json(a, 'POST', '/v1/management/organizations', { name: `Clock ${id()}` }, user, 201);
@@ -294,28 +381,24 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     await stop(b);
     set(b, 0);
     await opens(b, 'healthy restart 2');
-    await stop(c);
-    await opens(c, 'healthy restart 3');
+    observations.push(`open times after /readyz in ms (initial nodes and healthy restarts): ${opened.map(Math.round).join(', ')}`);
+    console.log(observations.join('\n'));
+  } finally {
+    await finish(info);
+  }
+});
 
-    const stepsBefore = await metric(a, 'terrabase_clock_steps_total');
-    set(a, 600_000);
-    await expect.poll(() => allowed(a), { message: 'a step closes the node at once', intervals: [100] }).toBe(0);
-    set(a, 0);
-    await expect.poll(() => metric(a, 'terrabase_clock_steps_total'), { message: 'the step is counted' }).toBeGreaterThan(stepsBefore);
-    const readings: string[] = [];
-    await expect.poll(async () => {
-      const open = await allowed(a);
-      const rounds = await metric(a, 'terrabase_clock_agreeing_rounds');
-      readings.push(`${open}@${rounds}`);
-      if (open === 1) expect(rounds).toBeGreaterThanOrEqual(2);
-      return open;
-    }, { message: 'a step reopens only after two agreeing rounds begun after it', intervals: [100] }).toBe(1);
-    expect(readings[0]).toMatch(/^0@[01]$/);
-    observations.push(`step while open: closed at once, readings (allowed@rounds) ${readings.join(' ')}`);
-    expect(await allowed(b)).toBe(1);
-    expect(await allowed(c)).toBe(1);
-    observations.push('one wrong clock among three closed alone: b and c stayed open');
-
+test('clock trust distinguishes unreachable peers, previous builds and disagreeing peers', async ({ request }, info) => {
+  const { a, b, c } = nodes;
+  const { set, metric, allowed, mode, transitions, previousBuild, standIn, holds, start, stop, opens, database, refused, prepare, finish, observations } =
+    await cluster(request, [a, b, c], 'previous-build');
+  try {
+    await prepare();
+    await start(a);
+    await opens(b, 'second node');
+    await opens(c, 'third node');
+    const { sql, rows } = await database(a);
+    expect((await sql(a, "INSERT INTO clock_rows VALUES (1, 'trusted home'), (4, 'trusted again')")).status).toBe(200);
     await stop(c);
     const previousC = await standIn(c, previousBuild);
     await expect.poll(async () => [previousC.asked() > 2, await metric(a, 'terrabase_clock_peers_answering'), await allowed(a), await mode(a)],
@@ -369,10 +452,8 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     await expect.poll(() => mode(a), { message: 'a peer that answers the route and disagrees closes the node', intervals: [100] }).toBe('closed/peers_disagree');
     expect(transitions(a)).toEqual(['first_of_build/none', 'closed/peers_disagree']);
     await holds(a, 'an answering peer outranks a peer of the previous build', 'closed/peers_disagree 0', [previousC], 3);
-    const rows = await json(a, 'POST', sqlPath, { statements: [{ sql: 'SELECT id FROM clock_rows ORDER BY id' }] });
-    expect(rows.results[0].rows).toEqual([[1], [4], [5]]);
+    expect(await rows(a)).toEqual([[1], [4], [5]]);
     observations.push('first of its build, then one peer answers 600 s ahead while the other still runs the previous build: first_of_build -> closed/peers_disagree with no step between, closed through three rounds');
-    observations.push(`open times after /readyz in ms (second and third node, then restarts 1-3): ${opened.map(Math.round).join(', ')}`);
     console.log(observations.join('\n'));
   } finally {
     await finish(info);
@@ -381,7 +462,7 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
 
 test('a received write never carries a wrong local clock into the HLC, and a clean restart issues at once', async ({ request }, info) => {
   const { node: h, first, second } = lone('h', 51, 18330, 'far');
-  const { set, metric, allowed, mode, standIn, stop, opens, json, clockPeer, refused, prepare, database, finish, observations, log } =
+  const { set, metric, allowed, mode, standIn, stop, opens, ready, internal, json, clockPeer, refused, prepare, database, finish, observations, log } =
     await cluster(request, [h, first, second], 'ahead');
   const peer = { offset: 0 as number | null };
   const ahead: number[] = [];
@@ -406,6 +487,10 @@ test('a received write never carries a wrong local clock into the HLC, and a cle
     for (const row of [10, 11]) expect(await received(row)).toMatchObject({ state: 'confirmed', conflicts: [] });
     expect(await sample()).toBeLessThanOrEqual(50);
     refused(await sql(h, "INSERT INTO clock_rows VALUES (12, 'closed ahead')"), 'the closed node ahead refuses its own write');
+    await ready(h);
+    expect(await rows(h)).toEqual([[1], [10], [11]]);
+    expect((await internal(h, 'GET', '/v1/sync/clock')).status).toBe(200);
+    observations.push('clock closed by peer disagreement: readyz 200, reads and received writes 200, peer clock 200, home writes retryable 409');
     set(h, 0);
     await expect.poll(async () => [await sample(), await allowed(h)], { message: 'the corrected clock reopens', intervals: [100] }).toEqual([expect.any(Number), 1]);
     const reopened = await sql(h, "INSERT INTO clock_rows VALUES (13, 'issued after reopening')");
@@ -444,12 +529,13 @@ test('a received write never carries a wrong local clock into the HLC, and a cle
 
 test('home writes recover in two agreeing rounds after a step during issuance, including across restart', async ({ request }, info) => {
   const { node: h, first, second } = lone('w', 61, 18340, 'near');
-  const { set, stepAfterKernel, setPeers, metric, mode, standIn, start, stop, opens, clockPeer, refused, prepare, database, finish, observations } =
+  const { set, stepAfterKernel, setPeers, metric, allowed, mode, clockState, standIn, start, stop, opens, clockPeer, refused, prepare, database, finish, observations } =
     await cluster(request, [h, first, second], 'issuing');
   const peer = { offset: 0 };
   try {
     await prepare();
-    const peers = [await standIn(first, clockPeer(peer)), await standIn(second, clockPeer(peer))];
+    await standIn(first, clockPeer(peer));
+    await standIn(second, clockPeer(peer));
     await opens(h, 'writing home with agreeing peers');
     const { sql, rows } = await database(h);
     const committed: number[][] = [];
@@ -467,21 +553,30 @@ test('home writes recover in two agreeing rounds after a step during issuance, i
         else refused(answer, 'a write crossing the forward step');
       }
       refused(await sql(h, `INSERT INTO clock_rows VALUES (${base + 20}, 'during step')`), 'writes stay refused while ahead');
+      const readings: string[] = [];
+      const sample = async (label: string) => {
+        const state = await clockState(h);
+        readings.push(`${label} ${JSON.stringify(state)}`);
+        return state;
+      };
+      await expect.poll(async () => (await sample('before correction')).allowed,
+        { message: 'the stepped home reports writes closed before correction', intervals: [100] }).toBe(0);
       set(h, 0);
       if (restart) {
         await stop(h);
         await start(h);
       }
-      const from = peers.map((stand) => stand.asked());
       await expect.poll(async () => {
-        const current = await mode(h);
-        if (current !== 'peers_agree/none') expect(Math.min(...peers.map((stand, index) => stand.asked() - from[index])))
-          .toBeLessThanOrEqual(2);
-        return current;
-      }, { message: 'the corrected home opens by the second agreeing round', intervals: [100] }).toBe('peers_agree/none');
+        const state = await sample(`corrected restart=${restart}`);
+        if (state.allowed === 0) expect(state.rounds, readings.join('\n')).toBeLessThan(2);
+        return state.allowed;
+      }, { message: 'the corrected home allows writes by the second agreeing round', intervals: [100] }).toBe(1);
+      expect(await mode(h)).toBe('peers_agree/none');
       expect(await metric(h, 'terrabase_clock_agreeing_rounds')).toBeGreaterThanOrEqual(2);
       const recovered = await sql(h, `INSERT INTO clock_rows VALUES (${base + 21}, 'after correction')`);
-      expect(recovered.status, recovered.body).toBe(200);
+      const after = await sample(`write answered ${recovered.status}`);
+      expect(recovered.status, `${recovered.body}\n${readings.join('\n')}`).toBe(200);
+      observations.push(`home recovery restart=${restart}: ${JSON.stringify(after)}`);
       committed.push([base + 21]);
       expect(await metric(h, 'terrabase_clock_hlc_ahead_milliseconds')).toBeLessThanOrEqual(50);
       expect(await rows(h)).toEqual(committed.sort((left, right) => left[0] - right[0]));
@@ -491,7 +586,8 @@ test('home writes recover in two agreeing rounds after a step during issuance, i
     await expect.poll(() => mode(h), { message: 'a configured but empty peers file closes as no_contact' }).toBe('closed/no_contact');
     refused(await sql(h, "INSERT INTO clock_rows VALUES (200, 'empty peers file')"), 'a configured empty peers file refuses writes');
     setPeers([h, first, second]);
-    await expect.poll(() => mode(h), { message: 'restoring agreeing peers reopens the home' }).toBe('peers_agree/none');
+    await expect.poll(() => allowed(h), { message: 'restoring agreeing peers allows home writes' }).toBe(1);
+    expect(await mode(h)).toBe('peers_agree/none');
     expect(await rows(h)).toEqual(committed);
     observations.push('configured peers file rewritten empty: closed/no_contact and home write refused; restored peers reopen it');
     console.log(observations.join('\n'));
@@ -502,7 +598,7 @@ test('home writes recover in two agreeing rounds after a step during issuance, i
 
 test('an open node that loses every peer keeps stamping; a closed one stays closed', async ({ request }, info) => {
   const { node: p, first, second } = lone('p', 31, 18310, 'far');
-  const { metric, allowed, mode, transitions, standIn, holds, opens, clockPeer, refused, prepare, database, finish, observations } =
+  const { metric, allowed, mode, transitions, standIn, holds, opens, ready, clockPeer, refused, prepare, database, finish, observations } =
     await cluster(request, [p, first, second], 'lost');
   const peer = { offset: 0 as number | null };
   try {
@@ -520,7 +616,7 @@ test('an open node that loses every peer keeps stamping; a closed one stays clos
     observations.push('one failed round to both far peers: peers_agree throughout');
 
     peer.offset = null;
-    const silent = performance.now();
+    const silent = Math.max(...peers.map((stand) => stand.answeredAt()));
     await expect.poll(async () => {
       expect(await allowed(p)).toBe(1);
       return mode(p);
@@ -545,8 +641,12 @@ test('an open node that loses every peer keeps stamping; a closed one stays clos
     peer.offset = null;
     await expect.poll(() => mode(p), { message: 'closed with no peer in contact' }).toBe('closed/no_contact');
     await holds(p, 'a closed node with no peer in contact does not open', 'closed/no_contact 0', peers, 5);
+    await ready(p);
+    expect(await rows(p)).toEqual([[1], [2]]);
+    refused(await sql(p, "INSERT INTO clock_rows VALUES (5, 'no contact')"), 'closed with no contact refuses home writes while serving reads');
     peer.offset = 0;
-    await expect.poll(() => mode(p), { message: 'agreeing peers reopen it' }).toBe('peers_agree/none');
+    await expect.poll(() => allowed(p), { message: 'agreeing peers allow local writes again' }).toBe(1);
+    expect(await mode(p)).toBe('peers_agree/none');
     expect((await sql(p, "INSERT INTO clock_rows VALUES (4, 'reopened')")).status).toBe(200);
     expect(await rows(p)).toEqual([[1], [2], [4]]);
     expect(await metric(p, 'terrabase_clock_failed_rounds_total')).toBe(0);
@@ -560,13 +660,15 @@ test('an open node that loses every peer keeps stamping; a closed one stays clos
 test('a brief unsynchronised kernel does not close an open node; a minute of it does', async ({ request }, info) => {
   test.slow();
   const { node: k, first, second } = lone('k', 41, 18320, 'near');
-  const { set, metric, allowed, mode, standIn, holds, opens, prepare, finish, observations, clockPeer } = await cluster(request, [k, first, second], 'kernel');
+  const { set, metric, allowed, mode, standIn, holds, opens, ready, prepare, database, refused, finish, observations, clockPeer } = await cluster(request, [k, first, second], 'kernel');
   const peer = { offset: 0 as number | null };
   try {
     await prepare();
     const peers = [await standIn(first, clockPeer(peer)), await standIn(second, clockPeer(peer))];
     await opens(k, 'node with agreeing partners');
     await expect.poll(() => mode(k), { message: 'two agreeing partners' }).toBe('peers_agree/none');
+    const { sql, rows } = await database(k);
+    expect((await sql(k, "INSERT INTO clock_rows VALUES (1, 'trusted')")).status).toBe(200);
 
     set(k, 0, 64);
     await holds(k, 'unsynchronised for the first 10 s', 'peers_agree/none 1', peers, 10);
@@ -583,13 +685,21 @@ test('a brief unsynchronised kernel does not close an open node; a minute of it 
     expect(closedAfter).toBeGreaterThanOrEqual(60_000);
     expect(closedAfter).toBeLessThan(70_000);
     expect(await allowed(k)).toBe(0);
+    await ready(k);
+    expect(await rows(k)).toEqual([[1]]);
+    refused(await sql(k, "INSERT INTO clock_rows VALUES (2, 'unsynchronised')"), 'unsynchronised kernel refuses home writes while serving reads');
     observations.push(`kernel unsynchronised again: closed/kernel after ${Math.round(closedAfter)} ms`);
 
     set(k, 0, 0, 50_001);
     await holds(k, 'a closed node gets no grace: an error estimate over 50 ms keeps it closed', 'closed/kernel 0', peers, 3);
     expect(await metric(k, 'terrabase_clock_agreeing_rounds')).toBe(0);
+    await ready(k);
+    expect(await rows(k)).toEqual([[1]]);
+    refused(await sql(k, "INSERT INTO clock_rows VALUES (3, 'estimated error')"), 'excessive kernel error refuses home writes while serving reads');
     set(k, 0);
     await expect.poll(() => allowed(k), { message: 'a synchronised kernel within 50 ms reopens it, with a 16 s maximum error' }).toBe(1);
+    expect((await sql(k, "INSERT INTO clock_rows VALUES (4, 'synchronised again')")).status).toBe(200);
+    expect(await rows(k)).toEqual([[1], [4]]);
     observations.push('closed: estimated error 50.001 ms keeps it closed; 1 ms with maximum error 16 s reopens it');
     console.log(observations.join('\n'));
   } finally {

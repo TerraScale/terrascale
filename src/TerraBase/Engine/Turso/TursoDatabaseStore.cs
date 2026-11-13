@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Turso.Data.Sqlite;
+using Turso.Raw.Public;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
@@ -27,12 +28,17 @@ internal sealed partial class TursoDatabaseStore(
 
     internal long RetainedCdcRows => Volatile.Read(ref _retainedCdcRows);
 
+    private bool _cdcObserved;
+
+    internal bool IdleClean => Volatile.Read(ref _cdcObserved) && RetainedCdcRows == 0;
+
     internal void ObserveCdcSize(SqliteConnection connection, SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "SELECT coalesce((SELECT max(change_id) FROM turso_cdc) - (SELECT min(change_id) FROM turso_cdc) + 1, 0);";
         Volatile.Write(ref _retainedCdcRows, (long)command.ExecuteScalar()!);
+        Volatile.Write(ref _cdcObserved, true);
     }
 
     internal int Format { get; private set; }
@@ -137,6 +143,8 @@ internal sealed partial class TursoDatabaseStore(
     internal TursoRevisionLedger Revisions { get; } = new(path, schemaMemory, tenant);
     private volatile StrongBox<Ulid> _incarnation = new(Ulid.Empty);
 
+    internal Ulid CreationIdentity { get; set; }
+
     public Ulid Incarnation => _incarnation.Value;
 
     public TenantContext? Tenant { get; } = tenant;
@@ -173,10 +181,21 @@ internal sealed partial class TursoDatabaseStore(
 
     internal DatabaseFences? Fences { get; init; }
 
+    private readonly CancellationTokenSource _refused = new();
+
+    public CancellationToken Refused => _refused.Token;
+
     internal string? CopyFault
     {
         get => Volatile.Read(ref field);
-        set => Volatile.Write(ref field, value);
+        set
+        {
+            Volatile.Write(ref field, value);
+            if (value is not null)
+            {
+                _refused.Cancel();
+            }
+        }
     }
 
     internal string? CloseRefusal => CopyFault ?? Ledger?.Refusal(this);
@@ -184,7 +203,14 @@ internal sealed partial class TursoDatabaseStore(
     internal StorageFaultLedger.Row? FaultRow
     {
         get => Volatile.Read(ref field);
-        set => Volatile.Write(ref field, value);
+        set
+        {
+            Volatile.Write(ref field, value);
+            if (value is not null)
+            {
+                _refused.Cancel();
+            }
+        }
     }
 
     internal bool Settled
@@ -202,7 +228,7 @@ internal sealed partial class TursoDatabaseStore(
             await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
         }
 
-        ThrowIfRefused(maintenance: false);
+        ThrowIfUnavailable();
         return await BeginOperationAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -227,11 +253,54 @@ internal sealed partial class TursoDatabaseStore(
         }
     }
 
+    internal CancellationTokenSource ReadCancellation(CancellationToken cancellationToken) =>
+        CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Refused, Ledger?.Refused ?? CancellationToken.None);
+
+    internal void ThrowIfUnavailable()
+    {
+        if (Tenant is { } database)
+        {
+            Ledger?.ThrowIfPending(database);
+        }
+        ThrowIfRefused(maintenance: false);
+    }
+
     private void ThrowIfRefused(bool maintenance)
     {
         if (Ledger is { } ledger && (maintenance ? ledger.FailedClosed : ledger.Refusal(this)) is { } refusal)
         {
             throw new StorageCopyFaultedException(refusal);
+        }
+    }
+
+    internal IDisposable? EnterMutation()
+    {
+        var lease = !IsSystem && Tenant is { } database ? Ledger?.Mutations(database).Enter() : null;
+        try
+        {
+            ThrowIfUnavailable();
+            return lease;
+        }
+        catch
+        {
+            lease?.Dispose();
+            throw;
+        }
+    }
+
+    internal async Task<IDisposable?> EnterMutationAsync(CancellationToken cancellationToken)
+    {
+        var lease = !IsSystem && Tenant is { } database && Ledger is { } ledger
+            ? await ledger.Mutations(database).EnterAsync(cancellationToken).ConfigureAwait(false) : null;
+        try
+        {
+            ThrowIfUnavailable();
+            return lease;
+        }
+        catch
+        {
+            lease?.Dispose();
+            throw;
         }
     }
 
@@ -267,28 +336,27 @@ internal sealed partial class TursoDatabaseStore(
             return;
         }
 
-        try
-        {
-            await ledger.RecordAsync(tenant, Incarnation, reason).ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            ledger.FailClosed($"a copy fault could not be recorded: {error.GetType().Name}");
-        }
+        await ledger.RecordAsync(tenant, Incarnation, reason).ConfigureAwait(false);
     }
 
     private async ValueTask<TursoStorageTransaction> BeginAsync(
         bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction", bool maintenance = false,
         string? file = null, int line = 0)
     {
+        if (Ledger is { } ledger && !IsSystem)
+        {
+            await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
+        }
+        if (!maintenance)
+        {
+            ThrowIfUnavailable();
+        }
+        else
+        {
+            ThrowIfRefused(maintenance);
+        }
         if (write)
         {
-            if (Ledger is { } ledger && !IsSystem)
-            {
-                await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
-            }
-
-            ThrowIfRefused(maintenance);
             if (FencedId(maintenance) is { } fenced)
             {
                 await Fences!.WaitAsync(fenced, cancellationToken).ConfigureAwait(false);
@@ -329,6 +397,11 @@ internal sealed partial class TursoDatabaseStore(
             var connection = session.Connection;
             var transaction = await session.ExecuteAsync(runner, () =>
             {
+                if (!maintenance)
+                {
+                    ThrowIfUnavailable();
+                }
+                using var mutation = write ? EnterMutation() : null;
                 beginStarted = true;
 
                 session.Settings(queryOnly: !write, full: durable);
@@ -566,6 +639,10 @@ internal sealed partial class TursoDatabaseStore(
             {
                 await session.ExecuteAsync(WriteLane, () =>
                 {
+                    ThrowIfUnavailable();
+                    using var refused = ReadCancellation(cancellationToken);
+                    using var interrupted = refused.Token.Register(() => TursoBindings.Interrupt(session.Native));
+                    using var mutation = EnterMutation();
                     Revisions.Attach(session.Connection);
                     return true;
                 }, cancellationToken).ConfigureAwait(false);
@@ -617,27 +694,23 @@ internal sealed partial class TursoDatabaseStore(
             }
 
             await using var operation = await BeginOperationAsync(CancellationToken.None).ConfigureAwait(false);
+            using var refused = ReadCancellation(CancellationToken.None);
+            using var interrupted = refused.Token.Register(() => TursoBindings.Interrupt(writer.Native));
             await WriteLane.RunAsync(() =>
             {
                 try
                 {
-                    if (Revisions.IsAttachedTo(writer.Connection))
-                    {
-                        Revisions.Checkpoint(writer.Connection);
-                    }
-                    else
-                    {
-                        Scalar(writer.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
-                    }
+                    ThrowIfUnavailable();
+                    refused.Token.ThrowIfCancellationRequested();
+                    CheckpointWriter(writer);
                 }
                 finally
                 {
                     Discard(writer);
                     pool.CloseIdleOf(this);
                 }
-
                 return true;
-            }, CancellationToken.None).ConfigureAwait(false);
+            }, refused.Token).ConfigureAwait(false);
             operation?.Complete();
             WritersEvicted?.Add(1);
         }
@@ -708,31 +781,47 @@ internal sealed partial class TursoDatabaseStore(
     internal async Task<Ulid> CopyToAsync(string path, CancellationToken cancellationToken)
     {
         const string reason = "the source file or its log reported an I/O error or corruption while copying";
+        ThrowIfUnavailable();
+        using var refused = ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         ExceptionDispatchInfo? sourceError = null;
         try
         {
 
             var sourceConnection = await ConnectionStringAsync(io, cancellationToken).ConfigureAwait(false);
             var targetConnection = await Encryption.CreateAsync(path, io, cancellationToken).ConfigureAwait(false);
-            await io.RunAsync(() =>
+            var source = new FaultAwareCopySource(sourceConnection, error =>
             {
-                using var source = new FaultAwareCopySource(sourceConnection, error =>
-                {
-                    NoteCopyFault(reason);
-                    sourceError ??= ExceptionDispatchInfo.Capture(error);
-                })
-                {
-                    CloseRefusal = () => CloseRefusal ?? "terminal copy source close",
-                };
+                NoteCopyFault(reason);
+                sourceError ??= ExceptionDispatchInfo.Capture(error);
+            })
+            {
+                CloseRefusal = () => CloseRefusal ?? "terminal copy source close",
+            };
+            try
+            {
                 if (Tenant is { } tenant)
                 {
                     Checkpoint?.Invoke("copy.source.opening", tenant);
                 }
-                TursoSession.OpenExisting(source, FilePath);
+                ThrowIfUnavailable();
+                using var mutation = await EnterMutationAsync(cancellationToken).ConfigureAwait(false);
+                await io.RunAsync(() => TursoSession.OpenExisting(source, FilePath), cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await io.RunAsync(source.Dispose, CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
+            await io.RunAsync(() =>
+            {
+                using var opened = source;
+                using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(TursoSession.Handle(source)));
                 using var begin = source.CreateCommand();
                 begin.CommandText = "BEGIN;";
                 begin.ExecuteNonQuery();
                 TursoCopy.Write(source, targetConnection, cancellationToken);
+                ThrowIfUnavailable();
             }, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception) when (sourceError is not null)
@@ -748,6 +837,7 @@ internal sealed partial class TursoDatabaseStore(
             throw;
         }
 
+        ThrowIfUnavailable();
         if (Tenant is { } targetSource)
         {
             Checkpoint?.Invoke("copy.target.initializing", targetSource);
@@ -795,10 +885,14 @@ internal sealed partial class TursoDatabaseStore(
 
     internal async Task<T> WithWritersHeldAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken, string holder = "the continuous backup")
     {
+        ThrowIfUnavailable();
         await AcquireWriterAsync(holder, cancellationToken).ConfigureAwait(false);
         try
         {
-            return await call().ConfigureAwait(false);
+            ThrowIfUnavailable();
+            var result = await call().ConfigureAwait(false);
+            ThrowIfUnavailable();
+            return result;
         }
         finally
         {
@@ -818,12 +912,23 @@ internal sealed partial class TursoDatabaseStore(
 
     internal async Task<T> OnWriterAsync<T>(Func<TursoSession, T> call, CancellationToken cancellationToken)
     {
+        ThrowIfUnavailable();
+        using var refused = ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         await using var operation = await BeginOperationAsync(cancellationToken).ConfigureAwait(false);
         TursoSession? writer = null;
         try
         {
             writer = await WriterSessionAsync(cancellationToken).ConfigureAwait(false);
-            var result = await writer.ExecuteAsync(WriteLane, () => call(writer), cancellationToken).ConfigureAwait(false);
+            using var interrupted = Refused.Register(() => TursoBindings.Interrupt(writer.Native));
+            using var failed = Ledger?.Refused.Register(() => TursoBindings.Interrupt(writer.Native));
+            ThrowIfUnavailable();
+            var result = await writer.ExecuteAsync(WriteLane, () =>
+            {
+                using var mutation = EnterMutation();
+                return call(writer);
+            }, cancellationToken).ConfigureAwait(false);
+            ThrowIfUnavailable();
             operation?.Complete();
             return result;
         }
@@ -1190,12 +1295,18 @@ internal sealed partial class TursoDatabaseStore(
 
     internal async Task BootstrapAsync(CancellationToken cancellationToken)
     {
+        using var refused = ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         var session = await RentAsync(cancellationToken).ConfigureAwait(false);
+        using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(session.Native));
         try
         {
+            using var mutation = await EnterMutationAsync(cancellationToken).ConfigureAwait(false);
             await session.ExecuteAsync(io, () =>
             {
 
+                ThrowIfUnavailable();
+                cancellationToken.ThrowIfCancellationRequested();
                 session.Settings(queryOnly: false, full: false);
 
                 Format = Bootstrap(name, session.Connection, cancellationToken);

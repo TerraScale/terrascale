@@ -254,7 +254,6 @@ internal sealed partial class EngineManagementService
         var empty = record.FormatVersion == 2
             ? await EraseProjectBatchAsync(transaction, record, cancellationToken).ConfigureAwait(false)
             : await IsProjectEmptyAsync(transaction, record.ProjectId, cancellationToken).ConfigureAwait(false)
-                && await EraseRetainedDatabasesAsync(transaction, record.ProjectId, cancellationToken).ConfigureAwait(false)
                 && await VerifyProjectPurgesAsync(transaction, record.ProjectId, cancellationToken).ConfigureAwait(false);
         if (current is not null && current.EvidenceVersion == 2 && current.Empty == empty && current.ClosureId == record.ClosureId && current.FormatVersion == record.FormatVersion)
         {

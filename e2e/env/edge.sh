@@ -14,6 +14,7 @@ pg_edge_serves() { openssl s_client -starttls postgres -connect 127.0.0.1:5432 -
 start mailpit "$tools/mailpit" --listen 127.0.0.1:8025 --smtp 127.0.0.1:587 \
   --smtp-tls-cert "$pki/edge.pem" --smtp-tls-key "$pki/edge.key" --smtp-require-starttls --smtp-auth-accept-any \
   --smtp-disable-rdns --disable-version-check
+start client-proxy node "$here/client-proxy.mjs"
 start dns node "$here/dns.mjs"
 start webhook-receiver node "$here/webhook-receiver.mjs"
 start cloudflare-sink node "$here/cloudflare-sink.mjs"
@@ -21,6 +22,7 @@ start stripe node "$here/stripe.mjs"
 start r2 node "$here/r2.mjs"
 start attack-protection node "$here/attack-protection.mjs"
 start oauth2 node "$here/oauth2.mjs"
+start sso node "$here/sso.mjs"
 start pg-edge env E2E_EDGE_CERT="$pki/edge.pem" E2E_EDGE_KEY="$pki/edge.key" node "$here/pg-edge.mjs"
 start caddy env XDG_DATA_HOME="$state/caddy" XDG_CONFIG_HOME="$state/caddy" E2E_EDGE_CERT="$pki/edge.pem" E2E_EDGE_KEY="$pki/edge.key" \
   "$tools/caddy" run --config "$here/Caddyfile" --adapter caddyfile
@@ -30,4 +32,5 @@ ready stripe curl -fsS --max-time 2 http://127.0.0.1:8027/log
 ready r2 curl -fsS --max-time 2 http://127.0.0.1:8028/log
 ready oauth2 curl -fsS --max-time 2 http://127.0.0.1:8031/readyz
 ready caddy edge_serves
+ready client-proxy curl -sS --max-time 2 --proxy http://127.64.0.1:8089 --noproxy '' --cacert "$trust" https://status.terrascale.tech/
 ready pg-edge pg_edge_serves

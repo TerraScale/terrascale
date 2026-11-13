@@ -65,6 +65,7 @@ jobs:
       status: ${{ steps.filter.outputs.status }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
       journey: ${{ steps.journey.outputs.journey }}
+      engine: ${{ steps.filter.outputs.engine }}
     steps:
       # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
       - if: github.event_name == 'push'
@@ -79,6 +80,66 @@ jobs:
           base: ${{ github.event_name == 'push' && github.event.before || '' }}
           ref: ${{ github.event_name == 'push' && github.sha || '' }}
           filters: |
+            engine:
+              - src/TerraBase/Engine/**/!(AGENTS.md|CLAUDE.md)
+              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Backup/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Hosting/Shutdown.cs
+              - src/TerraBase/Hosting/ApplicationRunCompletion.cs
+              - src/TerraBase/Hosting/DatabaseRoute.cs
+              - src/TerraBase/Hosting/DatabaseLifecycleCheckpoint.cs
+              - src/TerraBase/Hosting/BadRequests.cs
+              - src/TerraBase/Hosting/Listeners.cs
+              - src/TerraBase/Features/Health/NodeReadiness.cs
+              - src/TerraBase/Features/Health/ReadyzEndpoint.cs
+              - src/TerraBase/Configuration/TerraBaseOptions.cs
+              - src/TerraBase/Features/Memory/MemoryBudget.cs
+              - src/TerraBase/Features/Memory/IMemoryBudget.cs
+              - src/TerraBase/Features/Qos/QosAdmission.cs
+              - src/TerraBase/Features/Qos/IQosAdmission.cs
+              - src/TerraBase/Features/Qos/QosContext.cs
+              - src/TerraBase/Features/Qos/QosPolicy.cs
+              - src/TerraBase/Features/Qos/QosRequestLease.cs
+              - src/TerraBase/Features/Qos/QosMemoryException.cs
+              - src/TerraBase/Tenancy/TenantContext.cs
+              - src/TerraBase/Tenancy/PlanTierExtensions.cs
+              - src/TerraBase/Program.cs
+              - src/TerraBase/TerraBase.csproj
+              - src/TerraBase/Features/Sql/SqlErrors.cs
+              - src/TerraBase/Features/Sql/SqlService.cs
+              - src/TerraBase/Features/Sql/SqlScript.cs
+              - src/TerraBase/Features/Sql/SqlSocket.cs
+              - src/TerraBase/Features/Postgres/PostgresConnectionHandler.cs
+              - src/TerraBase/Features/Management/CreateDatabaseEndpoint.cs
+              - src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs
+              - src/TerraBase/Features/Management/EngineManagementService.AddPipeline.cs
+              - src/TerraBase/Features/Management/EngineManagementService.DeletePipeline.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Databases.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Recovery.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Orphans.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Tenants.cs
+              - src/TerraBase/Features/Management/Backups/StorageSweep.cs
+              - src/TerraBase/Features/Management/Backups/EngineManagedBackupService.Restores.cs
+              - src/TerraBase/Features/Replicas/HomeMoves.cs
+              - src/TerraBase/Features/Replicas/HomeLeases.cs
+              - src/TerraBase/Features/Replicas/RegionalHandoff.cs
+              - src/TerraBase/Features/Memory/MemoryBudgetExtensions.cs
+              - src/TerraBase/Primitives/DirectorySync.cs
+              - src/TerraBase/Primitives/EntityIds.cs
+              - src/TerraBase/Primitives/StrictJson.cs
+              - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
+              - e2e/env/engine-crash*
+              - e2e/env/build.sh
+              - scripts/terrabase/**
+              - scripts/vendor/download-turso-native.sh
+              - scripts/vendor/verify-turso-native.sh
+              - benchmark/turso-sync-host/turso-pin.env
+              - Makefile
+              - Directory.*
+              - global.json
+              - NuGet.config
+              - .github/workflows/ci.yml
+              - .github/workflows/journey.yml
             shared: &shared
               - .github/workflows/ci.yml
               - Makefile
@@ -443,6 +504,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
       # ts-orch accepts this job's OIDC token to release the image it just published.
       id-token: write
       # A failed release dispatches a fresh main run (a newer signed run) so the latest main still ends up live.
@@ -512,6 +574,31 @@ jobs:
           INDEX: ${{ steps.image.outputs.digest }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${ARM64}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Attest build provenance (linux/arm64 child)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
+          subject-digest: ${{ steps.digest.outputs.arm64 }}
+          push-to-registry: true
+      - name: Generate the linux/arm64 child SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom.spdx.json
+          upload-artifact: false
+      - name: Attest the SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
+          subject-digest: ${{ steps.digest.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom.spdx.json
+          push-to-registry: true
+      - name: Verify the attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARM64: ${{ steps.digest.outputs.arm64 }}
+        run: gh attestation verify "oci://ghcr.io/terrascale/${SERVICE}@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
 
   main-build-only:
     needs: [changes, terrabase, test]
@@ -529,6 +616,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
       id-token: write
       actions: read
     steps: *production-steps
@@ -600,6 +688,7 @@ jobs:
       actions: read
       issues: write
       packages: write
+      attestations: write
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -635,6 +724,41 @@ jobs:
       - name: Build or reuse the target image and publish its main tag
         if: steps.live.outputs.deploy == 'true'
         run: bash "$RUNNER_TEMP/reconcile-image.sh" auth
+      - id: authdigest
+        name: Extract the released arm64 child digest
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          IMAGE: ${{ env.IMAGE }}
+        run: echo "arm64=${IMAGE#*@}" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance (linux/arm64 child)
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/terrascale/ts-auth
+          subject-digest: ${{ steps.authdigest.outputs.arm64 }}
+          push-to-registry: true
+      - name: Generate the linux/arm64 child SBOM
+        if: steps.live.outputs.deploy == 'true'
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ghcr.io/terrascale/ts-auth@${{ steps.authdigest.outputs.arm64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom.spdx.json
+          upload-artifact: false
+      - name: Attest the SBOM
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ghcr.io/terrascale/ts-auth
+          subject-digest: ${{ steps.authdigest.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom.spdx.json
+          push-to-registry: true
+      - name: Verify the attestations
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARM64: ${{ steps.authdigest.outputs.arm64 }}
+        run: gh attestation verify "oci://ghcr.io/terrascale/ts-auth@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
       - name: Release to every region
         if: steps.live.outputs.deploy == 'true'
         env:
@@ -787,10 +911,12 @@ jobs:
   journey:
     needs: changes
     if: >-
-      (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
+      (github.event_name == 'pull_request' && (needs.changes.outputs.journey == 'true' || needs.changes.outputs.engine == 'true'))
       || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
       || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
     uses: ./.github/workflows/journey.yml
+    with:
+      engine: ${{ needs.changes.outputs.engine == 'true' }}
 
   all-green:
     name: all-green
@@ -799,4 +925,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:
-      - run: test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false
+      - run: |
+          test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false
+          test "${{ needs.changes.outputs.engine != 'true' || needs.journey.result == 'success' }}" = true

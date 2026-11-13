@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Features.Callers;
@@ -47,12 +48,19 @@ internal sealed class UserAuthenticationHandler(
             return AuthenticateResult.NoResult();
         }
 
-        if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(Context.RequestAborted).ConfigureAwait(false)) is not { } keys)
+        Context.Features.Set<TokenKeysPending>(null);
+        var token = header["Bearer ".Length..].Trim();
+        if (!CouldBeValid(token, terraBase, time))
         {
-            return AuthenticateResult.Fail("ts-auth signing keys are not loaded");
+            return AuthenticateResult.Fail("invalid token");
         }
 
-        var token = header["Bearer ".Length..].Trim();
+        if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(Context.RequestAborted).ConfigureAwait(false)) is not { } keys)
+        {
+            Context.Features.Set(TokenKeysPending.Instance);
+            return AuthenticateResult.Fail(TokenKeysPending.Message);
+        }
+
         var cacheKey = ValidatedTokens.KeyOf(token);
         if (validated.TryGet(cacheKey, keys, out var accepted))
         {
@@ -63,7 +71,12 @@ internal sealed class UserAuthenticationHandler(
         var result = await Tokens.ValidateTokenAsync(token, Parameters(keys)).ConfigureAwait(false);
         if (result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            var refreshed = await issuerKeys.RefreshAsync(Context.RequestAborted).ConfigureAwait(false);
+            var refreshed = await issuerKeys.RefreshAsync(Tokens.ReadJsonWebToken(token).Kid, Context.RequestAborted).ConfigureAwait(false);
+            if (refreshed is Unavailable)
+            {
+                Context.Features.Set(TokenKeysPending.Instance);
+                return AuthenticateResult.Fail(TokenKeysPending.Message);
+            }
             if (refreshed is IReadOnlyList<SecurityKey> refreshedKeys && !ReferenceEquals(refreshedKeys, keys))
             {
                 checkedWith = refreshedKeys;
@@ -219,6 +232,37 @@ internal sealed class UserAuthenticationHandler(
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
+    internal static bool AllowsAlgorithm(string algorithm) => Algorithms.Contains(algorithm, StringComparer.Ordinal);
+
+    internal static bool CouldBeValid(string token, TerraBaseOptions options, TimeProvider? time)
+    {
+        try
+        {
+            if (!Tokens.CanReadToken(token))
+            {
+                return false;
+            }
+
+            var jwt = Tokens.ReadJsonWebToken(token);
+            if (jwt.IsEncrypted || string.IsNullOrEmpty(jwt.EncodedSignature)
+                || !jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || !EntityIds.IsValid(subject)
+                || !Algorithms.Contains(jwt.Alg, StringComparer.Ordinal) || !Types.Contains(jwt.Typ, StringComparer.Ordinal))
+            {
+                return false;
+            }
+
+            var parameters = Parameters(options, [], time);
+            Validators.ValidateIssuer(jwt.Issuer, jwt, parameters);
+            Validators.ValidateAudience(jwt.Audiences, jwt, parameters);
+            return parameters.LifetimeValidator(jwt.TryGetPayloadValue<object>(JwtRegisteredClaimNames.Nbf, out _) ? jwt.ValidFrom : null,
+                jwt.TryGetPayloadValue<object>(JwtRegisteredClaimNames.Exp, out _) ? jwt.ValidTo : null, jwt, parameters);
+        }
+        catch (Exception error) when (error is ArgumentException or SecurityTokenException or JsonException or FormatException)
+        {
+            return false;
+        }
+    }
+
     private TokenValidationParameters Parameters(IReadOnlyList<SecurityKey> keys) => Parameters(terraBase, keys, time);
 
     internal static TokenValidationParameters Parameters(TerraBaseOptions terraBase, IReadOnlyList<SecurityKey> keys, TimeProvider? time) => new()
@@ -229,6 +273,9 @@ internal sealed class UserAuthenticationHandler(
         IssuerSigningKeys = keys,
         TryAllIssuerSigningKeys = false,
         ValidAlgorithms = Algorithms,
+        AlgorithmValidator = (algorithm, key, _, _) => Algorithms.Contains(algorithm, StringComparer.Ordinal)
+            && (key is not JsonWebKey jwk || (string.IsNullOrEmpty(jwk.Alg) || jwk.Alg == algorithm)
+                && (jwk.KeyOps.Count == 0 || jwk.KeyOps.Contains("verify", StringComparer.Ordinal))),
         ValidTypes = Types,
         RequireSignedTokens = true,
         RequireExpirationTime = true,

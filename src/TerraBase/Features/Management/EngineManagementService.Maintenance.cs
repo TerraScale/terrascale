@@ -66,8 +66,6 @@ internal sealed partial class EngineManagementService
 
             after = page.Next;
         }
-
-        await PurgeDeletedDatabasesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask DropLocalAsync(TenantContext database, CancellationToken cancellationToken)

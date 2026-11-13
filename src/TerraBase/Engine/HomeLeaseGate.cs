@@ -10,17 +10,6 @@ internal sealed class HomeLeaseGate(TimeProvider time)
     private long _until;
 
     internal Func<bool>? RegionalWriter { get; set; }
-    internal Func<long>? RegionalEpoch { get; set; }
-
-    internal long Epoch => RegionalEpoch?.Invoke() ?? 0;
-
-    internal void ThrowIfRegionalWriterChanged(long epoch)
-    {
-        if (!(RegionalWriter?.Invoke() ?? true) || Epoch != epoch)
-        {
-            throw new StorageBusyException();
-        }
-    }
 
     public IReadOnlyCollection<string> Leased => [.. _leased.Keys];
 

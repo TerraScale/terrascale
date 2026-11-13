@@ -109,11 +109,6 @@ internal sealed partial class EngineManagementService
             return false;
         }
 
-        if (!await EraseRetainedDatabasesAsync(transaction, project, token).ConfigureAwait(false))
-        {
-            return false;
-        }
-
         var databases = await CatalogTables.DatabasesAsync(transaction, project, null, CatalogPage, token).ConfigureAwait(false);
         foreach (var database in databases.Items.Where(database => !PlatformDatabases.IsPlatformDatabase(database.Id)))
         {
@@ -139,24 +134,6 @@ internal sealed partial class EngineManagementService
 
         return await VerifyProjectPurgesAsync(transaction, project, token).ConfigureAwait(false)
             && await IsProjectEmptyAsync(transaction, project, token).ConfigureAwait(false);
-    }
-
-    private async ValueTask<bool> EraseRetainedDatabasesAsync(IStorageTransaction transaction, string project, CancellationToken token)
-    {
-        var deleted = await SystemCatalog.ListAsync(transaction, DeletedDatabases.Project(project), null, CatalogPage,
-            ManagementJsonContext.Default.DeletedDatabaseRecord, record => record.Database.Id, token).ConfigureAwait(false);
-        foreach (var record in deleted.Items)
-        {
-            using var authority = await retention.EnterAsync(record.Database.Id, token).ConfigureAwait(false);
-            if (authority is null)
-            {
-                throw new StorageBusyException();
-            }
-            authority.Fence(transaction);
-            _ = await UnregisterRecordAsync(transaction, record.Storage, record.Database, token, customerDeletion: true).ConfigureAwait(false);
-            await DeletedDatabases.RemoveAsync(transaction, record, token).ConfigureAwait(false);
-        }
-        return deleted.Next is null;
     }
 
     private async ValueTask<bool> VerifyProjectPurgesAsync(IStorageTransaction transaction, string project, CancellationToken token)

@@ -162,7 +162,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard, 
         IStorageTransaction transaction, string kind, string id, JsonTypeInfo<T> type, CancellationToken cancellationToken)
         where T : class
     {
-        if (typeof(T) == typeof(ManagedDatabase) && await DatabasePurge.IsPermanentlyPurgedAsync(transaction, id, cancellationToken).ConfigureAwait(false))
+        if (typeof(T) == typeof(ManagedDatabase) && await DatabasePurge.IsDeletedAsync(transaction, id, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }

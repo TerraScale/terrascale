@@ -24,7 +24,7 @@ internal sealed class SqlService(
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, database, canWrite, apply, fences, placements);
+        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, database, canWrite, apply, fences);
         return replicas.Holds(database)
             ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, time, database, canWrite, Local)
             : Local();
@@ -34,11 +34,23 @@ internal sealed class SqlService(
         owners.Writer && await placements.FindAsync(database, cancellationToken).ConfigureAwait(false)
             is TenantDatabaseRecord { Placement.Home: var home } && home == options.Region;
 
-    public ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
+    public async ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
         TenantContext database, IReplicaReader reader, IReadOnlyList<SqlPlannedCommand> statements, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(reader);
-        return ExecuteOnCopyAsync(database, statement => reader.ExecuteAsync(statement, cancellationToken), statements, write: false, cancellationToken);
+        var store = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+        using var running = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, store?.Refused ?? CancellationToken.None);
+        try
+        {
+            var result = await ExecuteOnCopyAsync(database, statement => reader.ExecuteAsync(statement, running.Token),
+                statements, write: false, running.Token).ConfigureAwait(false);
+            _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        catch (OperationCanceledException) when (store?.Refused.IsCancellationRequested == true)
+        {
+            throw new StorageCopyFaultedException("Storage requires recovery.");
+        }
     }
 
     public void RecordLocalWrites(TenantContext database, long rows)
@@ -114,6 +126,7 @@ internal sealed class SqlService(
             results.Add(result);
         }
 
+        _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
         timing?.Invoke("local_allowance", allowanceMs);
         timing?.Invoke("local_native", nativeMs);
         if (units > 0)
@@ -184,7 +197,7 @@ internal sealed class SqlService(
 
 internal sealed class SqlSession(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
-    TenantContext database, bool canWrite, IHomeApply apply, DatabaseFences fences, IReplicaCatalog placements)
+    TenantContext database, bool canWrite, IHomeApply apply, DatabaseFences fences)
     : ISqlSession
 {
     private const int MaxStatements = 256;
@@ -243,6 +256,7 @@ internal sealed class SqlSession(
     public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -336,16 +350,10 @@ internal sealed class SqlSession(
     public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (await CheckDatabaseAsync(placements, database, cancellationToken).ConfigureAwait(false) is { } unavailable)
-            {
-                await DropAsync().ConfigureAwait(false);
-                _inTransaction = false;
-                return unavailable;
-            }
-
             await ExpireIfDueAsync().ConfigureAwait(false);
             if (_lost is { } lost)
             {
@@ -401,14 +409,6 @@ internal sealed class SqlSession(
             _gate.Release();
         }
     }
-
-    internal static async ValueTask<SqlError?> CheckDatabaseAsync(IReplicaCatalog placements, TenantContext database, CancellationToken cancellationToken) =>
-        await placements.FindAsync(database, cancellationToken).ConfigureAwait(false) switch
-        {
-            TenantDatabaseRecord => null,
-            NotFound => UnknownDatabase,
-            Unavailable => SqlErrors.Busy("the database catalog is unavailable"),
-        };
 
     internal static SqlStatement Internal(string sql) => new(sql, [], NoNamed, MaxRows, MaxBytes, SqlLimits.MaxRequestTime);
 
@@ -473,13 +473,6 @@ internal sealed class SqlSession(
     private async ValueTask<SqlOutcome> ExecuteLockedAsync(
         SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, bool first, CancellationToken cancellationToken)
     {
-        if (await CheckDatabaseAsync(placements, database, cancellationToken).ConfigureAwait(false) is { } unavailable)
-        {
-            await DropAsync().ConfigureAwait(false);
-            _inTransaction = false;
-            return unavailable;
-        }
-
         if (HasNonFiniteArgs(command))
         {
             return SqlErrors.NonFinite;
@@ -1145,6 +1138,8 @@ internal sealed class SqlSession(
 
     private static SqlError? Failure(Exception error) => error switch
     {
+        StorageCopyFaultedException => new SqlError(SqlErrors.CopyFaulted, "copy_faulted: Storage requires recovery."),
+        StorageProofPendingException => new SqlError(SqlErrors.RecoveryPending, "recovery_pending: Storage recovery proof is pending; retry."),
         StorageBusyException => SqlErrors.Busy("the database is busy; retry"),
         DatabaseMovedException moved => SqlErrors.Moved(moved),
         QueryCapacityException => SqlErrors.Interrupt,

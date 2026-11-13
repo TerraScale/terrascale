@@ -81,6 +81,20 @@ for (;;) { try { await client.setDatabasePlacement(project, database, { regions:
 
 The CLI takes the same list: `ts db create example -regions gru,fra` and `ts db placement example -regions sjc,fra`. `-all-regions` places the database in every serving region. When a requested region is not ready, `ts db placement <name> -regions …` exits with a message asking you to run the same command again.
 
+## Choosing a region by ping
+
+Wherever the dashboard shows the region map — when you create a database, change its regions, set up a project, and on the Home and Analytics pages — each region shows its ping: the round trip from your browser to that region, in milliseconds.
+
+The dashboard measures it in your browser: it calls the region's public health endpoint, `https://<region>.api.terrascale.tech/healthz`, once to open the connection and then three more times, and shows the median. A green dot means under 100 ms, amber under 250 ms and red 250 ms or more. "Unreachable" means the region didn't answer within 3 seconds from your network. When you pick regions, the one closest to you is marked "Lowest ping".
+
+The ping is measured from where you are now, not from your application's servers. If your application runs elsewhere, measure from there:
+
+```sh
+curl -o /dev/null -s -w '%{time_starttransfer}\n' https://gru.api.terrascale.tech/healthz
+```
+
+Home also shows a "Status probe" latency for each region: that one comes from TerraScale's status monitoring, not from your browser.
+
 ## Earlier fields
 
 `homeRegion`, `replicaRegions` and `POST …/move-home` are earlier fields and still work during the transition. New calls send `regions`. `allRegions: true`, sent without `regions`, is how you ask for every serving region, including regions added later. Responses list `regions`.

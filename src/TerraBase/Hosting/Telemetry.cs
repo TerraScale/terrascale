@@ -106,6 +106,8 @@ public static class Telemetry
                     "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
                         or "terrabase.stats.top.operations"
                         => new MetricStreamConfiguration { CardinalityLimit = 10 },
+                    "terrabase.regional_catalog.receipt_conflicts" => new MetricStreamConfiguration { CardinalityLimit = 2, TagKeys = ["kind"] },
+                    "terrabase.ownership.refresh_errors" => new MetricStreamConfiguration { CardinalityLimit = 2000, TagKeys = ["region"] },
                     "terrabase_pressure_available" => new MetricStreamConfiguration { CardinalityLimit = 11 },
                     _ => null,
                 };

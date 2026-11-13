@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using TerraBase.Tenancy;
 using Turso.Data.Sqlite;
+using Turso.Raw.Public;
 using ZLogger;
 
 namespace TerraBase.Engine.Turso;
@@ -113,6 +114,8 @@ internal sealed partial class TursoStorageEngine
 
     private async Task<bool> MigrateTenantAsync(TenantContext database, string path, CancellationToken cancellationToken)
     {
+        await using var read = await Ledger.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
+        cancellationToken = read.Token;
         var key = Key(database);
         var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
@@ -132,7 +135,11 @@ internal sealed partial class TursoStorageEngine
 
         try
         {
-            return await MigrateFileAsync(database.DatabaseId!, path, cancellationToken).ConfigureAwait(false);
+            using var mutation = await Ledger.Mutations(database).EnterAsync(cancellationToken).ConfigureAwait(false);
+            await Ledger.ThrowIfUnavailableAsync(database, cancellationToken).ConfigureAwait(false);
+            var result = await MigrateFileAsync(database.DatabaseId!, path, cancellationToken).ConfigureAwait(false);
+            await Ledger.ThrowIfUnavailableAsync(database, cancellationToken).ConfigureAwait(false);
+            return result;
         }
         finally
         {
@@ -166,15 +173,22 @@ internal sealed partial class TursoStorageEngine
         var connectionString = await Encryption.ExistingAsync(path, Io, cancellationToken).ConfigureAwait(false);
         return await Io.RunAsync(() =>
         {
-            using var connection = new SqliteConnection(connectionString);
+            using var connection = new SqliteConnection(connectionString)
+            {
+                CloseRefusal = () => cancellationToken.IsCancellationRequested ? "the migration copy lease was refused" : null,
+            };
+            cancellationToken.ThrowIfCancellationRequested();
             TursoSession.OpenExisting(connection, path);
+            using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(TursoSession.Handle(connection)));
             var before = StorageMigrations.FileFormat(connection);
             if (StorageMigrations.Apply(name, connection, cancellationToken) == before)
             {
                 return false;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             Checkpoint(name, connection);
+            cancellationToken.ThrowIfCancellationRequested();
             return true;
         }, cancellationToken).ConfigureAwait(false);
     }

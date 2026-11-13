@@ -85,11 +85,6 @@ internal sealed partial class TursoDatabaseStore
                 }
             }
         }
-        catch (Exception error)
-        {
-            Ledger!.FailClosed($"a storage operation's intent could not be retired: {error.GetType().Name}");
-            throw;
-        }
         finally
         {
             _operations.Release();
@@ -105,6 +100,20 @@ internal sealed partial class TursoDatabaseStore
         }
     }
 
+    private void CheckpointWriter(TursoSession writer)
+    {
+        using var mutation = EnterMutation();
+        if (Revisions.IsAttachedTo(writer.Connection))
+        {
+            Revisions.Checkpoint(writer.Connection);
+        }
+        else
+        {
+            Scalar(writer.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+        ThrowIfUnavailable();
+    }
+
     internal async Task CheckpointOnCloseAsync()
     {
         if (CurrentWriter() is null || CloseRefusal is not null)
@@ -118,17 +127,14 @@ internal sealed partial class TursoDatabaseStore
         {
             if (CurrentWriter() is { } writer && CloseRefusal is null)
             {
+                using var refused = ReadCancellation(CancellationToken.None);
+                using var interrupted = refused.Token.Register(() => TursoBindings.Interrupt(writer.Native));
                 await WriteLane.RunAsync(() =>
                 {
-                    if (Revisions.IsAttachedTo(writer.Connection))
-                    {
-                        Revisions.Checkpoint(writer.Connection);
-                    }
-                    else
-                    {
-                        Scalar(writer.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
-                    }
-                }, CancellationToken.None).ConfigureAwait(false);
+                    ThrowIfUnavailable();
+                    refused.Token.ThrowIfCancellationRequested();
+                    CheckpointWriter(writer);
+                }, refused.Token).ConfigureAwait(false);
             }
             operation?.Complete();
         }

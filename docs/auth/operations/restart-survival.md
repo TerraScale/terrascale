@@ -19,3 +19,17 @@ uses `IDataProtector`, antiforgery or cookie authentication, it must first persi
 an auth-owned TerraBase table, with keys encrypted by an `IXmlEncryptor` keyed from an HKDF subkey of the master
 key. If users are signed out by ts-auth restarts, look at the client's own session store, for example ts-dashboard's
 cookies.
+
+## TerraBase restarts while ts-auth is unavailable
+
+Each TerraBase node keeps its last successful public verification-key set in its own data directory as
+`auth-signing-keys.json`. A restart can load this issuer-bound snapshot after the peer/kernel clock-trust gate opens, while fetching independently.
+Its remaining 24-hour allowance runs on monotonic time, with a persisted wall-time high-water mark across restarts.
+Rollback before the fetch time or high-water mark rejects the file. Cross-restart elapsed-time accounting assumes
+accurate trusted UTC and durable local state; see the guarantees and limitations in
+[the authentication decision](../../terrabase/decisions/0007-ts-auth-user-tokens.md). Removed keys keep verifying until the node’s next successful refresh or that
+maximum age, with token expiration and API-key admission still enforced. With no usable snapshot, requests answer
+`503 auth_unavailable` with `Retry-After: 1` while background fetches continue. Watch
+`terrabase_auth_signing_keys_loaded` (zero for one minute) and `terrabase_auth_signing_keys_age_seconds` (above 1200
+for five minutes). See [TerraBase signing-key recovery](../../terrabase/signing-key-operations.md) for retry bounds
+and the revocation window.

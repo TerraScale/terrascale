@@ -409,6 +409,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("paid_excess");
 
+                    b.Property<DateTime?>("PaymentGraceUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("payment_grace_until");
+
                     b.Property<bool>("PaymentMethodValidated")
                         .HasColumnType("INTEGER")
                         .HasColumnName("payment_method_validated");
@@ -771,6 +775,14 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("erasure_id");
 
+                    b.Property<DateTime?>("ExpiryLastLoggedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expiry_last_logged_at");
+
+                    b.Property<DateTime?>("ExpiryUnavailableSince")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expiry_unavailable_since");
+
                     b.Property<string>("InternalReservation")
                         .HasColumnType("TEXT")
                         .HasColumnName("internal_reservation");
@@ -784,6 +796,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("kind");
+
+                    b.Property<DateTime>("OverageStartsAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("overage_starts_at");
 
                     b.Property<string>("Plan")
                         .IsRequired()
@@ -826,6 +842,11 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("subscription_id");
+
+                    b.Property<string>("TaxLocationStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("tax_location_status");
 
                     b.Property<bool>("TrialUsed")
                         .HasColumnType("INTEGER")
@@ -949,6 +970,118 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingSubscription", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("SubscriptionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<DateTime>("CheckedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("checked_at");
+
+                    b.Property<string>("CustomerId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("customer_id");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ended_at");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("OrganizationId", "SubscriptionId");
+
+                    b.ToTable("billing_subscriptions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_billing_subscriptions", "length(subscription_id) > 0 AND length(customer_id) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingTerms", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("SubscriptionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<DateTime>("EffectiveFrom")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("effective_from");
+
+                    b.Property<string>("PricingVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("pricing_version");
+
+                    b.Property<string>("Basis")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("basis");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("currency");
+
+                    b.Property<DateTime>("LearnedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("learned_at");
+
+                    b.Property<decimal>("OperationRate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("operation_rate");
+
+                    b.Property<long>("OperationsAllowance")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("operations_allowance");
+
+                    b.Property<string>("Plan")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan");
+
+                    b.Property<string>("PlanName")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan_name");
+
+                    b.Property<long>("StorageAllowance")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("storage_allowance");
+
+                    b.Property<decimal>("StorageRate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("storage_rate");
+
+                    b.HasKey("OrganizationId", "SubscriptionId", "EffectiveFrom", "PricingVersion", "Basis");
+
+                    b.ToTable("billing_terms", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_billing_terms", "length(subscription_id) > 0 AND basis IN ('start_date', 'event', 'first_check', 'unestablished')");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.InternalBillingRow", b =>
                 {
                     b.Property<string>("Id")
@@ -982,6 +1115,126 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                             t.HasCheckConstraint("ck_internal_billing_id", "length(id) = 26 AND length(organization_id) = 26 AND length(plan_id) = 26");
 
                             t.HasCheckConstraint("ck_internal_billing_scope", "scope = 'organization'");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.OverageCharge", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("AcceptedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("accepted_at");
+
+                    b.Property<long>("Allowance")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("allowance");
+
+                    b.Property<long>("AmountCents")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("amount_cents");
+
+                    b.Property<string>("ClaimOwner")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("claim_owner");
+
+                    b.Property<DateTime?>("ClaimUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("claim_until");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("CustomerId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("customer_id");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("description");
+
+                    b.Property<DateTime>("FrozenAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("frozen_at");
+
+                    b.Property<string>("Meter")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("meter");
+
+                    b.Property<DateTime>("Month")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("month");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("PlanName")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan_name");
+
+                    b.Property<string>("PricingVersion")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("pricing_version");
+
+                    b.Property<long?>("ProviderAmountCents")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("provider_amount_cents");
+
+                    b.Property<string>("ProviderId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("provider_id");
+
+                    b.Property<long>("Quantity")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("quantity");
+
+                    b.Property<string>("SkipReason")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("skip_reason");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("state");
+
+                    b.Property<string>("SubscriptionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<decimal>("UnitRate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("unit_rate");
+
+                    b.Property<long>("Usage")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("usage");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProviderId")
+                        .IsUnique()
+                        .HasFilter("provider_id IS NOT NULL");
+
+                    b.HasIndex("State", "Id");
+
+                    b.HasIndex("OrganizationId", "Month", "Meter")
+                        .IsUnique();
+
+                    b.ToTable("billing_overage_charges", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_overage_charge", "usage >= 0 AND allowance >= 0 AND quantity >= 0 AND amount_cents >= 0 AND unit_rate >= 0 AND state IN ('pending', 'charged', 'adopted', 'mismatch', 'skipped', 'nothing_due') AND (provider_id IS NULL) = (accepted_at IS NULL) AND (provider_id IS NULL) = (provider_amount_cents IS NULL) AND (provider_id IS NOT NULL) = (state IN ('charged', 'adopted', 'mismatch')) AND (skip_reason IS NOT NULL) = (state = 'skipped') AND (state = 'nothing_due') = (amount_cents = 0) AND (claim_owner IS NULL) = (claim_until IS NULL)");
                         });
                 });
 
@@ -1110,6 +1363,30 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.SkippedBillingMeter", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTime>("Month")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("month");
+
+                    b.Property<string>("Meter")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("meter");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reason");
+
+                    b.HasKey("OrganizationId", "Month", "Meter");
+
+                    b.ToTable("billing_skipped_meters", (string)null);
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.StripeCheckoutRow", b =>
                 {
                     b.Property<string>("Id")
@@ -1210,6 +1487,61 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_stripe_customers_id", "length(id) = 26 AND length(organization_id) = 26");
                         });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.StripeEventReceipt", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTime>("EventCreated")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("event_created");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("event_type");
+
+                    b.Property<string>("InvoiceId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("invoice_id");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTime>("ProcessingUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("processing_until");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("received_at");
+
+                    b.Property<string>("SubscriptionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReceivedAt");
+
+                    b.ToTable("stripe_event_receipts", (string)null);
                 });
 
             modelBuilder.Entity("TerraScale.Dashboard.Features.Data.SavedQueryRow", b =>
@@ -2120,9 +2452,45 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingSubscription", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingTerms", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.InternalBillingRow", b =>
                 {
                     b.HasOne("TerraScale.Dashboard.Common.Accounts.OrganizationRow", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.OverageCharge", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.SkippedBillingMeter", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)

@@ -19,7 +19,7 @@ internal static class DatabaseTtl
     public const long MinSeconds = 60;
     public const long MaxSeconds = 365L * 24 * 60 * 60;
 
-    public const string Description = " ttlSeconds (60 to 31,536,000) moves the database to the seven-day deleted state within seconds after expiresAt, like a delete; a TTL database counts against the plan's database limit and is billed until then.";
+    public const string Description = " ttlSeconds (60 to 31,536,000) deletes the database, its backups and its data keys within seconds after expiresAt, like a delete; a TTL database counts against the plan's database limit and is billed until then.";
 
     public static Validation? Invalid(long? seconds) =>
         seconds is < MinSeconds or > MaxSeconds ? new Validation($"ttlSeconds must be between {MinSeconds} and {MaxSeconds}") : null;

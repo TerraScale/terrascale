@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using NoContent = Microsoft.AspNetCore.Http.HttpResults.NoContent;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -16,8 +15,8 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
         Delete(ProjectApiRoute.Database);
         Metadata(AnchoredRevocation.Instance);
         Name("deleteDatabase");
-        Summary("Moves a database to the seven-day deleted state");
-        Description("The database is unreachable and is listed under deleted-databases for at least seven days. Restore it there by immutable ID until permanent purge is authorized. Data, backups and keys are retained until then; storage remains counted against the organization quota until purge. Permanent cleanup begins after that deadline or an explicit DELETE of the deleted-database resource. A call outside placement returns 421 wrong_region; a move in progress or deletion outside the home region returns 409. Other regions drop their copies at deletion and are re-seeded after restore. Branches are independent. Platform databases are protected. " + ProjectApiRoute.IdentityDescription);
+        Summary("Deletes a database and its data");
+        Description("Branches of the database are independent copies and are not deleted. Delete in its home region (421 wrong_region elsewhere). Permanent purge authority removes every replica, including allRegions placement, without a preceding PATCH. Refused with 409 move_in_progress while the database's home move runs; retry after it settles. Platform databases answer 409 platform_database_protected. 204 records logical deletion and local cleanup, tells every replica region to forget its record and replica at once, and retries remote erasure durably." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
@@ -48,16 +47,11 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
 
         return await management.DeleteDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), context.RouteValue("project"), context.RouteValue("database"), cancellationToken) switch
         {
-            Done => Retained(context),
+            Done => TypedResults.NoContent(),
             NotFound error => ManagementRoute.DatabaseNotFound(error),
             Forbidden error => ErrorResponse.From(error),
             Conflict error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
         };
-    }
-    private static NoContent Retained(HttpContext context)
-    {
-        context.Response.Headers.Append("TerraBase-Storage-Released", "at-purge");
-        return TypedResults.NoContent();
     }
 }

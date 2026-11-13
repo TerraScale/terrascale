@@ -52,12 +52,6 @@ internal sealed class ReplicaSqlSession(
     public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        if (await SqlSession.CheckDatabaseAsync(placements, database, cancellationToken).ConfigureAwait(false) is { } unavailable)
-        {
-            await DisposeAsync().ConfigureAwait(false);
-            _readOnlyTransaction = false;
-            return unavailable;
-        }
         await UsePrimaryAsync(cancellationToken).ConfigureAwait(false);
         if (_primary || _home is { IsAutocommit: false })
         {
@@ -144,12 +138,6 @@ internal sealed class ReplicaSqlSession(
     public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        if (await SqlSession.CheckDatabaseAsync(placements, database, cancellationToken).ConfigureAwait(false) is { } unavailable)
-        {
-            await DisposeAsync().ConfigureAwait(false);
-            _readOnlyTransaction = false;
-            return unavailable;
-        }
         await UsePrimaryAsync(cancellationToken).ConfigureAwait(false);
         if (_primary || _home is { IsAutocommit: false })
         {

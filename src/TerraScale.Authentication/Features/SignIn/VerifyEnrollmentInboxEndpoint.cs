@@ -61,7 +61,7 @@ public sealed class VerifyEnrollmentInboxEndpoint(Passcodes passcodes, TotpCrede
         if (!Tenancy.IsProject(tenant)
             || (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, cancellationToken)).Configuration?.RequireMfa != true
             || await mfa.ChallengedAsync(tenant, challenge, "enrollment-inbox", cancellationToken) is not { } pending
-            || await mfa.HasAllowedFactorAsync(pending.User, cancellationToken))
+            || await mfa.HasAllowedFactorAsync(pending.User, false, cancellationToken))
         {
             throw new ApiException(403, "mfa_required", "Start sign-in again.");
         }

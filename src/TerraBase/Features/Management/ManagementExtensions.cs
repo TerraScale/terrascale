@@ -11,7 +11,6 @@ internal static class ManagementExtensions
 {
     public static IServiceCollection AddTerraBaseManagement(this IServiceCollection services)
     {
-        services.AddSingleton<RetentionAuthority>();
         services.AddSingleton<EngineManagementService>();
         services.AddSingleton<DatabaseAllowance>();
         services.AddSingleton(provider => new Lazy<ICatalogGate>(provider.GetRequiredService<ICatalogGate>));

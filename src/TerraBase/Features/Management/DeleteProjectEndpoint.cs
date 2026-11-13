@@ -14,7 +14,7 @@ internal sealed class DeleteProjectEndpoint(IManagementService management) : End
         Metadata(AnchoredRevocation.Instance);
         Name("deleteProject");
         Summary("Deletes a project");
-        Description("Permanently erases the project's retained databases, ending their restore windows. Fails with 409 while the project still has live databases, API keys, file buckets or a customer backup destination. Remove those resources before deleting the project." + " " + ManagementRoute.IdentityDescription);
+        Description("Fails with 409 while the project still has databases, API keys or a customer backup destination. Detach the backup destination before deleting its project." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
