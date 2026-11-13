@@ -36,15 +36,27 @@ public sealed partial class AuthDbContext
             {
                 table.HasCheckConstraint("ck_users_auth_epoch", "auth_epoch >= 0");
                 table.HasCheckConstraint("ck_users_email", "length(email) BETWEEN 3 AND 254 AND email = lower(email)");
+                table.HasCheckConstraint("ck_users_username", "username IS NULL OR (length(username) BETWEEN 3 AND 32 AND username = lower(username) AND username NOT GLOB '*[^a-z0-9_.]*')");
                 table.HasCheckConstraint("ck_users_platform_role", "platform_role IS NULL OR platform_role = 'admin'");
             });
             user.HasKey(row => row.Id);
             user.Property(row => row.Id).HasMaxLength(26);
             user.Property(row => row.InstanceId).HasMaxLength(26);
             user.Property(row => row.Email).HasMaxLength(254);
+            user.Property(row => row.FirstName).HasMaxLength(255);
+            user.Property(row => row.LastName).HasMaxLength(255);
+            user.Property(row => row.ImageUrl).HasMaxLength(2048);
+            user.Property(row => row.ExternalId).HasMaxLength(255);
+            user.Property(row => row.EmailVerified).HasDefaultValue(true);
+            user.Property(row => row.PublicMetadata).HasDefaultValue("{}");
+            user.Property(row => row.PrivateMetadata).HasDefaultValue("{}");
+            user.Property(row => row.UnsafeMetadata).HasDefaultValue("{}");
+            user.HasIndex(row => new { row.InstanceId, row.ExternalId }).IsUnique();
             user.Property(row => row.AuthStamp).IsRequired().HasMaxLength(26);
             user.Property(row => row.Version).IsRequired().HasMaxLength(26).IsConcurrencyToken();
             user.HasIndex(row => new { row.InstanceId, row.Email }).IsUnique();
+            user.HasIndex(row => new { row.InstanceId, row.Username }).IsUnique();
+            user.Property(row => row.Username).HasMaxLength(32);
             user.Ignore(row => row.LinkedProviders);
             user.Ignore(row => row.AuthenticationBindings);
             user.Ignore(row => row.StepUpBindings);

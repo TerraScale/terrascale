@@ -677,11 +677,11 @@ func sendJSONStatus(ctx context.Context, hc *http.Client, method, target, author
 		return 0, fmt.Errorf("tsauth: %s %s: %w", method, req.URL.Path, err)
 	}
 	defer res.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(res.Body, (8<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(res.Body, (16<<20)+1))
 	if err != nil {
 		return 0, fmt.Errorf("tsauth: read %s %s response: %w", method, req.URL.Path, err)
 	}
-	if len(data) > 8<<20 {
+	if len(data) > 16<<20 {
 		return 0, &ResponseContractError{}
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {

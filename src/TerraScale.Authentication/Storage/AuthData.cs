@@ -60,12 +60,7 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
     {
         ArgumentNullException.ThrowIfNull(changes);
         var currentAudit = this.audit.Value;
-        if (currentAudit is { Committed: false })
-        {
-            changes = [.. changes, currentAudit.Success];
-        }
-
-        if (changes.Count == 0)
+        if (changes.Count == 0 && currentAudit is not { Committed: false })
         {
             return true;
         }
@@ -86,7 +81,7 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
 
         try
         {
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await this.SaveAsync(db, cancellationToken).ConfigureAwait(false);
             currentAudit?.Committed = true;
             return true;
         }
@@ -105,10 +100,21 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
             db.ChangeTracker.Clear();
             await using var transaction = await db.Database.BeginTransactionAsync(token).ConfigureAwait(false);
             var result = await work(db, token).ConfigureAwait(false);
-            await db.SaveChangesAsync(token).ConfigureAwait(false);
+            await this.SaveAsync(db, token).ConfigureAwait(false);
             await transaction.CommitAsync(token).ConfigureAwait(false);
+            this.audit.Value?.Committed = true;
             return result;
         }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task<int> SaveAsync(AuthDbContext db, CancellationToken cancellationToken)
+    {
+        if (this.audit.Value is { Committed: false } current)
+        {
+            current.Success.Apply(db);
+        }
+
+        return db.SaveChangesAsync(cancellationToken);
     }
 
     private sealed class WriteAudit(Change success)

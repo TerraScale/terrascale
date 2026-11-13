@@ -114,7 +114,11 @@ const tabStates: Record<string, PagePattern['query']> = {
 const authSections: [string, string][] = [
   ['overview', 'Overview'],
   ['users', 'Users'],
+  ['invitations', 'Invitations'],
+  ['waitlist', 'Waitlist'],
+  ['restrictions', 'Restrictions'],
   ['sessions', 'Sessions'],
+  ['organizations', 'Organizations'],
   ['sign-in', 'Sign-in methods'],
   ['social', 'Social sign-in'],
   ['configuration', 'Configuration'],
@@ -344,7 +348,7 @@ export const dashboardStates: readonly PageState[] = [
     ([section, label]): PageState => ({
       name: `authentication ${label.toLowerCase()}`,
       url: () => `/auth/${section}`,
-      covers: { path: new RegExp(`^/auth/${section}$`), ...(section === 'logs' ? { query: { after: optionalId } } : {}), ...(section === 'attack-protection' ? { query: { saved: /^(1)?$/ } } : {}) },
+      covers: { path: new RegExp(`^/auth/${section}$`), query: { saved: /^1?$/, ...(section === 'logs' ? { after: optionalId } : section === 'users' || section === 'sessions' ? { user: optionalId } : section === 'organizations' ? { org: optionalId, after: optionalId, view: /^(members|invitations|domains)?$/ } : {}) } },
       heading: section === 'overview' ? title('Project authentication', 2) : title(`Authentication: ${label}`),
       data: async (page, journey) => {
         if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
@@ -361,7 +365,22 @@ export const dashboardStates: readonly PageState[] = [
           await expect(page.locator('input[name=new_device_email]')).not.toBeChecked();
           await expect(page.locator('input[name=bot_challenge]')).not.toBeChecked();
         }
+        else if (section === 'organizations') {
+          await expect(page.getByRole('button', { name: 'Create organization', exact: true })).toBeVisible();
+          await expect(page.locator('#org-slug')).toBeVisible();
+        }
         else if (section === 'users') await expect(page.getByText('No users yet.', { exact: true })).toBeVisible();
+        else if (section === 'invitations') await expect(page.getByText('No invitations yet.', { exact: true })).toBeVisible();
+        else if (section === 'waitlist') await expect(page.getByText('The waitlist is empty.', { exact: true })).toBeVisible();
+        else if (section === 'restrictions') {
+          await expect(page.locator('#signup-mode')).toHaveValue('public');
+          await expect(page.locator('#signup-allowlist')).toHaveValue('');
+        }
+        else if (section === 'sign-in') {
+          await expect(page.locator('#auth-sign-in-form [role=switch]')).toHaveCount(4);
+          await expect(page.locator('#auth-method-magic_link')).toBeVisible();
+          await expect(page.locator('#auth-method-username')).toBeVisible();
+        } else if (section === 'social') await expect(page.locator('.ts-idp-provider')).toHaveCount(12);
         else if (section === 'danger') {
           await expect(page.getByText('No records.', { exact: true })).toHaveCount(3);
           await expect(page.locator('main')).toHaveAttribute('data-auth-section', 'danger');

@@ -5,13 +5,24 @@
     {
       "id": "auth.manage_user",
       "group": "a",
-      "title": "auth:read lists users; auth:write disables and re-enables a project user"
+      "title": "auth:read lists users and verifies user API keys; auth:write manages users and creates/revokes their keys"
     },
     {
       "id": "auth.project.sign_out_user",
       "group": "a",
       "title": "sign a project end user out everywhere",
       "needs": "project end user; exercised by hosted/project-mfa.spec.ts and the auth-management journey with auth:write keys"
+    },
+    {
+      "id": "auth.user_profiles",
+      "group": "a",
+      "title": "create and update profile metadata; import a valid hash and refuse a malformed row",
+      "password_hash": "$2b$10$abcdefghijklmnopqrstuuB5higg1tp13mgPBqluztPkYplq4K0O6"
+    },
+    {
+      "id": "auth.organizations",
+      "group": "a",
+      "title": "project organization CRUD, initial admin membership and invitations through every SDK"
     },
     {
       "id": "sql.execute.positional",
@@ -142,7 +153,7 @@
         "big": "9007199254740993",
         "r": 1.5,
         "flag": true,
-        "t": "héllo ✓",
+        "t": "h\u00e9llo \u2713",
         "b": "AAEC/w==",
         "absent": null
       },
@@ -329,6 +340,42 @@
       "sql": "SELECT 1",
       "status": 404,
       "code": "unknown_database"
+    },
+    {
+      "id": "auth.create_invitation",
+      "group": "b",
+      "title": "create invitation",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.list_invitations",
+      "group": "b",
+      "title": "list invitations",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.revoke_invitation",
+      "group": "b",
+      "title": "revoke invitation",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.list_waitlist",
+      "group": "b",
+      "title": "list waitlist",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.approve_waitlist",
+      "group": "b",
+      "title": "approve waitlist",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
+    },
+    {
+      "id": "auth.reject_waitlist",
+      "group": "b",
+      "title": "reject waitlist",
+      "needs": "platform owner sign-in bearer: the SQL SDK runners only receive project API keys; hosted/signup-restrictions.spec.ts exercises these management routes through the dashboard"
     }
   ]
 }

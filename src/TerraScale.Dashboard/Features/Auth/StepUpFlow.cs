@@ -159,7 +159,7 @@ namespace TerraScale.Dashboard.Features.Auth
                     "create_pat" => await AuthEndpoints.AuthorizeAsync(http, "/profile?tab=access-tokens", intent.Form.GetValueOrDefault("name")?.SingleOrDefault() ?? "", intent.Mcp is null ? int.Parse(intent.Form["expiresInDays"].Single(), System.Globalization.CultureInfo.InvariantCulture) : 0, mcp: intent.Mcp, stepUp: intent),
                     "rotate_api_key" => await RotateDashboardCredentialEndpoint.RotateAsync(http, sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "create_oauth_client" => await AuthenticationConsole.PostAsync(http, "clients", sessions, accounts, services.GetRequiredService<ITsAuthProjects>()),
-                    "update_oauth_client" or "rotate_oauth_client" or "create_webhook_endpoint" or "rotate_webhook_secret" => await AuthenticationConsole.PostAsync(http,
+                    "start_impersonation" or "update_oauth_client" or "rotate_oauth_client" or "create_webhook_endpoint" or "rotate_webhook_secret" => await AuthenticationConsole.PostAsync(http,
                         intent.Path.Replace("/api/v1/auth-management/", "", StringComparison.Ordinal), sessions, accounts, services.GetRequiredService<ITsAuthProjects>()),
                     "delete_organization" => await OrganizationEndpoints.LifecycleAsync(http, sessions, accounts,
                         services.GetRequiredService<OrganizationLifecycleService>(), services.GetRequiredService<IWorkspacePlacement>(), "delete"),

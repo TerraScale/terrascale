@@ -10,10 +10,18 @@ import (
 
 // Supported project social sign-in providers.
 const (
-	ProjectProviderGoogle = "google"
-	ProjectProviderGitHub = "github"
-	ProjectProviderApple  = "apple"
-	ProjectProviderOIDC   = "oidc"
+	ProjectProviderGoogle    = "google"
+	ProjectProviderGitHub    = "github"
+	ProjectProviderApple     = "apple"
+	ProjectProviderOIDC      = "oidc"
+	ProjectProviderMicrosoft = "microsoft"
+	ProjectProviderGitLab    = "gitlab"
+	ProjectProviderLinkedIn  = "linkedin"
+	ProjectProviderSlack     = "slack"
+	ProjectProviderDiscord   = "discord"
+	ProjectProviderFacebook  = "facebook"
+	ProjectProviderX         = "x"
+	ProjectProviderOAuth2    = "oauth2"
 )
 
 // ProjectAuthProviderRequest configures the project's own provider OAuth client.
@@ -24,11 +32,13 @@ const (
 // JSON serialization intentionally includes a supplied secret for the request;
 // formatted diagnostics redact the entire request. Do not log serialized JSON.
 type ProjectAuthProviderRequest struct {
-	ClientID     string  `json:"client_id"`
-	ClientSecret *string `json:"client_secret,omitempty"`
-	Issuer       *string `json:"issuer,omitempty"`
-	TeamID       *string `json:"team_id,omitempty"`
-	KeyID        *string `json:"key_id,omitempty"`
+	ClientID     string         `json:"client_id"`
+	ClientSecret *string        `json:"client_secret,omitempty"`
+	Issuer       *string        `json:"issuer,omitempty"`
+	TeamID       *string        `json:"team_id,omitempty"`
+	KeyID        *string        `json:"key_id,omitempty"`
+	Tenant       *string        `json:"tenant,omitempty"`
+	OAuth2       *ProjectOAuth2 `json:"oauth2,omitempty"`
 }
 
 // String redacts request diagnostics, including write-only secrets.
@@ -48,7 +58,7 @@ func (r ProjectAuthProviderRequest) Format(s fmt.State, verb rune) {
 // replayed automatically, including on authentication or transient failures.
 func (u *User) SetProjectProvider(ctx context.Context, project, provider string, request ProjectAuthProviderRequest) (*ProjectAuthSettings, error) {
 	if !projectAuthProviderName(provider) {
-		return nil, errors.New("tsauth: provider must be google, github, apple or oidc")
+		return nil, errors.New("tsauth: provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2")
 	}
 	return u.projectAuthRequest(ctx, project, http.MethodPut, "providers/"+provider, request)
 }
@@ -58,14 +68,14 @@ func (u *User) SetProjectProvider(ctx context.Context, project, provider string,
 // platform user's sign-in token and admin project role; sends one request.
 func (u *User) DeleteProjectProvider(ctx context.Context, project, provider string) (*ProjectAuthSettings, error) {
 	if !projectAuthProviderName(provider) {
-		return nil, errors.New("tsauth: provider must be google, github, apple or oidc")
+		return nil, errors.New("tsauth: provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2")
 	}
 	return u.projectAuthRequest(ctx, project, http.MethodDelete, "providers/"+provider, nil)
 }
 
 func projectAuthProviderName(provider string) bool {
 	switch provider {
-	case ProjectProviderGoogle, ProjectProviderGitHub, ProjectProviderApple, ProjectProviderOIDC:
+	case ProjectProviderGoogle, ProjectProviderGitHub, ProjectProviderApple, ProjectProviderOIDC, ProjectProviderMicrosoft, ProjectProviderGitLab, ProjectProviderLinkedIn, ProjectProviderSlack, ProjectProviderDiscord, ProjectProviderFacebook, ProjectProviderX, ProjectProviderOAuth2:
 		return true
 	default:
 		return false

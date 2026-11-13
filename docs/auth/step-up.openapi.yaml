@@ -24,7 +24,7 @@ paths:
         Valid pairs are delete_account with ts-auth or ts-dashboard, create_pat with ts-dashboard,
         and delete_organization, start_ownership_transfer, change_plan, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client,
         create_webhook_endpoint, rotate_webhook_secret,
-        change_email, add_passkey or delete_passkey with ts-auth.
+        change_email, add_passkey, delete_passkey or start_impersonation with ts-auth.
         return_uri must be /auth/step-up/callback on a registered dashboard redirect origin without
         query or fragment. Issuance is limited to ten requests per account per fifteen-minute window.
       requestBody:
@@ -109,7 +109,7 @@ components:
       properties:
         purpose:
           type: string
-          enum: [delete_account, delete_organization, start_ownership_transfer, change_plan, create_pat, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client, create_webhook_endpoint, rotate_webhook_secret, change_email, add_passkey, delete_passkey]
+          enum: [delete_account, delete_organization, start_ownership_transfer, change_plan, create_pat, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client, create_webhook_endpoint, rotate_webhook_secret, change_email, add_passkey, delete_passkey, start_impersonation]
         audience:
           type: string
           enum: [ts-auth, ts-dashboard]
@@ -118,7 +118,7 @@ components:
           format: uri
         organization_id:
           type: string
-          description: Required for and binds delete_organization, start_ownership_transfer and change_plan proofs; refused for other purposes.
+          description: Required for and binds delete_organization, start_ownership_transfer and change_plan proofs to an organization ULID. For start_impersonation, required as "<project ULID>:<target user ULID>" to bind both identities. Refused for other purposes.
     StepUpBody:
       type: object
       required: [proof, step_up_url, expires_at]

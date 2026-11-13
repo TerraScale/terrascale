@@ -464,6 +464,7 @@
       "terrascale.authentication.security": {
         "type": "Project",
         "dependencies": {
+          "BCrypt.Net-Next": "[4.2.1, )",
           "Geralt": "[4.4.0, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.23.0, )"
         }
@@ -525,6 +526,12 @@
           "ZLogger": "[2.5.10, )",
           "ZString": "[2.6.0, )"
         }
+      },
+      "BCrypt.Net-Next": {
+        "type": "CentralTransitive",
+        "requested": "[4.2.1, )",
+        "resolved": "4.2.1",
+        "contentHash": "cJ1Zaad8sBSQJq3QBSPmFuLq0XDi9ys0Dk5S11gakZ2qdFWC1aaRLZ7sqOLQjGJYhgIK3LW3TixJswM6+CVbyw=="
       },
       "Fido2": {
         "type": "CentralTransitive",

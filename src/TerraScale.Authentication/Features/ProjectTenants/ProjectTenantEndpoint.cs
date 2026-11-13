@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Configuration;
@@ -11,8 +12,7 @@ using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary>Sign-in methods; at least one of passcode and password stays on.</summary>
-public sealed record MethodsBody(bool Passcode, bool Password, bool SignUp);
+public sealed record MethodsBody(bool Passcode, bool Password, string SignUpMode, bool MagicLink = false, bool Username = false);
 
 /// <summary>Hosted page branding; null shows the project's name and the default theme.</summary>
 public sealed record BrandingBody(string? Name, string? LogoUrl, string? ThemeColor, int? TitleSize = null, string? DefaultTheme = null,
@@ -33,23 +33,27 @@ public sealed record ConfigurationBody(IReadOnlyList<string> RedirectUrls, int S
 public sealed record CountsBody(long Users, long Clients);
 
 /// <summary>A social sign-in provider; its secret is never answered. <c>callback_url</c> is registered at the provider.</summary>
-public sealed record ProviderBody(string Provider, bool Configured, string? ClientId, string? Issuer, string? TeamId, string? KeyId, string CallbackUrl);
+public sealed record ProviderBody(string Provider, bool Configured, string? ClientId, string? Issuer, string? TeamId, string? KeyId, string CallbackUrl, string? Tenant = null, [property: JsonPropertyName("oauth2")] OAuth2Configuration? OAuth2 = null);
 
 /// <summary>A project tenant's settings.</summary>
 public sealed record SettingsBody(string ProjectId, string Issuer, string DiscoveryUrl, string SignInUrl, MethodsBody Methods, BrandingBody Branding, CountsBody Counts,
-    IReadOnlyList<ProviderBody> Providers, ConfigurationBody? Configuration = null, AttackProtectionStatus? AttackProtection = null, bool OrganizationPicker = false);
+    IReadOnlyList<ProviderBody> Providers, ConfigurationBody? Configuration = null, AttackProtectionStatus? AttackProtection = null, RestrictionsBody? Restrictions = null, bool OrganizationPicker = false);
 
 /// <summary><c>PUT /v1/{project}/providers/{provider}</c>: an omitted client_secret keeps the stored one.</summary>
-public sealed record SetProviderRequest(string? ClientId, string? ClientSecret, string? Issuer = null, string? TeamId = null, string? KeyId = null);
+public sealed record SetProviderRequest(string? ClientId, string? ClientSecret, string? Issuer = null, string? TeamId = null, string? KeyId = null, string? Tenant = null, [property: JsonPropertyName("oauth2")] OAuth2Configuration? OAuth2 = null);
 
 /// <summary>Changes to the sign-in methods; an omitted method is unchanged.</summary>
-public sealed record MethodsPatch(bool? Passcode, bool? Password, bool? SignUp);
+public sealed record MethodsPatch(bool? Passcode, bool? Password, string? SignUpMode, bool? MagicLink = null, bool? Username = null);
 
 /// <summary><c>PUT /v1/{project}/settings</c>: an omitted part is unchanged; a sent branding replaces the branding.</summary>
-public sealed record UpdateSettingsRequest(MethodsPatch? Methods, BrandingBody? Branding, ConfigurationBody? Configuration = null, AttackProtectionSettings? AttackProtection = null, bool? OrganizationPicker = null);
+public sealed record UpdateSettingsRequest(MethodsPatch? Methods, BrandingBody? Branding, ConfigurationBody? Configuration = null, AttackProtectionSettings? AttackProtection = null, RestrictionsBody? Restrictions = null, bool? OrganizationPicker = null);
 
-/// <summary>An end user of the tenant.</summary>
-public sealed record ProjectUserBody(string Id, string Email, DateTimeOffset CreatedAt, bool Disabled);
+public sealed record ProjectUserBody(string Id, string Email, DateTimeOffset CreatedAt, bool Disabled, string? FirstName, string? LastName,
+    string? ImageUrl, string? ExternalId, bool EmailVerified, JsonElement PublicMetadata, JsonElement PrivateMetadata, JsonElement UnsafeMetadata)
+{
+    public static ProjectUserBody From(UserRecord user) => new(user.Id, user.Email, user.CreatedAt, user.Disabled, user.FirstName, user.LastName,
+        user.ImageUrl, user.ExternalId, user.EmailVerified, JsonElement.Parse(user.PublicMetadata), JsonElement.Parse(user.PrivateMetadata), JsonElement.Parse(user.UnsafeMetadata));
+}
 
 /// <summary>A page of end users.</summary>
 public sealed record ProjectUserPageBody(IReadOnlyList<ProjectUserBody> Items, string? Next);
@@ -62,15 +66,15 @@ public sealed record ProjectSessionPageBody(IReadOnlyList<ProjectSessionBody> It
 
 /// <summary>An OAuth client of the tenant; <c>client_secret</c> only in the answer that created a confidential client.</summary>
 public sealed record ClientBody(string ClientId, string Name, string Type, IReadOnlyList<string> RedirectUris, DateTimeOffset CreatedAt,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null);
 
 /// <summary>The tenant's clients, in one page.</summary>
 public sealed record ClientPageBody(IReadOnlyList<ClientBody> Items, string? Next);
 
 /// <summary><c>POST /v1/{project}/clients</c>.</summary>
-public sealed record CreateClientRequest(string? Name, string? Type, IReadOnlyList<string>? RedirectUris);
+public sealed record CreateClientRequest(string? Name, string? Type, IReadOnlyList<string>? RedirectUris, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null);
 
-public sealed record UpdateClientRequest(string? Name, IReadOnlyList<string>? RedirectUris);
+public sealed record UpdateClientRequest(string? Name, IReadOnlyList<string>? RedirectUris, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null);
 
 public sealed record RotateClientRequest(int? GraceSeconds);
 
@@ -82,8 +86,14 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
 
     protected TenantDirectory Tenants { get; } = tenants;
 
-    protected sealed override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
-        this.HandleAsync(new ProjectCaller.SignedIn(caller), cancellationToken);
+    protected sealed override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    {
+        var person = new ProjectCaller.SignedIn(caller);
+        await this.BeforeWriteAsync(person, cancellationToken);
+        return await this.HandleAsync(person, cancellationToken);
+    }
+
+    protected virtual Task BeforeWriteAsync(ProjectCaller caller, CancellationToken cancellationToken) => Task.CompletedTask;
 
     protected abstract Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken);
 
@@ -115,6 +125,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
             ?? throw new InvalidOperationException("A management operation must have a name.");
         try
         {
+            await this.BeforeWriteAsync(new ProjectCaller.SecretKey(key), cancellationToken);
             return await this.Tenants.AuditKeyWriteAsync(key, operation, request.Path,
                 token => this.HandleAsync(new ProjectCaller.SecretKey(key), token), cancellationToken);
         }
@@ -127,7 +138,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         }
     }
 
-    protected async Task<string> AccessAsync(ProjectCaller caller, string minimum, CancellationToken cancellationToken)
+    protected async Task<string> AccessAsync(ProjectCaller caller, string minimum, CancellationToken cancellationToken, string? requiredScope = null)
     {
         ArgumentNullException.ThrowIfNull(caller);
         var projectId = this.RouteId("project");
@@ -137,8 +148,8 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
                 await this.Tenants.CheckAccessAsync(person.Id, projectId, minimum, cancellationToken);
                 break;
             case ProjectCaller.SecretKey(var key):
-                await this.Tenants.CheckKeyAccessAsync(key, projectId, HttpMethods.IsGet(this.HttpContext.Request.Method) && minimum != Roles.Admin
-                    ? TerraBaseScopes.AuthRead : TerraBaseScopes.AuthWrite, this.HttpContext.Connection.RemoteIpAddress, cancellationToken);
+                await this.Tenants.CheckKeyAccessAsync(key, projectId, requiredScope ?? (HttpMethods.IsGet(this.HttpContext.Request.Method) && minimum != Roles.Admin
+                    ? TerraBaseScopes.AuthRead : TerraBaseScopes.AuthWrite), this.HttpContext.Connection.RemoteIpAddress, cancellationToken);
 
                 break;
             default:
@@ -160,21 +171,21 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
             await db.OidcApplications.LongCountAsync(application => application.InstanceId == projectId, token).ConfigureAwait(false)), cancellationToken);
         var issuer = OidcIssuer.Issuer(options, projectId).AbsoluteUri;
         return new(projectId, issuer, issuer + "/.well-known/openid-configuration", new Uri(options.PublicOrigin, $"ui/{projectId}/sign-in").AbsoluteUri,
-            new(settings.Passcode, settings.Password, settings.SignUp), new(settings.Name, settings.LogoUrl, settings.ThemeColor, settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.EmailMessage),
+            new(settings.Passcode, settings.Password, settings.SignUpMode, settings.MagicLink, settings.Username), new(settings.Name, settings.LogoUrl, settings.ThemeColor, settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.EmailMessage),
             counts,
             [.. SocialProviders.Names.Select(name => settings.Provider(name) is { } record
-                ? new ProviderBody(name, true, record.ClientId, record.Issuer, record.TeamId, record.KeyId, SocialProviders.Callback(options, projectId, name).AbsoluteUri)
+                ? new ProviderBody(name, true, record.ClientId, record.Issuer, record.TeamId, record.KeyId, SocialProviders.Callback(options, projectId, name).AbsoluteUri, record.Tenant, record.OAuth2)
                 : new ProviderBody(name, false, null, null, null, null, SocialProviders.Callback(options, projectId, name).AbsoluteUri))], settings.Configuration ?? ConfigurationBody.Default,
             new(settings.AttackProtection.BotChallenge, settings.AttackProtection.BreachedPasswords, settings.AttackProtection.AccountLockout, settings.AttackProtection.NewDeviceEmail,
-                services.GetRequiredService<TurnstileKeys>().Configured), settings.OrganizationPicker);
+                services.GetRequiredService<TurnstileKeys>().Configured), settings.Restrictions ?? RestrictionsBody.Default, settings.OrganizationPicker);
     }
 
-    /// <summary>An end user.</summary>
-    protected static ProjectUserBody Map(UserRecord user) => new(user.Id, user.Email, user.CreatedAt, user.Disabled);
+    protected static ProjectUserBody Map(UserRecord user) => ProjectUserBody.From(user);
 
     /// <summary>A client, with its secret when just created.</summary>
-    protected static ClientBody Map(OidcApplication client, string? secret = null) => new(client.ClientId!, client.DisplayName ?? string.Empty, client.ClientType!,
-        [.. client.RedirectUris], NUlid.Ulid.Parse(client.ClientId).Time, secret);
+    protected static ClientBody Map(OidcApplication client, string? secret = null) => new(client.ClientId!, client.DisplayName ?? string.Empty, MachineClients.Policy(client) is null ? client.ClientType! : "machine",
+        [.. client.RedirectUris], NUlid.Ulid.Parse(client.ClientId).Time, secret, MachineClients.Policy(client)?.AllowedScopes,
+        MachineClients.Policy(client)?.AllowedAudiences, MachineClients.Policy(client)?.TokenLifetimeMinutes);
 
     protected static Uri? ClientRedirect(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) && string.IsNullOrEmpty(uri.UserInfo) && !value.Contains('#', StringComparison.Ordinal)
@@ -184,6 +195,11 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(ProjectStepUpRequest))]
 [JsonSerializable(typeof(ProjectStepUpBody))]
+[JsonSerializable(typeof(RestrictionsBody))]
+[JsonSerializable(typeof(ProjectInvitationBody))]
+[JsonSerializable(typeof(CreateProjectInvitationRequest))]
+[JsonSerializable(typeof(ProjectInvitationPageBody))]
+[JsonSerializable(typeof(WaitlistPageBody))]
 [JsonSerializable(typeof(SettingsBody))]
 [JsonSerializable(typeof(UpdateSettingsRequest))]
 [JsonSerializable(typeof(SetProviderRequest))]

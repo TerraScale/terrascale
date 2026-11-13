@@ -1,0 +1,137 @@
+{
+  "base": "/v1/{project}/organizations",
+  "authorization": {
+    "GET": "auth:read",
+    "mutations": "auth:write"
+  },
+  "operations": [
+    {
+      "name": "CreateOrganization",
+      "method": "POST",
+      "path": "/v1/{project}/organizations",
+      "request": "OrganizationRequest",
+      "response": "Organization",
+      "status": 201
+    },
+    {
+      "name": "ListOrganizations",
+      "method": "GET",
+      "path": "/v1/{project}/organizations",
+      "request": null,
+      "response": "OrganizationPage",
+      "status": 200
+    },
+    {
+      "name": "GetOrganization",
+      "method": "GET",
+      "path": "/v1/{project}/organizations/{org}",
+      "request": null,
+      "response": "Organization",
+      "status": 200
+    },
+    {
+      "name": "UpdateOrganization",
+      "method": "PUT",
+      "path": "/v1/{project}/organizations/{org}",
+      "request": "OrganizationRequest",
+      "response": "Organization",
+      "status": 200
+    },
+    {
+      "name": "DeleteOrganization",
+      "method": "DELETE",
+      "path": "/v1/{project}/organizations/{org}",
+      "request": null,
+      "response": null,
+      "status": 204
+    },
+    {
+      "name": "AddOrganizationMember",
+      "method": "POST",
+      "path": "/v1/{project}/organizations/{org}/memberships",
+      "request": "OrganizationMembershipRequest",
+      "response": "OrganizationMembership",
+      "status": 201
+    },
+    {
+      "name": "ListOrganizationMembers",
+      "method": "GET",
+      "path": "/v1/{project}/organizations/{org}/memberships",
+      "request": null,
+      "response": "OrganizationMembershipPage",
+      "status": 200
+    },
+    {
+      "name": "UpdateOrganizationMember",
+      "method": "PUT",
+      "path": "/v1/{project}/organizations/{org}/memberships/{user}",
+      "request": "OrganizationMembershipRequest",
+      "response": "OrganizationMembership",
+      "status": 200
+    },
+    {
+      "name": "DeleteOrganizationMember",
+      "method": "DELETE",
+      "path": "/v1/{project}/organizations/{org}/memberships/{user}",
+      "request": null,
+      "response": null,
+      "status": 204
+    },
+    {
+      "name": "CreateOrganizationInvitation",
+      "method": "POST",
+      "path": "/v1/{project}/organizations/{org}/invitations",
+      "request": "OrganizationInvitationRequest",
+      "response": "OrganizationInvitation",
+      "status": 201
+    },
+    {
+      "name": "ListOrganizationInvitations",
+      "method": "GET",
+      "path": "/v1/{project}/organizations/{org}/invitations",
+      "request": null,
+      "response": "OrganizationInvitationPage",
+      "status": 200
+    },
+    {
+      "name": "RevokeOrganizationInvitation",
+      "method": "DELETE",
+      "path": "/v1/{project}/organizations/{org}/invitations/{invitation}",
+      "request": null,
+      "response": null,
+      "status": 204
+    },
+    {
+      "name": "AddOrganizationDomain",
+      "method": "POST",
+      "path": "/v1/{project}/organizations/{org}/domains",
+      "request": "OrganizationDomainRequest",
+      "response": "OrganizationDomain",
+      "status": 201
+    },
+    {
+      "name": "ListOrganizationDomains",
+      "method": "GET",
+      "path": "/v1/{project}/organizations/{org}/domains",
+      "request": null,
+      "response": "OrganizationDomainPage",
+      "status": 200
+    },
+    {
+      "name": "VerifyOrganizationDomain",
+      "method": "POST",
+      "path": "/v1/{project}/organizations/{org}/domains/{domain}/verify",
+      "request": null,
+      "response": "OrganizationDomain",
+      "status": 200
+    },
+    {
+      "name": "DeleteOrganizationDomain",
+      "method": "DELETE",
+      "path": "/v1/{project}/organizations/{org}/domains/{domain}",
+      "request": null,
+      "response": null,
+      "status": 204
+    }
+  ]
+}

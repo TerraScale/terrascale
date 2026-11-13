@@ -3,12 +3,13 @@ stay compatible."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .ids import validate_id
 
 __all__ = [
+    "UserApiKey", "UserApiKeyPage", "UserApiKeyVerification", "UserApiKeyPolicy",
     "ApiKey",
     "ApiKeyPage",
     "ApiKeySecret",
@@ -22,11 +23,16 @@ __all__ = [
     "ProjectDirectoryUser",
     "ProjectLinkedProvider",
     "ProjectProviderUpdate",
+    "ProjectOAuth2",
     "ProjectSession",
     "ProjectSessionPage",
     "ProjectSettings",
     "ProjectSettingsUpdate",
     "ProjectUser",
+    "CreateProjectUser",
+    "UpdateProjectUser",
+    "ImportProjectUser",
+    "ImportProjectUsersResult",
     "ProjectUserExportPage",
     "ProjectUserPage",
     "Regions",
@@ -297,13 +303,16 @@ class ProjectClient:
     redirect_uris: list[str]
     created_at: str
     client_secret: str | None = field(default=None, repr=False)
+    allowed_scopes: list[str] | None = None
+    allowed_audiences: list[str] | None = None
+    token_lifetime_minutes: int | None = None
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectClient:
         for key in ("client_id", "name", "type", "created_at"):
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project client metadata")
-        if body["type"] not in ("public", "confidential"):
+        if body["type"] not in ("public", "confidential", "machine"):
             raise ValueError("invalid project client type")
         secret = body.get("client_secret")
         if secret is not None and (not isinstance(secret, str) or not secret):
@@ -315,6 +324,8 @@ class ProjectClient:
             redirect_uris=_strings(body, "redirect_uris", "project client redirect uris"),
             created_at=body["created_at"],
             client_secret=secret,
+            allowed_scopes=body.get("allowed_scopes"), allowed_audiences=body.get("allowed_audiences"),
+            token_lifetime_minutes=body.get("token_lifetime_minutes"),
         )
 
 
@@ -370,19 +381,30 @@ def _int_or_none(body: dict[str, Any], key: str, what: str) -> int | None:
     return value
 
 
+def _signup_mode(body: dict[str, Any]) -> str:
+    value = body.get("sign_up_mode")
+    if value not in ("public", "restricted", "waitlist"):
+        raise ValueError("invalid sign-up mode")
+    return str(value)
+
+
 @dataclass(frozen=True)
 class ProjectSettingsMethods:
     """The project's enabled end-user sign-in methods."""
 
     passcode: bool
     password: bool
-    sign_up: bool
+    sign_up_mode: str
+    magic_link: bool = False
+    username: bool = False
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettingsMethods:
         return cls(passcode=_bool(body, "passcode", "project sign-in methods"),
                    password=_bool(body, "password", "project sign-in methods"),
-                   sign_up=_bool(body, "sign_up", "project sign-in methods"))
+                   sign_up_mode=_signup_mode(body),
+                   magic_link=_bool(body, "magic_link", "project sign-in methods"),
+                   username=_bool(body, "username", "project sign-in methods"))
 
 
 @dataclass(frozen=True)
@@ -435,6 +457,19 @@ class ProjectSettingsCounts:
 
 
 @dataclass(frozen=True)
+class ProjectOAuth2:
+    """Custom OAuth2 endpoints, scopes and dot-separated claim paths."""
+
+    authorize_url: str
+    token_url: str
+    userinfo_url: str
+    scopes: str
+    id_claim: str = "id"
+    email_claim: str = "email"
+    email_verified_claim: str = "email_verified"
+
+
+@dataclass(frozen=True)
 class ProjectSettingsProvider:
     """One federated sign-in provider's configuration state."""
 
@@ -445,6 +480,8 @@ class ProjectSettingsProvider:
     team_id: str | None
     key_id: str | None
     callback_url: str
+    tenant: str | None = None
+    oauth2: ProjectOAuth2 | None = None
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettingsProvider:
@@ -456,7 +493,8 @@ class ProjectSettingsProvider:
                    issuer=_text(body, "issuer", "project provider issuer"),
                    team_id=_text(body, "team_id", "project provider team id"),
                    key_id=_text(body, "key_id", "project provider key id"),
-                   callback_url=body["callback_url"])
+                   callback_url=body["callback_url"], tenant=_text(body, "tenant", "Microsoft tenant"),
+                   oauth2=ProjectOAuth2(**body["oauth2"]) if body.get("oauth2") else None)
 
 
 @dataclass(frozen=True)
@@ -496,6 +534,7 @@ class ProjectSettings:
     counts: ProjectSettingsCounts
     providers: list[ProjectSettingsProvider]
     configuration: ProjectSettingsConfiguration | None = None
+    restrictions: ProjectRestrictions | None = None
     organization_picker: bool = False
 
     @classmethod
@@ -505,6 +544,7 @@ class ProjectSettings:
                 raise ValueError("invalid project settings")
         configuration = body.get("configuration")
         return cls(
+            restrictions=ProjectRestrictions.from_json(body["restrictions"]) if body.get("restrictions") is not None else None,
             organization_picker=body.get("organization_picker", False),
             project_id=validate_id(body["project_id"]),
             issuer=body["issuer"],
@@ -526,15 +566,19 @@ class ProjectSettingsUpdate:
     methods: ProjectSettingsMethods | None = None
     branding: ProjectSettingsBranding | None = None
     configuration: ProjectSettingsConfiguration | None = None
+    restrictions: ProjectRestrictions | None = None
     organization_picker: bool | None = None
 
     def to_body(self) -> dict[str, Any]:
         body: dict[str, Any] = {}
+        if self.restrictions is not None:
+            body["restrictions"] = self.restrictions.to_body()
         if self.organization_picker is not None:
             body["organization_picker"] = self.organization_picker
         if self.methods is not None:
             body["methods"] = {"passcode": self.methods.passcode, "password": self.methods.password,
-                               "sign_up": self.methods.sign_up}
+                               "sign_up_mode": self.methods.sign_up_mode,
+                               "magic_link": self.methods.magic_link, "username": self.methods.username}
         if self.branding is not None:
             branding: dict[str, Any] = {}
             for key in ("name", "logo_url", "theme_color", "default_theme", "background_color", "text_color",
@@ -568,6 +612,14 @@ class ProjectUser:
     email: str
     created_at: str
     disabled: bool
+    first_name: str | None = None
+    last_name: str | None = None
+    image_url: str | None = None
+    external_id: str | None = None
+    email_verified: bool = False
+    public_metadata: dict[str, Any] = field(default_factory=dict)
+    private_metadata: dict[str, Any] = field(default_factory=dict)
+    unsafe_metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectUser:
@@ -575,7 +627,11 @@ class ProjectUser:
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project user")
         return cls(id=validate_id(body["id"]), email=body["email"], created_at=body["created_at"],
-                   disabled=_bool(body, "disabled", "project user state"))
+                   disabled=_bool(body, "disabled", "project user state"),
+                   first_name=body.get("first_name"), last_name=body.get("last_name"), image_url=body.get("image_url"),
+                   external_id=body.get("external_id"), email_verified=_bool(body, "email_verified", "email verification"),
+                   public_metadata=body["public_metadata"], private_metadata=body["private_metadata"],
+                   unsafe_metadata=body["unsafe_metadata"])
 
 
 @dataclass(frozen=True)
@@ -659,13 +715,17 @@ class ProjectProviderUpdate:
     issuer: str | None = None
     team_id: str | None = None
     key_id: str | None = None
+    tenant: str | None = None
+    oauth2: ProjectOAuth2 | None = None
 
     def to_body(self) -> dict[str, Any]:
         body: dict[str, Any] = {"client_id": self.client_id}
-        for key in ("client_secret", "issuer", "team_id", "key_id"):
+        for key in ("client_secret", "issuer", "team_id", "key_id", "tenant"):
             value = getattr(self, key)
             if value:
                 body[key] = value
+        if self.oauth2 is not None:
+            body["oauth2"] = asdict(self.oauth2)
         return body
 
 
@@ -760,3 +820,192 @@ class DatabaseRequestLogs:
             raise ValueError("invalid request logs items")
         return cls(validate_id(body["databaseId"]), [DatabaseRequestLog.from_json(i) for i in items],
                    body["truncated"], body["recordingLimited"])
+
+@dataclass(frozen=True)
+class ProjectRestrictions:
+    allowlist: list[str]
+    blocklist: list[str]
+    block_disposable_emails: bool = False
+    block_email_aliases: bool = False
+
+    def to_body(self) -> dict[str, Any]:
+        return {"allowlist": self.allowlist, "blocklist": self.blocklist,
+                "block_disposable_emails": self.block_disposable_emails,
+                "block_email_aliases": self.block_email_aliases}
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectRestrictions:
+        return cls(_strings(body, "allowlist", "restrictions"), _strings(body, "blocklist", "restrictions"),
+                   _bool(body, "block_disposable_emails", "restrictions"),
+                   _bool(body, "block_email_aliases", "restrictions"))
+
+
+@dataclass(frozen=True)
+class ProjectInvitation:
+    id: str
+    email: str
+    redirect_url: str | None
+    created_at: str
+    expires_at: str
+    status: str
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectInvitation:
+        return cls(validate_id(body["id"]), body["email"], body["redirect_url"],
+                   body["created_at"], body["expires_at"], body["status"])
+
+
+@dataclass(frozen=True)
+class ProjectInvitationPage:
+    items: list[ProjectInvitation]
+    next_cursor: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectInvitationPage:
+        return cls([ProjectInvitation.from_json(entry) for entry in body["items"]], body["next"])
+
+
+@dataclass(frozen=True)
+class ProjectWaitlistEntry:
+    id: str
+    project_id: str
+    email: str
+    created_at: str
+    status: str
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectWaitlistEntry:
+        return cls(validate_id(body["id"]), validate_id(body["project_id"]),
+                   body["email"], body["created_at"], body["status"])
+
+
+@dataclass(frozen=True)
+class ProjectWaitlistPage:
+    items: list[ProjectWaitlistEntry]
+    next_cursor: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectWaitlistPage:
+        return cls([ProjectWaitlistEntry.from_json(entry) for entry in body["items"]], body["next"])
+
+
+@dataclass(frozen=True, kw_only=True)
+class UpdateProjectUser:
+    first_name: str | None = None
+    last_name: str | None = None
+    image_url: str | None = None
+    external_id: str | None = None
+    public_metadata: dict[str, Any] | None = None
+    private_metadata: dict[str, Any] | None = None
+    unsafe_metadata: dict[str, Any] | None = None
+    clear: tuple[str, ...] = ()
+
+    def body(self) -> dict[str, Any]:
+        body = {name: value for name in ("first_name", "last_name", "image_url", "external_id",
+                                         "public_metadata", "private_metadata", "unsafe_metadata")
+                if (value := getattr(self, name)) is not None}
+        for name in self.clear:
+            if name not in ("first_name", "last_name", "image_url", "external_id"):
+                raise ValueError("Only scalar profile fields can be cleared.")
+            body[name] = None
+        return body
+
+
+@dataclass(frozen=True, kw_only=True)
+class CreateProjectUser(UpdateProjectUser):
+    email: str
+    password: str | None = None
+
+    def body(self) -> dict[str, Any]:
+        body = super().body()
+        body["email"] = self.email
+        if self.password is not None:
+            body["password"] = self.password
+        return body
+
+
+@dataclass(frozen=True, kw_only=True)
+class ImportProjectUser(UpdateProjectUser):
+    email: str
+    email_verified: bool = False
+    password_hash: str | None = None
+
+    def body(self) -> dict[str, Any]:
+        body = super().body()
+        body.update(email=self.email, email_verified=self.email_verified)
+        if self.password_hash is not None:
+            body["password_hash"] = self.password_hash
+        return body
+
+
+@dataclass(frozen=True)
+class ImportedProjectUser:
+    index: int
+    user: ProjectUser
+
+
+@dataclass(frozen=True)
+class UserImportError:
+    index: int
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class ImportProjectUsersResult:
+    items: list[ImportedProjectUser]
+    errors: list[UserImportError]
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ImportProjectUsersResult:
+        return cls(items=[ImportedProjectUser(row["index"], ProjectUser.from_json(row["user"])) for row in body["items"]],
+                   errors=[UserImportError(row["index"], row["code"], row["message"]) for row in body["errors"]])
+
+@dataclass(frozen=True, repr=False)
+class UserApiKey:
+    id: str
+    user_id: str
+    name: str
+    prefix: str
+    scopes: list[str]
+    created_at: str
+    expires_at: str | None
+    key: str | None = None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> UserApiKey:
+        return cls(validate_id(body["id"], "key"), validate_id(body["user_id"], "user"),
+                   body["name"], body["prefix"], _strings(body, "scopes", "user key scopes"),
+                   body["created_at"], body["expires_at"], body.get("key"))
+
+
+@dataclass(frozen=True)
+class UserApiKeyPage:
+    items: list[UserApiKey]
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> UserApiKeyPage:
+        return cls([UserApiKey.from_json(item) for item in body["items"]])
+
+
+@dataclass(frozen=True)
+class UserApiKeyVerification:
+    valid: bool
+    user_id: str | None
+    scopes: list[str] | None
+    key_id: str | None
+    expires_at: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> UserApiKeyVerification:
+        if not isinstance(body["valid"], bool):
+            raise ValueError("invalid user key verification")
+        return cls(body["valid"], body["user_id"], body["scopes"], body["key_id"], body["expires_at"])
+
+@dataclass(frozen=True)
+class UserApiKeyPolicy:
+    allowed_scopes: list[str]
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> UserApiKeyPolicy:
+        return cls(_strings(body, "allowed_scopes", "user key policy"))

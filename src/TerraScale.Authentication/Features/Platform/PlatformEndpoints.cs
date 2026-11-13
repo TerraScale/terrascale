@@ -582,7 +582,7 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
     /// <summary>One project's route.</summary>
     protected const string Project = Organization + "/projects/{project}";
 
-    private const int MaxBody = 16 * 1024;
+    protected virtual int MaximumBodyBytes => 16 * 1024;
 
     /// <inheritdoc />
     public sealed override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
@@ -645,7 +645,7 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
                 using var buffer = new MemoryStream();
                 var chunk = new byte[4096];
                 int read;
-                while ((read = await this.HttpContext.Request.Body.ReadAsync(chunk, cancellationToken)) > 0 && buffer.Length + read <= MaxBody)
+                while ((read = await this.HttpContext.Request.Body.ReadAsync(chunk, cancellationToken)) > 0 && buffer.Length + read <= this.MaximumBodyBytes)
                 {
                     buffer.Write(chunk, 0, read);
                 }
@@ -660,7 +660,7 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
         {
         }
 
-        throw Invalid($"The body must be a JSON object of at most {MaxBody} bytes with only this operation's members.");
+        throw Invalid($"The body must be a JSON object of at most {this.MaximumBodyBytes} bytes with only this operation's members.");
     }
 
     // JSON between systems is UTF-8 (RFC 8259 §8.1): another declared charset is refused, never resolved.

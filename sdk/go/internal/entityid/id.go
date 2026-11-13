@@ -89,6 +89,9 @@ func Path(path []string) error {
 	for i := 1; i < len(path); i++ {
 		switch path[i-1] {
 		case "organizations", "projects", "databases", "members", "api-keys", "invitations":
+			if len(path) == 2 && path[0] == "api-keys" && path[1] == "verify" {
+				continue
+			}
 			if path[i-1] == "invitations" && (path[i] == "accept" || path[i] == "lookup" || path[i] == "decline") {
 				continue
 			}

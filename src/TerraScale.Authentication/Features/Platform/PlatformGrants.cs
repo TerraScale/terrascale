@@ -212,6 +212,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
 
         var lifetime = expires - clock.GetUtcNow();
         var identity = Identity(user.Id, organization, project, requested.IsEmpty ? allowed : requested, lifetime < Lifetime ? lifetime : Lifetime)
+            .SetClaim("token_use", "user")
             .SetClaim(Claims.Email, user.Email)
             .SetClaim(Claims.EmailVerified, true)
             .SetClaim(Claims.AuthenticationTime, authenticatedAt);
@@ -344,6 +345,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
     {
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, subject)
+            .SetClaim("token_use", "machine")
             .SetClaim(OrganizationClaim, organization)
             .SetScopes(scopes)
             .SetResources(options.AccessTokenAudiences);
@@ -409,7 +411,8 @@ public sealed class ApiKeyApplicationManager(
     ILogger<OpenIddict.Core.OpenIddictApplicationManager<OidcApplication>> logger,
     Microsoft.Extensions.Options.IOptionsMonitor<OpenIddict.Core.OpenIddictCoreOptions> options,
     OpenIddict.Abstractions.IOpenIddictApplicationStore<OidcApplication> store,
-    TimeProvider clock)
+    TimeProvider clock,
+    AttemptLimiter limiter)
     : OpenIddict.Core.OpenIddictApplicationManager<OidcApplication>(cache, logger, options, store)
 {
     /// <summary>The prefix of an API key client's stored secret.</summary>
@@ -429,13 +432,23 @@ public sealed class ApiKeyApplicationManager(
 
     public override async ValueTask<bool> ValidateClientSecretAsync(OidcApplication application, string secret, CancellationToken cancellationToken = default)
     {
-        if (await base.ValidateClientSecretAsync(application, secret, cancellationToken).ConfigureAwait(false))
+        var machine = MachineClients.Policy(application) is not null;
+        if (machine && await limiter.CheckAsync(application.InstanceId!, "machine-client-failure", application.ClientId!,
+            10, TimeSpan.FromMinutes(15), cancellationToken).ConfigureAwait(false) is not null)
         {
-            return true;
+            return false;
         }
 
-        return application.PreviousSecretHash is not null && application.PreviousSecretExpiresAt > clock.GetUtcNow()
+        var valid = await base.ValidateClientSecretAsync(application, secret, cancellationToken).ConfigureAwait(false)
+            || application.PreviousSecretHash is not null && application.PreviousSecretExpiresAt > clock.GetUtcNow()
             && await ValidateClientSecretAsync(secret, application.PreviousSecretHash, cancellationToken).ConfigureAwait(false);
+        if (!valid && machine)
+        {
+            await limiter.AcquireAsync(application.InstanceId!, "machine-client-failure", application.ClientId!,
+                10, TimeSpan.FromMinutes(15), cancellationToken).ConfigureAwait(false);
+        }
+
+        return valid;
     }
 
     /// <inheritdoc />

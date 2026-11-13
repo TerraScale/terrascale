@@ -1,22 +1,25 @@
 using System.Globalization;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Metadata;
+using Microsoft.AspNetCore;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
-using Microsoft.AspNetCore;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.DotNet.TerraBase;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Features.ProjectOrganizations;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
+using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
@@ -43,14 +46,15 @@ public sealed record TokenBody(
     [property: JsonPropertyName("id_token")] string? IdToken,
     [property: JsonPropertyName("refresh_token")] string? RefreshToken);
 
-/// <summary>Claims about the signed-in user (OpenID Connect Core §5.3).</summary>
-/// <param name="Subject">The user id.</param>
-/// <param name="Email">The user's email, with the <c>email</c> scope.</param>
-/// <param name="EmailVerified">Always true with the <c>email</c> scope: sign-in proves the address.</param>
 public sealed record UserInfoBody(
     [property: JsonPropertyName("sub")] string Subject,
     [property: JsonPropertyName("email"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Email,
-    [property: JsonPropertyName("email_verified"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? EmailVerified);
+    [property: JsonPropertyName("email_verified"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? EmailVerified,
+    [property: JsonPropertyName("given_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FirstName,
+    [property: JsonPropertyName("family_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LastName,
+    [property: JsonPropertyName("picture"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ImageUrl,
+    [property: JsonPropertyName("public_metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? PublicMetadata,
+    [property: JsonPropertyName("act"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ImpersonationActor? Actor = null);
 
 /// <summary><c>GET /{slug}/.well-known/openid-configuration</c>: OpenID Provider metadata, served by OpenIddict.</summary>
 public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
@@ -61,7 +65,7 @@ public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
         Get("/{slug}/.well-known/openid-configuration");
         Name("oidc_discovery");
         Summary("OpenID Provider metadata");
-        Description("OpenID Connect Discovery 1.0 metadata for the issuer {public origin}/{slug}: terrascale, or an existing project's id. Other slugs answer 404. A project tenant serves the authorization code flow for its own clients and end users, without device, client-credentials or token-exchange grants.");
+        Description("OpenID Connect Discovery 1.0 metadata for the issuer {public origin}/{slug}: terrascale, or an existing project's id. Other slugs answer 404. A project tenant serves authorization-code and refresh flows for its interactive clients and end users, and client-credentials grants for its machine apps. Device and token-exchange grants are platform-only.");
         Tags("OAuth");
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status404NotFound);
@@ -95,8 +99,8 @@ public sealed class JwksEndpoint : EndpointWithoutRequest<IResult>
 /// <summary>
 /// <c>GET /{slug}/oauth/authorize</c>: the authorization endpoint with its parameters in the query string.
 /// </summary>
-public sealed class AuthorizeGetEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
-    : AuthorizeEndpoint(sessions, settings, clock, options)
+public sealed class AuthorizeGetEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
+    : AuthorizeEndpoint(impersonations, sessions, settings, clock, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -111,8 +115,8 @@ public sealed class AuthorizeGetEndpoint(Sessions sessions, ProjectAuthSettings 
 /// <c>POST /{slug}/oauth/authorize</c>: the authorization endpoint with its parameters form-encoded (OpenID Connect Core
 /// 3.1.2.1).
 /// </summary>
-public sealed class AuthorizePostEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
-    : AuthorizeEndpoint(sessions, settings, clock, options)
+public sealed class AuthorizePostEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
+    : AuthorizeEndpoint(impersonations, sessions, settings, clock, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -129,7 +133,7 @@ public sealed class AuthorizePostEndpoint(Sessions sessions, ProjectAuthSettings
 /// redirect URI, scopes and PKCE first; this signs in the user of the hosted session cookie, or sends the browser to the
 /// hosted sign-in page and back.
 /// </summary>
-public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options) : EndpointWithoutRequest<IResult>
+public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/authorize";
@@ -179,6 +183,40 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
         if (parameters.Any(parameter => parameter.Key is Parameters.Prompt or LoginAfter && parameter.Value.Count > 1) || marker.Count > 0 && loginAfter is null)
         {
             return OidcResults.Forbid(Errors.InvalidRequest, $"prompt and {LoginAfter} may appear only once, and {LoginAfter} must be Unix milliseconds.");
+        }
+
+        var ticketParameter = parameters.FirstOrDefault(parameter => parameter.Key == "impersonation_ticket").Value;
+        if (ticketParameter.Count > 0)
+        {
+            if (ticketParameter.Count != 1 || string.IsNullOrEmpty(ticketParameter[0]))
+            {
+                return OidcResults.Forbid(Errors.InvalidRequest, "Supply exactly one impersonation ticket.");
+            }
+
+            try
+            {
+                var admin = await sessions.ResolveVersionedAsync(OidcIssuer.InstanceId,
+                    this.HttpContext.Request.Cookies[Tenancy.SessionCookie(OidcIssuer.InstanceId)], cancellationToken);
+                var redeemed = await impersonations.RedeemAsync(tenant, request.ClientId, ticketParameter[0]!, admin?.User,
+                    admin is { } liveAdmin ? Sessions.Live(liveAdmin.Session, liveAdmin.Version, clock.GetUtcNow()) : null, cancellationToken);
+                this.HttpContext.Response.Cookies.Append(Impersonations.Cookie(tenant), redeemed.Cookie, ImpersonationBrowser.CookieOptions(redeemed.Live.Record.ExpiresAt));
+                this.HttpContext.Response.Headers["Referrer-Policy"] = "no-referrer";
+                return OidcResults.SignIn(redeemed.Live.User, redeemed.Live.Record.RedeemedAt!.Value, request.GetScopes(),
+                    OidcResults.Audiences(tenant, options, request.ClientId), impersonation: redeemed.Live.Record);
+            }
+            catch (ApiException error) when (error.Status == 400)
+            {
+                return OidcResults.Forbid(Errors.InvalidRequest, error.Message);
+            }
+        }
+
+        if (this.HttpContext.Request.Cookies.TryGetValue(Impersonations.Cookie(tenant), out var actingCookie))
+        {
+            var acting = await impersonations.ResolveAsync(tenant, actingCookie, cancellationToken);
+            return acting is not null && acting.Record.ClientId == request.ClientId
+                ? OidcResults.SignIn(acting.User, acting.Record.RedeemedAt!.Value, request.GetScopes(),
+                    OidcResults.Audiences(tenant, options, request.ClientId), impersonation: acting.Record)
+                : OidcResults.Forbid(Errors.LoginRequired, "End the impersonation before signing in to another client.");
         }
 
         var cookie = Tenancy.SessionCookie(tenant);
@@ -231,12 +269,52 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
             return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(next)}{notice}{locales}");
         }
 
-        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId),
+        OrganizationClaims? organization = null;
+        if (Tenancy.IsProject(tenant))
+        {
+            var organizations = this.HttpContext.RequestServices.GetRequiredService<ProjectOrganizationDirectory>();
+            if (parameters.Any(parameter => parameter.Key == "organization" && parameter.Value.Count != 1))
+            {
+                return OidcResults.Forbid(Errors.InvalidRequest, "organization must appear once.");
+            }
+
+            var suggestions = request.HasPromptValue(PromptValues.None) ? [] : await organizations.AutoJoinAsync(signedIn.User, cancellationToken);
+            var selected = (string?)request.GetParameter("organization");
+            if (selected is not null)
+            {
+                organization = await organizations.ClaimsAsync(tenant, selected, signedIn.User.Id, cancellationToken);
+                if (organization is null)
+                {
+                    return OidcResults.Forbid(Errors.AccessDenied, "The user is not a member of this organization.");
+                }
+            }
+            else
+            {
+                var choices = await organizations.ChoicesAsync(tenant, signedIn.User.Id, cancellationToken);
+                if (choices.Count > 1 || suggestions.Count > 0)
+                {
+                    if (request.HasPromptValue(PromptValues.None))
+                    {
+                        return OidcResults.Forbid(Errors.InteractionRequired, "Choose an organization.");
+                    }
+
+                    var resume = $"/{tenant}/oauth/authorize{QueryString.Create(parameters)}";
+                    return OrganizationPageModel.Render(this.HttpContext, new(tenant, "", "Choose an organization", Next: resume,
+                        Choices: [.. choices.Select(choice => new OrganizationChoice(choice.Slug, choice.Role,
+                            $"/{tenant}/oauth/authorize{QueryString.Create(parameters.Where(parameter => parameter.Key != "organization").Append(new("organization", choice.Id)))}"))],
+                        Suggestions: suggestions));
+                }
+
+                organization = choices.SingleOrDefault();
+            }
+        }
+
+        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId), organization: organization,
             organizationPicker: await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
     }
 }
 
-public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications,
+public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications,
     Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, IOpenIddictTokenManager tokens) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
@@ -247,7 +325,8 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
         Summary("Token endpoint");
         Description("application/x-www-form-urlencoded grant_type=authorization_code (code, redirect_uri, code_verifier), grant_type=refresh_token (refresh_token), grant_type=urn:ietf:params:oauth:grant-type:device_code (device_code, client_id; RFC 8628 for the ts CLI, see /{slug}/oauth/device) or, for service clients only, grant_type=client_credentials. Every POST to /terrascale/oauth/token and /terrascale/oauth/device, including invalid client credentials and malformed requests, charges the socket peer's shared minute budget before client authentication: TS_AUTH_RATE_LIMIT (or --rate-limit), default 1000, per IPv4 address or IPv6 /64, with an additional IPv6 /48 budget at four times that capacity. Forwarding is disabled by default. With TS_AUTH_TRUSTED_PROXIES (or --trusted-proxies) configured, exact trusted socket peers have four times the aggregate peer capacity in separate trusted-proxy buckets and also charge a separate resolved-client budget of TS_AUTH_RATE_LIMIT per IPv4 address or IPv6 /64, with an additional resolved-client IPv6 /48 budget at four times that capacity; both apply before authentication. ASP.NET processes only the rightmost X-Forwarded-For hop from these peers. Missing or malformed rightmost addresses retain the proxy address and share its client budget. Other forwarding headers and submitted client identifiers do not select a budget. Exhaustion answers 429 rate_limited with Retry-After in seconds; missing peer addresses or unavailable limiter storage answer 503 temporarily_unavailable. Both are OAuth JSON errors with Cache-Control: no-store. Storage that does not answer within 10 seconds answers 503 temporarily_unavailable with Retry-After; a refresh_token retry after it may answer invalid_grant if the first attempt committed late, so sign in again then. Confidential clients authenticate with client_secret_basic or client_secret_post. Access tokens are ES256 JWTs with typ at+jwt whose aud holds TS_AUTH_ACCESS_TOKEN_AUDIENCES; a user's carry email and email_verified, a service client's have sub = client id and no scopes. Refresh tokens rotate on every use, with one exception: when the ts-dashboard client redeems an authorization code with ts_refresh_expires_at (Unix seconds, after now and at most 365 days and 5 minutes ahead, the 5 minutes absorbing a clock difference between the dashboard and ts-auth), the grant's refresh token expires at that instant and never rotates, so a refresh answers no refresh_token and the client keeps using the one it has, authenticating as the client every time; any other ts_refresh_expires_at from that client answers invalid_request and leaves the code unredeemed. Other clients, other grants and refresh requests ignore the parameter. Other platform refresh tokens have a fixed expiry 14 days after the authorization code is redeemed."
             + " Project refresh tokens initially expire at the original auth_time plus the project's configured session lifetime (5 minutes to 30 days). Rotation never extends an observed expiry, and reducing policy immediately limits code and refresh redemption. Observing policy expiry revokes the whole sign-in, so later policy increases cannot revive its grants. Authorization-code redirect_uri must still satisfy the project's current nonempty allowlist as well as the client registration."
-            + " Active MFA users' authorization-code, refresh and exchange grants need the ts_auth_mfa claim of a second-factor sign-in; primary-only ones answer invalid_grant. Pending and disabled factors permit primary authentication; corrupt or unavailable factor state answers 503 temporarily_unavailable. Machine client credentials and API keys are independent of user MFA. User sign-in access and identity tokens carry the server-issued numeric auth_time as Unix seconds; refresh and organization/project exchange preserve its original value. Submitted auth_time parameters are ignored. Exchange requires a nonnegative integer no more than 30 seconds ahead of the exchanging replica; missing, malformed, negative or further-ahead values answer invalid_grant. Machine tokens carry no auth_time. Authentication time alone does not establish MFA completion.");
+            + " Active MFA users' authorization-code, refresh and exchange grants need the ts_auth_mfa claim of a second-factor sign-in; primary-only ones answer invalid_grant. Pending and disabled factors permit primary authentication; corrupt or unavailable factor state answers 503 temporarily_unavailable. Machine client credentials and API keys are independent of user MFA. User sign-in access and identity tokens carry the server-issued numeric auth_time as Unix seconds; refresh and organization/project exchange preserve its original value. Submitted auth_time parameters are ignored. Exchange requires a nonnegative integer no more than 30 seconds ahead of the exchanging replica; missing, malformed, negative or further-ahead values answer invalid_grant. Machine tokens carry no auth_time. Authentication time alone does not establish MFA completion."
+            + " Project machine apps use client_credentials with their own nonempty allowed scopes, an optional resource from allowed_audiences, and a per-app 5 to 60 minute lifetime (default 15). Their sub is client_id; aud is the selected resource. They have no end-user identity. A machine client has an additional 1000/minute budget. Interactive apps cannot use client_credentials.");
         Tags("OAuth");
         // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -282,10 +361,9 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
         }
 
         var tenant = Tenancy.Current(this.HttpContext);
-        if (Tenancy.IsProject(tenant) && !request.IsAuthorizationCodeGrantType() && !request.IsRefreshTokenGrantType())
+        if (Tenancy.IsProject(tenant) && !request.IsAuthorizationCodeGrantType() && !request.IsRefreshTokenGrantType() && !request.IsClientCredentialsGrantType())
         {
-            // A project's end users sign in to its own applications; machine, device and platform grants are the platform's.
-            return OidcResults.Forbid(Errors.UnsupportedGrantType, "A project issuer grants only authorization_code and refresh_token.");
+            return OidcResults.Forbid(Errors.UnsupportedGrantType, "A project issuer grants authorization_code, refresh_token and machine client_credentials.");
         }
 
         if (request.IsAuthorizationCodeGrantType() && !await OidcResults.AllowsRedirectAsync(settings, tenant, request.RedirectUri, cancellationToken))
@@ -299,6 +377,11 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
             if (application is null)
             {
                 return OidcResults.Forbid(Errors.InvalidClient, "The client is unknown, revoked or expired.");
+            }
+
+            if (Tenancy.IsProject(tenant))
+            {
+                return await MachineClients.GrantAsync(this.HttpContext, request, application, cancellationToken);
             }
 
             if (application.ClientSecret?.StartsWith(ApiKeyApplicationManager.DigestPrefix, StringComparison.Ordinal) == true)
@@ -330,9 +413,13 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal
             ?? throw new InvalidOperationException("OpenIddict passed a token request without a principal.");
-        var user = principal.GetClaim(Claims.Subject) is { } subject
-            ? await mfa.PrimaryUserAsync(tenant, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken)
-            : null;
+        var acting = principal.GetClaim(Impersonations.Claim) is { } actingId
+            ? await impersonations.FindAsync(tenant, actingId, cancellationToken) : null;
+        var user = principal.HasClaim(claim => claim.Type == Impersonations.Claim)
+            ? acting is not null && acting.Record.ClientId == request.ClientId && acting.User.Id == principal.GetClaim(Claims.Subject) ? acting.User : null
+            : principal.GetClaim(Claims.Subject) is { } subject
+                ? await mfa.PrimaryUserAsync(tenant, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken)
+                : null;
         if (user is null || ProjectSessionPolicy.ReadAuthenticationTime(principal, clock) is not { } authenticationTime)
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
@@ -361,14 +448,24 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
             return OidcResults.Forbid(Errors.InvalidRequest, FixedRefreshTokens.InvalidNotice);
         }
 
+        OrganizationClaims? organization = null;
+        if (principal.GetClaim("org_id") is { } orgId)
+        {
+            organization = await this.HttpContext.RequestServices.GetRequiredService<ProjectOrganizationDirectory>().ClaimsAsync(tenant, orgId, user.Id, cancellationToken);
+            if (organization is null)
+            {
+                return OidcResults.Forbid(Errors.InvalidGrant, "The organization membership ended.");
+            }
+        }
+
         return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, authenticationTime, principal.GetScopes(),
-            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt,
-            await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
+            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt, acting?.Record, organization,
+            organizationPicker: await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
     }
 }
 
 /// <summary><c>GET /{slug}/oauth/userinfo</c>: the UserInfo endpoint by GET.</summary>
-public sealed class UserInfoGetEndpoint(TotpCredentials mfa) : UserInfoEndpoint(mfa)
+public sealed class UserInfoGetEndpoint(Impersonations impersonations, TotpCredentials mfa) : UserInfoEndpoint(impersonations, mfa)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -380,7 +477,7 @@ public sealed class UserInfoGetEndpoint(TotpCredentials mfa) : UserInfoEndpoint(
 }
 
 /// <summary><c>POST /{slug}/oauth/userinfo</c>: the UserInfo endpoint by form POST (OpenID Connect Core 5.3.1).</summary>
-public sealed class UserInfoPostEndpoint(TotpCredentials mfa) : UserInfoEndpoint(mfa)
+public sealed class UserInfoPostEndpoint(Impersonations impersonations, TotpCredentials mfa) : UserInfoEndpoint(impersonations, mfa)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -393,7 +490,7 @@ public sealed class UserInfoPostEndpoint(TotpCredentials mfa) : UserInfoEndpoint
 }
 
 /// <summary>The UserInfo endpoint: claims about the user of a valid access token.</summary>
-public abstract class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutRequest<IResult>
+public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCredentials mfa) : EndpointWithoutRequest<IResult>
 {
     internal const string RouteName = "oauth_userinfo";
 
@@ -439,15 +536,24 @@ public abstract class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutReq
         }
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
-        if (principal?.GetClaim(Claims.Subject) is not { } subject
-            || await mfa.PrimaryUserAsync(Tenancy.Current(this.HttpContext), subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim),
-                principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken) is not { } user)
+        var tenant = Tenancy.Current(this.HttpContext);
+        var acting = principal?.GetClaim(Impersonations.Claim) is { } actingId
+            ? await impersonations.FindAsync(tenant, actingId, cancellationToken) : null;
+        var user = principal?.GetClaim(Claims.Subject) is not { } subject ? null
+            : principal.HasClaim(claim => claim.Type == Impersonations.Claim)
+                ? acting?.User.Id == subject ? acting.User : null
+                : await mfa.PrimaryUserAsync(tenant, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim),
+                    principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken);
+        if (user is null || principal is null)
         {
             return Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         var email = principal.HasScope(Scopes.Email);
-        return Results.Ok(new UserInfoBody(user.Id, email ? user.Email : null, email ? true : null));
+        var profile = principal.HasScope(Scopes.Profile);
+        return Results.Ok(new UserInfoBody(user.Id, email ? user.Email : null, email ? user.EmailVerified : null,
+            profile ? user.FirstName : null, profile ? user.LastName : null, profile ? user.ImageUrl : null,
+            profile ? JsonElement.Parse(user.PublicMetadata) : null, acting is null ? null : new ImpersonationActor(acting.Record.ActorId)));
     }
 }
 
@@ -475,7 +581,7 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
 }
 
 /// <summary><c>GET /{slug}/oauth/logout</c>: RP-initiated logout with its parameters in the query string.</summary>
-public sealed class LogoutGetEndpoint(Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(sessions, settings, options)
+public sealed class LogoutGetEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(impersonations, sessions, settings, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -487,7 +593,7 @@ public sealed class LogoutGetEndpoint(Sessions sessions, ProjectAuthSettings set
 }
 
 /// <summary><c>POST /{slug}/oauth/logout</c>: RP-initiated logout with its parameters form-encoded (RP-Initiated Logout 1.0 section 2).</summary>
-public sealed class LogoutPostEndpoint(Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(sessions, settings, options)
+public sealed class LogoutPostEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(impersonations, sessions, settings, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -505,7 +611,7 @@ public sealed class LogoutPostEndpoint(Sessions sessions, ProjectAuthSettings se
 /// is ended only for an <c>id_token_hint</c> issued to its user or once the user confirms on the hosted page
 /// (RP-Initiated Logout 1.0 section 2): anything else shows the confirmation and changes nothing.
 /// </summary>
-public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
+public abstract class LogoutEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/logout";
@@ -547,7 +653,10 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
         }
 
         var cookie = this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)];
-        if (await sessions.ResolveAsync(tenant, cookie, cancellationToken) is { } live && !await this.ConfirmedAsync(request, live.User.Id))
+        var actingCookie = this.HttpContext.Request.Cookies[Impersonations.Cookie(tenant)];
+        var acting = await impersonations.ResolveAsync(tenant, actingCookie, cancellationToken);
+        var subject = actingCookie is not null ? acting?.User.Id : (await sessions.ResolveAsync(tenant, cookie, cancellationToken))?.User.Id;
+        if (subject is not null && !await this.ConfirmedAsync(request, subject))
         {
             // Names no account, so a page opened by another site learns nothing it could not already.
             var fields = Carried.Select(name => (Name: name, Value: (string?)request[name]))
@@ -557,8 +666,20 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignOutConfirm, tenant) { LogoutFields = fields });
         }
 
-        await sessions.RevokeAsync(tenant, cookie, cancellationToken);
-        BrowserSecurity.DeleteSessionCookie(this.HttpContext.Response, tenant);
+        if (actingCookie is not null)
+        {
+            if (acting is not null)
+            {
+                await impersonations.EndAsync(tenant, acting.Record.Id, acting.Record.ActorId, "manual", cancellationToken);
+            }
+
+            this.HttpContext.Response.Cookies.Delete(Impersonations.Cookie(tenant), ImpersonationBrowser.CookieOptions(null));
+        }
+        else
+        {
+            await sessions.RevokeAsync(tenant, cookie, cancellationToken);
+            BrowserSecurity.DeleteSessionCookie(this.HttpContext.Response, tenant);
+        }
         var returnTo = request.PostLogoutRedirectUri is { } uri
             ? (string.IsNullOrEmpty(request.State) ? uri : Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(uri, Parameters.State, request.State))
             : null;
@@ -643,7 +764,7 @@ internal static class OidcResults
     /// platform owner (<see cref="PlatformBootstrap.OwnerEmail"/>) always carries it.
     /// </summary>
     public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
-        DateTimeOffset? refreshExpiresAt = null, bool organizationPicker = false)
+        DateTimeOffset? refreshExpiresAt = null, ImpersonationRecord? impersonation = null, OrganizationClaims? organization = null, bool organizationPicker = false)
     {
         // TerraBase and platform scopes come only from the role-checked token exchange (TS-598), never with a sign-in,
         // although ts-dashboard holds their permissions for the exchange.
@@ -654,8 +775,13 @@ internal static class OidcResults
 
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, user.Id)
+            .SetClaim("token_use", "user")
             .SetClaim(Claims.Email, user.Email)
-            .SetClaim(Claims.EmailVerified, true)
+            .SetClaim(Claims.EmailVerified, user.EmailVerified)
+            .SetClaim(Claims.GivenName, user.FirstName)
+            .SetClaim(Claims.FamilyName, user.LastName)
+            .SetClaim(Claims.Picture, user.ImageUrl)
+            .SetClaim("public_metadata", JsonElement.Parse(user.PublicMetadata))
             .SetClaim(Claims.AuthenticationTime, authenticatedAt.ToUnixTimeSeconds())
             .SetClaim(OidcIssuer.EpochClaim, user.AuthEpoch)
             .SetClaim(OidcIssuer.StateClaim, user.AuthStamp)
@@ -673,14 +799,27 @@ internal static class OidcResults
             identity.SetClaim(PlatformRoleClaim, PlatformRoleAdmin);
         }
 
+        if (impersonation is not null)
+        {
+            identity.SetClaim(Impersonations.Claim, impersonation.Id);
+            identity.SetClaim("act", JsonSerializer.SerializeToElement(new ImpersonationActor(impersonation.ActorId), ImpersonationJson.Default.ImpersonationActor));
+        }
+
+        var profile = identity.HasScope(Scopes.Profile);
+        if (organization is not null)
+        {
+            identity.SetClaim("org_id", organization.Id).SetClaim("org_slug", organization.Slug).SetClaim("org_role", organization.Role);
+        }
+
         var email = identity.HasScope(Scopes.Email);
         identity.SetDestinations(claim => claim.Type switch
         {
-            Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
+            Claims.Subject or "act" or Impersonations.Claim => [Destinations.AccessToken, Destinations.IdentityToken],
+            Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
-            Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
+            Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" => [Destinations.AccessToken, Destinations.IdentityToken],
+            "ts_auth_session" or "token_use" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             OidcIssuer.OrganizationPickerClaim => [Destinations.IdentityToken],
-            "ts_auth_session" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             _ => [],
         });
         var principal = new ClaimsPrincipal(identity);

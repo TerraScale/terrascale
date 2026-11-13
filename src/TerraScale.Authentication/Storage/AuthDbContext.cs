@@ -35,11 +35,15 @@ public sealed partial class AuthDbContext(DbContextOptions<AuthDbContext> option
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
+        ConfigureSignUp(modelBuilder);
         ConfigureIdentity(modelBuilder);
         ConfigureAttackProtection(modelBuilder);
+        ConfigureImpersonation(modelBuilder);
         ConfigurePlatform(modelBuilder);
         ConfigureOidc(modelBuilder);
         ConfigureOperations(modelBuilder);
+        ConfigureProjectOrganizations(modelBuilder);
+        ConfigureUserApiKeys(modelBuilder);
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
             foreach (var property in entity.GetProperties())

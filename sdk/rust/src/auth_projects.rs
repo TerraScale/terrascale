@@ -5,6 +5,9 @@
 //! request, viewer for reads and admin for changes. Obtain a client with
 //! [`crate::TerraScaleClient::projects`].
 
+mod organizations;
+pub use organizations::*;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,9 +17,48 @@ use crate::client::{SharedClient, SKIP_AUTH_MARKER, SKIP_SESSION_MARKER};
 use crate::error::{Error, ErrorKind, Result};
 use crate::transport::{Method, Request};
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectRestrictions {
+    pub allowlist: Vec<String>,
+    pub blocklist: Vec<String>,
+    pub block_disposable_emails: bool,
+    pub block_email_aliases: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectInvitation {
+    pub id: String,
+    pub email: String,
+    pub redirect_url: Option<String>,
+    pub created_at: String,
+    pub expires_at: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectInvitationPage {
+    pub items: Vec<ProjectInvitation>,
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectWaitlistEntry {
+    pub id: String,
+    pub project_id: String,
+    pub email: String,
+    pub created_at: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectWaitlistPage {
+    pub items: Vec<ProjectWaitlistEntry>,
+    pub next: Option<String>,
+}
+
 const MAX_EXPORT_CURSOR_BYTES: usize = 8192;
 
-/// Sign-in methods; at least one of passcode and password stays on.
+/// Sign-in methods; at least one of passcode, password and magic_link stays on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectMethods {
     /// Whether the email passcode method is on.
@@ -24,7 +66,13 @@ pub struct ProjectMethods {
     /// Whether the password method is on.
     pub password: bool,
     /// Whether sign-up is allowed.
-    pub sign_up: bool,
+    pub sign_up_mode: String,
+    /// Browser-bound magic links.
+    #[serde(default)]
+    pub magic_link: bool,
+    /// Username and password sign-in.
+    #[serde(default)]
+    pub username: bool,
 }
 
 /// A labelled link underneath the hosted sign-in card.
@@ -119,6 +167,10 @@ pub struct ProjectProvider {
     pub key_id: Option<String>,
     /// The callback URL to register at the provider.
     pub callback_url: String,
+    /// Microsoft account audience.
+    pub tenant: Option<String>,
+    /// Custom OAuth2 endpoints and claims.
+    pub oauth2: Option<ProjectOAuth2>,
 }
 
 /// A project's settings.
@@ -145,6 +197,8 @@ pub struct ProjectSettings {
     /// Session policy, when the project has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ProjectConfiguration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restrictions: Option<ProjectRestrictions>,
 }
 
 /// Settings changes; an omitted part stays unchanged.
@@ -161,11 +215,21 @@ pub struct ProjectSettingsUpdate {
     /// Session policy changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ProjectConfiguration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restrictions: Option<ProjectRestrictions>,
 }
 
 /// A project end user.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectUser {
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub image_url: Option<String>,
+    pub external_id: Option<String>,
+    pub email_verified: bool,
+    pub public_metadata: serde_json::Map<String, Value>,
+    pub private_metadata: serde_json::Map<String, Value>,
+    pub unsafe_metadata: serde_json::Map<String, Value>,
     /// User id.
     pub id: String,
     /// Email address.
@@ -174,6 +238,85 @@ pub struct ProjectUser {
     pub created_at: String,
     /// Whether the user is disabled.
     pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct UserProfile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_metadata: Option<serde_json::Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_metadata: Option<serde_json::Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsafe_metadata: Option<serde_json::Map<String, Value>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CreateProjectUser {
+    pub email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(flatten)]
+    pub profile: UserProfile,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ImportProjectUser {
+    pub email: String,
+    pub email_verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password_hash: Option<String>,
+    #[serde(flatten)]
+    pub profile: UserProfile,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct UpdateProjectUser {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_metadata: Option<serde_json::Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_metadata: Option<serde_json::Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsafe_metadata: Option<serde_json::Map<String, Value>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportProjectUsers {
+    pub users: Vec<ImportProjectUser>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportedProjectUser {
+    pub index: usize,
+    pub user: ProjectUser,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserImportError {
+    pub index: usize,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportProjectUsersResult {
+    pub items: Vec<ImportedProjectUser>,
+    pub errors: Vec<UserImportError>,
 }
 
 /// One cursor page of project end users.
@@ -244,6 +387,12 @@ pub struct ProjectProviderUpdate {
     /// Key id, for the `apple` provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_id: Option<String>,
+    /// Microsoft account audience.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+    /// Custom OAuth2 endpoints and claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth2: Option<ProjectOAuth2>,
 }
 
 /// One live end-user session; revoking it signs the session out.
@@ -288,6 +437,12 @@ pub struct ProjectClient {
     /// Client secret, answered exactly once for confidential clients.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_audiences: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_lifetime_minutes: Option<i32>,
 }
 
 /// One cursor page of the project's OAuth clients.
@@ -309,6 +464,12 @@ pub struct CreateProjectClient {
     pub r#type: String,
     /// Exact redirect URIs.
     pub redirect_uris: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_audiences: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_lifetime_minutes: Option<i32>,
 }
 
 /// Request body for OAuth client updates.
@@ -318,6 +479,12 @@ pub struct UpdateProjectClient {
     pub name: String,
     /// Exact redirect URIs.
     pub redirect_uris: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_audiences: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_lifetime_minutes: Option<i32>,
 }
 
 /// A rotated client secret, answered exactly once; the previous secret keeps
@@ -346,19 +513,33 @@ fn validate_cursor(cursor: &str) -> Result<()> {
 }
 
 fn provider_name(provider: &str) -> Result<String> {
-    if matches!(provider, "google" | "github" | "apple" | "oidc") {
+    if matches!(
+        provider,
+        "google"
+            | "github"
+            | "apple"
+            | "oidc"
+            | "microsoft"
+            | "gitlab"
+            | "linkedin"
+            | "slack"
+            | "discord"
+            | "facebook"
+            | "x"
+            | "oauth2"
+    ) {
         Ok(provider.to_owned())
     } else {
         Err(Error::new(
             ErrorKind::Validation,
             "invalid_provider",
-            "provider must be one of google, github, apple, oidc.",
+            "provider must be one of google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc, oauth2.",
         ))
     }
 }
 
 fn client_type(value: &str) -> Result<()> {
-    if matches!(value, "public" | "confidential") {
+    if matches!(value, "public" | "confidential" | "machine") {
         Ok(())
     } else {
         Err(Error::new(
@@ -412,6 +593,116 @@ impl ProjectsClient {
     }
 
     /// Read the project's settings (`GET /v1/{project}/settings`).
+    pub async fn list_invitations(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        limit: Option<u32>,
+        after: Option<&str>,
+    ) -> Result<ProjectInvitationPage> {
+        let query = self.page_query(None, limit, after)?;
+        self.send_typed(
+            "auth_projects.list_invitations",
+            Method::Get,
+            &format!("/{}/invitations{query}", self.project(project_id)?),
+            None,
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn list_waitlist(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        limit: Option<u32>,
+        after: Option<&str>,
+    ) -> Result<ProjectWaitlistPage> {
+        let query = self.page_query(None, limit, after)?;
+        self.send_typed(
+            "auth_projects.list_waitlist",
+            Method::Get,
+            &format!("/{}/waitlist{query}", self.project(project_id)?),
+            None,
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn create_invitation(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        email: &str,
+        redirect_url: Option<&str>,
+    ) -> Result<ProjectInvitation> {
+        self.send_typed(
+            "auth_projects.create_invitation",
+            Method::Post,
+            &format!("/{}/invitations", self.project(project_id)?),
+            Some(&serde_json::json!({"email": email, "redirect_url": redirect_url})),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn revoke_invitation(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        invitation_id: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.revoke_invitation",
+            Method::Delete,
+            &format!(
+                "/{}/invitations/{}",
+                self.project(project_id)?,
+                path_id(invitation_id, "invitation_id")?
+            ),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn approve_waitlist(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        entry_id: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.approve_waitlist",
+            Method::Post,
+            &format!(
+                "/{}/waitlist/{}/approve",
+                self.project(project_id)?,
+                path_id(entry_id, "entry_id")?
+            ),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn reject_waitlist(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        entry_id: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.reject_waitlist",
+            Method::Post,
+            &format!(
+                "/{}/waitlist/{}/reject",
+                self.project(project_id)?,
+                path_id(entry_id, "entry_id")?
+            ),
+            sign_in,
+        )
+        .await
+    }
+
     pub async fn get_settings(&self, sign_in: &str, project_id: &str) -> Result<ProjectSettings> {
         self.send_typed(
             "auth_projects.get_settings",
@@ -459,6 +750,55 @@ impl ProjectsClient {
             Method::Get,
             &format!("/{}/users{query}", self.project(project_id)?),
             None,
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn create_user(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        request: &CreateProjectUser,
+    ) -> Result<ProjectUser> {
+        self.send_typed(
+            "auth_projects.create_user",
+            Method::Post,
+            &format!("/{}/users", self.project(project_id)?),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn update_user(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        user_id: &str,
+        request: &UpdateProjectUser,
+    ) -> Result<ProjectUser> {
+        self.send_typed(
+            "auth_projects.update_user",
+            Method::Patch,
+            &self.user_path(project_id, user_id)?,
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn import_users(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        request: &ImportProjectUsers,
+    ) -> Result<ImportProjectUsersResult> {
+        self.send_typed(
+            "auth_projects.import_users",
+            Method::Post,
+            &format!("/{}/users/import", self.project(project_id)?),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
             sign_in,
         )
         .await
@@ -926,4 +1266,163 @@ impl ProjectsClient {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Deserialize)]
+pub struct UserApiKey {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub prefix: String,
+    pub scopes: Vec<String>,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub key: Option<String>,
+}
+
+impl std::fmt::Debug for UserApiKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("UserApiKey{secret:[REDACTED]}")
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserApiKeyPage {
+    pub items: Vec<UserApiKey>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateUserApiKey {
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserApiKeyPolicy {
+    pub allowed_scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserApiKeyVerification {
+    pub valid: bool,
+    pub user_id: Option<String>,
+    pub scopes: Option<Vec<String>>,
+    pub key_id: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+impl ProjectsClient {
+    pub async fn create_user_api_key(
+        &self,
+        credential: &str,
+        project: &str,
+        user: &str,
+        request: &CreateUserApiKey,
+    ) -> Result<UserApiKey> {
+        self.send_typed(
+            "auth_projects.create_user_api_key",
+            Method::Post,
+            &format!(
+                "/{}/users/{}/api-keys",
+                self.project(project)?,
+                path_id(user, "user")?
+            ),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            credential,
+        )
+        .await
+    }
+
+    pub async fn list_user_api_keys(
+        &self,
+        credential: &str,
+        project: &str,
+        user: &str,
+    ) -> Result<UserApiKeyPage> {
+        self.send_typed(
+            "auth_projects.list_user_api_keys",
+            Method::Get,
+            &format!(
+                "/{}/users/{}/api-keys",
+                self.project(project)?,
+                path_id(user, "user")?
+            ),
+            None,
+            credential,
+        )
+        .await
+    }
+
+    pub async fn revoke_user_api_key(
+        &self,
+        credential: &str,
+        project: &str,
+        user: &str,
+        key: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.revoke_user_api_key",
+            Method::Delete,
+            &format!(
+                "/{}/users/{}/api-keys/{}",
+                self.project(project)?,
+                path_id(user, "user")?,
+                path_id(key, "key")?
+            ),
+            credential,
+        )
+        .await
+    }
+
+    pub async fn verify_user_api_key(
+        &self,
+        credential: &str,
+        project: &str,
+        key: &str,
+    ) -> Result<UserApiKeyVerification> {
+        self.send_typed(
+            "auth_projects.verify_user_api_key",
+            Method::Post,
+            &format!("/{}/api-keys/verify", self.project(project)?),
+            Some(&serde_json::json!({"key": key})),
+            credential,
+        )
+        .await
+    }
+
+    pub async fn set_user_api_key_policy(
+        &self,
+        credential: &str,
+        project: &str,
+        request: &UserApiKeyPolicy,
+    ) -> Result<UserApiKeyPolicy> {
+        self.send_typed(
+            "auth_projects.set_user_api_key_policy",
+            Method::Put,
+            &format!("/{}/user-api-key-policy", self.project(project)?),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            credential,
+        )
+        .await
+    }
+}
+
+/// Custom OAuth2 endpoints, scopes and dot-separated claim paths.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectOAuth2 {
+    /// Authorization URL.
+    pub authorize_url: String,
+    /// Token URL.
+    pub token_url: String,
+    /// Userinfo URL.
+    pub userinfo_url: String,
+    /// Space-separated scopes.
+    pub scopes: String,
+    /// Subject claim path.
+    pub id_claim: String,
+    /// Email claim path.
+    pub email_claim: String,
+    /// Boolean email verification claim path.
+    pub email_verified_claim: String,
 }

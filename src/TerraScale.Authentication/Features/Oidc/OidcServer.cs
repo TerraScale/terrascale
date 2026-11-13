@@ -1,23 +1,24 @@
-using System.Security.Cryptography;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Extensions;
+using Microsoft.AspNetCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
-using OpenIddict.Server;
-using Microsoft.AspNetCore;
 using OpenIddict.Server.AspNetCore;
+using OpenIddict.Server;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
-using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
+using TerraScale.DotNet;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
 
@@ -173,6 +174,10 @@ public static class OidcIssuer
                         server.PromptValues.Remove(PromptValues.Consent);
                         server.PromptValues.Remove(PromptValues.SelectAccount);
                     })
+                    .RemoveEventHandler(OpenIddictServerHandlers.Exchange.ValidateResources.Descriptor)
+                    .AddEventHandler<ValidateTokenRequestContext>(handler => handler.UseScopedHandler<MachineTokenResources>()
+                        .SetOrder(OpenIddictServerHandlers.Exchange.ValidateResources.Descriptor.Order)
+                        .SetType(OpenIddictServerHandlerType.Custom))
                     .RemoveEventHandler(OpenIddictServerHandlers.RedeemTokenEntry.Descriptor)
                     .RemoveEventHandler(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor)
                     .RemoveEventHandler(OpenIddictServerHandlers.Discovery.AttachSigningKeys.Descriptor)
@@ -184,6 +189,12 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ValidateTokenContext>(handler => handler.UseScopedHandler<ValidateCredentialLineage>()
                         .SetOrder(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor.Order)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ValidateTokenContext>(handler => handler.UseScopedHandler<ValidateImpersonationToken>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor.Order + 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<GenerateTokenContext>(handler => handler.UseScopedHandler<LimitImpersonationToken>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.CreateTokenEntry.Descriptor.Order - 2)
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ValidateTokenRequestContext>(handler => handler.UseSingletonHandler<RefuseScopeExpansion>()
                         .SetOrder(OpenIddictServerHandlers.Exchange.ValidateScopePermissions.Descriptor.Order - 1)

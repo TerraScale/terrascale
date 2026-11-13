@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.Dashboard.Platform.TsAuth
@@ -5,7 +6,9 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     public sealed record TsAuthProjectMethods(
         [property: JsonPropertyName("passcode")] bool Passcode,
         [property: JsonPropertyName("password")] bool Password,
-        [property: JsonPropertyName("sign_up")] bool SignUp);
+        [property: JsonPropertyName("sign_up_mode")] string SignUpMode,
+        [property: JsonPropertyName("magic_link")] bool MagicLink = false,
+        [property: JsonPropertyName("username")] bool Username = false);
 
     public sealed record TsAuthProjectBranding(
         [property: JsonPropertyName("name")] string? Name,
@@ -49,6 +52,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("providers")] IReadOnlyList<TsAuthProjectProvider> Providers,
         [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectConfiguration? Configuration = null,
         [property: JsonPropertyName("attack_protection"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthAttackProtection? AttackProtection = null,
+        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthRestrictions? Restrictions = null,
         [property: JsonPropertyName("organization_picker")] bool OrganizationPicker = false);
 
     public sealed record TsAuthProjectProvider(
@@ -58,14 +62,18 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("issuer")] string? Issuer,
         [property: JsonPropertyName("team_id")] string? TeamId,
         [property: JsonPropertyName("key_id")] string? KeyId,
-        [property: JsonPropertyName("callback_url")] string CallbackUrl);
+        [property: JsonPropertyName("callback_url")] string CallbackUrl,
+    [property: JsonPropertyName("tenant")] string? Tenant = null,
+    [property: JsonPropertyName("oauth2")] TsAuthProjectOAuth2? OAuth2 = null);
 
     public sealed record TsAuthProjectProviderUpdate(
         [property: JsonPropertyName("client_id")] string ClientId,
         [property: JsonPropertyName("client_secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null,
         [property: JsonPropertyName("issuer"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Issuer = null,
         [property: JsonPropertyName("team_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TeamId = null,
-        [property: JsonPropertyName("key_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? KeyId = null)
+        [property: JsonPropertyName("key_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? KeyId = null,
+    [property: JsonPropertyName("tenant"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Tenant = null,
+    [property: JsonPropertyName("oauth2"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectOAuth2? OAuth2 = null)
     {
         public override string ToString()
         {
@@ -78,13 +86,33 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("branding"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectBranding? Branding = null,
         [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectConfiguration? Configuration = null,
         [property: JsonPropertyName("attack_protection"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthAttackProtection? AttackProtection = null,
+        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthRestrictions? Restrictions = null,
         [property: JsonPropertyName("organization_picker"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? OrganizationPicker = null);
 
     public sealed record TsAuthProjectUser(
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("email")] string Email,
         [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-        [property: JsonPropertyName("disabled")] bool Disabled);
+        [property: JsonPropertyName("disabled")] bool Disabled)
+    {
+        [JsonPropertyName("first_name")]
+        public string? FirstName { get; init; }
+        [JsonPropertyName("last_name")]
+        public string? LastName { get; init; }
+        [JsonPropertyName("image_url")]
+        public string? ImageUrl { get; init; }
+        [JsonPropertyName("external_id")]
+        public string? ExternalId { get; init; }
+        [JsonPropertyName("email_verified")]
+        public bool EmailVerified { get; init; }
+        [JsonPropertyName("public_metadata")]
+        public JsonElement PublicMetadata { get; init; }
+        [JsonPropertyName("private_metadata")]
+        public JsonElement PrivateMetadata { get; init; }
+        [JsonPropertyName("unsafe_metadata")]
+        public JsonElement UnsafeMetadata { get; init; }
+    }
+
 
     public sealed record TsAuthUserExportPage(
         [property: JsonPropertyName("items")] IReadOnlyList<TsAuthDirectoryUser> Items,
@@ -117,7 +145,10 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("type")] string Type,
         [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string> RedirectUris,
         [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-        [property: JsonPropertyName("client_secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null)
+        [property: JsonPropertyName("client_secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null,
+        [property: JsonPropertyName("allowed_scopes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedScopes = null,
+        [property: JsonPropertyName("allowed_audiences"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedAudiences = null,
+        [property: JsonPropertyName("token_lifetime_minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TokenLifetimeMinutes = null)
     {
         public override string ToString()
         {
@@ -128,11 +159,17 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     public sealed record TsAuthProjectCreateOAuthClient(
         [property: JsonPropertyName("name")] string? Name,
         [property: JsonPropertyName("type")] string? Type,
-        [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris);
+        [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris,
+        [property: JsonPropertyName("allowed_scopes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedScopes = null,
+        [property: JsonPropertyName("allowed_audiences"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedAudiences = null,
+        [property: JsonPropertyName("token_lifetime_minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TokenLifetimeMinutes = null);
 
     public sealed record TsAuthProjectClientUpdate(
         [property: JsonPropertyName("name")] string? Name,
-        [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris);
+        [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris,
+        [property: JsonPropertyName("allowed_scopes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedScopes = null,
+        [property: JsonPropertyName("allowed_audiences"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedAudiences = null,
+        [property: JsonPropertyName("token_lifetime_minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TokenLifetimeMinutes = null);
 
     public sealed record TsAuthProjectRotateClient(
         [property: JsonPropertyName("grace_seconds")] int? GraceSeconds = null);
@@ -178,4 +215,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             return "TsAuthProjectClientSecret { sensitive fields redacted }";
         }
     }
+    public sealed record TsAuthProjectOAuth2(
+        [property: JsonPropertyName("authorize_url")] string AuthorizeUrl,
+        [property: JsonPropertyName("token_url")] string TokenUrl,
+        [property: JsonPropertyName("userinfo_url")] string UserinfoUrl,
+        [property: JsonPropertyName("scopes")] string Scopes,
+        [property: JsonPropertyName("id_claim")] string IdClaim = "id",
+        [property: JsonPropertyName("email_claim")] string EmailClaim = "email",
+        [property: JsonPropertyName("email_verified_claim")] string EmailVerifiedClaim = "email_verified");
 }

@@ -2,6 +2,84 @@
   "producer_revision": "e30ffdc287530551b161b0130220be53d3c0475e",
   "operations": [
     {"operation_id": "sign_out_project_user", "method": "POST", "path": "/v1/{project}/users/{user}/sign-out", "security": "platform_user_sign_in_bearer_project_admin", "success_status": 204, "errors": [400, 401, 403, 404, 503], "retry": "none", "sdk_method": "Projects.SignOutUserAsync"},
+    {
+    "operation_id": "create_user_api_key",
+    "method": "POST",
+    "path": "/v1/{project}/users/{user}/api-keys",
+    "success_status": 201,
+    "scope": "auth:write",
+    "security": "project_key_or_platform_person",
+    "retry": "none"
+  },
+  {
+    "operation_id": "list_user_api_keys",
+    "method": "GET",
+    "path": "/v1/{project}/users/{user}/api-keys",
+    "success_status": 200,
+    "scope": "auth:read",
+    "security": "project_key_or_platform_person",
+    "retry": "none"
+  },
+  {
+    "operation_id": "revoke_user_api_key",
+    "method": "DELETE",
+    "path": "/v1/{project}/users/{user}/api-keys/{key}",
+    "success_status": 204,
+    "scope": "auth:write",
+    "security": "project_key_or_platform_person",
+    "retry": "none"
+  },
+  {
+    "operation_id": "verify_user_api_key",
+    "method": "POST",
+    "path": "/v1/{project}/api-keys/verify",
+    "success_status": 200,
+    "scope": "auth:read",
+    "security": "project_key_only",
+    "retry": "none"
+  },
+  {
+    "operation_id": "get_user_api_key_policy",
+    "method": "GET",
+    "path": "/v1/{project}/user-api-key-policy",
+    "success_status": 200,
+    "scope": "auth:read",
+    "security": "project_key_or_platform_person",
+    "retry": "none"
+  },
+  {
+    "operation_id": "set_user_api_key_policy",
+    "method": "PUT",
+    "path": "/v1/{project}/user-api-key-policy",
+    "success_status": 200,
+    "scope": "auth:write",
+    "security": "project_key_or_platform_person",
+    "retry": "none"
+  },
+  {
+    "operation_id": "create_self_user_api_key",
+    "method": "POST",
+    "path": "/v1/{project}/me/api-keys",
+    "success_status": 201,
+    "security": "project_hosted_session_cookie",
+    "origin_required": true
+  },
+  {
+    "operation_id": "list_self_user_api_keys",
+    "method": "GET",
+    "path": "/v1/{project}/me/api-keys",
+    "success_status": 200,
+    "security": "project_hosted_session_cookie",
+    "origin_required": false
+  },
+  {
+    "operation_id": "revoke_self_user_api_key",
+    "method": "DELETE",
+    "path": "/v1/{project}/me/api-keys/{key}",
+    "success_status": 204,
+    "security": "project_hosted_session_cookie",
+    "origin_required": true
+  },
     {"operation_id": "mintEndUserToken", "method": "POST", "path": "/v1/terrascale/projects/{project}/end-user-tokens", "request_dto": "EndUserTokenRequest", "response_dto": "EndUserTokenBody", "success_status": 200, "errors": [400, 401, 429, 503], "security": "exact_project_unrestricted_api_key_bearer_sql_read_write", "request_media_type": "application/json", "response_media_type": "application/json", "pagination": null, "retry": "none; sent once", "sdk_method": "Projects.MintEndUserTokenAsync", "contract": "end-user-tokens.json"},
     {"operation_id": "get_account_mfa", "method": "GET", "path": "/v1/terrascale/account/mfa", "request_dto": null, "response_dto": "AccountMfaBody", "success_status": 200, "errors": [401, 503], "security": "platform_user_sign_in_bearer", "request_media_type": null, "response_media_type": "application/json", "pagination": null, "retry": "none; no idempotency contract", "sdk_method": "Platform.GetAccountMfaAsync"},
     {"operation_id": "set_organization_mfa_policy", "method": "PUT", "path": "/v1/terrascale/organizations/{organization}/mfa-policy", "request_dto": "MfaPolicyRequest", "response_dto": "OrganizationBody", "success_status": 200, "errors": [400, 401, 403, 404, 409, 503], "security": "platform_user_sign_in_bearer", "request_media_type": "application/json", "response_media_type": "application/json", "pagination": null, "retry": "none; no idempotency contract", "sdk_method": "Platform.SetOrganizationMfaPolicyAsync"},
@@ -1012,6 +1090,12 @@
         503
       ],
       "sdk_method": "Oidc.GetUserInfoAsync"
-    }
+    },
+    {"operation_id": "create_project_invitation", "method": "POST", "path": "/v1/{project}/invitations", "request_dto": "CreateProjectInvitationRequest", "response_dto": "ProjectInvitationBody", "success_status": 201, "errors": [400, 401, 403, 404, 409, 503], "security": "platform_user_sign_in_bearer", "request_media_type": "application/json", "response_media_type": "application/json", "pagination": null, "retry": "none; sent once", "sdk_method": "Projects.CreateInvitationAsync", "contract": "signup-restrictions.json"},
+    {"operation_id": "list_project_invitations", "method": "GET", "path": "/v1/{project}/invitations", "request_dto": null, "response_dto": "ProjectInvitationPageBody", "success_status": 200, "errors": [400, 401, 403, 404, 409, 503], "security": "platform_user_sign_in_bearer", "request_media_type": null, "response_media_type": "application/json", "pagination": {"limit": "1..100; default 50", "after": "previous next"}, "retry": "none; sent once", "sdk_method": "Projects.ListInvitationsAsync", "contract": "signup-restrictions.json"},
+    {"operation_id": "revoke_project_invitation", "method": "DELETE", "path": "/v1/{project}/invitations/{invitation}", "request_dto": null, "response_dto": null, "success_status": 204, "errors": [400, 401, 403, 404, 409, 503], "security": "platform_user_sign_in_bearer", "request_media_type": null, "response_media_type": null, "pagination": null, "retry": "none; sent once", "sdk_method": "Projects.RevokeInvitationAsync", "contract": "signup-restrictions.json"},
+    {"operation_id": "list_project_waitlist", "method": "GET", "path": "/v1/{project}/waitlist", "request_dto": null, "response_dto": "WaitlistPageBody", "success_status": 200, "errors": [400, 401, 403, 404, 409, 503], "security": "platform_user_sign_in_bearer", "request_media_type": null, "response_media_type": "application/json", "pagination": {"limit": "1..100; default 50", "after": "previous next"}, "retry": "none; sent once", "sdk_method": "Projects.ListWaitlistAsync", "contract": "signup-restrictions.json"},
+    {"operation_id": "approve_project_waitlist", "method": "POST", "path": "/v1/{project}/waitlist/{entry}/approve", "request_dto": null, "response_dto": null, "success_status": 204, "errors": [400, 401, 403, 404, 409, 503], "security": "platform_user_sign_in_bearer", "request_media_type": null, "response_media_type": null, "pagination": null, "retry": "none; sent once", "sdk_method": "Projects.ApproveWaitlistAsync", "contract": "signup-restrictions.json"},
+    {"operation_id": "reject_project_waitlist", "method": "POST", "path": "/v1/{project}/waitlist/{entry}/reject", "request_dto": null, "response_dto": null, "success_status": 204, "errors": [400, 401, 403, 404, 409, 503], "security": "platform_user_sign_in_bearer", "request_media_type": null, "response_media_type": null, "pagination": null, "retry": "none; sent once", "sdk_method": "Projects.RejectWaitlistAsync", "contract": "signup-restrictions.json"}
   ]
 }

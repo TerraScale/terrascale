@@ -1,4 +1,12 @@
+
+/** @typedef {{readonly allowlist: readonly string[], readonly blocklist: readonly string[], readonly block_disposable_emails: boolean, readonly block_email_aliases: boolean}} TsAuthRestrictions */
+/** @typedef {{readonly id: string, readonly email: string, readonly redirect_url: string | null, readonly created_at: string, readonly expires_at: string, readonly status: string}} TsAuthProjectInvitation */
+/** @typedef {{readonly id: string, readonly project_id: string, readonly email: string, readonly created_at: string, readonly status: string}} TsAuthWaitlistEntry */
+/** @typedef {{readonly items: readonly TsAuthProjectInvitation[], readonly next: string | null}} TsAuthProjectInvitationPage */
+/** @typedef {{readonly items: readonly TsAuthWaitlistEntry[], readonly next: string | null}} TsAuthWaitlistPage */
+
 import { requireId } from "./ids.js";
+import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
 /** @import { TsAuthHttp } from "./http.js" */
 /** @import { TerraScaleResult } from "./result.js" */
 
@@ -12,7 +20,9 @@ import { requireId } from "./ids.js";
  * @typedef {{
  *   readonly passcode: boolean;
  *   readonly password: boolean;
- *   readonly sign_up: boolean;
+ *   readonly sign_up_mode: "public" | "restricted" | "waitlist";
+ *   readonly magic_link?: boolean;
+ *   readonly username?: boolean;
  * }} TsAuthProjectMethods
  */
 
@@ -65,6 +75,8 @@ import { requireId } from "./ids.js";
  *   readonly team_id: string | null;
  *   readonly key_id: string | null;
  *   readonly callback_url: string;
+ *   readonly tenant?: string | null;
+ *   readonly oauth2?: TsAuthProjectOAuth2 | null;
  * }} TsAuthProjectProvider
  */
 
@@ -78,6 +90,7 @@ import { requireId } from "./ids.js";
  *   readonly branding: TsAuthProjectBranding;
  *   readonly counts: TsAuthProjectCounts;
  *   readonly providers: readonly TsAuthProjectProvider[];
+ *   readonly restrictions?: TsAuthRestrictions | undefined;
  *   readonly configuration?: TsAuthProjectConfiguration | null | undefined;
  *   readonly organization_picker: boolean;
  * }} TsAuthProjectSettings
@@ -87,6 +100,7 @@ import { requireId } from "./ids.js";
  * @typedef {{
  *   readonly methods?: TsAuthProjectMethods | undefined;
  *   readonly branding?: TsAuthProjectBranding | undefined;
+ *   readonly restrictions?: TsAuthRestrictions | undefined;
  *   readonly configuration?: TsAuthProjectConfiguration | undefined;
  *   readonly organization_picker?: boolean | undefined;
  * }} TsAuthProjectSettingsUpdate
@@ -98,6 +112,14 @@ import { requireId } from "./ids.js";
  *   readonly email: string;
  *   readonly created_at: string;
  *   readonly disabled: boolean;
+ *   readonly first_name: string | null;
+ *   readonly last_name: string | null;
+ *   readonly image_url: string | null;
+ *   readonly external_id: string | null;
+ *   readonly email_verified: boolean;
+ *   readonly public_metadata: Readonly<Record<string, unknown>>;
+ *   readonly private_metadata: Readonly<Record<string, unknown>>;
+ *   readonly unsafe_metadata: Readonly<Record<string, unknown>>;
  * }} TsAuthProjectUser
  */
 
@@ -164,6 +186,8 @@ import { requireId } from "./ids.js";
  *   readonly issuer?: string | undefined;
  *   readonly team_id?: string | undefined;
  *   readonly key_id?: string | undefined;
+ *   readonly tenant?: string | undefined;
+ *   readonly oauth2?: TsAuthProjectOAuth2 | undefined;
  * }} TsAuthProjectProviderUpdate
  */
 
@@ -200,6 +224,9 @@ import { requireId } from "./ids.js";
  *   readonly redirect_uris: readonly string[];
  *   readonly created_at: string;
  *   readonly client_secret?: string | undefined;
+ *   readonly allowed_scopes?: readonly string[] | null | undefined;
+ *   readonly allowed_audiences?: readonly string[] | null | undefined;
+ *   readonly token_lifetime_minutes?: number | null | undefined;
  * }} TsAuthProjectOAuthClient
  */
 
@@ -215,6 +242,9 @@ import { requireId } from "./ids.js";
  *   readonly name: string;
  *   readonly type: string;
  *   readonly redirect_uris: readonly string[];
+ *   readonly allowed_scopes?: readonly string[] | null | undefined;
+ *   readonly allowed_audiences?: readonly string[] | null | undefined;
+ *   readonly token_lifetime_minutes?: number | null | undefined;
  * }} TsAuthProjectCreateClientRequest
  */
 
@@ -222,6 +252,9 @@ import { requireId } from "./ids.js";
  * @typedef {{
  *   readonly name: string;
  *   readonly redirect_uris: readonly string[];
+ *   readonly allowed_scopes?: readonly string[] | null | undefined;
+ *   readonly allowed_audiences?: readonly string[] | null | undefined;
+ *   readonly token_lifetime_minutes?: number | null | undefined;
  * }} TsAuthProjectUpdateClientRequest
  */
 
@@ -317,7 +350,19 @@ function requireCursor(after, maximumLength) {
  * TerraScale account sign-in token; the producer checks the project role on
  * every request (viewer reads, admin changes).
  */
+/**
+ * @typedef {{ first_name?: string | null, last_name?: string | null, image_url?: string | null, external_id?: string | null, public_metadata?: Record<string, unknown>, private_metadata?: Record<string, unknown>, unsafe_metadata?: Record<string, unknown> }} TsAuthUserProfile
+ * @typedef {TsAuthUserProfile & { email: string, password?: string }} TsAuthCreateUser
+ * @typedef {TsAuthUserProfile & { email: string, email_verified?: boolean, password_hash?: string }} TsAuthImportUser
+ * @typedef {{ items: { index: number, user: TsAuthProjectUser }[], errors: { index: number, code: string, message: string }[] }} TsAuthImportUsersResult
+ * @typedef {{ id: string, user_id: string, name: string, prefix: string, scopes: readonly string[], created_at: string, expires_at: string | null, key?: string }} TsAuthUserApiKey
+ * @typedef {{ name: string, scopes: readonly string[], expires_at?: string | null }} TsAuthCreateUserApiKey
+ * @typedef {{ valid: boolean, user_id: string | null, scopes: readonly string[] | null, key_id: string | null, expires_at: string | null }} TsAuthUserApiKeyVerification
+ */
+
 export class TsAuthProjectsClient {
+  /** @type {TsAuthOrganizationsClient} */
+  organizations;
   /**
    * @type {TsAuthHttp}
    * @readonly
@@ -325,10 +370,196 @@ export class TsAuthProjectsClient {
   #http;
 
   /**
-   * @param {TsAuthHttp} http
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {TsAuthCreateUserApiKey} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthUserApiKey>>}
    */
+  createUserApiKey(credential, projectId, userId, request, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/api-keys`,
+      routeName: "tsauth.projects.create_user_api_key",
+      projectAccessToken: managementCredential(credential),
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<{items: readonly TsAuthUserApiKey[]}>>}
+   */
+  listUserApiKeys(credential, projectId, userId, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "GET",
+      path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/api-keys`,
+      routeName: "tsauth.projects.list_user_api_keys",
+      projectAccessToken: managementCredential(credential),
+
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {string} keyId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  revokeUserApiKey(credential, projectId, userId, keyId, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "DELETE",
+      path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/api-keys/${requireId(keyId, "keyId")}`,
+      routeName: "tsauth.projects.revoke_user_api_key",
+      projectAccessToken: managementCredential(credential),
+
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {{key: string}} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthUserApiKeyVerification>>}
+   */
+  verifyUserApiKey(credential, projectId, request, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/api-keys/verify`,
+      routeName: "tsauth.projects.verify_user_api_key",
+      projectAccessToken: managementCredential(credential),
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {{allowed_scopes: readonly string[]}} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<{allowed_scopes: readonly string[]}>>}
+   */
+  setUserApiKeyPolicy(credential, projectId, request, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "PUT",
+      path: `v1/${requireId(projectId, "projectId")}/user-api-key-policy`,
+      routeName: "tsauth.projects.set_user_api_key_policy",
+      projectAccessToken: managementCredential(credential),
+      body: request,
+    });
+  }
+
+  /** @param {TsAuthHttp} http */
   constructor(http) {
     this.#http = http;
+    this.organizations = new TsAuthOrganizationsClient(http);
+  }
+
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {{limit?: number, after?: string, signal?: AbortSignal}} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectInvitationPage>>}
+   */
+  listInvitations(signIn, projectId, options = {}) {
+    requireLimit(options.limit);
+    requireCursor(options.after, maximumExportCursorLength);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : {signal: options.signal}),
+      method: "GET", path: `v1/${requireId(projectId, "projectId")}/invitations`,
+      routeName: "tsauth.projects.list_invitations", projectAccessToken: managementCredential(signIn),
+      query: { ...(options.limit === undefined ? {} : {limit: options.limit}), ...(options.after === undefined ? {} : {after: options.after}) },
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {{limit?: number, after?: string, signal?: AbortSignal}} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthWaitlistPage>>}
+   */
+  listWaitlist(signIn, projectId, options = {}) {
+    requireLimit(options.limit);
+    requireCursor(options.after, maximumExportCursorLength);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : {signal: options.signal}),
+      method: "GET", path: `v1/${requireId(projectId, "projectId")}/waitlist`,
+      routeName: "tsauth.projects.list_waitlist", projectAccessToken: managementCredential(signIn),
+      query: { ...(options.limit === undefined ? {} : {limit: options.limit}), ...(options.after === undefined ? {} : {after: options.after}) },
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {{email: string, redirect_url?: string}} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectInvitation>>}
+   */
+  createInvitation(signIn, projectId, request, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : {signal: options.signal}),
+      method: "POST", path: `v1/${requireId(projectId, "projectId")}/invitations`,
+      routeName: "tsauth.projects.create_invitation", projectAccessToken: managementCredential(signIn), body: request,
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} id
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  revokeInvitation(signIn, projectId, id, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : {signal: options.signal}),
+      method: "DELETE", path: `v1/${requireId(projectId, "projectId")}/invitations/${requireId(id, "id")}`,
+      routeName: "tsauth.projects.revoke_invitation", projectAccessToken: managementCredential(signIn),
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} id
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  approveWaitlist(signIn, projectId, id, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : {signal: options.signal}),
+      method: "POST", path: `v1/${requireId(projectId, "projectId")}/waitlist/${requireId(id, "id")}/approve`,
+      routeName: "tsauth.projects.approve_waitlist", projectAccessToken: managementCredential(signIn),
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} id
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  rejectWaitlist(signIn, projectId, id, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : {signal: options.signal}),
+      method: "POST", path: `v1/${requireId(projectId, "projectId")}/waitlist/${requireId(id, "id")}/reject`,
+      routeName: "tsauth.projects.reject_waitlist", projectAccessToken: managementCredential(signIn),
+    });
   }
 
   /**
@@ -359,7 +590,7 @@ export class TsAuthProjectsClient {
    */
   updateSettings(signIn, projectId, request, options = {}) {
     members(options, ["signal"]);
-    members(request, ["methods", "branding", "configuration"]);
+    members(request, ["methods", "branding", "configuration", "restrictions"]);
     return this.#http.request({
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "PUT",
@@ -399,6 +630,64 @@ export class TsAuthProjectsClient {
         ...(request.limit === undefined ? {} : { limit: request.limit }),
         ...(request.after === undefined ? {} : { after: request.after }),
       },
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {TsAuthCreateUser} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectUser>>}
+   */
+  createUser(signIn, projectId, request, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/users`,
+      routeName: "tsauth.projects.create_user",
+      projectAccessToken: managementCredential(signIn),
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {TsAuthUserProfile} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectUser>>}
+   */
+  updateUser(signIn, projectId, userId, request, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "PATCH",
+      path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}`,
+      routeName: "tsauth.projects.update_user",
+      projectAccessToken: managementCredential(signIn),
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {{ users: readonly TsAuthImportUser[] }} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthImportUsersResult>>}
+   */
+  importUsers(signIn, projectId, request, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/users/import`,
+      routeName: "tsauth.projects.import_users",
+      projectAccessToken: managementCredential(signIn),
+      body: request,
     });
   }
 
@@ -496,7 +785,7 @@ export class TsAuthProjectsClient {
    * stored one. The answered settings list every provider.
    * @param {string} signIn
    * @param {string} projectId
-   * @param {"google" | "github" | "apple" | "oidc"} provider
+   * @param {"google" | "github" | "apple" | "oidc" | "microsoft" | "gitlab" | "linkedin" | "slack" | "discord" | "facebook" | "x" | "oauth2"} provider
    * @param {TsAuthProjectProviderUpdate} request
    * @param {TsAuthProjectsRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthProjectSettings>>}
@@ -507,12 +796,20 @@ export class TsAuthProjectsClient {
       provider !== "google" &&
       provider !== "github" &&
       provider !== "apple" &&
-      provider !== "oidc"
+      provider !== "oidc" &&
+      provider !== "microsoft" &&
+      provider !== "gitlab" &&
+      provider !== "linkedin" &&
+      provider !== "slack" &&
+      provider !== "discord" &&
+      provider !== "facebook" &&
+      provider !== "x" &&
+      provider !== "oauth2"
     )
       throw new TypeError(
-        "provider must be google, github, apple or oidc.",
+        "provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.",
       );
-    members(request, ["client_id", "client_secret", "issuer", "team_id", "key_id"]);
+    members(request, ["client_id", "client_secret", "issuer", "team_id", "key_id", "tenant", "oauth2"]);
     if (typeof request.client_id !== "string" || request.client_id.length === 0)
       throw new TypeError("client_id must be a non-empty string.");
     return this.#http.request({
@@ -530,7 +827,7 @@ export class TsAuthProjectsClient {
    * carry the provider.
    * @param {string} signIn
    * @param {string} projectId
-   * @param {"google" | "github" | "apple" | "oidc"} provider
+   * @param {"google" | "github" | "apple" | "oidc" | "microsoft" | "gitlab" | "linkedin" | "slack" | "discord" | "facebook" | "x" | "oauth2"} provider
    * @param {TsAuthProjectsRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthProjectSettings>>}
    */
@@ -540,10 +837,18 @@ export class TsAuthProjectsClient {
       provider !== "google" &&
       provider !== "github" &&
       provider !== "apple" &&
-      provider !== "oidc"
+      provider !== "oidc" &&
+      provider !== "microsoft" &&
+      provider !== "gitlab" &&
+      provider !== "linkedin" &&
+      provider !== "slack" &&
+      provider !== "discord" &&
+      provider !== "facebook" &&
+      provider !== "x" &&
+      provider !== "oauth2"
     )
       throw new TypeError(
-        "provider must be google, github, apple or oidc.",
+        "provider must be google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.",
       );
     return this.#http.request({
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -652,7 +957,7 @@ export class TsAuthProjectsClient {
    */
   createClient(signIn, projectId, request, options) {
     members(options, ["signal", "stepUpProof"]);
-    members(request, ["name", "type", "redirect_uris"]);
+    members(request, ["name", "type", "redirect_uris", "allowed_scopes", "allowed_audiences", "token_lifetime_minutes"]);
     return this.#http.request({
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
@@ -676,7 +981,7 @@ export class TsAuthProjectsClient {
    */
   updateClient(signIn, projectId, clientId, request, options) {
     members(options, ["signal", "stepUpProof"]);
-    members(request, ["name", "redirect_uris"]);
+    members(request, ["name", "redirect_uris", "allowed_scopes", "allowed_audiences", "token_lifetime_minutes"]);
     return this.#http.request({
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "PUT",
@@ -764,3 +1069,15 @@ export class TsAuthProjectsClient {
     });
   }
 }
+
+/**
+ * @typedef {{
+ *   readonly authorize_url: string;
+ *   readonly token_url: string;
+ *   readonly userinfo_url: string;
+ *   readonly scopes: string;
+ *   readonly id_claim?: string;
+ *   readonly email_claim?: string;
+ *   readonly email_verified_claim?: string;
+ * }} TsAuthProjectOAuth2
+ */

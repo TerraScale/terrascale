@@ -473,3 +473,9 @@ for (;;) { try { await client.setDatabasePlacement(project, database, { regions:
 Pass the project secret API key as the first credential argument to `client.projects.disableUser(secretKey, projectId, userId)`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
 
 Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.
+Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.
+Project user profile creation, merge-patch updates, and partial password-hash imports
+are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
+for fields, scope requirements, hash encodings and the next-release API names.
+Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
+User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).

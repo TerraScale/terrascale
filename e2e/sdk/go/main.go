@@ -21,6 +21,7 @@ import (
 )
 
 type operation struct {
+	PasswordHash  string         `json:"password_hash"`
 	ID            string         `json:"id"`
 	Group         string         `json:"group"`
 	Needs         string         `json:"needs"`
@@ -173,6 +174,55 @@ func (r *runner) do(op operation) error {
 	}
 	ctx := r.ctx
 	switch op.ID {
+	case "auth.organizations":
+		auth, err := tsauth.New(tsauth.Config{})
+		if err != nil {
+			return err
+		}
+		read := auth.WithToken(os.Getenv("E2E_AUTH_READ_KEY"))
+		write := auth.WithToken(os.Getenv("E2E_AUTH_WRITE_KEY"))
+		user := os.Getenv("E2E_AUTH_USER")
+		created, err := write.CreateProjectOrganization(ctx, r.project, tsauth.ProjectOrganizationRequest{Name: "SDK organization", Slug: strings.ReplaceAll(r.table, "_", "-"), AdminUserId: &user, DomainJoin: "off"})
+		if err != nil {
+			return err
+		}
+		defer write.DeleteProjectOrganization(ctx, r.project, created.Id)
+		found, err := read.GetProjectOrganization(ctx, r.project, created.Id)
+		if err != nil {
+			return err
+		}
+		if err = same(found.Id, created.Id, "organization read"); err != nil {
+			return err
+		}
+		listed, err := read.ListProjectOrganizations(ctx, r.project, 100, "")
+		if err != nil {
+			return err
+		}
+		seen := false
+		for _, item := range listed.Items {
+			if item.Id == created.Id {
+				seen = true
+			}
+		}
+		if err = same(seen, true, "organization listed"); err != nil {
+			return err
+		}
+		members, err := read.ListProjectOrganizationMembers(ctx, r.project, created.Id, 100, "")
+		if err != nil {
+			return err
+		}
+		if err = same(members.Items[0].Role, "admin", "initial admin"); err != nil {
+			return err
+		}
+		_, err = write.CreateProjectOrganizationInvitation(ctx, r.project, created.Id, tsauth.ProjectOrganizationInvitationRequest{Email: "org-" + r.run + "@example.com", Role: "member"})
+		if err != nil {
+			return err
+		}
+		invites, err := read.ListProjectOrganizationInvitations(ctx, r.project, created.Id, 100, "")
+		if err != nil {
+			return err
+		}
+		return same(invites.Items[0].Status, "pending", "invitation listed")
 	case "auth.manage_user":
 		auth, err := tsauth.New(tsauth.Config{})
 		if err != nil {
@@ -208,7 +258,85 @@ func (r *runner) do(op operation) error {
 		if err != nil {
 			return err
 		}
-		return same(enabled.Disabled, false, "write key enables")
+
+		if enabled.Disabled {
+			return errors.New("write key did not enable")
+		}
+		key, err := write.CreateUserAPIKey(ctx, r.project, user, tsauth.CreateUserAPIKey{Name: "journey", Scopes: []string{"invoices:read"}})
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(os.Getenv("E2E_SECRETS"), "user-api-key-go"), []byte(key.Key), 0o600); err != nil {
+			return err
+		}
+		keys, err := read.ListUserAPIKeys(ctx, r.project, user)
+		if err != nil {
+			return err
+		}
+		if len(keys.Items) != 1 || keys.Items[0].ID != key.ID {
+			return errors.New("user key not listed")
+		}
+		verified, err := read.VerifyUserAPIKey(ctx, r.project, key.Key)
+		if err != nil {
+			return err
+		}
+		if !verified.Valid || verified.UserID == nil || *verified.UserID != user || len(verified.Scopes) != 1 || verified.Scopes[0] != "invoices:read" {
+			return errors.New("user key did not verify")
+		}
+		if err := write.RevokeUserAPIKey(ctx, r.project, user, key.ID); err != nil {
+			return err
+		}
+		invalid, err := read.VerifyUserAPIKey(ctx, r.project, key.Key)
+		if err != nil {
+			return err
+		}
+		return same(invalid.Valid, false, "revoked key invalid immediately")
+
+	case "auth.user_profiles":
+		auth, err := tsauth.New(tsauth.Config{})
+		if err != nil {
+			return err
+		}
+		write := auth.WithToken(os.Getenv("E2E_AUTH_WRITE_KEY"))
+		first := "SDK"
+		created, err := write.CreateProjectUser(ctx, r.project, tsauth.CreateProjectUserRequest{
+			Email:       "profile-go-" + r.run + "@example.com",
+			UserProfile: tsauth.UserProfile{FirstName: &first, PublicMetadata: map[string]any{"keep": 1, "remove": true}},
+		})
+		if err != nil {
+			return err
+		}
+		if created.FirstName == nil || *created.FirstName != first {
+			return errors.New("created profile differs")
+		}
+		changed, err := write.UpdateProjectUser(ctx, r.project, created.ID, tsauth.UpdateProjectUserRequest{
+			PublicMetadata: map[string]any{"remove": nil, "added": "yes"}, PrivateMetadata: map[string]any{"backend": true},
+		})
+		if err != nil {
+			return err
+		}
+		if changed.PublicMetadata["keep"] != float64(1) || changed.PublicMetadata["added"] != "yes" {
+			return errors.New("metadata merge differs")
+		}
+		if _, exists := changed.PublicMetadata["remove"]; exists {
+			return errors.New("metadata was not removed")
+		}
+		hash := op.PasswordHash
+		malformed := "malformed"
+		imported, err := write.ImportProjectUsers(ctx, r.project, tsauth.ImportProjectUsersRequest{Users: []tsauth.ImportProjectUser{
+			{Email: "import-go-" + r.run + "@example.com", EmailVerified: true, PasswordHash: &hash},
+			{Email: "invalid-go-" + r.run + "@example.com", PasswordHash: &malformed},
+		}})
+		if err != nil {
+			return err
+		}
+		if len(imported.Items) != 1 || len(imported.Errors) != 1 || imported.Errors[0].Index != 1 {
+			return errors.New("partial import differs")
+		}
+		if err := write.DeleteProjectUser(ctx, r.project, imported.Items[0].User.ID); err != nil {
+			return err
+		}
+		return write.DeleteProjectUser(ctx, r.project, created.ID)
 	case "sql.execute.positional":
 		if _, err := r.db.Execute(ctx, r.fill(op.Setup)); err != nil {
 			return err

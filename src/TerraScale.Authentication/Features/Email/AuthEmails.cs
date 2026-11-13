@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Oidc;
 
 namespace TerraScale.Authentication.Features.Email;
 
@@ -44,6 +45,8 @@ public enum AuthEmailKind
 
     /// <summary>An alert, sent to the current address, about a pending sign-in email change with a link that cancels it.</summary>
     EmailChangeNotice,
+
+    SocialLinkCode,
 }
 
 /// <summary>
@@ -86,6 +89,8 @@ public sealed record AuthEmailValues(string Email)
 
     /// <summary>The requested sign-in address of an email change notice.</summary>
     public string? NewEmail { get; init; }
+
+    public string? Provider { get; init; }
 
     /// <summary>Omits every value, so formatting or logging the record never discloses a code or a link.</summary>
     public override string ToString() => nameof(AuthEmailValues);
@@ -275,6 +280,7 @@ public sealed partial class AuthEmails(AuthOptions options)
     public static readonly IReadOnlyDictionary<string, AuthEmailKind> Kinds = new Dictionary<string, AuthEmailKind>(StringComparer.Ordinal)
     {
         ["sign_in_code"] = AuthEmailKind.SignInCode,
+        ["social_link_code"] = AuthEmailKind.SocialLinkCode,
         ["magic_link"] = AuthEmailKind.MagicLink,
         ["verify_email"] = AuthEmailKind.VerifyEmail,
         ["password_reset"] = AuthEmailKind.PasswordReset,
@@ -319,6 +325,7 @@ public sealed partial class AuthEmails(AuthOptions options)
         .. kind switch
         {
             AuthEmailKind.MagicLink => ["link", "expires_in"],
+            AuthEmailKind.SocialLinkCode => ["code", "expires_in", "provider"],
             AuthEmailKind.Invitation => ["link", "expires_in", "organization", "inviter"],
             AuthEmailKind.NewDevice => ["device", "location", "time"],
             AuthEmailKind.Lockout => ["locked_until"],
@@ -422,6 +429,7 @@ public sealed partial class AuthEmails(AuthOptions options)
         {
             ["app_name"] = brand.Name,
             ["user.email"] = values.Email,
+            ["provider"] = values.Provider ?? string.Empty,
             ["support_email"] = brand.SupportEmail ?? string.Empty,
             ["code"] = values.Code ?? string.Empty,
             ["link"] = values.Link?.AbsoluteUri ?? string.Empty,
@@ -470,10 +478,11 @@ public sealed partial class AuthEmails(AuthOptions options)
         await AuthEmailLayout.Create(view).RenderAsync(html, Encoder, cancellationToken).ConfigureAwait(false);
         return new EmailMessage(view.Subject, Text(view), html.ToString())
         {
-            FromName = brand.SenderName,
+            FromName = kind == AuthEmailKind.Invitation && values.Tenant != OidcIssuer.InstanceId && values.Organization is { } organization
+                ? organization + " (" + brand.Name + ")" : brand.SenderName,
             ReplyTo = brand.ReplyTo,
             Tenant = values.Tenant,
-            Purpose = kind is AuthEmailKind.SignInCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.MfaCode or AuthEmailKind.StepUpCode
+            Purpose = kind is AuthEmailKind.SignInCode or AuthEmailKind.SocialLinkCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.MfaCode or AuthEmailKind.StepUpCode
                 ? EmailPurpose.Authentication : kind == AuthEmailKind.Invitation ? EmailPurpose.Invitation : EmailPurpose.Notification
         };
     }
@@ -573,18 +582,32 @@ public sealed partial class AuthEmails(AuthOptions options)
             "Digite este código para entrar em {{ app_name }} como {{ user.email }}.",
             null,
             "Não tentou entrar? Ignore este e-mail. Nunca compartilhe este código."),
+        [(AuthEmailKind.SocialLinkCode, English)] = new(
+            "{{ code }} connects {{ provider }} to your {{ app_name }} account",
+            "Connect {{ provider }}. This code expires in {{ expires_in }}.",
+            "Connect {{ provider }}",
+            "Enter this code to connect {{ provider }} to your {{ app_name }} account.",
+            null,
+            "If you didn't try to sign in with {{ provider }}, ignore this email."),
+        [(AuthEmailKind.SocialLinkCode, Portuguese)] = new(
+            "{{ code }} conecta {{ provider }} à sua conta em {{ app_name }}",
+            "Conecte {{ provider }}. Este código expira em {{ expires_in }}.",
+            "Conectar {{ provider }}",
+            "Digite este código para conectar {{ provider }} à sua conta em {{ app_name }}.",
+            null,
+            "Se você não tentou entrar com {{ provider }}, ignore este e-mail."),
         [(AuthEmailKind.MagicLink, English)] = new(
             "Sign in to {{ app_name }}",
             "Your sign-in link expires in {{ expires_in }}.",
             "Sign in to {{ app_name }}",
-            "Sign in as {{ user.email }}.",
+            "Sign in as {{ user.email }}. If you opened the link in another browser, enter the code below.",
             "Sign in",
             "Didn't try to sign in? Ignore this email. Never forward this link."),
         [(AuthEmailKind.MagicLink, Portuguese)] = new(
             "Seu link de acesso para {{ app_name }}",
             "Seu link de acesso expira em {{ expires_in }}.",
             "Entre em {{ app_name }}",
-            "Entre como {{ user.email }}.",
+            "Entre como {{ user.email }}. Se abriu o link em outro navegador, digite o código abaixo.",
             "Entrar",
             "Não tentou entrar? Ignore este e-mail. Nunca encaminhe este link."),
         [(AuthEmailKind.VerifyEmail, English)] = new(

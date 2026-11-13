@@ -1,14 +1,17 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Identity;
 
-public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock)
+public sealed partial class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock, SignUpRestrictions restrictions)
 {
     public static string? NormalizeEmail(string? email)
     {
@@ -19,9 +22,27 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         }
 
         var at = trimmed.IndexOf('@', StringComparison.Ordinal);
-        return at > 0 && at == trimmed.LastIndexOf('@') && trimmed[(at + 1)..].Split('.') is { Length: > 1 } labels && labels.All(label => label.Length > 0)
-            ? AuthIds.NormalizeEmail(trimmed)
-            : null;
+        if (at <= 0 || at != trimmed.LastIndexOf('@') || NormalizeDomain(trimmed[(at + 1)..]) is not { } domain)
+        {
+            return null;
+        }
+
+        var normalized = AuthIds.NormalizeEmail(trimmed[..at] + "@" + domain);
+        return normalized.Length <= 254 ? normalized : null;
+    }
+
+    internal static string? NormalizeDomain(string domain)
+    {
+        try
+        {
+            var ascii = new IdnMapping().GetAscii(domain).ToLowerInvariant();
+            return Uri.CheckHostName(ascii) == UriHostNameType.Dns && ascii.Split('.') is { Length: > 1 } labels && labels.All(label => label.Length > 0)
+                ? ascii : null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 
     public Task<UserRecord?> CreateAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
@@ -30,18 +51,23 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
     public async Task<UserRecord?> CreateAsync(string instanceId, string email, string? passwordHash, CancellationToken cancellationToken)
         => await this.CreateAccountAsync(instanceId, email, passwordHash, AuthIds.New(), cancellationToken).ConfigureAwait(false);
 
-    internal (UserRecord User, Change[] Changes) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, Change? lifecycleEvent = null)
+    internal (UserRecord User, Change[] Changes) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, Change? lifecycleEvent = null, string? username = null)
     {
-        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New() };
+        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New(), Username = username };
         return (user, lifecycleEvent is null ? [Change.Insert(user)] : [Change.Insert(user), lifecycleEvent]);
     }
 
     internal async Task<UserRecord?> CreateAccountAsync(string instanceId, string email, string? passwordHash, string userId, CancellationToken cancellationToken)
     {
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));
+        if (await restrictions.AdmissionAsync(instanceId, normalized, true, cancellationToken).ConfigureAwait(false) is not { } admission)
+        {
+            return null;
+        }
+
         var lifecycleEvent = await outbox.CreateAsync(instanceId, "user.signed_up", userId, normalized, null, cancellationToken).ConfigureAwait(false);
         var (user, changes) = this.NewAccount(instanceId, normalized, passwordHash, userId, lifecycleEvent);
-        if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+        if (await data.SaveAsync([.. changes, .. admission], cancellationToken).ConfigureAwait(false))
         {
             return BindAuthenticationState(user);
         }
@@ -53,6 +79,16 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         NormalizeEmail(email) is { } normalized
             ? await this.ReadAsync(db => db.Users.Where(user => user.InstanceId == instanceId && user.Email == normalized), cancellationToken).ConfigureAwait(false)
             : null;
+
+    public static string? NormalizeUsername(string? username) => username is { Length: >= 3 and <= 32 }
+        && username.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '.')
+        && username.ToLowerInvariant() is not ("admin" or "administrator" or "root" or "support" or "security" or "help" or "terrascale" or "system" or "owner" or "staff")
+        ? username.ToLowerInvariant() : null;
+
+    public Task<UserRecord?> FindByUsernameAsync(string instanceId, string username, CancellationToken cancellationToken) =>
+        NormalizeUsername(username) is { } normalized
+            ? this.ReadAsync(db => db.Users.Where(user => user.InstanceId == instanceId && user.Username == normalized), cancellationToken)
+            : Task.FromResult<UserRecord?>(null);
 
     public Task<UserRecord?> GetAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
         TerraScaleIds.IsValid(userId)
@@ -68,7 +104,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         return linked is { Disabled: false } && linked.LinkedProviders.Contains(identity) ? BindProvider(linked, identity) : null;
     }
 
-    public async Task<UserRecord?> FromProviderAsync(string tenant, LinkedProvider identity, string verifiedEmail, bool allowCreation, CancellationToken cancellationToken)
+    public async Task<UserRecord?> FromProviderAsync(string tenant, LinkedProvider identity, string verifiedEmail, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(identity);
         if (!Complete(identity))
@@ -83,14 +119,19 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 return await this.FindByProviderAsync(tenant, identity, cancellationToken).ConfigureAwait(false);
             }
 
-            if (!allowCreation || NormalizeEmail(verifiedEmail) is not { } normalized
+            if (NormalizeEmail(verifiedEmail) is not { } normalized
                 || await this.FindByEmailAsync(tenant, normalized, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return null;
             }
 
+            if (await restrictions.AdmissionAsync(tenant, normalized, true, cancellationToken).ConfigureAwait(false) is not { } admission)
+            {
+                return null;
+            }
+
             var user = new UserRecord(AuthIds.New(), tenant, normalized, 0, clock.GetUtcNow()) { AuthStamp = AuthIds.New(), LinkedProviders = [identity] };
-            List<Change> changes = [Change.Insert(user), Change.Insert(Link(user, identity))];
+            List<Change> changes = [Change.Insert(user), Change.Insert(Link(user, identity)), .. admission];
             if (await outbox.CreateAsync(tenant, "user.signed_up", user.Id, normalized, null, cancellationToken).ConfigureAwait(false) is { } lifecycleEvent)
             {
                 changes.Add(lifecycleEvent);
@@ -134,6 +175,11 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 changes.Add(lifecycleEvent);
             }
 
+            if (await outbox.CreateAsync(caller.InstanceId, "user.updated", caller.Id, current.Email, identity.Provider, cancellationToken).ConfigureAwait(false) is { } updatedEvent)
+            {
+                changes.Add(updatedEvent);
+            }
+
             if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
             {
                 return true;
@@ -168,6 +214,18 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         }
 
         return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<bool> SetUsernameAsync(UserRecord caller, string username, Change session, CancellationToken cancellationToken)
+    {
+        if (NormalizeUsername(username) is not { } normalized
+            || await this.GetAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { Disabled: false } current
+            || current.AuthEpoch != caller.AuthEpoch || current.AuthStamp != caller.AuthStamp)
+        {
+            return false;
+        }
+
+        return await data.SaveAsync([Change.Update(current with { Username = normalized }), session], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<bool> SetPasswordAsync(UserRecord caller, string passwordHash, CancellationToken cancellationToken = default)
@@ -209,7 +267,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
 
         var passcode = await data.ReadAsync((db, token) => db.Passcodes.Where(row => row.InstanceId == instanceId && row.Key == userId).WithVersion()
             .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
-        List<Change> changes = [Change.Update(current with { Email = newEmail, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthIds.New() }), .. extra];
+        List<Change> changes = [Change.Update(current with { Email = newEmail, EmailVerified = true, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthIds.New() }), .. extra];
         if (await outbox.CreateAsync(instanceId, "user.updated", userId, newEmail, null, cancellationToken).ConfigureAwait(false) is { } updatedEvent)
         {
             changes.Add(updatedEvent);
@@ -270,6 +328,8 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 return;
             }
 
+            var impersonations = await data.ReadAsync((db, token) => db.Impersonations.Where(row => row.EndedAt == null
+                && (row.UserId == userId || row.ActorId == userId)).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
             var signUpKey = Passcodes.SignUpKey + current.Email;
             var passcodes = await data.ReadAsync((db, token) => db.Passcodes
                 .Where(row => row.InstanceId == instanceId && (row.Key == signUpKey || row.UserId == userId)).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
@@ -279,6 +339,19 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 DeletionJob.Enqueue(instanceId, "account", userId, clock, closureGeneration: closureGeneration),
                 .. passcodes.Select(passcode => Change.Delete(passcode)),
             ];
+            foreach (var impersonation in impersonations)
+            {
+                changes.Add(Change.Delete(impersonation));
+                changes.AddRange(ImpersonationEndings.Events(impersonation.Value,
+                    impersonation.Value.UserId == userId ? "target_deleted" : "admin_deleted", impersonation.Value.ActorId, outbox, clock));
+            }
+
+            if (await this.RemoveOrganizationMembershipsAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } memberships)
+            {
+                continue;
+            }
+
+            changes.AddRange(memberships);
             if (await outbox.CreateAsync(instanceId, "user.deleted", userId, current.Email, null, cancellationToken).ConfigureAwait(false) is { } deleted)
             {
                 changes.Add(deleted);
@@ -303,7 +376,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         AuthenticationBindings = [.. BindAuthenticationState(user).AuthenticationBindings, new CredentialBinding(Credentials.SocialKind, Credentials.SocialKey(identity), user.Id)],
     };
 
-    private static ProviderLinkRecord Link(UserRecord user, LinkedProvider identity) =>
+    internal static ProviderLinkRecord Link(UserRecord user, LinkedProvider identity) =>
         new(user.InstanceId, user.Id, identity.Provider, identity.Issuer, identity.ClientId, identity.Subject);
 
     private static bool Complete(LinkedProvider identity) =>

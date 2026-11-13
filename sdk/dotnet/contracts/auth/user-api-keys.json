@@ -1,0 +1,92 @@
+{
+  "contract": "docs/auth/machine-tokens-and-user-api-keys.md",
+  "operations": [
+    {
+      "operation_id": "create_user_api_key",
+      "method": "POST",
+      "path": "/v1/{project}/users/{user}/api-keys",
+      "success_status": 201,
+      "scope": "auth:write",
+      "security": "project_key_or_platform_person",
+      "retry": "none"
+    },
+    {
+      "operation_id": "list_user_api_keys",
+      "method": "GET",
+      "path": "/v1/{project}/users/{user}/api-keys",
+      "success_status": 200,
+      "scope": "auth:read",
+      "security": "project_key_or_platform_person",
+      "retry": "none"
+    },
+    {
+      "operation_id": "revoke_user_api_key",
+      "method": "DELETE",
+      "path": "/v1/{project}/users/{user}/api-keys/{key}",
+      "success_status": 204,
+      "scope": "auth:write",
+      "security": "project_key_or_platform_person",
+      "retry": "none"
+    },
+    {
+      "operation_id": "verify_user_api_key",
+      "method": "POST",
+      "path": "/v1/{project}/api-keys/verify",
+      "success_status": 200,
+      "scope": "auth:read",
+      "security": "project_key_only",
+      "retry": "none"
+    },
+    {
+      "operation_id": "get_user_api_key_policy",
+      "method": "GET",
+      "path": "/v1/{project}/user-api-key-policy",
+      "success_status": 200,
+      "scope": "auth:read",
+      "security": "project_key_or_platform_person",
+      "retry": "none"
+    },
+    {
+      "operation_id": "set_user_api_key_policy",
+      "method": "PUT",
+      "path": "/v1/{project}/user-api-key-policy",
+      "success_status": 200,
+      "scope": "auth:write",
+      "security": "project_key_or_platform_person",
+      "retry": "none"
+    },
+    {
+      "operation_id": "create_self_user_api_key",
+      "method": "POST",
+      "path": "/v1/{project}/me/api-keys",
+      "success_status": 201,
+      "security": "project_hosted_session_cookie",
+      "origin_required": true
+    },
+    {
+      "operation_id": "list_self_user_api_keys",
+      "method": "GET",
+      "path": "/v1/{project}/me/api-keys",
+      "success_status": 200,
+      "security": "project_hosted_session_cookie",
+      "origin_required": false
+    },
+    {
+      "operation_id": "revoke_self_user_api_key",
+      "method": "DELETE",
+      "path": "/v1/{project}/me/api-keys/{key}",
+      "success_status": 204,
+      "security": "project_hosted_session_cookie",
+      "origin_required": true
+    }
+  ],
+  "secret": "tsk_ + 8 random characters + _ + 43 random characters; creation only",
+  "verification": {
+    "valid": "boolean",
+    "user_id": "nullable ULID",
+    "scopes": "nullable string array",
+    "key_id": "nullable ULID",
+    "expires_at": "nullable RFC3339",
+    "cache_seconds": 0
+  }
+}
