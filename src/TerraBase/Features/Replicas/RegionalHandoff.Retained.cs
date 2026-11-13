@@ -107,38 +107,40 @@ internal sealed partial class RegionalHandoff
                 if (++count > manifest.Count || string.CompareOrdinal(after, record.Database.Id) >= 0
                     || database.DatabaseId != record.Database.Id || database.ProjectId != record.Database.ProjectId
                     || record.Database.Home(options.Region) != options.Region
-                    || !DatabaseRevision.TryParse(entry.Revision, out var expected))
+                    || !DatabaseRevision.TryParse(entry.Revision, out _))
                 {
                     return false;
                 }
                 RegionalRetention.Append(hash, record.Database.Id);
                 after = record.Database.Id;
-                await services.GetRequiredService<ITransactionCrypto>().PrepareAsync(database, token).ConfigureAwait(false);
-                if (_prepared.GetValueOrDefault(database.DatabaseId!) != entry.Revision)
+            }
+            await using (var transaction = await store.BeginDurableTransactionAsync(token).ConfigureAwait(false))
+            {
+                foreach (var entry in page.Entries)
                 {
-                    await replicas.OpenAsync(database, new Uri(source, ReplicaRoutes.DatabasePath(database)), _http, token).ConfigureAwait(false);
-                    _ = await replicas.PullAsync(database, fromHome: true, token).ConfigureAwait(false);
-                    if (replicas.HeldRevision(database) is not { } actual || actual.Incarnation != expected.Incarnation
-                        || DatabaseRevision.Compare(actual, expected) < 0)
-                    {
-                        return false;
-                    }
-                    await replication.SuspendAsync(database).ConfigureAwait(false);
-                    _promoted[database.DatabaseId!] = database;
-                    var detached = await replicas.DetachAsync(database, token).ConfigureAwait(false);
-                    if (detached is null)
-                    {
-                        return false;
-                    }
-                    _ = await engine.DeleteDatabaseAsync(database, token).ConfigureAwait(false);
-                    await services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, token).ConfigureAwait(false);
-                    _prepared[database.DatabaseId!] = entry.Revision;
+                    var record = entry.Record;
+                    var json = EntityJson(record);
+                    await transaction.PutAsync(DeletedDatabases.Kind, record.Database.Id, json, token).ConfigureAwait(false);
+                    await transaction.PutAsync(DeletedDatabases.Project(record.Database.ProjectId), record.Database.Id, json, token).ConfigureAwait(false);
                 }
-                await using var transaction = await store.BeginDurableTransactionAsync(token).ConfigureAwait(false);
-                var json = EntityJson(record);
-                await transaction.PutAsync(DeletedDatabases.Kind, record.Database.Id, json, token).ConfigureAwait(false);
-                await transaction.PutAsync(DeletedDatabases.Project(record.Database.ProjectId), record.Database.Id, json, token).ConfigureAwait(false);
                 await transaction.CommitAsync(token).ConfigureAwait(false);
+            }
+            foreach (var chunk in page.Entries.Chunk(4))
+            {
+                var pending = chunk.Where(entry => _prepared.GetValueOrDefault(entry.Record.Database.Id) != entry.Revision).ToArray();
+                foreach (var entry in pending)
+                {
+                    _promoted[entry.Record.Database.Id] = entry.Record.Storage;
+                }
+                var imported = await Task.WhenAll(pending.Select(entry => ImportRetainedAsync(entry, source, engine, replicas, replication, token))).ConfigureAwait(false);
+                if (imported.Any(accepted => !accepted))
+                {
+                    return false;
+                }
+                foreach (var entry in pending)
+                {
+                    _prepared[entry.Record.Database.Id] = entry.Revision;
+                }
             }
             if (page.Next is null)
             {
@@ -152,6 +154,33 @@ internal sealed partial class RegionalHandoff
         while (true);
         return count == manifest.Count && Convert.ToHexStringLower(hash.GetHashAndReset()) == manifest.Digest
             && await PreparingAsync(request, token).ConfigureAwait(false);
+    }
+
+    private async Task<bool> ImportRetainedAsync(RetainedEntry entry, Uri source, IStorageEngine engine,
+        IDatabaseReplicas replicas, RegionReplication replication, CancellationToken token)
+    {
+        var database = entry.Record.Storage;
+        if (!DatabaseRevision.TryParse(entry.Revision, out var expected))
+        {
+            return false;
+        }
+        await services.GetRequiredService<ITransactionCrypto>().PrepareAsync(database, token).ConfigureAwait(false);
+        await replicas.OpenAsync(database, new Uri(source, ReplicaRoutes.DatabasePath(database)), _http, token).ConfigureAwait(false);
+        _ = await replicas.PullAsync(database, fromHome: true, token).ConfigureAwait(false);
+        if (replicas.HeldRevision(database) is not { } actual || actual.Incarnation != expected.Incarnation
+            || DatabaseRevision.Compare(actual, expected) < 0)
+        {
+            return false;
+        }
+        await replication.SuspendAsync(database).ConfigureAwait(false);
+        var detached = await replicas.DetachAsync(database, token).ConfigureAwait(false);
+        if (detached is null)
+        {
+            return false;
+        }
+        _ = await engine.DeleteDatabaseAsync(database, token).ConfigureAwait(false);
+        await services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, token).ConfigureAwait(false);
+        return true;
     }
 
     private static ReadOnlyMemory<byte> EntityJson(DeletedDatabaseRecord record) =>
