@@ -41,11 +41,11 @@ pair of supported formats has a migration step, every supported format has a loc
 the lock entry of Target, existing lock entries never change, and a step stays unchanged for at least 60 days.
 
 A change to any file that shapes the bytes on disk needs either a new format step or the `storage-format-unchanged`
-label, applied once a reviewer confirms the bytes on disk stay the same. Those files are everything under
-`src/TerraBase/Engine/Turso/` (schema, change log, key record, cipher and page settings), the stored-file and
-revisions sidecar records (`Engine/StoredDatabaseFile.cs`, `Engine/Revisions/RevisionManifest*.cs`), the snapshot
-bundle (`Features/Backup/SnapshotBundle.cs`), the vendored storage client and the pinned native storage library
-(`benchmark/turso-sync-host/turso-pin.env`). The labels `storage-format` and `storage-format-unchanged` contradict
+label, applied once a reviewer confirms the bytes on disk stay the same. Those files are everything in the storage
+engine's directory (the one holding `storage-format.lock`: schema, change log, key record, cipher and page settings),
+the stored-file and revisions sidecar records (`Engine/StoredDatabaseFile.cs`, `Engine/Revisions/RevisionManifest*.cs`),
+the snapshot bundle (`Features/Backup/SnapshotBundle.cs`), the vendored storage client and the pin of the native
+storage library. The labels `storage-format` and `storage-format-unchanged` contradict
 each other. `storage-format` with `Needs format bump` in the description is the pending case the old gate allowed.
 
 A SQL step runs with `synchronous = FULL` in one transaction together with its `user_version` update.

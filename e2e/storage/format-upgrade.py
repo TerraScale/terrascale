@@ -258,7 +258,7 @@ def build_target(target):
         ],
         check=True,
     )
-    format_file = source / "src/TerraBase/Engine/Turso/StorageFormat.cs"
+    format_file = next(source.glob("src/TerraBase/Engine/*/StorageFormat.cs"))
     text = format_file.read_text()
     changed = re.sub(r"public const int Target = \d+;", f"public const int Target = {target};", text)
     assert changed != text
@@ -317,13 +317,12 @@ except (OSError, gdb.error):
 end
 continue
 end
-run
-"""
+run"""
 
 
 def kill_at(build, directory, mode):
     script = work / "kill.gdb"
-    script.write_text(GDB)
+    script.write_text(GDB + "\n")
     log = work / f"kill-{mode}.log"
     with log.open("w") as output:
         subprocess.run(

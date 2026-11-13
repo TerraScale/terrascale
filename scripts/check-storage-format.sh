@@ -12,19 +12,22 @@ LABELS=$labels BODY=$body python3 - "$1" <<'PY'
 import datetime
 import hashlib
 import os
+import pathlib
 import re
 import subprocess
 import sys
 
-root = "src/TerraBase/Engine/Turso/"
+root = str(next(pathlib.Path("src/TerraBase/Engine").glob("*/storage-format.lock")).parent) + "/"
+client = str(next(pathlib.Path("src/vendor").glob("*.Data.Sqlite"))) + "/"
+pin = str(next(pathlib.Path("benchmark").glob("*-sync-host/*-pin.env")))
 base = sys.argv[1]
 storage = re.compile("|".join([
-    r"^src/TerraBase/Engine/Turso/",
+    "^" + re.escape(root),
     r"^src/TerraBase/Engine/StoredDatabaseFile\.cs$",
     r"^src/TerraBase/Engine/Revisions/RevisionManifest(File)?\.cs$",
     r"^src/TerraBase/Features/Backup/SnapshotBundle\.cs$",
-    r"^src/vendor/Turso\.Data\.Sqlite/",
-    r"^benchmark/turso-sync-host/turso-pin\.env$",
+    "^" + re.escape(client),
+    "^" + re.escape(pin) + "$",
 ]))
 step_pattern = re.compile(r'new\((\d+),\s*(\d+),\s*"([0-9-]+)",\s*("""\n?(.*?)"""|"((?:[^"\\]|\\.)*)")\)', re.S)
 
@@ -81,7 +84,7 @@ current = open(root + "StorageFormat.cs").read()
 low, high, target = formats(current)
 if not low <= target <= high:
     fail(f"Target {target} must lie inside Supported {low} to {high}")
-digest = schema(open(root + "TursoDatabaseStore.cs").read())
+digest = schema(next(pathlib.Path(root).glob("*DatabaseStore.cs")).read_text())
 locked = lock(open(root + "storage-format.lock").read())
 for number in range(low, high + 1):
     if number not in locked:
