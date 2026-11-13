@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Clock;
 using ZLogger;
 
 namespace TerraBase.Hosting;
@@ -65,6 +66,18 @@ internal sealed class ApplicationRunCompletion
 
         await Task.WhenAll(observations).ConfigureAwait(false);
         var closingAt = Stopwatch.GetTimestamp();
+        if (started)
+        {
+            try
+            {
+                await app.Services.GetRequiredService<NodeHlcClock>().SaveLastStampAsync().ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                errors.Add(error);
+            }
+        }
+
         try
         {
             if (storage is not null)

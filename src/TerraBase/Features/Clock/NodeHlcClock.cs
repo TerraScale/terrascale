@@ -7,7 +7,7 @@ using ZLogger;
 
 namespace TerraBase.Features.Clock;
 
-internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions options, TimeProvider time, ClockTrust trust, IMeterFactory meters, ILogger<NodeHlcClock> logger) : IHlcClock, IAsyncDisposable
+internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions options, TimeProvider time, ClockTrust trust, IMeterFactory meters, ILogger<NodeHlcClock> logger) : IHlcClock, IDisposable
 {
     private const long ReservationMilliseconds = 5_000;
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
@@ -22,7 +22,9 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
 
     private long HighWater => Volatile.Read(ref _highWater);
 
-    public async ValueTask DisposeAsync()
+    public void Dispose() => _gate.Dispose();
+
+    public async Task SaveLastStampAsync()
     {
         await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
@@ -38,8 +40,6 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
         {
             _gate.Release();
         }
-
-        _gate.Dispose();
     }
 
     public async ValueTask<HlcTimestamp?> IssueAsync(CancellationToken cancellationToken)
