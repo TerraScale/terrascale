@@ -40,7 +40,14 @@ internal sealed partial class ContinuousBackup
             if (file.Shipping)
             {
                 (file.Shipping, file.Epoch) = (false, null);
-                Abandon(file);
+                if (file.Generation is not null && (file.Buffered > 0 || file.Behind))
+                {
+                    Drop(file, "lease");
+                }
+                else
+                {
+                    Abandon(file);
+                }
             }
 
             return false;
@@ -49,7 +56,14 @@ internal sealed partial class ContinuousBackup
         if (file.Epoch != epoch)
         {
             (file.Shipping, file.Epoch) = (true, epoch);
-            Abandon(file);
+            if (file.Generation is not null && (file.Buffered > 0 || file.Behind))
+            {
+                Drop(file, "lease");
+            }
+            else
+            {
+                Abandon(file);
+            }
             _logger.ZLogInformation($"This member now ships {file.Prefix:@File}");
         }
 
@@ -119,14 +133,7 @@ internal sealed partial class ContinuousBackup
             }
             catch
             {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    Abandon(file);
-                }
-                else
-                {
-                    Drop(file, "read");
-                }
+                Drop(file, "read");
 
                 throw;
             }

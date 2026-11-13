@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
@@ -91,7 +92,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         _failures = meter.CreateCounter<long>("terrabase.backup.failures", description: "Backup passes of a file that failed.");
         _holes = meter.CreateCounter<long>("terrabase.backup.holes", description: "Backup continuity breaks that require a fresh snapshot.");
         _abandoned = meter.CreateCounter<long>("terrabase.backup.abandoned",
-            description: "Generations ended by a failure with log read but not stored, by reason (read, destination, shredded, missing_key).");
+            description: "Generations ended by a failure with log read but not stored, by reason (read, destination, shredded, missing_key, lease, shutdown, disk).");
         _deferred = meter.CreateCounter<long>("terrabase.backup.snapshots_deferred",
             description: "Passes that put off a due daily snapshot, by reason (backlog: unread log remains; busy: snapshot uploads in flight).");
         _generations = meter.CreateCounter<long>("terrabase.backup.generations", description: "Generations started (each stores a snapshot).");
@@ -103,7 +104,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             "Bytes the backups of the files this member ships occupy in the bucket, measured daily.");
         meter.CreateObservableGauge("terrabase.backup.files", () => Shipped().Count(), description: "Storage files this node ships.");
         meter.CreateObservableGauge("terrabase.backup.lag", () => Shipped().Select(file => Lag(file, _time.GetUtcNow())).DefaultIfEmpty().Max(),
-            "s", "Age of the newest stored segment or initial snapshot, over every file this node ships; age since discovery before the first upload.");
+            "s", "Age of data known stored, including verified idle reads, over every file this node ships; age since discovery before the first upload.");
         meter.CreateObservableGauge("terrabase.backup.last_success", () => Shipped().Select(file => file.LastShipped?.ToUnixTimeSeconds() ?? 0).DefaultIfEmpty().Min(),
             "s", "Unix time of the least recent data in the bucket over every file this node ships (0 while a file has none).");
     }
@@ -494,6 +495,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 {
                     if (error is OperationCanceledException && cancellationToken.IsCancellationRequested && !callerCancellation.IsCancellationRequested)
                     {
+                        if (file.Generation is not null && (file.Buffered > 0 || file.Behind))
+                        {
+                            Drop(file, "shutdown");
+                        }
                         _logger.ZLogWarning($"Final backup shipping exhausted its shutdown budget; unshipped changes remain in local storage for the next snapshot");
                     }
                     else
@@ -507,6 +512,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             try
             {
+                if (file.Generation is not null && (file.Buffered > 0 || file.Behind))
+                {
+                    Drop(file, "shutdown");
+                }
                 await file.DisposeAsync().ConfigureAwait(false);
             }
             catch (Exception error)
@@ -568,6 +577,15 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         try
         {
+            var store = await _storage.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+            var (kind, id) = RecordKey(database);
+            DateTimeOffset? lastShipped;
+            await using (var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false))
+            {
+                var stored = await transaction.GetAsync(kind, id, cancellationToken).ConfigureAwait(false);
+                lastShipped = stored is null ? null : JsonSerializer.Deserialize(stored.Json.Span, BackupJsonContext.Default.BackupStatusRecord)?.LastShippedAt;
+            }
+
             if (await _engine.OpenTapAsync(database, cancellationToken).ConfigureAwait(false) is { } tap)
             {
                 BackupScratchStream pending;
@@ -581,7 +599,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     throw;
                 }
 
-                _files[prefix] = new ShippedFile(database, prefix, BackupLayout.KeyScope(database), tap, pending, _time.GetUtcNow(), _targets.Platform);
+                _files[prefix] = new ShippedFile(database, prefix, BackupLayout.KeyScope(database), tap, pending, _time.GetUtcNow(), _targets.Platform) { LastShipped = lastShipped };
             }
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -618,8 +636,16 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private static bool GenerationLost(Exception error) =>
         error is DatabaseShreddedException or InvalidDataException { Message: DataKeys.MissingKeyMessage };
 
-    private static double Lag(ShippedFile file, DateTimeOffset now) =>
-        Math.Max(0, (now - (file.LastShipped ?? file.Opened)).TotalSeconds);
+    private static double Lag(ShippedFile file, DateTimeOffset now)
+    {
+        var stored = file.LastShipped ?? file.Opened;
+        if (file.StoredThrough is { } through && through > stored)
+        {
+            stored = through;
+        }
+
+        return Math.Max(0, (now - stored).TotalSeconds);
+    }
 
     private string ScratchFile(string extension) => Path.Combine(_scratch, EntityIds.New().ToString() + extension);
     private static void DeleteSnapshot(string path) => BackupReader.Delete(path);
@@ -708,6 +734,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public bool PendingEndsMarked { get; set; }
         public DateTimeOffset LastSnapshot { get; set; }
         public DateTimeOffset? LastShipped { get; set; }
+        public DateTimeOffset? StoredThrough { get; set; }
         public ShippingProgress? PlatformProgress { get; set; }
         public DateTimeOffset Opened { get; } = opened;
 

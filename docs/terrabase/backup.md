@@ -229,14 +229,19 @@ segment only repeats its own bytes.
 After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. When the attempt
 is due, the failed segment is sent again before anything more is read. Between attempts reads and trimming go on, so
 the native capture table stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
-stays in the native capture table, where the backup's durable anchor keeps it. An outage never ends a generation
+stays in the native capture table, where the backup's durable anchor keeps it. Each shipping pass checks a per-file cap of
+256 MiB of unacknowledged capture payload and row overhead, using the existing pending-log budget. A pass over
+that cap records a `disk` hole, discards and acknowledges the log through its read position to allow trimming,
+and requires a fresh stored snapshot before shipping resumes. An outage never ends a generation
 just because it reaches the longest backoff. Buffered segments and their disk reservations stay until upload succeeds;
 a refused disk reservation stops further reads without clearing the existing buffer. Transient customer destination
 failures preserve the same pending segment too. A failed snapshot read, a missing generation key or a destination
 change requires a new generation. Every such break logs a warning and counts in both
-`terrabase_backup_abandoned_total{reason}` (`read`, `destination`, `shredded`, `missing_key`) and
+`terrabase_backup_abandoned_total{reason}` (`read`, `destination`, `shredded`, `missing_key`, `lease`, `shutdown`, `disk`) and
 `terrabase_backup_holes_total`; a discontinuous tap read also counts as a hole. The replacement generation must store
-a fresh snapshot before shipping segments. A shipper lease change and process shutdown also end a generation.
+a fresh snapshot before shipping segments. A shipper lease change or loss and process shutdown also end a
+generation. If a generation has buffered or unread log, these paths count a hole with reason `lease` or `shutdown` before discarding it. A cancelled daily
+snapshot read counts a `read` hole because its partially consumed log cannot safely be reused.
 At shutdown a file ships its whole backlog, read after read, while the shutdown
 budget lasts and its passes succeed; a daily snapshot upload that shutdown cancels does not stop that. Shutdown starts
 no generation, whose full snapshot would spend the budget other files need: a file without one waits for the next
@@ -247,11 +252,13 @@ while snapshot uploads are busy, waits for a later pass; `terrabase_backup_snaps
 `terrabase_backup_failures_total`, shows as `lastError` until a snapshot is stored, and puts off the next attempt by
 its own backoff (1 s, doubling to 5 minutes), while segments keep shipping.
 
-Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is the age of the newest stored segment, using the initial
-snapshot as the baseline until a segment is stored. Before the first upload it is the time since file discovery.
-It advances even without a known backlog or error, and clearing a buffer or ending a generation cannot reset it.
-A daily snapshot being captured or queued does not advance the stored time. A successful replacement snapshot
-establishes the new baseline, but the hole counter still records the break in recovery history.
+Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is the age of the latest time known stored, using the initial
+snapshot as the baseline until a segment is stored. A due, continuous read that returns zero bytes with no
+buffered, unstored or unread log proves the file was stored through the time immediately before that read.
+This keeps idle files healthy without masking pending writes. On discovery, the saved backup status supplies
+the last-shipped baseline when available; otherwise the baseline is file discovery. Clearing a buffer or ending
+a generation cannot reset lag. A daily snapshot being captured or queued does not advance the stored time.
+A successful replacement snapshot establishes the new baseline, but the hole counter still records the break in recovery history.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its database's data key, a random salt and the object's

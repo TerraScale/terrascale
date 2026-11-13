@@ -44,6 +44,17 @@ internal sealed partial class ContinuousBackup
                 file.LastError = null;
                 return;
             }
+            if (file.Tap is ICdcBackupRetention retention && await retention.RetainedBytesAsync(cancellationToken).ConfigureAwait(false) > MaxPendingBytes)
+            {
+                if (file.Generation is not null)
+                {
+                    Drop(file, "disk");
+                }
+
+                await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             var due = _time.GetUtcNow() >= file.RetryAt;
             var switched = false;
             if (due)
@@ -64,7 +75,7 @@ internal sealed partial class ContinuousBackup
                     {
                         Abandon(file);
                     }
-                    (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, default, default, default, null, default);
+                    (file.LastShipped, file.StoredThrough, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, null, default, default, default, null, default);
                     (file.SnapshotFailures, file.SnapshotRetryAt, file.SnapshotError) = (0, DateTimeOffset.MinValue, null);
                 }
             }
@@ -111,6 +122,7 @@ internal sealed partial class ContinuousBackup
 
             WalRead read;
             var appended = file.Pending.Length;
+            var readAt = _time.GetUtcNow();
             try
             {
                 read = await ReadPendingAsync(file, cancellationToken).ConfigureAwait(false);
@@ -144,6 +156,11 @@ internal sealed partial class ContinuousBackup
             if (!due)
             {
                 return;
+            }
+
+            if (read.Bytes == 0 && file.Buffered == 0 && file.Unstored is null && !file.Behind)
+            {
+                file.StoredThrough = readAt;
             }
 
             if (file.Buffered > 0)
@@ -289,6 +306,10 @@ internal sealed partial class ContinuousBackup
         do
         {
             read = await file.Tap.ReadAsync(Stream.Null, cancellationToken).ConfigureAwait(false);
+            if (file.Tap is ICdcBackupRetention retention)
+            {
+                await retention.AcknowledgeAsync(retention.Position, cancellationToken).ConfigureAwait(false);
+            }
         }
         while (read.Remaining);
     }

@@ -4,6 +4,8 @@ internal interface ICdcBackupRetention
 {
     long Position { get; }
 
+    ValueTask<long> RetainedBytesAsync(CancellationToken cancellationToken);
+
     ValueTask AcknowledgeAsync(long position, CancellationToken cancellationToken);
 }
 
