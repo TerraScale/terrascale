@@ -56,14 +56,15 @@ deleted database and back it up under a new key.
    v1/keys/00000000000000000000000001/<project>/<database>/`. A previous faulty shred may have left only `shredded`.
 2. Clear only that protected database's marker: `cf r2 objects delete
    v1/keys/00000000000000000000000001/<project>/<database>/shredded --bucket-name ts-terrabase-shapes-prod`.
-3. A shipping or sealing pass that encounters the marker abandons its current generation and pending work, increments
-   `terrabase.backup.abandoned` with reason `shredded`, and invalidates its key selection. After marker removal, the next
+3. A shipping or sealing pass that encounters the marker invalidates its key selection, and the next pass starts a new
+   generation (`terrabase.backup.generation_restarts` with reason `key_lost`). After marker removal, the next
    eligible pass selects fresh keys and writes a new base snapshot and generation proof. No restart or daily snapshot
    is needed. Check `GET /v1/backup` for a new generation and `"lastError":null`, and verify a new wrapped key appears
-   under the custody prefix. A process restart also begins a fresh generation.
+   under the custody prefix. A process restart resumes the stored generation from its durable backup account; it starts
+   a fresh generation only when that account is being replaced or history was lost.
 4. If the marker was removed before the writer encountered it, sealing first resolves the active generation's base key
    through the existing key cache. Healthy cache hits add no custody requests or key-read-slot usage. If custody reports
-   that the key is missing, the writer abandons the generation with reason `missing_key`, invalidates its selection and
+   that the key is missing, the writer invalidates its selection and, counted with reason `key_lost`,
    starts a fresh generation on the next eligible pass. Key selection still checks deletion authority, so a marker
    fences recovery. A generation whose base key is still held can continue.
 
@@ -73,7 +74,7 @@ In the November 12 incident, custody wrote the marker and destroyed the wrapped 
 refused the platform database's shred. Removing that marker previously resumed the existing generation with a new key,
 but its base snapshot still needed a destroyed key. Restores failed with `a backup object names a data key the bucket
 does not hold` until a new decryptable base was written, normally by a daily snapshot or a process restart. The writer
-now abandons the generation when shipping encounters the marker or sealing discovers the missing base key, then creates
+now ends the generation when shipping encounters the marker or sealing discovers the missing base key, then creates
 a fresh generation on its next eligible pass after marker removal.
 
 Destroyed-key history stays unreadable permanently. The fresh generation captures live data under newly generated

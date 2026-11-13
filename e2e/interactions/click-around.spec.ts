@@ -23,6 +23,9 @@ async function runSql(page: Page, sql: string): Promise<void> {
   await page.waitForLoadState('load');
 }
 
+test.describe('SQL workspace draft', () => {
+  test.describe.configure({ mode: 'default' });
+
 test('SQL editor creates a table, inserts and selects; a saved query reopens; the Tables tab lists the rows', async ({ page, audit }) => {
   const current = journey();
   const table = unique('editor').replaceAll('-', '_');
@@ -61,6 +64,56 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
   await expect(page.locator('main').getByText('Grace', { exact: true })).toBeVisible();
   await expect(page.locator('main').getByText('Ada', { exact: true })).toBeVisible();
   await audit.check('table rows');
+});
+
+test('the new table form creates a table and opens the statement in the editor', async ({ page, audit }) => {
+  const current = journey();
+  const table = unique('formed').replaceAll('-', '_');
+  await page.goto(`/databases/${current.databaseId}/sql`);
+  await shell(page, current);
+  await page.getByRole('button', { name: 'New table', exact: true }).click();
+  const dialog = page.locator('#create-table');
+  await expect(dialog).toBeVisible();
+  await dialog.locator('#create-table-name').fill(table);
+  await dialog.getByRole('button', { name: 'Add column', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Add column', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Add column', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Remove column', exact: true }).last().click();
+  const names = dialog.locator('[name="columnName"]');
+  await expect(names).toHaveCount(3);
+  await names.nth(1).fill('name');
+  await names.nth(2).fill('score');
+  await dialog.locator('[name="columnType"]').nth(1).selectOption('TEXT');
+  await dialog.locator('[name="columnType"]').nth(2).selectOption('REAL');
+  await dialog.locator('[name="columnNotNull"]').nth(1).check();
+  const preview = dialog.locator('#create-table-sql');
+  await expect(preview).toHaveValue(new RegExp(`CREATE TABLE "${table}"`));
+  await expect(preview).toHaveValue(/"id" INTEGER PRIMARY KEY/);
+  await expect(preview).toHaveValue(/"name" TEXT NOT NULL/);
+  await expect(preview).toHaveValue(/"score" REAL/);
+  await dialog.getByRole('button', { name: 'Open in SQL editor', exact: true }).click();
+  await page.waitForLoadState('load');
+  await expect(page.locator('#sql')).toHaveValue(new RegExp(`CREATE TABLE "${table}"`));
+  await expect(page.locator('#sql')).toHaveValue(/"name" TEXT NOT NULL/);
+  await page.getByRole('button', { name: 'New table', exact: true }).click();
+  const again = page.locator('#create-table');
+  await again.locator('#create-table-name').fill(table);
+  await again.getByRole('button', { name: 'Add column', exact: true }).click();
+  await again.locator('[name="columnName"]').nth(1).fill('name');
+  await again.locator('[name="columnType"]').nth(1).selectOption('TEXT');
+  await again.getByRole('button', { name: 'Create table', exact: true }).click();
+  await page.waitForLoadState('load');
+  await expect(page.getByRole('status').filter({ hasText: `Created table ${table}` })).toBeVisible();
+  await expect(page.locator('#sql-tables')).toContainText(table);
+  await audit.check('table created from the form');
+  await page.getByRole('button', { name: 'New table', exact: true }).click();
+  const duplicate = page.locator('#create-table');
+  audit.expectStatus(/\/api\/v1\/dashboard\/data\/sql\/tables(?:\?|$)/, 400);
+  await duplicate.locator('#create-table-name').fill(table);
+  await duplicate.getByRole('button', { name: 'Create table', exact: true }).click();
+  await expect(duplicate.locator('[role="alert"]')).toBeVisible();
+  await expect(duplicate.locator('[role="alert"]')).toContainText(/\w/);
+});
 });
 
 test('the SQL editor suggests CREATE TABLE while typing create', async ({ page }) => {

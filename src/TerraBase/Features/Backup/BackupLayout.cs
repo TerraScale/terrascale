@@ -48,6 +48,33 @@ internal static class BackupLayout
     public static string SegmentsBefore(string file, Ulid generation, long start) =>
         string.Create(CultureInfo.InvariantCulture, $"{Segments(file, generation)}{start:D16}");
 
+    public static string Holes(string file) => $"{file}/holes/";
+
+    public static string HoleStates(string file, BackupHole hole) =>
+        string.Create(CultureInfo.InvariantCulture, $"{Holes(file)}{hole.Incarnation}-{hole.From:D16}-");
+
+    public static string Hole(string file, BackupHole hole) =>
+        string.Create(CultureInfo.InvariantCulture, $"{HoleStates(file, hole)}{hole.To:D16}-{Time(hole.FromAt)}-{Time(hole.ToAt)}-{(hole.Open ? OpenHole : ClosedHole)}");
+
+    public static BackupHole? ParseHole(string key) =>
+        key[(key.LastIndexOf('/') + 1)..].Split('-') is [{ Length: > 0 } incarnation, var from, var to, var fromAt, var toAt, OpenHole or ClosedHole]
+            && Number(from) is { } start && Number(to) is { } end && end >= start
+            && Bound(fromAt) is { } lostFrom && Bound(toAt) is { } lostTo && !(lostTo.At < lostFrom.At)
+            ? new(incarnation, start, end, lostFrom.At, lostTo.At, key.EndsWith("-" + OpenHole, StringComparison.Ordinal))
+            : null;
+
+    private const string OpenHole = "open";
+    private const string ClosedHole = "closed";
+    private const string UnknownTime = "unknown";
+
+    private static string Time(DateTimeOffset? at) =>
+        at is { } known ? known.ToUnixTimeMilliseconds().ToString("D13", CultureInfo.InvariantCulture) : UnknownTime;
+
+    private static HoleBound? Bound(string value) =>
+        value == UnknownTime ? new(null) : Milliseconds(value) is { } at ? new(at) : null;
+
+    private sealed record HoleBound(DateTimeOffset? At);
+
     public static string Data(string scope) => $"{Version}/{scope}/";
 
     public static string Keys(string scope) => $"{Version}/keys/{scope}/";
