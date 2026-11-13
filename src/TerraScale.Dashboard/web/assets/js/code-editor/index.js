@@ -149,7 +149,17 @@ class CodeEditor extends HTMLElement {
       .catch(error => console.warn('JavaScript completion unavailable:', error)) : null;
 
     this.editor = editor;
-    this.dataset.ready = '';
+    const extras = [sql, js].filter(Boolean);
+    const markReady = () => {
+      if (this.editor === editor) {
+        this.dataset.ready = '';
+      }
+    };
+    if (extras.length === 0) {
+      markReady();
+    } else {
+      Promise.all(extras).then(markReady);
+    }
     this.cleanup = () => {
       sql?.then(dispose => dispose?.());
       js?.then(dispose => dispose?.());
