@@ -258,6 +258,7 @@ internal sealed class SqlSession(
     {
         ArgumentNullException.ThrowIfNull(command);
         _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             return await ExecuteLockedAsync(plan, command, admit, first: false, cancellationToken).ConfigureAwait(false);
