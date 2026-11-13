@@ -89,9 +89,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         var meter = meters.Create(Telemetry.MeterName);
         _uploaded = meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment).");
         _failures = meter.CreateCounter<long>("terrabase.backup.failures", description: "Backup passes of a file that failed.");
-        _holes = meter.CreateCounter<long>("terrabase.backup.holes", description: "Logs found checkpointed or rewritten by someone else, each ending a generation.");
+        _holes = meter.CreateCounter<long>("terrabase.backup.holes", description: "Backup continuity breaks that require a fresh snapshot.");
         _abandoned = meter.CreateCounter<long>("terrabase.backup.abandoned",
-            description: "Generations ended by a failure with log read but not stored, by reason (outage, read, destination).");
+            description: "Generations ended by a failure with log read but not stored, by reason (read, destination, shredded, missing_key).");
         _deferred = meter.CreateCounter<long>("terrabase.backup.snapshots_deferred",
             description: "Passes that put off a due daily snapshot, by reason (backlog: unread log remains; busy: snapshot uploads in flight).");
         _generations = meter.CreateCounter<long>("terrabase.backup.generations", description: "Generations started (each stores a snapshot).");
@@ -103,7 +103,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             "Bytes the backups of the files this member ships occupy in the bucket, measured daily.");
         meter.CreateObservableGauge("terrabase.backup.files", () => Shipped().Count(), description: "Storage files this node ships.");
         meter.CreateObservableGauge("terrabase.backup.lag", () => Shipped().Select(file => Lag(file, _time.GetUtcNow())).DefaultIfEmpty().Max(),
-            "s", "Seconds the oldest committed data not yet in the bucket has waited, over every file this node ships.");
+            "s", "Age of the newest stored segment or initial snapshot, over every file this node ships; age since discovery before the first upload.");
         meter.CreateObservableGauge("terrabase.backup.last_success", () => Shipped().Select(file => file.LastShipped?.ToUnixTimeSeconds() ?? 0).DefaultIfEmpty().Min(),
             "s", "Unix time of the least recent data in the bucket over every file this node ships (0 while a file has none).");
     }
@@ -608,10 +608,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 file.DrilledAt = DateTimeOffset.MinValue;
             }
         }
-        else if (file.Target.Revision != BackupDestinationNames.Platform && file.Generation is not null)
-        {
-            Drop(file, "destination");
-        }
 
         _failures.Add(1);
         file.LastError = error.GetType().Name;
@@ -622,13 +618,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private static bool GenerationLost(Exception error) =>
         error is DatabaseShreddedException or InvalidDataException { Message: DataKeys.MissingKeyMessage };
 
-    private static double Lag(ShippedFile file, DateTimeOffset now)
-    {
-        var noticed = file.BehindSince is { } since ? Math.Max(0, (now - since).TotalSeconds) : 0;
-        return file.LastError is not null && file.LastShipped is { } shipped
-            ? Math.Max(noticed, Math.Max(0, (now - shipped).TotalSeconds))
-            : noticed;
-    }
+    private static double Lag(ShippedFile file, DateTimeOffset now) =>
+        Math.Max(0, (now - (file.LastShipped ?? file.Opened)).TotalSeconds);
 
     private string ScratchFile(string extension) => Path.Combine(_scratch, EntityIds.New().ToString() + extension);
     private static void DeleteSnapshot(string path) => BackupReader.Delete(path);
@@ -718,7 +709,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public DateTimeOffset LastSnapshot { get; set; }
         public DateTimeOffset? LastShipped { get; set; }
         public ShippingProgress? PlatformProgress { get; set; }
-        public DateTimeOffset? BehindSince { get; set; } = opened;
+        public DateTimeOffset Opened { get; } = opened;
 
         public string? LastError { get; set; }
         public int Failures { get; set; }

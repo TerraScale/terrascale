@@ -56,7 +56,14 @@ internal sealed partial class ContinuousBackup
                     var target = await _targets.ShippingAsync(file.Database, file.Configuration, cancellationToken).ConfigureAwait(false);
                     file.Target.Dispose();
                     file.Target = target;
-                    Abandon(file);
+                    if (file.Generation is not null)
+                    {
+                        Drop(file, "destination");
+                    }
+                    else
+                    {
+                        Abandon(file);
+                    }
                     (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, default, default, default, null, default);
                     (file.SnapshotFailures, file.SnapshotRetryAt, file.SnapshotError) = (0, DateTimeOffset.MinValue, null);
                 }
@@ -95,11 +102,6 @@ internal sealed partial class ContinuousBackup
             }
             else if (!due && (file.Behind || file.Buffered >= MaxPendingBytes))
             {
-                if (Backoff(file.Failures) >= MaxBackoff)
-                {
-                    Drop(file, "outage");
-                }
-
                 return;
             }
             if (due && file.Pending.Length > 0)
@@ -116,7 +118,6 @@ internal sealed partial class ContinuousBackup
             catch
             {
                 file.Pending.SetLength(appended);
-                file.BehindSince ??= _time.GetUtcNow();
                 throw;
             }
 
@@ -137,7 +138,6 @@ internal sealed partial class ContinuousBackup
                 file.Position += read.Bytes;
                 file.PendingAt = now;
                 (file.PendingMark, file.PendingEndsMarked) = (read.Mark ?? file.PendingMark, read.Mark is not null);
-                file.BehindSince ??= now;
             }
 
             file.Behind = read.Remaining;
@@ -149,11 +149,6 @@ internal sealed partial class ContinuousBackup
             if (file.Buffered > 0)
             {
                 await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
-            }
-
-            if (!file.Behind)
-            {
-                file.BehindSince = null;
             }
 
             if (file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
@@ -195,11 +190,6 @@ internal sealed partial class ContinuousBackup
         }
         finally
         {
-            if (cancellationToken.IsCancellationRequested && file.Target.Revision != BackupDestinationNames.Platform)
-            {
-                Abandon(file);
-            }
-
             file.PendingBytes = file.Buffered;
         }
     }
@@ -353,15 +343,14 @@ internal sealed partial class ContinuousBackup
     {
         _holes.Add(1);
         _logger.ZLogWarning($"The log of {file.Prefix:@File} has a hole; its backup starts a new generation");
-        file.BehindSince ??= _time.GetUtcNow();
         Abandon(file);
     }
     private void Drop(ShippedFile file, string reason)
     {
         var bytes = file.Buffered;
+        _holes.Add(1);
         _abandoned.Add(1, new KeyValuePair<string, object?>("reason", reason));
         _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} dropped {bytes:@Bytes} bytes of log it had not stored ({reason:@Reason}); it starts a new generation");
-        file.BehindSince ??= _time.GetUtcNow();
         Abandon(file);
     }
     private static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(MaxBackoff.TotalSeconds, Math.Pow(2, Math.Min(failures - 1, 9))));

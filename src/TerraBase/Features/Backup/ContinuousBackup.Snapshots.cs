@@ -39,7 +39,7 @@ internal sealed partial class ContinuousBackup
         {
             if (file.Shipping)
             {
-                (file.Shipping, file.Epoch, file.BehindSince) = (false, null, null);
+                (file.Shipping, file.Epoch) = (false, null);
                 Abandon(file);
             }
 
@@ -48,7 +48,7 @@ internal sealed partial class ContinuousBackup
 
         if (file.Epoch != epoch)
         {
-            (file.Shipping, file.Epoch, file.BehindSince) = (true, epoch, _time.GetUtcNow());
+            (file.Shipping, file.Epoch) = (true, epoch);
             Abandon(file);
             _logger.ZLogInformation($"This member now ships {file.Prefix:@File}");
         }
@@ -65,7 +65,6 @@ internal sealed partial class ContinuousBackup
         var snapshot = ScratchFile(".db");
         try
         {
-            file.BehindSince ??= _time.GetUtcNow();
             await file.StopSideAsync().ConfigureAwait(false);
             file.Clear();
             await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
@@ -82,8 +81,8 @@ internal sealed partial class ContinuousBackup
                 await baseline.AcknowledgeAsync(baseline.Position, cancellationToken).ConfigureAwait(false);
             }
 
-            (file.Generation, file.GenerationKey, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
-                (generation, generationKey, 0, 0, at, at, at, false);
+            (file.Generation, file.GenerationKey, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.Behind) =
+                (generation, generationKey, 0, 0, at, at, false);
             Prove(file, at);
             _generations.Add(1);
             (file.LastError, file.Failures) = (null, 0);
@@ -151,11 +150,6 @@ internal sealed partial class ContinuousBackup
             {
                 await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             }
-            if (file.LastShipped is not { } shipped || shipped < at)
-            {
-                file.LastShipped = at;
-            }
-
             var generation = file.Generation!.Value;
             var key = new SnapshotKey(BackupLayout.Snapshot(file.Prefix, at, generation, file.Position), at, generation, file.Position);
             var drill = at - file.DrilledAt >= DrillInterval;

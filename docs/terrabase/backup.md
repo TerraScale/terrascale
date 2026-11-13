@@ -23,7 +23,8 @@ of TS-633 are done. Not done yet:
 
 Continuous backup is always on. Outside Development a node refuses to start (exit code 2, before it opens any file)
 unless its Tigris bucket and master key are present, so no deployed node runs without backup. Only Development runs
-without backup; tests use an in-memory S3 fake. Retention and rotation use the correct settings in code; there is no
+without backup; those nodes emit `terrabase_backup_disabled = 1` and a critical startup log. Development refuses
+cluster discovery through `TS_PEERS_FILE`. Retention and rotation use the correct settings in code; there is no
 backup activation step or operator tuning table.
 
 Tigris bucket settings use `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`,
@@ -228,14 +229,15 @@ segment only repeats its own bytes.
 After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. When the attempt
 is due, the failed segment is sent again before anything more is read. Between attempts reads and trimming go on, so
 the native capture table stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
-stays in the native capture table, where the backup's anchor keeps it, and a short outage costs nothing. Once failures reach the
-longest backoff (about eight and a half minutes into an outage) while log still waits there, the outage counts as
-sustained: the log is **dropped**, the generation ends, reads trim the native capture table again, and the file starts a new
-generation with a snapshot once the bucket answers. A log is dropped only then, after a failed snapshot read, or after
-any failure on a customer destination (below). Every drop logs a warning and counts in
-`terrabase_backup_abandoned_total{reason}` (`outage`, `read`, `destination`); a hole counts in
-`terrabase_backup_holes_total`. A new shipper lease, a destination change and shutdown also end a generation, on
-purpose, without counting a drop. At shutdown a file ships its whole backlog, read after read, while the shutdown
+stays in the native capture table, where the backup's durable anchor keeps it. An outage never ends a generation
+just because it reaches the longest backoff. Buffered segments and their disk reservations stay until upload succeeds;
+a refused disk reservation stops further reads without clearing the existing buffer. Transient customer destination
+failures preserve the same pending segment too. A failed snapshot read, a missing generation key or a destination
+change requires a new generation. Every such break logs a warning and counts in both
+`terrabase_backup_abandoned_total{reason}` (`read`, `destination`, `shredded`, `missing_key`) and
+`terrabase_backup_holes_total`; a discontinuous tap read also counts as a hole. The replacement generation must store
+a fresh snapshot before shipping segments. A shipper lease change and process shutdown also end a generation.
+At shutdown a file ships its whole backlog, read after read, while the shutdown
 budget lasts and its passes succeed; a daily snapshot upload that shutdown cancels does not stop that. Shutdown starts
 no generation, whose full snapshot would spend the budget other files need: a file without one waits for the next
 start. The exception is a file whose customer destination was just detached, which stores its final snapshot in the
@@ -245,13 +247,11 @@ while snapshot uploads are busy, waits for a later pass; `terrabase_backup_snaps
 `terrabase_backup_failures_total`, shows as `lastError` until a snapshot is stored, and puts off the next attempt by
 its own backoff (1 s, doubling to 5 minutes), while segments keep shipping.
 
-Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is how long the oldest committed data not yet in the bucket has
-waited, as far as the shipper can tell: it starts when a read first finds unstored changes (or a snapshot is pinned,
-or a read fails), stays above zero while a backlog remains, a failed upload is pending or the file has no generation
-after a drop or hole, and returns to 0 once a pass stores everything it read and nothing is left. It is not a bound on
-loss: data dropped or behind a hole is not in the bucket even after lag returns to 0. While a generation's first
-snapshot is copied and uploaded nothing of that file ships, so lag counts from before the copy until the pass after the
-snapshot is stored.
+Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is the age of the newest stored segment, using the initial
+snapshot as the baseline until a segment is stored. Before the first upload it is the time since file discovery.
+It advances even without a known backlog or error, and clearing a buffer or ending a generation cannot reset it.
+A daily snapshot being captured or queued does not advance the stored time. A successful replacement snapshot
+establishes the new baseline, but the hole counter still records the break in recovery history.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its database's data key, a random salt and the object's

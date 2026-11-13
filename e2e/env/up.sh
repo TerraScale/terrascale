@@ -87,6 +87,9 @@ else
     TERRABASE_FILES_S3_SECRET_ACCESS_KEY="$r2_secret_access_key" dotnet "$build/terrabase/terrabase.dll"
   ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz
   node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof"
+  curl -fsS --max-time 2 http://127.0.0.1:9091/metrics > "$state/backup-disabled.metrics"
+  awk '/^terrabase_backup_disabled(\{[^}]*\})? 1$/ {found=1; print} END {exit !found}' "$state/backup-disabled.metrics"
+  [ "$(curl -sS --max-time 2 -o "$state/backup-disabled.json" -w '%{http_code}' http://127.0.0.1:8080/backupz)" = 503 ]
 fi
 
 auth=(TS_AUTH_TERRABASE_URL=http://127.0.0.1:8081 TS_AUTH_LISTEN=http://127.0.0.1:8090 TS_AUTH_METRICS_LISTEN=http://127.0.0.1:9092
