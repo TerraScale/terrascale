@@ -1358,6 +1358,7 @@ test('R3 replace: stale refusals are metered once at the source or final destina
         }, { message: 'the final writer is ready while the source cache names fra', timeout: 45_000, intervals: [1000] }).toBe(true);
         writer = node.endpoint;
         const before = await observationCounts(created.id);
+        let responseDetails: unknown;
         const peers = join(stateDir, 'peers');
         const complete = readFileSync(peers, 'utf8');
         if (terminal) writeFileSync(peers, complete.replace(/^(journey-extra-sjc sjc) \S+$/gm, '$1 127.0.0.9'));
@@ -1365,6 +1366,7 @@ test('R3 replace: stale refusals are metered once at the source or final destina
           const response = await cells.post(home + database(created.id) + '/sql/execute', {
             data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
           });
+          responseDetails = { body: await response.text(), region: response.headers()['x-terrabase-region'], timing: response.headers()['server-timing'] };
           if (terminal) {
             await answer(response, 503, 'unavailable');
             expect(response.headers()['retry-after']).toBe('1');
@@ -1379,7 +1381,7 @@ test('R3 replace: stale refusals are metered once at the source or final destina
         }
         const after = await observationCounts(created.id);
         const deltas = Object.fromEntries(['gru', 'fra', 'sjc'].map(region => [region, after[region].requests - before[region].requests]));
-        expect(deltas, 'one final request owner across all stored observations').toEqual(terminal ? { gru: 1, fra: 0, sjc: 0 } : { gru: 0, fra: 0, sjc: 1 });
+        expect(deltas, 'one final request owner across all stored observations: ' + JSON.stringify({ before, after, response: responseDetails })).toEqual(terminal ? { gru: 1, fra: 0, sjc: 0 } : { gru: 0, fra: 0, sjc: 1 });
         const owner = terminal ? 'gru' : 'sjc';
         expect(after[owner].sent - before[owner].sent).toBeGreaterThan(0);
         expect(after[owner].received - before[owner].received).toBeGreaterThan(0);
@@ -1397,6 +1399,119 @@ test('R3 replace: stale refusals are metered once at the source or final destina
       if (node) await node.stop();
     } finally {
       restore();
+    }
+  }
+});
+
+for (const forwarded of [true, false]) {
+  test(`R3 replace: ${forwarded ? 'a request admitted before promotion refuses the stale copy before execution' : 'a direct admitted request forwards its buffered body once after promotion'}`, async ({ cells, request }) => {
+    const restore = extendPeers(['sjc']);
+    let node: RegionProcess | undefined;
+    let created: Database | undefined;
+    let session: ReturnType<typeof connect> | undefined;
+    let pending: ReturnType<typeof httpRequest> | undefined;
+    let writer = replica;
+    try {
+      node = await startRegion('sjc', 0);
+      const current = journey();
+      await publishPlacementPlan(current.organizationId);
+      created = await named(cells, replica, name('admitted-stale-route'), ['fra', 'sjc'], current.projectId);
+      await sql(cells, replica, created.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
+      await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (1), (2), (3)');
+      await expect.poll(async () => {
+        const response = await cells.post(`${node!.endpoint}${database(created!.id)}/sql/execute`, {
+          data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
+        });
+        return { status: response.status(), region: response.headers()['x-terrabase-region'], body: await response.json() };
+      }, { message: 'the promotion target serves every seeded row locally' })
+        .toMatchObject({ status: 200, region: 'sjc', body: { results: [{ rows: [[1], [2], [3]] }] } });
+      await expect.poll(async () => (await progress(cells, created!.id, replica)).regions.find(row => row.region === 'sjc'),
+        { message: 'the next writer holds the seeded rows' })
+        .toMatchObject({ revision: expect.any(String), lastPulledAt: expect.any(String), lagMs: 0 });
+      const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
+        form: { grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey, project: current.projectId, scope: 'sql:read sql:write databases:read' },
+      }));
+      saveSecret('admitted-stale-route-token', grant.access_token);
+      const body = JSON.stringify({ statements: [{ sql: 'INSERT INTO placement_rows VALUES (4)' }] });
+      const headers = { authorization: `Bearer ${grant.access_token}`, 'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body), expect: '100-continue' };
+      if (forwarded) session = connect('http://127.0.0.2:8081');
+      const stream = forwarded ? session!.request({
+        ':method': 'POST', ':path': database(created.id) + '/sql/execute', ':authority': 'fra.api.terrascale.tech', ...headers,
+        'x-terrabase-peer-credential': readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0],
+        'x-terrabase-forwarded-for': '127.0.0.1', 'x-terrabase-request-accounting': 'source',
+      }) : pending = httpRequest(`http://127.0.0.2:8180${database(created.id)}/sql/execute`, {
+        method: 'POST', headers: { ...headers, host: 'fra.api.terrascale.tech' },
+      });
+      session?.on('error', error => stream.destroy(error));
+      const response = once(stream, 'response');
+      const admission = forwarded ? once(stream, 'headers') : once(stream, 'continue').then(() => [{ ':status': 100 }]);
+      pending?.flushHeaders();
+      const [admitted] = await Promise.race([admission, response.then(([answer]) => [forwarded ? answer : { ':status': answer.statusCode }])]);
+      expect(admitted[':status'], 'the handler is reading the body after placement admission').toBe(100);
+      await answer(await cells.patch(replica + database(created.id), { data: { regions: ['sjc'] } }), 200, '200 placement moves while the admitted body is withheld');
+      writer = node.endpoint;
+      const before = await observationCounts(created.id);
+      stream.end(body);
+      const [result] = await response;
+      const answered = forwarded ? result : { ...result.headers, ':status': result.statusCode };
+      let refused = '';
+      for await (const chunk of forwarded ? stream : result) refused += chunk;
+      if (forwarded) {
+        expect(answered[':status'], refused).toBe(503);
+        expect(answered['x-terrabase-placement-miss'], 'the source may refresh only a refusal before execution').toBe('1');
+        expect(JSON.parse(refused).error.code).toBe('unavailable');
+        expect(await observationCounts(created.id), 'the refused peer attempt owns no requests, operations or bytes').toEqual(before);
+      } else {
+        expect(answered[':status'], refused).toBe(200);
+        expect(JSON.parse(refused).results[0].rows_affected).toBe(1);
+        const after = await observationCounts(created.id);
+        expect(Object.fromEntries(['gru', 'fra', 'sjc'].map(region => [region, after[region].requests - before[region].requests])),
+          'the forwarded buffered body is metered once at its executor').toEqual({ gru: 0, fra: 0, sjc: 1 });
+        expect(after.sjc.received - before.sjc.received).toBeGreaterThan(0);
+        expect(after.sjc.sent - before.sjc.sent).toBeGreaterThan(0);
+      }
+      expect((await sql(cells, node.endpoint, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows)
+        .toEqual(forwarded ? [[1], [2], [3]] : [[1], [2], [3], [4]]);
+      console.log(`R3 admitted request: 100 Continue -> promotion -> ${forwarded ? '503 placement miss, no metering, withheld insert absent' : '200, buffered insert executed and metered exactly once at sjc'}`);
+    } finally {
+      session?.destroy();
+      pending?.destroy();
+      try {
+        if (created) await answer(await cells.delete(writer + database(created.id)), 204, '204 writer deletes its fixture');
+      } finally {
+        try { if (node) await node.stop(); } finally { restore(); }
+      }
+    }
+  });
+
+}
+
+test('R3 replace: source-owned observations survive a restart in a region that never held the database', async ({ cells }) => {
+  const restore = extendPeers(['sjc']);
+  let node: RegionProcess | undefined;
+  let created: Database | undefined;
+  try {
+    node = await startRegion('sjc', 0);
+    await publishPlacementPlan(journey().organizationId);
+    created = await named(cells, replica, name('remote-observations'), ['fra'], journey().projectId);
+    await sql(cells, replica, created.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
+    const before = await observationCounts(created.id);
+    expect((await sql(cells, node.endpoint, created.id, 'SELECT value FROM placement_rows')).results[0].rows).toEqual([]);
+    const recorded = await observationCounts(created.id);
+    expect(recorded.fra.requests - before.fra.requests, 'one forwarded request is attributed to fra').toBe(1);
+    expect(recorded.fra.received - before.fra.received).toBeGreaterThan(0);
+    expect(recorded.fra.sent - before.fra.sent).toBeGreaterThan(0);
+    await node.stop();
+    node = undefined;
+    node = await startRegion('sjc', 0);
+    expect(await observationCounts(created.id), 'shutdown flush retains observations without a local placement record').toEqual(recorded);
+    console.log('R3 remote observations: one destination-attributed request and its bytes survive the source shutdown flush and restart');
+  } finally {
+    try {
+      if (created) await answer(await cells.delete(replica + database(created.id)), 204, '204 writer deletes its fixture');
+    } finally {
+      try { if (node) await node.stop(); } finally { restore(); }
     }
   }
 });

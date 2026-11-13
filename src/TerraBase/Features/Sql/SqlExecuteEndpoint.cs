@@ -93,6 +93,12 @@ internal sealed class SqlExecuteEndpoint(
         SqlRequestTiming.Mark(HttpContext, "tenant");
         if (await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
         {
+            if (!placement.PlacedIn(options.Region))
+            {
+                await DatabaseRegions.ProxyAsync(HttpContext, placement.Home, body).ConfigureAwait(false);
+                return Results.Empty;
+            }
+
             return await ReplicaAsync(database, placement, commands, body, all, cancellationToken);
         }
 
@@ -165,6 +171,12 @@ internal sealed class SqlExecuteEndpoint(
 
         var reader = await replicas.OpenAsync(database, writes, preference, cancellationToken);
         SqlRequestTiming.Mark(HttpContext, "replica_open");
+        if (reader is null && Listeners.IsForwarded(HttpContext))
+        {
+            await DatabaseRegions.ProxyAsync(HttpContext, placement.Home, body).ConfigureAwait(false);
+            return Results.Empty;
+        }
+
         if (reader.RunsAtHome(writes, preference))
         {
             WriteRoute? route = null;
