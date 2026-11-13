@@ -96,6 +96,6 @@ TerraBase returns authorization errors as `{"error":{"code":"key_revoked"}}` (wi
 | --- | --- |
 | `401 key_revoked` | Permanent for this key or retired secret and its tokens. Stop retrying; obtain a new key or use the rotated secret. |
 | `401 key_expired` | Permanent for this key and its tokens. Stop retrying and obtain a new key. |
-| `503 auth_unavailable` | Temporary: TerraBase cannot confirm that the key is valid and refuses access. Honor `Retry-After: 1`; retry only safe operations within a deadline. |
+| `503 auth_unavailable` | Temporary: TerraBase cannot confirm that the key or token is valid (the key-authorization service is slow, or the node has just started and has not loaded the keys that verify tokens) and refuses access. Honor `Retry-After: 1`; retry only safe operations within a deadline. Do not treat it as a sign-out. |
 
 For other `401` responses, check token expiry and exchange again only while the key is still valid. For `403`, check the resource scope and operation permissions. A `403 ip_not_allowed` means the client address is outside a key or project allowlist; see [Key expiry and IP allowlists](#key-expiry-and-ip-allowlists). Do not retry permission failures automatically. A cutoff can leave a request's outcome uncertain: [reconcile writes before replaying them](/guides/errors). Never log the token, authorization header, raw server error body or customer data while diagnosing the request.

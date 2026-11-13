@@ -9,8 +9,6 @@ mkdir -p "$state/terrabase"
 
 random() { openssl rand -base64 "$1" | tr '+/' '-_' | tr -d '=\n'; }
 peer_secret=$(openssl rand -hex 32)
-(umask 077 && printf 'x-terrabase-peer-credential: %s\n' "$peer_secret" > "$state/peer-header")
-internal=(--http2-prior-knowledge -H "@$state/peer-header")
 terrabase_master_key=$(openssl rand -base64 32)
 auth_master_key=$(openssl rand -base64 32)
 auth_audit_signing_key=$(openssl rand -base64 32)
@@ -63,7 +61,6 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
     ready nats curl -fsS --max-time 2 http://127.0.0.1:8222/healthz
     cells+=(TS_NATS_URL=nats://127.0.0.1:4222 TERRABASE_NATS_TOKEN_FILE="$state/nats-token")
   fi
-  clients=(terrabase:8080 terrabase-fra:8180)
   start terrabase env "${cells[@]}" TS_REGION=gru TS_NODE=journey-1 TERRABASE_DATA_DIRECTORY="$state/terrabase" \
     TERRABASE_PORT=8080 TERRABASE_METRICS_PORT=9091 TERRABASE_POSTGRES_PORT=6432 dotnet "$build/terrabase/terrabase.dll"
   ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz
@@ -72,25 +69,23 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
     TERRABASE_PORT=8180 TERRABASE_METRICS_PORT=9191 TERRABASE_POSTGRES_PORT=6532 dotnet "$build/terrabase/terrabase.dll"
   if [ "${E2E_NODES_PER_REGION:-1}" = 2 ]; then
     rm -rf "$state/terrabase-gru-2" "$state/terrabase-fra-2"
-    clients+=(terrabase-gru-2:8280 terrabase-fra-2:8380)
     start terrabase-gru-2 env "${cells[@]}" TS_REGION=gru TS_NODE=journey-3 TERRABASE_DATA_DIRECTORY="$state/terrabase-gru-2" \
       TERRABASE_PORT=8280 TERRABASE_METRICS_PORT=9291 TERRABASE_POSTGRES_PORT=6632 dotnet "$build/terrabase/terrabase.dll"
     start terrabase-fra-2 env "${cells[@]}" TS_REGION=fra TS_NODE=journey-4 TERRABASE_DATA_DIRECTORY="$state/terrabase-fra-2" \
       TERRABASE_PORT=8380 TERRABASE_METRICS_PORT=9391 TERRABASE_POSTGRES_PORT=6732 dotnet "$build/terrabase/terrabase.dll"
-    ready terrabase-gru-2 curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.3:8081/readyz
-    ready terrabase-fra-2 curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.4:8081/readyz
+    ready terrabase-gru-2 curl -fsS --max-time 2 http://127.0.0.1:8280/readyz
+    ready terrabase-fra-2 curl -fsS --max-time 2 http://127.0.0.1:8380/readyz
   fi
-  ready terrabase curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.1:8081/readyz
-  ready terrabase-fra curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.2:8081/readyz
+  ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz
+  ready terrabase-fra curl -fsS --max-time 2 http://127.0.0.1:8180/readyz
 else
-  clients=(terrabase:8080)
   start terrabase env DOTNET_ENVIRONMENT=Development TERRABASE_DATA_DIRECTORY="$state/terrabase" TERRABASE_PORT=8080 \
     TERRABASE_INTERNAL_PORT=8081 TERRABASE_METRICS_PORT=9091 TERRABASE_POSTGRES_PORT=6432 \
     TERRABASE_AUTH_ISSUER=https://auth.terrascale.tech/terrascale TERRABASE_AUTH_AUDIENCE=https://api.terrascale.tech \
     TERRABASE_PEER_SECRET="$peer_secret" TERRABASE_MASTER_KEY="$terrabase_master_key" \
     TERRABASE_FILES_S3_ENDPOINT=https://journey.r2.cloudflarestorage.com/ TERRABASE_FILES_S3_ACCESS_KEY_ID="$r2_access_key_id" \
     TERRABASE_FILES_S3_SECRET_ACCESS_KEY="$r2_secret_access_key" dotnet "$build/terrabase/terrabase.dll"
-  ready terrabase curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.1:8081/readyz
+  ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz
   node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof"
   curl -fsS --max-time 2 http://127.0.0.1:9091/metrics > "$state/backup-disabled.metrics"
   awk '/^terrabase_backup_disabled(\{[^}]*\})? 1$/ {found=1; print} END {exit !found}' "$state/backup-disabled.metrics"
@@ -115,9 +110,6 @@ start dashboard env TS_AUTH_DASHBOARD_CLIENT_SECRET="$client_secret" TS_DASHBOAR
   dotnet "$build/dashboard/TerraScale.Dashboard.dll" --environment Production --urls http://127.0.0.1:8085 --contentRoot "$build/dashboard"
 
 ready ts-auth curl -fsS --max-time 2 http://127.0.0.1:8090/readyz
-for client in "${clients[@]}"; do
-  ready "${client%:*}" curl -fsS --max-time 2 "http://127.0.0.1:${client#*:}/readyz"
-done
 ready dashboard curl -fsS --max-time 2 --cacert "$trust" https://dash.terrascale.tech/readyz
 curl -fsS --max-time 2 --cacert "$trust" https://dash.terrascale.tech/readyz
 echo

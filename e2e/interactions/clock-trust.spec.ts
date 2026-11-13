@@ -18,6 +18,9 @@ type Answer = { status: number; body: string; retryAfter?: string };
 type StandIn = { asked: () => number; close: () => Promise<void> };
 
 const internalPort = 18281;
+const unverifiedProject = '01JZ0000000000000000000000';
+const unverifiedToken = [{ alg: 'ES256', typ: 'at+jwt', kid: 'journey' }, { sub: unverifiedProject, iss: 'https://auth.terrascale.tech/terrascale' }]
+  .map(part => Buffer.from(JSON.stringify(part)).toString('base64url')).concat('c2lnbmF0dXJl').join('.');
 const run = randomBytes(3).toString('hex');
 const nodes: Record<'a' | 'b' | 'c', Node> = {
   a: { name: `clock-a-${run}`, region: `gru-${run}`, address: '127.0.0.21', port: 18280, metrics: 19280, postgres: 16280 },
@@ -158,7 +161,15 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
       expect(running.get(node)?.exitCode, log(node)).toBeNull();
       return request.get(`http://127.0.0.1:${node.port}/readyz`).then((response) => response.status(), () => 0);
     }, { message: `${node.name} ready` }).toBe(200);
-    return { spawned, ready: performance.now() };
+    const ready = performance.now();
+    const unverified = await request.get(`http://127.0.0.1:${node.port}/v1/projects/${unverifiedProject}/databases`, { headers: { authorization: `Bearer ${unverifiedToken}` } });
+    const refusal = await unverified.text();
+    expect(unverified.status(), `a token this node cannot verify yet: ${refusal}`).toBe(503);
+    expect(JSON.parse(refusal).error.code).toBe('auth_unavailable');
+    expect(unverified.headers()['retry-after']).toBe('1');
+    const keys = await request.get(`http://127.0.0.1:${node.metrics}/metrics`).then(response => response.text());
+    expect(keys.split('\n').filter(line => /^terrabase_auth_signing_keys_loaded(\{[^}]*\})? /.test(line)).map(line => line.slice(line.lastIndexOf(' ') + 1))).toEqual(['0']);
+    return { spawned, ready };
   };
   const stop = async (node: Node) => {
     const child = running.get(node);

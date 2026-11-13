@@ -31,7 +31,7 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 ### `auth_unavailable`
 
-503 — the key-authorization service could not be reached to check the credential. Wait and resend. Retry: yes.
+503 — the key-authorization service could not be reached to check the credential, or this node has just started and has not yet loaded the keys that verify access tokens (the token itself may be valid). Wait `Retry-After` and resend; do not ask the user to sign in again. Retry: yes.
 
 ### `backup_history_incomplete`
 

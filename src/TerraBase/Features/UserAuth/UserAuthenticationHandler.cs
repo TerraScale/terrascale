@@ -49,6 +49,7 @@ internal sealed class UserAuthenticationHandler(
 
         if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(Context.RequestAborted).ConfigureAwait(false)) is not { } keys)
         {
+            Context.Features.Set(TokenKeysPending.Instance);
             return AuthenticateResult.Fail("ts-auth signing keys are not loaded");
         }
 
