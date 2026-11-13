@@ -30,12 +30,27 @@ The burst covers an office behind one NAT. Sustained rates match or exceed the o
 `Retry-After` is an upper bound on the time until one more request is admitted. A full bucket drains in four minutes
 (calls) or thirty minutes (mail), never a fixed ten-minute lock.
 
-The per-email budgets stay fixed windows. They send one lockout notice per stored deadline: 10 failed password attempts
+The per-email budgets stay fixed windows. They send one lockout notice per stored deadline: 10 charged primary password attempts
 per 15 minutes, 5 code redemptions per 30 minutes, and 5 code issues and a 60-second cooldown per address. Password
-verification reserves a slot before checking the credential and returns that slot after success, using a conditional
-write against the same region and window that admitted it. Concurrent verifications count while in flight; a
-successful sign-in never clears other failures, and an exhausted budget still refuses correct passwords. Previously,
-successful sign-ins and confirmations also consumed the ten slots, locking out ordinary account use. The shared IP
+verification reserves one slot before checking the credential and returns only that request's reservation after the
+session is issued and accepted, an eligible account receives its second-factor challenge, or its password step-up is
+accepted; every other outcome retains the charge until the window expires. The return uses a conditional write against
+the same store, key and window that admitted it, skips a changed window, and subtracts only one charge. Concurrent
+verifications count while in flight; a successful sign-in never clears other failures, and an exhausted budget still
+refuses correct passwords. Projects using account-lockout protection do not use this password budget.
+
+| Outcome | Password reservation | Second-factor budget |
+|---|---|---|
+| Wrong password | Charged | Unchanged |
+| Right password, then wrong second factor | Returned at the eligible second-factor handoff | Charged by `mfa-proof` |
+| Right password, account refused | Charged | Unchanged |
+| Right password, signed in | Returned | Charged if a second factor was attempted |
+| Cancelled, timed out or failed before primary success | Charged | Charged if a second factor was attempted |
+| Return store unavailable | Charged; one warning, successful sign-in continues | Unchanged by the return |
+
+An inbox-verification prerequisite or a platform step-up still awaiting its second factor retains the password charge;
+neither has accepted the guarded step yet. Previously, successful sign-ins and confirmations also consumed the ten
+slots, locking out ordinary account use. The shared IP
 budgets above still charge every attempt. A refusal's
 `Retry-After` is the remaining part of that window in seconds, and the page speaks it in whole minutes above two
 minutes. A transient failure (a full delivery queue, storage that does not answer) keeps the visitor on their own

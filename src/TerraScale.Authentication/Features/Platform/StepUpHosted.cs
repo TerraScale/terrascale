@@ -3,6 +3,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Ui;
 
@@ -33,6 +34,7 @@ internal static class StepUpHosted
         var locale = AuthEmails.Locale(context.Request);
         var copy = HostedCopies.For(locale);
         string? notice = null;
+        AttemptLimiter.Reservation? passwordReservation = null;
         if (post && !record.Approved)
         {
             var ip = SignInFlow.Ip(context);
@@ -79,6 +81,7 @@ internal static class StepUpHosted
                     }
 
                     primary = checkedPassword.User;
+                    passwordReservation = checkedPassword.Reservation;
                 }
                 else if (record.MailRequested)
                 {
@@ -123,6 +126,11 @@ internal static class StepUpHosted
             ReturnUri = record.Approved ? record.ReturnUri : null,
         });
         page.StatusCode = context.Response.StatusCode;
+        if (record.Approved && passwordReservation is not null)
+        {
+            await passwordReservation.ReturnAsync(cancellationToken);
+        }
+
         return page;
     }
 }

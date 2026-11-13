@@ -6,6 +6,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Sso;
@@ -259,7 +260,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
             return SignInFlow.Limited(this.HttpContext, SignInStep.Password, ipWait, address, next);
         }
 
-        var (user, wait) = await hosted.CheckPasswordAsync(address, form.Password, cancellationToken,
+        var (user, wait, reservation) = await hosted.CheckPasswordAsync(address, form.Password, cancellationToken,
             AuthEmails.Locale(this.HttpContext.Request));
         if (wait is { } retry)
         {
@@ -267,7 +268,12 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
             return SignInFlow.Limited(this.HttpContext, SignInStep.Password, retry, address, next);
         }
 
-        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
+        if (user is not null && reservation is not null && !await sessions.CanStartSignInAsync(user, cancellationToken))
+        {
+            user = null;
+        }
+
+        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken, reservation) is { } step)
         {
             return step;
         }
@@ -282,7 +288,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
         }
 
         AuthMetrics.SignIn("hosted_password", "succeeded");
-        return await SignInFlow.SignedInAsync(this.HttpContext, sessions, session, next, cancellationToken);
+        return await SignInFlow.SignedInAsync(this.HttpContext, sessions, session, next, cancellationToken, reservation: reservation);
     }
 }
 
@@ -817,11 +823,7 @@ internal static class SignInFlow
     public static string Ip(HttpContext context) =>
         HostedAuth.Subject(context.Connection.RemoteIpAddress?.ToString()) ?? throw ApiException.Unavailable();
 
-    /// <summary>
-    /// The second-factor step for a user whose primary credential was just verified and who has an active authenticator
-    /// app, or null to open a session directly (which still refuses an active factor or stale authentication).
-    /// </summary>
-    public static async Task<IResult?> SecondFactorAsync(HttpContext context, TotpCredentials mfa, UserRecord user, string? next, CancellationToken cancellationToken)
+    public static async Task<IResult?> SecondFactorAsync(HttpContext context, TotpCredentials mfa, UserRecord user, string? next, CancellationToken cancellationToken, AttemptLimiter.Reservation? reservation = null)
     {
         var policy = Tenancy.IsProject(user.InstanceId)
             ? (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(user.InstanceId, cancellationToken)).Configuration ?? ConfigurationBody.Default
@@ -843,12 +845,18 @@ internal static class SignInFlow
         }
 
         AuthMetrics.SignIn("hosted_mfa", "challenged");
-        return SignInPageModel.Render(context, new SignInPageModel(enrolled ? SignInStep.Mfa : SignInStep.MfaEnroll, user.InstanceId, user.Email, next)
+        var result = SignInPageModel.Render(context, new SignInPageModel(enrolled ? SignInStep.Mfa : SignInStep.MfaEnroll, user.InstanceId, user.Email, next)
         {
             Challenge = challenge,
             AllowTotp = policy.AllowTotp,
             AllowPasskey = policy.AllowPasskey,
         });
+        if (reservation is not null)
+        {
+            await reservation.ReturnAsync(cancellationToken);
+        }
+
+        return result;
     }
 
     /// <summary>A primary-only session for <paramref name="user"/>, or null when MFA or a newer epoch refuses one.</summary>
@@ -864,12 +872,7 @@ internal static class SignInFlow
         }
     }
 
-    /// <summary>
-    /// Replaces the browser's session with <paramref name="session"/> and resumes <paramref name="next"/>. Unless it came
-    /// <paramref name="viaSso"/>, a platform account whose domain signs in through its organization's identity provider
-    /// is refused: the new session ends at once and the page points at single sign-on.
-    /// </summary>
-    public static async Task<IResult> SignedInAsync(HttpContext context, Sessions sessions, IssuedSession session, string? next, CancellationToken cancellationToken, bool viaSso = false)
+    public static async Task<IResult> SignedInAsync(HttpContext context, Sessions sessions, IssuedSession session, string? next, CancellationToken cancellationToken, bool viaSso = false, AttemptLimiter.Reservation? reservation = null)
     {
         var tenant = Tenant(context);
         if (!viaSso && !Tenancy.IsProject(tenant)
@@ -886,7 +889,13 @@ internal static class SignInFlow
         }
         await context.RequestServices.GetRequiredService<AccountProtection>().SignedInAsync(context, tenant, session.Session.UserId, cancellationToken);
         BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
-        return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
+        var result = SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
+        if (reservation is not null)
+        {
+            await reservation.ReturnAsync(cancellationToken);
+        }
+
+        return result;
     }
 
     /// <summary>

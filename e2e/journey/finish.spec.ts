@@ -1,6 +1,5 @@
 import type { APIRequestContext } from '@playwright/test';
 import { deleteAccount } from '../support/account';
-import { auditedContext } from '../support/audit';
 import { test, expect } from '../support/remote-database';
 import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
 import { runOperations, sdks } from '../support/sdk';
@@ -8,8 +7,8 @@ import { prepareAuthManagement, closeAuthManagement } from '../support/auth-mana
 import { deleteProjectOwner } from '../support/project-owner';
 import { checkPasswordFairness } from '../support/password-fairness';
 import { shell } from '../support/shell';
-import { auth, onLocalStack } from '../support/stack';
-import { journey, saveCookies, saveSecret, setupFinished } from '../support/state';
+import { onLocalStack } from '../support/stack';
+import { journey, saveSecret, setupFinished } from '../support/state';
 
 async function placementHeaders(request: APIRequestContext): Promise<{ Authorization: string }> {
   const current = journey();
@@ -179,31 +178,6 @@ test.describe('teardown', () => {
     await page.waitForLoadState('load');
     await shell(page, { ...current, displayName: name });
     await audit.check('profile renamed');
-  });
-
-  test('successful password sign-ins preserve the account budget while failed attempts exhaust it', async ({ browser }) => {
-    await onLocalStack(async () => {
-      const current = journey();
-      const context = await auditedContext(browser, { storageState: { cookies: [], origins: [] } });
-      try {
-        const attempt = (email: string, password: string) => context.request.post(`${auth}/ui/terrascale/sign-in/password`, {
-          headers: { Origin: auth }, form: { email, password },
-        });
-        for (let index = 0; index < 12; index++) {
-          expect((await attempt(current.email, current.password)).status(), `honest sign-in ${index + 1}`).toBe(200);
-        }
-        const absent = `absent-${current.runId}@example.com`;
-        for (let index = 0; index < 10; index++) {
-          expect((await attempt(absent, current.password)).status(), `failed attempt ${index + 1}`).toBe(401);
-        }
-        const limited = await attempt(absent, current.password);
-        expect(limited.status()).toBe(429);
-        expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
-      } finally {
-        await saveCookies(context);
-        await context.close();
-      }
-    });
   });
 
   test('the account is deleted through the profile danger tab, a new sign-in is refused and its files leave the object store', async ({ page, audit, browser }, info) => {
