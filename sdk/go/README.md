@@ -94,8 +94,8 @@ Retries: TerraBase does not deduplicate retries and rejects `Idempotency-Key`,
 so the client never sends one. Reads are retried after 429 `rate_limited` and
 `tenant_busy` (an admission refusal) with `Retry-After`, and after the transient
 rejections (`capacity`, `storage_unavailable`, `dependencies_unavailable`) with
-backoff. Transport errors, gateway `502`/`504` answers and `commit_uncertain`
-are retried only for reads. Mutations return uncertain outcomes without a replay:
+backoff. Transport errors and gateway `502`/`504` answers are retried only for reads.
+`commit_uncertain` and `write_outcome_unknown` are never retried. Mutations return uncertain outcomes without a replay:
 use `errors.Is(err, tb.ErrCommitUncertain)` and re-read the state before deciding
 what to do. `500 internal_error` is never retried. Requests have a fixed
 30-second total budget and 64 MiB response cap. A server cooldown is never
@@ -285,11 +285,10 @@ err = s.Transaction(ctx, func(s *v1.SQLSession) error {
   nothing is resent. A frame holds at most 1 MiB, checked before sending.
 - Errors are `*v1.SQLError` with `Status` 0. A refused upgrade (401, 403, 404,
   421, …) returns the same `*APIError` as REST.
-- Reconnect: when the socket drops, calls in flight fail (`ErrCommitUncertain`
-  for `Execute`, `Batch` and `Commit`). The next call opens a new socket with a
-  fresh credential. If a transaction was open, every call except `Rollback`
-  returns `ErrTransactionRolledBack` until `Rollback`, which only clears that
-  state. After `Close` calls return `ErrSQLSessionClosed`.
+- A lost committing reply returns `ErrCommitUncertain`; every later call returns
+  the same uncertainty without reconnecting. If no committing request was sent,
+  a lost open transaction returns `ErrTransactionRolledBack` until `Rollback`
+  clears local state, after which a call can reconnect. After `Close` calls return `ErrSQLSessionClosed`.
 - Tests replay the recorded session in
   [websocket-session.json](contracts/terrabase/sql/websocket-session.json)
   against a local fake; on 2026-11-04 a session ran the same flow against live gru.
@@ -744,3 +743,16 @@ are available in the source SDK. See [user profiles](../../docs/auth/user-profil
 for fields, scope requirements, hash encodings and the next-release API names.
 Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
 User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+
+### SQL session outcome rule
+
+An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
+open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
+autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.
+The SDK returns `write_outcome_unknown` (SQLSTATE `08007`) or its existing commit-uncertain error, retains that
+failure for every later call on the session, and closes the connection. It never reconnects or automatically
+retries an uncertain request. If the client cannot prove no request byte left, it treats the request as sent.
+An execute outside a confirmed transaction, or behind unanswered transaction control, is potentially committing.
+A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
+Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
+through another session before deciding whether to repeat it.

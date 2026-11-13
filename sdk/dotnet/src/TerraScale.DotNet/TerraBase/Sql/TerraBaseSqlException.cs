@@ -89,7 +89,7 @@ public static class TerraBaseSqlErrorCodes
 
 /// <summary>
 /// A refused SQL statement: <c>{"code","message","statement","sqlstate"}</c> from REST or a WebSocket error frame. The
-/// failing request rolled back. <see cref="Code"/> is one of <see cref="TerraBaseSqlErrorCodes"/>. Over the WebSocket
+/// failing request rolled back unless the code is <c>write_outcome_unknown</c> (08007). <see cref="Code"/> is one of <see cref="TerraBaseSqlErrorCodes"/>. Over the WebSocket
 /// <see cref="HttpRequestException.StatusCode"/> is null.
 /// </summary>
 public sealed class TerraBaseSqlException : TerraBaseException

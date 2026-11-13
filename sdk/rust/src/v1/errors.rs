@@ -74,7 +74,7 @@ pub enum Error {
     /// `500 internal_error`: a write may have committed.
     #[error("terrabase: 500 internal_error")]
     InternalError,
-    /// A refused SQL statement; the request rolled back. `status` is the HTTP
+    /// A SQL statement error; `write_outcome_unknown` requires reconciliation. `status` is the HTTP
     /// status over REST (`sql/execute`) and `None` over a SQL session.
     #[error("terrabase: {}{error}", status.map(|s| format!("{s} ")).unwrap_or_default())]
     Sql {
@@ -119,7 +119,7 @@ pub enum Error {
     UndecodableAck { status: u16, message: String },
 }
 
-/// A refused SQL statement. The request rolled back. `code` is one of
+/// A SQL statement error. `write_outcome_unknown` requires reconciliation. `code` is one of
 /// [`sql_error_codes`](crate::v1::sql_error_codes).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SqlError {
@@ -275,6 +275,10 @@ impl Error {
             Self::Response {
                 mutation, error, ..
             } => *mutation && error.is_uncertain(),
+            Self::Sql { error, .. } => matches!(
+                error.code.as_str(),
+                "write_outcome_unknown" | "commit_uncertain"
+            ),
             Self::CommitUncertain
             | Self::InternalError
             | Self::Transport(_)

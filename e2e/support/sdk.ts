@@ -161,3 +161,45 @@ export async function runOperations(sdk: Sdk, group: Group, management?: { user:
   expect(lines.filter((line) => !line.ok).map((line) => `${line.id}: ${line.error}`), `${sdk} group ${group} failures`).toEqual([]);
   expect(result.code, `${sdk} runner exit code (stderr: ${result.stderr.trim().slice(-400)})`).toBe(0);
 }
+
+export async function runSessionFault(sdk: Sdk, mode: string, asynchronous = false): Promise<void> {
+  const { sessionProxy } = await import('../sdk/session-proxy');
+  const proxy = await sessionProxy(mode);
+  const current = journey();
+  try {
+    const result = await paced('a', () => execute(sdk, {
+      TERRASCALE_API_KEY: current.apiKey,
+      TERRASCALE_PROJECT_ID: current.projectId,
+      TERRASCALE_DATABASE_NAME: current.databaseName,
+      E2E_SESSION_PROXY: proxy.origin,
+      E2E_SESSION_TABLE: `lost_${sdk}_${Date.now().toString(36)}`,
+      E2E_SESSION_FAULT: mode,
+      E2E_SESSION_ASYNC: asynchronous ? '1' : '',
+    }));
+    const proof = proxy.proof();
+    console.log(`${sdk} ${mode}${asynchronous ? ' async' : ''}: ${result.stdout.trim()} ${JSON.stringify(proof)}`);
+    await test.info().attach(`${sdk}-${mode}${asynchronous ? '-async' : ''}`, {
+      body: JSON.stringify({ ...result, ...proof }), contentType: 'application/json',
+    });
+    expect(result.code, result.stderr).toBe(0);
+    const answer = JSON.parse(result.stdout.trim()) as { first: string; next: string; rows: string };
+    const expected = mode === 'before' ? ['transaction_rolled_back'] : ['commit_uncertain', 'write_outcome_unknown'];
+    if (mode === 'read') {
+      expect(['commit_uncertain', 'write_outcome_unknown', 'accepted']).not.toContain(answer.first);
+      expect(answer.next).toBe('transaction_rolled_back');
+    } else {
+      expect(expected, `${sdk} first error: ${answer.first}`).toContain(answer.first);
+      expect(answer.next, 'later calls retain the failure').toBe(answer.first);
+    }
+    expect(answer.rows, 'the lost reply does not imply rollback').toBe(['before', 'read'].includes(mode) ? '0' : mode === 'batch' ? '2' : '1');
+    expect(proof.dropped).toBe(true);
+    expect(proof.upgrades, 'no silent reconnect').toBe(1);
+    if (mode === 'before') {
+      expect(proof.requests.filter(type => type === 'commit')).toHaveLength(0);
+      expect(proof.requests.slice(0, 2)).toEqual(['begin', 'execute']);
+      expect(proof.requests.length).toBeLessThanOrEqual(3);
+    } else {
+      expect(proof.requests, 'no replay or fresh transaction').toEqual(['autocommit', 'batch'].includes(mode) ? ['execute'] : mode === 'read' ? ['begin', 'execute', 'execute'] : ['begin', 'execute', 'commit']);
+    }
+  } finally { await proxy.close(); }
+}

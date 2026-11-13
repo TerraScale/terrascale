@@ -96,7 +96,9 @@ func (e *SQLError) Error() string {
 func (e *SQLError) Unwrap() error { return e.API }
 
 // Is matches the error's code constant, also for session errors that carry no *APIError.
-func (e *SQLError) Is(target error) bool { return target == e.Code }
+func (e *SQLError) Is(target error) bool {
+	return target == e.Code || target == ErrCommitUncertain && e.Code == ErrWriteOutcomeUnknown
+}
 
 func (e *SQLError) IsTransient() bool {
 	return e.Code == ErrSerializationConflict || e.Code == ErrTenantBusy

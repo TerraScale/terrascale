@@ -33,7 +33,7 @@ pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 << 20;
 ///   `429` without a TerraBase error code is retried only when replay-safe.
 ///   Quota refusals such as `429 operation_allowance` are never retried.
 /// * Transport errors, the transient 503s (`capacity`,
-///   `storage_unavailable`, `dependencies_unavailable`, `commit_uncertain`)
+///   `storage_unavailable`, `dependencies_unavailable`)
 ///   and gateway `502`/`503`/`504` answers without a TerraBase error code
 ///   are retried only when the request is replay-safe: reads, queries and
 ///   other explicitly read-only requests.
@@ -732,8 +732,7 @@ impl Client {
                     | (
                         Some(503),
                         Some(
-                            "commit_uncertain"
-                                | "capacity"
+                            "capacity"
                                 | "storage_unavailable"
                                 | "dependencies_unavailable"
                                 | "storage_busy"
@@ -1029,8 +1028,7 @@ impl Client {
                                 (
                                     Some(503),
                                     Some(
-                                        "commit_uncertain"
-                                        | "capacity"
+                                        "capacity"
                                         | "storage_unavailable"
                                         | "dependencies_unavailable"
                                         | "storage_busy"

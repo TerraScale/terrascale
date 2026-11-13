@@ -23,3 +23,14 @@ Server frames: `{"id","type":"result","results":[…],"transaction":bool}` or
 whether a transaction is open afterwards. After a failed statement inside a transaction every `execute` answers
 `transaction_aborted` until `rollback` or `commit`. Close codes: 1003 binary frame, 1009 frame over 1 MiB, 1011
 memory budget, 1001 server restarting, 1008 lost authorization. The server pings every 20 seconds.
+
+An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
+open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
+autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.
+The SDK returns `write_outcome_unknown` (SQLSTATE `08007`) or its existing commit-uncertain error, retains that
+failure for every later call on the session, and closes the connection. It never reconnects or automatically
+retries an uncertain request. If the client cannot prove no request byte left, it treats the request as sent.
+An execute outside a confirmed transaction, or behind unanswered transaction control, is potentially committing.
+A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
+Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
+through another session before deciding whether to repeat it.
