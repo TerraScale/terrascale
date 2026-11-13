@@ -77,9 +77,9 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             await BadRequests.WriteAsync(context, (int)status, RefusalCode(status), RefusalMessage(status), op: null).ConfigureAwait(false);
             return;
         }
-        catch (Exception error) when (error is WebSocketException or HttpRequestException or OperationCanceledException)
+        catch (Exception error) when (error is WebSocketException or HttpRequestException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            await HomeForwarding.MisdirectedAsync(context, home.Region).ConfigureAwait(false);
+            await HomeForwarding.UnavailableAsync(context, home.Region).ConfigureAwait(false);
             return;
         }
 

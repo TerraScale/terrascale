@@ -209,8 +209,8 @@ internal sealed class SqlSocket(
             .ConfigureAwait(false))
         {
             case ManagedDatabase record when !record.PlacedIn(region) && !record.AllRegions && !record.Replicas.Contains(region):
-                return await RefuseAsync(request.Id, new SqlError(SqlErrors.WrongRegion,
-                    $"the database is served in {string.Join(", ", record.Regions(region))}, not {region}; connect through its home region {record.Home(region)}"),
+                return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable,
+                    "the database placement changed while opening the session; reconnect"),
                     cancellationToken).ConfigureAwait(false);
             case Unavailable unavailable:
                 return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);

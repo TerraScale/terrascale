@@ -402,7 +402,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         var region = services.GetRequiredService<TerraBaseOptions>().Region;
         return await services.GetRequiredService<IReplicaCatalog>().FindAsync(tenant, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-            && !placement.Includes(region)
+            && !placement.PlacedIn(region)
             && await services.GetRequiredService<IHomeLocator>().LocateAsync(tenant.ProjectId!, tenant.DatabaseId, cancellationToken).ConfigureAwait(false) is { } home
             && home.Region != region
                 ? home

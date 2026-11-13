@@ -59,14 +59,12 @@ internal static class HomeForwarding
     internal static string RetryUrl(HttpContext context, string region) =>
         "https://" + Host(region) + context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent();
 
-    internal static Task MisdirectedAsync(HttpContext context, string region)
+    internal static Task UnavailableAsync(HttpContext context, string region)
     {
         context.Response.Headers.CacheControl = "no-store";
-        context.Response.Headers["X-TerraBase-Database-Home"] = region;
-        var url = RetryUrl(context, region);
-        context.Response.Headers.Location = url;
-        return BadRequests.WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region",
-            $"the database is served in {region}: send it to https://{Host(region)}", op: null, url: url);
+        context.Response.Headers.RetryAfter = "1";
+        return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "unavailable",
+            $"the database region {region} could not be reached", op: null, region: region);
     }
 
     internal static bool Unanswered(HttpContext context, Exception error) =>
@@ -77,7 +75,7 @@ internal static class HomeForwarding
         if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)
             || error is HttpRequestException { HttpRequestError: HttpRequestError.NameResolutionError or HttpRequestError.ConnectionError or HttpRequestError.SecureConnectionError })
         {
-            return MisdirectedAsync(context, region);
+            return UnavailableAsync(context, region);
         }
 
         return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "write_outcome_unknown",
@@ -129,13 +127,11 @@ internal static class HomeForwarding
                 return await HomeAtAsync(peers, shapeHome, context.RequestAborted).ConfigureAwait(false);
             }
 
-            if (socket && database is not null
-                && await management.FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase socketDatabase
-                && socketDatabase.Home(options.Region) is { } socketHome
-                && socketHome != options.Region
-                && !(socketDatabase.AllRegions || socketDatabase.Replicas.Contains(options.Region)))
+            if (database is not null
+                && await management.FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase routedDatabase
+                && !routedDatabase.Placement(options.Region).PlacedIn(options.Region))
             {
-                return await HomeAtAsync(peers, socketHome, context.RequestAborted).ConfigureAwait(false);
+                return await HomeAtAsync(peers, routedDatabase.Home(options.Region), context.RequestAborted).ConfigureAwait(false);
             }
 
             if (database is null
