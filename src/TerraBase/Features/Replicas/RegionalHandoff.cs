@@ -312,19 +312,6 @@ internal sealed partial class RegionalHandoff(
         {
             return Refuse("preparation catalog missing");
         }
-        var retained = request.Catalog.Records.Where(record => record.Kind == DeletedDatabases.Kind)
-            .Select(record => EntityPayload.Read(new StoredRecord(record.Id, 0, record.Json), ManagementJsonContext.Default.DeletedDatabaseRecord)
-                ?? throw new InvalidDataException("invalid retained database record"))
-            .Where(record => record.Database.Home(options.Region) == options.Region)
-            .ToDictionary(record => record.Database.Id, StringComparer.Ordinal);
-        foreach (var record in retained.Values)
-        {
-            if (!request.Positions.Any(position => position.Home == options.Region
-                && DatabasePurge.SameDatabase(record.Storage, Database(position))))
-            {
-                return Refuse("retained database has no certified source position");
-            }
-        }
         await RegionalCatalog.ImportAsync(services.GetRequiredService<IStorageEngine>(), request.Catalog, cancellationToken).ConfigureAwait(false);
         await services.GetRequiredService<RegionReplication>().SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
 
@@ -342,24 +329,11 @@ internal sealed partial class RegionalHandoff(
             {
                 return Refuse("invalid applied-position proof");
             }
-            var isRetained = retained.TryGetValue(position.Database, out var record)
-                && DatabasePurge.SameDatabase(record.Storage, database);
-            if (isRetained)
-            {
-                await services.GetRequiredService<ITransactionCrypto>().PrepareAsync(database, cancellationToken).ConfigureAwait(false);
-            }
             var held = replicas.HeldRevision(database);
             if (held is not { } current || current.Incarnation != expected.Incarnation
                 || DatabaseRevision.Compare(current, expected) < 0)
             {
-                if (isRetained)
-                {
-                    var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
-                    var source = nodes.Single(node => node.Name == request.Source && node.Region == options.Region);
-                    await replicas.OpenAsync(database, new Uri(source.InternalListener(options.InternalPort), ReplicaRoutes.DatabasePath(database)), _http, cancellationToken).ConfigureAwait(false);
-                    _ = await replicas.PullAsync(database, fromHome: true, cancellationToken).ConfigureAwait(false);
-                }
-                else if (!await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
+                if (!await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
                 {
                     return Refuse("replica follower unavailable during preparation");
                 }
@@ -652,31 +626,12 @@ internal sealed partial class RegionalHandoff(
 
             var snapshot = promoting
                 ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null;
-            if (snapshot is not null)
-            {
-                foreach (var retainedEntry in snapshot.Records.Where(record => record.Kind == DeletedDatabases.Kind))
-                {
-                    var retained = EntityPayload.Read(new StoredRecord(retainedEntry.Id, 0, retainedEntry.Json), ManagementJsonContext.Default.DeletedDatabaseRecord)
-                        ?? throw new InvalidDataException("invalid retained database record");
-                    if (retained.Database.Home(options.Region) != options.Region)
-                    {
-                        continue;
-                    }
-                    if (positions.Count >= 10_000 || !services.GetRequiredService<IStorageEngine>().HasDatabaseFiles(retained.Storage, cancellationToken))
-                    {
-                        return DrainRefused(progress, "retained database files or position capacity unavailable");
-                    }
-                    _ = await revisions.DrainWritersAsync(retained.Storage, cancellationToken).ConfigureAwait(false);
-                    if (await revisions.CurrentRevisionAsync(retained.Storage, cancellationToken).ConfigureAwait(false) is not { } applied)
-                    {
-                        return DrainRefused(progress, "retained source applied position unavailable");
-                    }
-                    positions.Add(new RegionalPosition(retained.Storage.OrganizationId, retained.Storage.ProjectId!, retained.Database.Id, options.Region, applied.ToString()));
-                }
-            }
+            var retainedManifest = promoting
+                ? await RegionalRetention.ManifestAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false)
+                : null;
 
             var address = peer.InternalListener(options.InternalPort);
-            var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, snapshot, transfer.Id), ReplicasJsonContext.Default.RegionalPrepare);
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, snapshot, transfer.Id, retainedManifest), ReplicasJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
             {
                 return DrainRefused(progress, "preparation payload bound reached");

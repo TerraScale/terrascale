@@ -13,7 +13,7 @@ routes = [
 ]
 paths = {}
 for route in routes:
-    methods = ["delete"] if "/databases/" in route or route.endswith("/{deletedDatabase}") else ["get"] if route.endswith("deleted-databases") else ["post"]
+    methods = ["delete"] if "/databases/" in route else ["get", "delete"] if route.endswith("/{deletedDatabase}") else ["get"] if route.endswith("deleted-databases") else ["post"]
     paths[route] = {
         method: {key: value for key, value in source["paths"][route][method].items() if not key.startswith("x-")}
         for method in methods

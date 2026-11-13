@@ -3,7 +3,8 @@ set -euo pipefail
 export DOTNET_ROOT=$HOME/.local/share/mise/dotnet-root DOTNET_PROCESSOR_COUNT=4 E2E_REGIONS=2
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
-export E2E_STATE="$root/e2e/.state" E2E_BUILD="$root/e2e/.state/build"
+export E2E_STATE="${E2E_STATE:-/tmp/922cbdaa-C7-retention/state}" E2E_BUILD="${E2E_BUILD:-/tmp/922cbdaa-C7-retention/build}"
+mkdir -p "$E2E_STATE"
 command -v cc > /dev/null
 command -v nats-server > /dev/null
 export E2E_RETENTION_NODE=$(node -p process.execPath)
@@ -12,6 +13,8 @@ free -g
 test "$(free -g | awk '/^Mem:/ {print $7}')" -ge 6
 rm -rf "$E2E_STATE/retained-handoff"
 printf '0\n' > "$E2E_STATE/retained-handoff-clock"
+printf '0\n' > "$E2E_STATE/retained-handoff-clock-1"
+printf '0\n' > "$E2E_STATE/retained-handoff-clock-2"
 export E2E_RETENTION_CLOCK_FILE="$E2E_STATE/retained-handoff-clock"
 export E2E_RETENTION_CLOCK="$E2E_STATE/retention-tools/clock.so"
 mkdir -p "$E2E_STATE/retention-tools"

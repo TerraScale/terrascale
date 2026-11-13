@@ -32,9 +32,10 @@ const natsToken = randomBytes(32).toString('hex');
 writeFileSync(join(state, 'secrets.d', 'retained-handoff-nats'), natsToken, { mode: 0o600 });
 writeFileSync(join(directory, 'nats-token'), natsToken, { mode: 0o600 });
 const clock = join(state, 'retained-handoff-clock');
-function setClock(seconds) {
-  writeFileSync(clock + '.next', String(seconds));
-  renameSync(clock + '.next', clock);
+function setClock(seconds, node) {
+  const file = node === undefined ? clock : clock + '-' + node;
+  writeFileSync(file + '.next', String(seconds));
+  renameSync(file + '.next', file);
 }
 setClock(0);
 const peers = join(directory, 'peers');
@@ -148,7 +149,7 @@ try {
       TS_NATS_URL: 'nats://127.0.0.1:4222', TERRABASE_NATS_TOKEN_FILE: join(directory, 'nats-token'),
       TERRABASE_DATA_DIRECTORY: roots[node - 1], TERRABASE_PORT: node === 1 ? '8080' : '8180',
       TERRABASE_METRICS_PORT: node === 1 ? '9091' : '9191', TERRABASE_POSTGRES_PORT: node === 1 ? '6432' : '6532',
-      LD_PRELOAD: clockLibrary, E2E_RETENTION_CLOCK_FILE: clock,
+      LD_PRELOAD: clockLibrary, E2E_RETENTION_CLOCK_FILE: clock + '-' + node,
     });
   }
   await expect.poll(async () => {
@@ -162,11 +163,13 @@ try {
       { message: 'node loaded the real auth signing keys', timeout: 45_000 })
       .toMatch(/terrabase_auth_key_fetches_total\{[^}]*outcome="success"[^}]*\} [1-9]/);
   }
+  const contract = await fetch('http://127.0.0.1:8081/openapi/v1.json', { headers: { 'x-terrabase-peer-credential': secret } });
+  if (contract.status === 200) writeFileSync(join(directory, 'openapi-v1.json'), await contract.text());
   console.log('real nodes: journey-1 and journey-2, gru, shared NATS writer lease, auth keys loaded');
   const seed = await request(1, database(owner.databaseId));
   if (seed.status === 200) await checked(1, database(owner.databaseId), 'DELETE', undefined, 204);
   const created = [];
-  for (const name of ['restore', 'purge']) {
+  for (const name of ['restore', 'purge', 'unreachable', 'expiry']) {
     const record = (await checked(1, project + '/databases', 'POST', { name: 'retained-handoff-' + name, regions: ['gru'] }, 201)).json();
     await checked(1, database(record.id) + '/sql/execute', 'POST', { statements: [{ sql: 'CREATE TABLE kept (value INTEGER)' }, { sql: 'INSERT INTO kept VALUES (11), (22), (33)' }] });
     await expect.poll(async () => (await keys(record.id)).filter(key => !key.endsWith('/shredded')).length, { timeout: 45_000 }).toBeGreaterThan(0);
@@ -177,7 +180,7 @@ try {
     created.push(record.id);
     console.log('created rows [11,22,33], backup and key present, DELETE 204, client SQL 404: ' + record.id);
   }
-  const [restoreId, purgeId] = created;
+  const [restoreId, purgeId, unreachableId, expiryId] = created;
   await expect.poll(() => files(roots[1], restoreId), { message: 'candidate has no retained source files before handoff', timeout: 45_000 }).toEqual([]);
   await expect.poll(() => files(roots[1], purgeId), { message: 'candidate has no second retained source files before handoff', timeout: 45_000 }).toEqual([]);
   console.log('candidate has no retained files before handoff');
@@ -207,6 +210,22 @@ try {
   } finally {
     returnSourceFiles();
   }
+  const pageIds = [];
+  const beforePages = (await checked(1, project + '/deleted-databases?limit=100', 'GET')).json();
+  let retainedCount = beforePages.items.length;
+  let next = beforePages.next;
+  while (next) {
+    const page = (await checked(1, project + '/deleted-databases?limit=100&after=' + encodeURIComponent(next), 'GET')).json();
+    retainedCount += page.items.length;
+    next = page.next;
+  }
+  for (let index = retainedCount; index < 300; index++) {
+    const record = (await checked(1, project + '/databases', 'POST', { name: 'retained-page-' + index, regions: ['gru'] }, 201)).json();
+    await checked(1, database(record.id) + '/sql/execute', 'POST', { statements: [{ sql: 'CREATE TABLE proof (value INTEGER)' }, { sql: 'INSERT INTO proof VALUES (' + index + ')' }] });
+    await checked(1, database(record.id), 'DELETE', undefined, 204);
+    pageIds.push(record.id);
+  }
+  const handoffStarted = performance.now();
   await checked(1, '/v1/rollout/drain?target=journey-2', 'POST', undefined, 204);
   assert.equal((await checked(2, '/v1/rollout/status')).json().writer, true);
   assert(files(roots[1], restoreId).some(file => file.endsWith('.db')));
@@ -216,34 +235,78 @@ try {
   const rows = (await checked(2, database(restoreId) + '/sql/execute', 'POST', { statements: [{ sql: 'SELECT value FROM kept ORDER BY value' }] })).json().results[0].rows;
   assert.deepEqual(rows, [[11], [22], [33]]);
   console.log('restore on peer -> 200; original rows ' + JSON.stringify(rows));
-  await checked(2, database(restoreId), 'DELETE', undefined, 204);
-  const peerKeys = await keys(purgeId);
-  const peerBackups = await backups(purgeId);
+  assert.equal(pageIds.length + retainedCount, 300);
+  const received = [];
+  let retainedAfter;
+  do {
+    const page = (await checked(2, project + '/deleted-databases?limit=100' + (retainedAfter ? '&after=' + encodeURIComponent(retainedAfter) : ''), 'GET')).json();
+    received.push(...page.items.map(record => record.id));
+    retainedAfter = page.next;
+  } while (retainedAfter);
+  assert.equal(received.length, 299);
+  assert(pageIds.every(id => received.includes(id)));
+  console.log('300 retained databases crossed handoff in bounded pages; verified manifest; elapsed ms=' + Math.round(performance.now() - handoffStarted));
+
+  const eightDays = 8 * 24 * 60 * 60;
+  setClock(eightDays, 1);
+  await expect.poll(async () => (await fetch('http://127.0.0.1:9091/metrics')).text(),
+    { message: 'outgoing maintenance runs after the old retention deadline', timeout: 45_000 }).toContain('terrabase_purge_pending');
+  const stillLive = (await checked(2, database(restoreId) + '/sql/execute', 'POST', { statements: [{ sql: 'SELECT value FROM kept ORDER BY value' }] })).json().results[0].rows;
+  assert.deepEqual(stillLive, [[11], [22], [33]]);
+  assert((await keys(restoreId)).some(key => !key.endsWith('/shredded')));
+  console.log('A clock +8d after restore on B: live rows [11,22,33], keys intact, A remains nonwriter');
+  setClock(0, 1);
+
+  const purge = await checked(2, deleted(purgeId), 'DELETE', undefined, 202);
+  assert.equal(purge.json().state, 'destroying');
+  await expect.poll(() => files(roots[0], purgeId).filter(file => file.endsWith('.db') || file.endsWith('.key')), { timeout: 45_000 }).toEqual([]);
+  await expect.poll(() => files(roots[1], purgeId).filter(file => file.endsWith('.db') || file.endsWith('.key')), { timeout: 45_000 }).toEqual([]);
+  await expect.poll(async () => (await keys(purgeId)).filter(key => !key.endsWith('/shredded')), { timeout: 45_000 }).toEqual([]);
+  console.log('purge on B with A alive: A and B files=0, wrapped keys=0, durable job returned 202');
+
   const outgoing = nodes.find(node => node.name === 'node-1');
-  outgoing.process.kill('SIGTERM');
-  await outgoing.stopped;
-  rmSync(roots[0], { recursive: true });
-  writeFileSync(peers, 'journey-2 gru 127.0.0.2\n');
-  console.log('outgoing node retired: process stopped, local data removed, peer inventory now journey-2');
-  const returnPeerFiles = displace(roots[1], purgeId, join(held, 'peer'));
-  setClock(8 * 24 * 60 * 60);
+  outgoing.process.kill('SIGSTOP');
   try {
-    await expect.poll(async () => (await fetch('http://127.0.0.2:9191/metrics')).text(),
-      { message: 'automatic purge reports missing retained files', timeout: 45_000 }).toContain('reason="retained_files_missing"');
-    assert.deepEqual(await keys(purgeId), peerKeys);
-    assert.deepEqual(await backups(purgeId), peerBackups);
-    assert(readFileSync(join(directory, 'node-2.log'), 'utf8').split('\n').some(line => line.includes('has no local files') && line.includes(purgeId)));
-    console.log('clock +8d with peer files missing: counter and database warning present; keys and backups preserved');
+    const pending = await checked(2, deleted(unreachableId), 'DELETE', undefined, 202);
+    assert.equal(pending.json().state, 'destroying');
+    assert(pending.json().outstanding.includes('keys'));
+    assert(files(roots[0], unreachableId).some(file => file.endsWith('.db')));
+    const same = await checked(2, deleted(unreachableId), 'GET');
+    assert.equal(same.json().id, unreachableId);
+    assert.equal(same.json().state, 'destroying');
+    console.log('A unreachable but alive: DELETE 202; GET same job destroying; A files still present');
   } finally {
-    returnPeerFiles();
+    outgoing.process.kill('SIGCONT');
   }
-  await expect.poll(() => files(roots[1], purgeId).filter(file => file.endsWith('.db') || file.endsWith('.key')), { message: 'expired retained files purged on peer', timeout: 45_000 }).toEqual([]);
-  await expect.poll(async () => (await keys(purgeId)).filter(key => !key.endsWith('/shredded')), { message: 'expired retained keys destroyed on peer', timeout: 45_000 }).toEqual([]);
-  await expect.poll(() => backups(purgeId), { message: 'expired retained backups removed on peer', timeout: 45_000 }).toEqual([]);
-  console.log('clock +8d: peer files=0, wrapped keys=0, backup objects=0; expired purge completed');
+  const repeated = await request(2, deleted(unreachableId), 'DELETE');
+  assert([202, 204].includes(repeated.status), repeated.text);
+  await expect.poll(() => files(roots[0], unreachableId).filter(file => file.endsWith('.db') || file.endsWith('.key')), { timeout: 45_000 }).toEqual([]);
+  console.log('A returns: repeated purge addresses same job, A files and keys erased');
+
+  await expect.poll(async () => (await checked(2, deleted(purgeId), 'GET')).json().state, { timeout: 45_000 }).toBe('complete');
+  assert.deepEqual((await checked(2, deleted(purgeId), 'GET')).json().outstanding, []);
+  assert.deepEqual(await backups(purgeId), []);
+  await checked(2, deleted(purgeId), 'DELETE', undefined, 404);
+  console.log('verified files=0, keys=0, backup objects=0: GET complete; subsequent DELETE 404 gone');
+
+  const beforeExpiryKeys = await keys(expiryId);
+  setClock(eightDays, 2);
+  setClock(eightDays);
+  await expect.poll(async () => (await fetch('http://127.0.0.2:9191/metrics')).text(), { timeout: 45_000 })
+    .toMatch(/terrabase_retention_expiries_waiting_confirmation [1-9]/);
+  assert(files(roots[1], expiryId).some(file => file.endsWith('.db')));
+  assert.deepEqual(await keys(expiryId), beforeExpiryKeys);
+  console.log('writer B clock +8d, partner A correct: expiry waits for confirmation; retained files and keys intact');
+  setClock(eightDays, 1);
+  await expect.poll(() => files(roots[1], expiryId).filter(file => file.endsWith('.db') || file.endsWith('.key')), { timeout: 45_000 }).toEqual([]);
+  await expect.poll(() => files(roots[0], expiryId).filter(file => file.endsWith('.db') || file.endsWith('.key')), { timeout: 45_000 }).toEqual([]);
+  await expect.poll(async () => (await keys(expiryId)).filter(key => !key.endsWith('/shredded')), { timeout: 45_000 }).toEqual([]);
+  console.log('both clocks +8d: scheduled expiry authorized, A and B files=0, wrapped keys=0');
+
 } finally {
   for (const node of nodes.reverse()) {
     if (node.process.exitCode === null && node.process.signalCode === null) {
+      node.process.kill('SIGCONT');
       node.process.kill('SIGTERM');
     }
     await node.stopped;

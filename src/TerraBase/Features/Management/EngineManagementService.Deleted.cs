@@ -235,6 +235,11 @@ internal sealed partial class EngineManagementService
             await AdvancePurgeAsync(databaseId, cancellationToken).ConfigureAwait(false);
             return await GetDatabasePurgeAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
         }
+        var job = await GetDatabasePurgeAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
+        if (job is DatabasePurgeBody)
+        {
+            return job;
+        }
         return result switch
         {
             true => throw new UnreachableException(),

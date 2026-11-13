@@ -1,4 +1,4 @@
-using TerraBase.Configuration;
+using TerraBase.Hosting;
 using TerraBase.Features.Replicas;
 
 namespace TerraBase.Features.Management;

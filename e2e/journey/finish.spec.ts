@@ -138,7 +138,16 @@ test.describe('database deletion', () => {
       expect(after.status()).toBe(200);
       expect((await after.json()).items.some((item: { id: string }) => item.id === database.id)).toBe(false);
       expect((await request.delete(url, { headers })).status()).toBe(204);
-      expect((await request.delete(`${deletedUrl}/${database.id}`, { headers })).status()).toBe(204);
+      const purging = await request.delete(`${deletedUrl}/${database.id}`, { headers });
+      expect([202, 204]).toContain(purging.status());
+      if (purging.status() === 202) {
+        expect(await purging.json()).toMatchObject({ id: database.id, state: 'destroying' });
+      }
+      const job = await request.get(`${deletedUrl}/${database.id}`, { headers });
+      expect(job.status()).toBe(200);
+      expect(await job.json()).toMatchObject({ id: database.id });
+      const repeated = await request.delete(`${deletedUrl}/${database.id}`, { headers });
+      expect([202, 204, 404]).toContain(repeated.status());
       expect((await request.post(`${deletedUrl}/${database.id}/restore`, { headers })).status()).toBe(404);
     } finally {
       await request.delete(url, { headers });
