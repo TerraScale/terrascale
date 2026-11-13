@@ -606,7 +606,6 @@ try {
     if (tokens[at]?.startsWith('home-fra-epoch-') && reply.raw === '+ACK') fraAcks.add(tokens[at + 2]);
     return skipTarget !== null && fraAcks.has(skipTarget);
   });
-  const aNotice = notice(relocated, columnA);
   const sentA = await held(send(relocated, columnA, relocatedKey));
   skipTarget = String(sentA.seq);
   await skipped;
@@ -617,12 +616,12 @@ try {
   const relocatedBody = await request(home, relocatedPath, undefined, user, 'GET');
   assert.equal(relocatedBody.homeRegion, 'fra', JSON.stringify(relocatedBody));
   const moveSeconds = (Date.now() - moveStarted) / 1000;
-  let bEarly = false;
-  const bNotice = notice(relocated, columnB).then(result => { bEarly = true; return result; });
   const sentB = await send(relocated, columnB, keyId, 'fra');
   await progress(sentB, 1, consumer => consumer.startsWith('home-fra-epoch-'));
-  assert(!bEarly);
   assert.deepEqual(await onFra('SELECT a, b FROM pairs WHERE id = 1'), [[0, 0]]);
+  assert.deepEqual(await onFra('SELECT count(*) FROM applications'), [[0]]);
+  const aNotice = notice(relocated, columnA);
+  const bNotice = notice(relocated, columnB);
   unblock();
   assert.equal((await aNotice).state, 'confirmed');
   assert.equal((await bNotice).state, 'confirmed');
