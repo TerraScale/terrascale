@@ -1,8 +1,9 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Features.Clock;
 using TerraBase.Hosting;
+using ZLogger;
 
 namespace TerraBase.Features.Clock;
 
@@ -12,9 +13,10 @@ internal interface IHlcState
     ValueTask RefreshAsync(CancellationToken cancellationToken);
 }
 
-internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions options, TimeProvider time) : IHlcClock, IHlcState, IDisposable
+internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions options, TimeProvider time, IMeterFactory meters, ILogger<NodeHlcClock> logger) : IHlcClock, IHlcState, IDisposable
 {
     private const long ReservationMilliseconds = 5_000;
+    private readonly Counter<long> _capped = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.clock.observe_capped", "{observation}");
     private readonly SemaphoreSlim _gate = new(1, 1);
     private HlcTimestamp _previous;
     private HlcTimestamp _reserved;
@@ -82,8 +84,17 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
 
     private async ValueTask<HlcTimestamp> AdvanceLockedAsync(HlcTimestamp remote, CancellationToken cancellationToken)
     {
+        var utc = time.GetUtcNow().ToUnixTimeMilliseconds();
+        var ceiling = checked(utc + ClockGuard.LimitMilliseconds);
+        if (remote.PhysicalMilliseconds > ceiling)
+        {
+            _capped.Add(1);
+            logger.ZLogWarning($"Remote clock from {remote.NodeId:@Node} is {remote.PhysicalMilliseconds - utc:@AheadMilliseconds} ms ahead; observing at {ceiling:@Ceiling}");
+            remote = remote with { PhysicalMilliseconds = ceiling, Logical = 0 };
+        }
+
         var previous = _previous;
-        var physical = Math.Max(time.GetUtcNow().ToUnixTimeMilliseconds(), Math.Max(previous.PhysicalMilliseconds, remote.PhysicalMilliseconds));
+        var physical = Math.Max(utc, Math.Max(previous.PhysicalMilliseconds, remote.PhysicalMilliseconds));
         var logical = physical == previous.PhysicalMilliseconds && physical == remote.PhysicalMilliseconds ? (long)Math.Max(previous.Logical, remote.Logical) + 1
             : physical == previous.PhysicalMilliseconds ? (long)previous.Logical + 1
             : physical == remote.PhysicalMilliseconds ? (long)remote.Logical + 1 : 0;

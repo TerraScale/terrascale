@@ -86,6 +86,8 @@ internal class HomePush(
 
     private IHlcClock Clock => clock;
 
+    private ILocalWriteClock WriteClock => services.GetRequiredService<ILocalWriteClock>();
+
     private ITransactionCrypto Crypto => services.GetRequiredService<ITransactionCrypto>();
 
     private TimeProvider Time => time;
@@ -825,6 +827,11 @@ internal class HomePush(
             Record("local_capture", ref started);
             var stamp = await push.Clock.NextAsync(cancellationToken).ConfigureAwait(false);
             Record("local_hlc", ref started);
+            if (!push.WriteClock.Allowed || stamp.PhysicalMilliseconds > push.Time.GetUtcNow().ToUnixTimeMilliseconds() + ClockGuard.LimitMilliseconds)
+            {
+                throw new LocalWriteRefusedException("the origin clock cannot support a local commit");
+            }
+
             var transaction = new RegionTransaction(Ulid.NewUlid().ToString(), push.Region, stamp, changes);
             var payload = await push.Crypto.SealAsync(database, Encode(transaction), cancellationToken).ConfigureAwait(false);
             Record("local_seal", ref started);

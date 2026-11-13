@@ -2,8 +2,8 @@
 
 `TerraBase.Features.Clock.IHlcClock` is the timestamp source shared by local
 capture and R6 home apply. `NextAsync(CancellationToken)` issues a timestamp;
-`ObserveAsync(HlcTimestamp, CancellationToken)` advances past an accepted remote
-stamp. Both return `ValueTask<HlcTimestamp>`.
+`ObserveAsync(HlcTimestamp, CancellationToken)` incorporates remote
+time, limiting its contribution to local UTC plus 50 ms. Both return `ValueTask<HlcTimestamp>`.
 
 `HlcTimestamp(long PhysicalMilliseconds, uint Logical, string NodeId)` orders by
 Unix milliseconds, logical counter, then ordinal node ID. R6 column conflict resolution compares
@@ -35,7 +35,7 @@ and advances timestamps in memory. Before issuing beyond its durable reservation
 it commits an upper bound five seconds ahead, with the maximum logical counter,
 using a durable system-database transaction. A failed reservation returns no
 stamp. All returned stamps are covered by an already durable upper bound;
-concurrent issuers and accepted remote observations preserve HLC ordering.
+concurrent issuers preserve HLC ordering. Remote timestamps beyond the observation bound are clipped for local issuance without changing the timestamp carried by their effects.
 This removes per-stamp system commits and their catalog-cache invalidations.
 
 On restart, the persisted upper bound becomes the previous timestamp. Every new
@@ -45,12 +45,10 @@ local writes stay closed until UTC is within the existing 50 ms limit. A normal
 restart can therefore delay local admission by up to five seconds; requests can
 still forward home. A larger backward clock jump remains closed until recovery.
 Invalid persisted state fails closed. Within the running process, admission
-tracks issued and observed time, not the unused reservation. Observation of a
-future stamp still closes admission immediately.
+tracks issued and observed time, not the unused reservation. Remote observations cannot introduce an arbitrarily distant high-water mark. A warning and `terrabase_clock_observe_capped_total` counter identify clipped observations; `terrabase_clock_hlc_ahead_milliseconds` reports the current high-water distance from UTC. Existing recovered reservations and backward clock jumps still close local admission.
 
 Local capture and the internal `Next` method retain their checks before and after
-issuance. The router still forwards refused local transactions home. Home apply
-can observe accepted remote timestamps without weakening the skew check.
+issuance. The router still forwards refused local transactions home. Apply observes remote time within the bound and does not reject a transaction because of its timestamp.
 
 The guard samples every five seconds. Each pass ensures persisted state was
 loaded without issuing a stamp, so sampling an untrusted clock cannot persist a

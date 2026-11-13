@@ -23,8 +23,7 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 - **Inserts never overwrite.** An insert of a key that exists at the home is a `primary_key` conflict and reverts its
   transaction (D12: tables that take local writes use ULID keys). An update of a row that the home never had reverts
   as `missing_row`.
-- **Clock guard.** A transaction stamped more than 50 milliseconds ahead of the peer clocks this process already holds (or its own clock, when that is later) reverts as `clock` and never
-  advances the home's HLC (D21; R12 adds the per-node skew guard).
+- **Clock admission.** Local commits check clock health before publishing. Receiving an otherwise valid transaction with a future timestamp does not cause a clock conflict. Observation limits the remote contribution to local UTC plus 50 ms and emits a warning and counter when it clips a timestamp; the effect retains its original stamp.
 - **Triggers do not fire for applied changes.** The origin region already ran them and their writes are part of the
   transaction. See [triggers](#triggers).
 - **Foreign keys are re-checked at the end of the transaction.** Foreign-key actions (`CASCADE`, `SET NULL`) do not run
@@ -122,7 +121,7 @@ home kept; the loser is the region transaction that lost.
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `id` | TEXT | ULID of the record, in record order. |
-| `kind` | TEXT | `superseded`, `unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`, `missing_row`, `schema`, `clock`. |
+| `kind` | TEXT | `superseded`, `unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`, `missing_row`, `schema`. |
 | `table_name` | TEXT | The table, or null when the rejection is not about one row. |
 | `row_key` | TEXT | JSON object of the row's primary key, or null. |
 | `column_name` | TEXT | The losing column, or null for a row-level loss and for `reverted`. |

@@ -10,7 +10,7 @@ internal sealed record ClockReport(string Node, string Region, double? SkewMilli
 internal sealed class ClockGuard(
     TerraBaseOptions options, TimeProvider time, IMeterFactory meters, IHlcState state, IClockErrorSource errors) : BackgroundService, ILocalWriteClock
 {
-    private const double LimitMilliseconds = 50;
+    internal const long LimitMilliseconds = 50;
     private static readonly TimeSpan FreshFor = TimeSpan.FromSeconds(15);
     private readonly TimeProvider _elapsed = TimeProvider.System;
     private Reading? _reading;
@@ -42,6 +42,7 @@ internal sealed class ClockGuard(
     {
         var meter = meters.Create(Telemetry.MeterName);
         _ = meter.CreateObservableGauge("terrabase.clock.skew", () => SkewMilliseconds, "ms");
+        _ = meter.CreateObservableGauge("terrabase.clock.hlc_ahead", () => Math.Max(0, state.HighWater - time.GetUtcNow().ToUnixTimeMilliseconds()), "ms");
         _ = meter.CreateObservableGauge("terrabase.clock.local_writes_allowed", () => Allowed ? 1 : 0);
         _ = meter.CreateObservableGauge("terrabase.clock.reported", () => Volatile.Read(ref _reported));
         await using var reports = new ClockReports(options);

@@ -73,7 +73,7 @@ public static class Telemetry
                 }
                 return instrument.Name switch
                 {
-                    "terrabase.clock.skew" or "terrabase.clock.local_writes_allowed" or "terrabase.clock.reported" or "terrabase_pressure_cpu_util" or "terrabase_pressure_mem_util"
+                    "terrabase.clock.skew" or "terrabase.clock.hlc_ahead" or "terrabase.clock.observe_capped" or "terrabase.clock.local_writes_allowed" or "terrabase.clock.reported" or "terrabase_pressure_cpu_util" or "terrabase_pressure_mem_util"
                         or "terrabase_pressure_memory_used_bytes" or "terrabase_pressure_memory_budget_bytes"
                         or "terrabase_pressure_disk_used_bytes" or "terrabase_pressure_disk_free_bytes"
                         or "terrabase_pressure_disk_total_bytes" or "terrabase_pressure_request_rate"

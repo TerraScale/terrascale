@@ -16,7 +16,7 @@ internal sealed class NodeClockService(IHlcClock clock, ILocalWriteClock guard, 
             }
 
             var timestamp = await clock.NextAsync(context.CancellationToken).ConfigureAwait(false);
-            if (!guard.Allowed || timestamp.PhysicalMilliseconds > time.GetUtcNow().ToUnixTimeMilliseconds() + 50)
+            if (!guard.Allowed || timestamp.PhysicalMilliseconds > time.GetUtcNow().ToUnixTimeMilliseconds() + ClockGuard.LimitMilliseconds)
             {
                 throw new ClockSkewException();
             }
