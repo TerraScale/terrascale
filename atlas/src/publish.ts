@@ -154,7 +154,7 @@ export async function publish(request: Request, env: Env): Promise<Response> {
   try {
     input = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
   } catch {
-    return failure("empty_publish", "Body is not a JSON publish document", "Send topology or placements.", 400);
+    return failure("empty_publish", "Body is not a JSON publish record", "Send topology or placements.", 400);
   }
   if (!isObject(input) || (!("topology" in input) && !("placements" in input))) {
     return failure("empty_publish", "No topology or placements supplied", "Send topology or placements.", 400);
@@ -191,10 +191,8 @@ export async function publish(request: Request, env: Env): Promise<Response> {
   if (!parsed.ok) {
     return failure(
       parsed.code,
-      parsed.code === "future_updated"
-        ? "updated is more than 300 seconds ahead"
-        : "Publish document failed validation",
-      "Correct the document before publishing again.",
+      parsed.code === "future_updated" ? "updated is more than 300 seconds ahead" : "Publish record failed validation",
+      "Correct the record before publishing again.",
       400,
     );
   }

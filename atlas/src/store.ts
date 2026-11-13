@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Placement, PublishRequest, Topology } from "./contract";
 import type { Env } from "./env";
-import { cacheDocument, placementKey } from "./read";
+import { cacheRecord, placementKey } from "./read";
 
 type WriteResult = "updated" | "stale" | "skipped";
 
@@ -91,7 +91,7 @@ export class AtlasStore extends DurableObject<Env> {
 
   private async refreshCache(key: string, doc: Topology | Placement): Promise<void> {
     try {
-      await this.env.ATLAS_KV.put(key, JSON.stringify(cacheDocument(doc)));
+      await this.env.ATLAS_KV.put(key, JSON.stringify(cacheRecord(doc)));
     } catch (error) {
       console.error("atlas KV refresh failed after D1 accepted the write", error);
     }

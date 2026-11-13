@@ -5,12 +5,12 @@ const MEMORY_TTL_MS = 5_000;
 const KV_TTL_MS = 60_000;
 export const placementKey = (project: string, database: string) => `placement:${project}:${database}`;
 
-type Document = Topology | Placement;
+type AtlasRecord = Topology | Placement;
 interface CacheEntry<T> {
   at: number;
   doc: T | null;
 }
-interface MemoryEntry extends CacheEntry<Document> {
+interface MemoryEntry extends CacheEntry<AtlasRecord> {
   remembered: number;
 }
 const memory = new Map<string, MemoryEntry>();
@@ -19,11 +19,11 @@ export function invalidateMemory(): void {
   memory.clear();
 }
 
-export function cacheDocument<T>(doc: T | null): CacheEntry<T> {
+export function cacheRecord<T>(doc: T | null): CacheEntry<T> {
   return { at: Date.now(), doc };
 }
 
-function remember(key: string, entry: CacheEntry<Document>): void {
+function remember(key: string, entry: CacheEntry<AtlasRecord>): void {
   if (memory.size >= 512) memory.delete(memory.keys().next().value!);
   memory.set(key, { ...entry, remembered: Date.now() });
 }
@@ -39,7 +39,7 @@ export interface ReadResult<T> {
   stale: boolean;
 }
 
-async function load<T extends Document>(
+async function load<T extends AtlasRecord>(
   env: Env,
   ctx: ExecutionContext,
   key: string,
@@ -71,7 +71,7 @@ async function load<T extends Document>(
     if (!fresh && cached !== undefined) return { doc: cached.doc as T | null, cache: "HIT", stale: true };
     throw error;
   }
-  const entry = cacheDocument(doc);
+  const entry = cacheRecord(doc);
   remember(key, entry);
   ctx.waitUntil(
     env.ATLAS_KV.put(key, JSON.stringify(entry)).catch((error: unknown) => {
