@@ -33,16 +33,18 @@ Status Workers are compared separately and only the selected Workers deploy.
 
 Auth and dashboard read their readiness revision. Their release jobs run in
 `ci.yml` and `images-ghcr.yml`, as required by the release service's existing
-OIDC policy. The release is signed with the dispatched run's commit, and each
-region refuses an image whose revision label names another commit. So Sites
-requests a main dispatch only when work is due and main's head is the target;
-otherwise the decision says it is waiting for main's head to qualify. The
-dispatched job reads live inside its release lock and releases only its own
-commit, and only if that commit is qualified; if not, it records nothing and
-the next reconcile after main CI tries again. It checks out that commit,
-reuses an image labeled with it, or builds and checks one. Only then does it
-move the mutable main tag and release the pinned arm64 digest. The availability
-of a prior Images run does not matter.
+OIDC policy. Dashboard provenance, the SBOM and `gh attestation verify` name
+the package `scripts/ci/reconcile-image.sh` publishes,
+`ghcr.io/terrascale/terrascale-dashboard`. The release is signed with the
+dispatched run's commit, and each region refuses an image whose revision label
+names another commit. So Sites requests a main dispatch only when work is due
+and main's head is the target; otherwise the decision says it is waiting for
+main's head to qualify. The dispatched job reads live inside its release lock
+and releases only its own commit, and only if that commit is qualified; if not,
+it records nothing and the next reconcile after main CI tries again. It checks
+out that commit, reuses an image labeled with it, or builds and checks one.
+Only then does it move the mutable main tag and release the pinned arm64
+digest. The availability of a prior Images run does not matter.
 
 Every site deploy records target as the Worker version message. The proof
 requires that version at 100% traffic. Auth and dashboard verify readiness and
