@@ -823,13 +823,27 @@ internal static class SignInFlow
     public static string Ip(HttpContext context) =>
         HostedAuth.Subject(context.Connection.RemoteIpAddress?.ToString()) ?? throw ApiException.Unavailable();
 
-    public static async Task<IResult?> SecondFactorAsync(HttpContext context, TotpCredentials mfa, UserRecord user, string? next, CancellationToken cancellationToken, AttemptLimiter.Reservation? reservation = null)
+    public static async Task<IResult?> SecondFactorAsync(HttpContext context, TotpCredentials mfa, UserRecord user, string? next, CancellationToken cancellationToken, AttemptLimiter.Reservation? reservation = null, bool forceEnrolled = false)
     {
         var policy = Tenancy.IsProject(user.InstanceId)
             ? (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(user.InstanceId, cancellationToken)).Configuration ?? ConfigurationBody.Default
             : ConfigurationBody.Default;
-        var enrolled = await mfa.HasAllowedFactorAsync(user, cancellationToken);
-        if (!policy.RequireMfa && (!policy.AllowTotp || !(await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled))
+        var sso = context.RequestServices.GetRequiredService<SsoSignIn>();
+        var ssoProof = Tenancy.IsProject(user.InstanceId) ? null : sso.FactorProofFor(context, user);
+        if (forceEnrolled && ssoProof is null)
+        {
+            throw new InvalidOperationException("The SSO factor challenge requires its account proof.");
+        }
+
+        var ssoRequired = ssoProof is not null && await sso.RequiresMfaAsync(context, user, cancellationToken);
+        if (ssoRequired)
+        {
+            user = user with { InboxProven = true };
+        }
+
+        var enrolled = await mfa.HasAllowedFactorAsync(user, ssoProof is not null, cancellationToken);
+        if (!policy.RequireMfa && !ssoRequired && !(forceEnrolled && enrolled)
+            && (!policy.AllowTotp || !(await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled))
         {
             return null;
         }
@@ -839,7 +853,7 @@ internal static class SignInFlow
             return await VerifyEnrollmentInboxEndpoint.SendAsync(context, user, next, cancellationToken);
         }
 
-        if (await mfa.ChallengeAsync(user, !enrolled, cancellationToken) is not { } challenge)
+        if (await mfa.ChallengeAsync(user, !enrolled, ssoProof, cancellationToken) is not { } challenge)
         {
             return null;
         }
@@ -872,15 +886,27 @@ internal static class SignInFlow
         }
     }
 
-    public static async Task<IResult> SignedInAsync(HttpContext context, Sessions sessions, IssuedSession session, string? next, CancellationToken cancellationToken, bool viaSso = false, AttemptLimiter.Reservation? reservation = null)
+    public static async Task<IResult> SignedInAsync(HttpContext context, Sessions sessions, IssuedSession session, string? next, CancellationToken cancellationToken, AttemptLimiter.Reservation? reservation = null)
     {
         var tenant = Tenant(context);
-        if (!viaSso && !Tenancy.IsProject(tenant)
+        var sso = context.RequestServices.GetRequiredService<SsoSignIn>();
+        if (!Tenancy.IsProject(tenant) && sso.ProofFor(context, session.Session.UserId, session.Session.AuthEpoch, session.Session.AuthStamp) is { } proof)
+        {
+            if (!await sso.FinishProofAsync(context, session, cancellationToken))
+            {
+                await sessions.RevokeAsync(tenant, session.Token, cancellationToken);
+                return Refused(context);
+            }
+
+            next = proof.Next;
+            AuthMetrics.SignIn("hosted_sso", "succeeded");
+        }
+        else if (!Tenancy.IsProject(tenant)
             && await context.RequestServices.GetRequiredService<Users>().GetAsync(tenant, session.Session.UserId, cancellationToken) is { } user
-            && await SsoAsync(context, user.Email, next, cancellationToken) is { } sso)
+            && await SsoAsync(context, user.Email, next, cancellationToken) is { } enforced)
         {
             await sessions.RevokeAsync(tenant, session.Token, cancellationToken);
-            return sso;
+            return enforced;
         }
 
         if (!Tenancy.IsProject(tenant))
@@ -928,10 +954,33 @@ internal static class SignInFlow
     }
 
     /// <summary>The single sign-on page when <paramref name="email"/> must sign in through its organization's identity provider; otherwise null.</summary>
-    public static async Task<IResult?> SsoAsync(HttpContext context, string email, string? next, CancellationToken cancellationToken) =>
-        !Tenancy.IsProject(Tenant(context)) && await context.RequestServices.GetRequiredService<SsoSignIn>().RequiredAsync(email, cancellationToken)
+    public static async Task<IResult?> SsoAsync(HttpContext context, string email, string? next, CancellationToken cancellationToken)
+    {
+        var sso = context.RequestServices.GetRequiredService<SsoSignIn>();
+        return !Tenancy.IsProject(Tenant(context)) && !await sso.ContinuesAsync(context, email, cancellationToken) && await sso.RequiredAsync(email, cancellationToken)
             ? SignInPageModel.Render(context, new SignInPageModel(SignInStep.Sso, Tenant(context), email, next) { SsoUrl = SsoSignIn.StartUrl(email, next) })
             : null;
+    }
+
+    public static async Task<bool> EnrolledAsync(HttpContext context, Sessions sessions, IssuedSession session, CancellationToken cancellationToken)
+    {
+        var tenant = Tenant(context);
+        if (!Tenancy.IsProject(tenant))
+        {
+            if (!await context.RequestServices.GetRequiredService<SsoSignIn>().FinishProofAsync(context, session, cancellationToken))
+            {
+                await sessions.RevokeAsync(tenant, session.Token, cancellationToken);
+                return false;
+            }
+
+            AuthMetrics.SignIn("hosted_sso", "succeeded");
+            await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
+            await context.RequestServices.GetRequiredService<AccountProtection>().SignedInAsync(context, tenant, session.Session.UserId, cancellationToken);
+        }
+
+        BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
+        return true;
+    }
 
     public static IResult UsernameTaken(HttpContext context, string email, string? next) =>
         SignInPageModel.Render(context, new SignInPageModel(SignInStep.SignUp, Tenant(context), email, next,

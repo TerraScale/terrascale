@@ -91,7 +91,7 @@ test('project requests survive a thirty-second first-writer outage without miscl
     }
   };
   const stopped = performance.now();
-  const restart = restartAfterKill(nodes[0], recover);
+  const restart = restartAfterKill(nodes[0], true, undefined, recover);
   try {
     await expect.poll(() => {
       const pid = Number(readFileSync(join(stateDir, 'pids/terrabase.pid'), 'utf8').trim());
@@ -251,7 +251,8 @@ test('malformed, expired and other independently invalid tokens are refused befo
   node.outage(true);
   try {
     await node.start();
-    for (const invalid of ['broken.token', rewrite(token, {}, { exp: Math.floor(Date.now() / 1000) - 1 }),
+    for (const invalid of ['broken.token', rewrite(token, {}, { exp: 'invalid' }), rewrite(token, {}, { nbf: {} }),
+      rewrite(token, {}, { exp: Math.floor(Date.now() / 1000) - 1 }),
       rewrite(token, {}, { nbf: Math.floor(Date.now() / 1000) + 300 }), rewrite(token, {}, { iss: 'https://wrong.example' }),
       rewrite(token, {}, { aud: 'wrong-audience' }), rewrite(token, { alg: 'none' }, {})]) {
       saveSecret('independently-invalid-token', invalid);

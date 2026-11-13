@@ -18,8 +18,8 @@ if UTC steps back. A failed write is logged and the process continues. The high-
 
 Across restarts, accounting assumes accurate trusted UTC and durable, unreverted data. A high-water mark detects
 rollback below recorded time; it cannot prove downtime if clocks are wrong but agree, prevent restoration of old
-state, or recover an unwritten checkpoint. A crash can lose up to 60 seconds of checkpoint progress; failed writes
-can lose more. The 24-hour monotonic limit is unconditional within a process, while an unconditional real-time cap
+state, or recover an unwritten checkpoint. With timely successful writes and scheduling, a crash can lose up to
+60 seconds of checkpoint progress; failed or stalled writes and scheduling delays can lose more. The 24-hour monotonic limit is unconditional within a process, while an unconditional real-time cap
 across arbitrary wall-clock or data rollback is not guaranteed. No stored keys load without established clock trust.
 
 Unreadable, oversized (over 2 MiB), truncated, malformed, wrong-version, wrong-issuer, empty or unusable stored key

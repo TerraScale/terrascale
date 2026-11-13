@@ -18,6 +18,7 @@
     {"code": "row_conflict", "sqlstate": "P0001", "status": 409},
     {"code": "too_large", "sqlstate": "54000", "status": 413},
     {"code": "query_canceled", "sqlstate": "57014", "status": 400},
+    {"code": "write_outcome_unknown", "sqlstate": "08007", "status": 503},
     {"code": "transaction_rolled_back", "sqlstate": "40000", "status": 400},
     {"code": "transaction_aborted", "sqlstate": "25P02", "status": 400},
     {"code": "read_only_transaction", "sqlstate": "25006", "status": 400},

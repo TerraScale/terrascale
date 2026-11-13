@@ -63,9 +63,10 @@ Only the organization's owners can create, change, verify or delete the connecti
 
 ## What happens at sign-in
 
-- **Domain sign-in.** After verification, anyone who enters an email address at your domain on the hosted sign-in page is sent to your IdP through **Continue with single sign-on**. Email-code and password sign-in are refused for that domain.
+- **Domain sign-in.** After verification, anyone who enters an email address at your domain on the hosted sign-in page is sent to your IdP through **Continue with single sign-on**. Email-code and password sign-in are refused for that domain, except for organization owners and for the one ordinary sign-in that confirms linking an existing account.
 - **Break-glass owners.** Owners of the organization keep email-code and password sign-in, so a broken IdP cannot lock the organization out.
-- **Verified email only.** The IdP's email must belong to the verified domain. A token with `email_verified` set to `false` is refused.
+- **Verified email only.** The IdP's email must belong to the verified domain. The provider must assert `email_verified=true`; a missing or false claim is refused.
+- **Existing accounts.** Confirm the displayed organization, full provider issuer and account, then complete one ordinary sign-in to prove account ownership. This includes any required second factor. If the organization requires MFA and the account has no allowed factor, enroll an authenticator or passkey before the link completes. Later sign-ins use that linked provider identity and still require MFA when applicable.
 - **Just-in-time membership.** The first single sign-on sign-in creates the TerraScale account if it does not exist, then adds it to the organization with the connection's `default_role`. Existing members keep their current role.
 - **One organization per domain.** A verified domain belongs to one organization. No other organization can claim it.
 

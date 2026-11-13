@@ -89,8 +89,8 @@ unchanged.
   - Across restarts this relies on the clock-trust gate providing accurate UTC and on durable, unreverted local
     state. A high-water mark detects rollback below the recorded time; it cannot measure downtime during which
     all clocks are wrong but agree, detect restoration of an older data-directory copy, or recover an unwritten
-    checkpoint after a failed write or crash. Up to one checkpoint period may be unrecorded after a crash,
-    longer after write failures. The monotonic in-process cap is unconditional; a universal 24-hour real-time
+    checkpoint after a failed write or crash. With timely successful writes and scheduling, up to one checkpoint
+    period may be unrecorded after a crash; failed or stalled writes and scheduling delays can lose more. The monotonic in-process cap is unconditional; a universal 24-hour real-time
     guarantee across arbitrary clock/state rollback is not claimed. If clock trust cannot be established, stored
     keys are never loaded. The data directory must be as trusted as the process itself.
   - To drop stored trust, stop the node, delete `auth-signing-keys.json`, then start it. Deleting the file while

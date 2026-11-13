@@ -6,6 +6,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
@@ -52,7 +53,9 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         var ipWait = await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken);
         // Resolving the challenge only reads: a refused request keeps a valid continuation and spends no proof.
-        if (await mfa.ChallengedAsync(tenant, form.Challenge, "verification", cancellationToken) is not { } challenged)
+        if (await mfa.ChallengedAsync(tenant, form.Challenge, "verification", cancellationToken) is not { } challenged
+            || !Tenancy.IsProject(tenant)
+                && this.HttpContext.RequestServices.GetRequiredService<SsoSignIn>().FactorProofFor(this.HttpContext, challenged.User) != challenged.SsoProof)
         {
             AuthMetrics.SignIn("hosted_mfa", ipWait is null ? "expired" : "rate_limited");
             return Expired(tenant, next);

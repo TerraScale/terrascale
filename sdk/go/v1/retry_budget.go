@@ -15,7 +15,12 @@ type RetryBudgetError struct {
 func (e *RetryBudgetError) Error() string {
 	return "terrabase: server cooldown exceeds remaining operation deadline"
 }
-func (e *RetryBudgetError) Unwrap() error { return e.API }
+func (e *RetryBudgetError) Unwrap() error {
+	if e.API == nil {
+		return nil
+	}
+	return e.API
+}
 
 func waitRetry(ctx context.Context, delay time.Duration, api *APIError) error {
 	if err := ctx.Err(); err != nil {

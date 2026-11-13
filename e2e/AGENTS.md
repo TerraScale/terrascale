@@ -149,6 +149,19 @@ The `multi-region faults` shard of `journey.yml` shares the normal service and S
 the fault specs. Local runs use the same variables and normal prepare/start/up/stop lifecycle, followed by
 `bash env/local.sh exec npx playwright test --project fault` from `e2e/`.
 
+The shard also builds a journey-only receipt driver from the same product sources.
+Its exporter copy includes receipt kinds only inside that driver; the shipped exporter
+is unchanged. The driver uses the real engine, catalog schema, serializers and importer
+to prove receipt bytes and holder/authority bindings through the real importer,
+atomic refusal of invalid or conflicting evidence, and byte-preserving receipt-free
+import retention. Isolated pairs of real driver nodes with their own NATS exercise
+the real drain and preparation endpoints: retained receipt bytes and unapplied
+snapshot sentinels prove refusal while background maintenance runs; the source
+resumes management writes and reads after receipt or
+row/byte-limit rejection. Only the journey copy sends receipts; the product
+importer and handoff refusal path are unchanged in the driver. It adds no runtime
+product setting.
+
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
 8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
 under the run state. Four-node mode starts a checksum-pinned NATS server with JetStream and a generated credential
@@ -475,3 +488,11 @@ still refuses tenant_busy and verifies that every operation ran. The local edge 
 ## Social provider stand-in
 
 The OAuth2 provider at identity.journey.terrascale.tech is served by env/oauth2.mjs behind the same edge. It validates redirect, state, one-use authorization code and PKCE, and supplies verified or unverified email claims through userinfo. Only inside the isolated namespace, 93.184.215.14/32 is assigned to loopback and this hostname resolves to it; every other hostname keeps its existing mapping. This exercises the production public-address SSRF checks without permitting loopback providers or any external route. The browser journey proves email ownership before creating or linking a user, replay refusal, and subsequent subject-based sign-in.
+
+## SQL session lost replies
+
+The SQL sessions case of `journey/finish.spec.ts` runs each SDK's public session through a loopback network proxy
+(`sdk/session-proxy.ts`) forwarding to the real HTTPS edge. It discards a successful COMMIT or autocommit
+answer before delivering it, checks the persisted row through REST, and counts frames and upgrades to refuse
+replays and fresh transactions. The control closes the connection before COMMIT and verifies rollback.
+Python runs both its synchronous and asynchronous session. No SDK or server contains a fault hook.

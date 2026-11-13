@@ -14,6 +14,7 @@ internal sealed record RegionalOwner(string Region, string Node, long Epoch, str
 internal sealed class RegionalOwners(TerraBaseOptions options)
 {
     private readonly ConcurrentDictionary<string, RegionalOwner> _owners = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _unconfirmed = new(StringComparer.Ordinal);
     private long _until;
     private int _draining;
 
@@ -25,6 +26,12 @@ internal sealed class RegionalOwners(TerraBaseOptions options)
 
     internal RegionalOwner? Find(string region) => _owners.GetValueOrDefault(region);
 
+    internal IReadOnlyCollection<string> Regions => [.. _owners.Keys];
+
+    internal RegionalOwner? Confirmed(string region) => _unconfirmed.ContainsKey(region) ? null : Find(region);
+
+    internal void Unconfirm(string region) => _unconfirmed[region] = 0;
+
     internal void Observe(RegionalOwner owner)
     {
         var previous = Find(owner.Region);
@@ -33,6 +40,7 @@ internal sealed class RegionalOwners(TerraBaseOptions options)
             Volatile.Write(ref _until, 0);
         }
         _owners[owner.Region] = owner;
+        _ = _unconfirmed.TryRemove(owner.Region, out _);
     }
 
     internal void Renew(long until) => Volatile.Write(ref _until, until);

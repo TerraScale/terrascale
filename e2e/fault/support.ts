@@ -1,10 +1,11 @@
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
-import { expect } from '@playwright/test';
+import { expect, request as apiRequest } from '@playwright/test';
 import { database, json, sql, type Cells } from '../placement/support';
 import { stateDir } from '../support/stack';
 
@@ -15,28 +16,37 @@ export const nodes = [
   { name: 'journey-4', region: 'fra', address: '127.0.0.4', port: 8380, service: 'terrabase-fra-2' },
 ] as const;
 type Node = typeof nodes[number];
-type NodeStatus = { node: string; owner: string; writer: boolean; ready: boolean };
+type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; session: string };
 type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
 
-async function nodeStatus(node: Node): Promise<NodeStatus> {
+export async function nodeRequest(node: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(`http://${node.address}:8081`);
-  const stream = session.request({ ':path': '/v1/rollout/status', 'x-terrabase-peer-credential': credential });
+  const stream = session.request({
+    ':method': method, ':path': path, 'x-terrabase-peer-credential': credential,
+    ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
+    ...(user ? { 'x-terrabase-user-id': user } : {}),
+  });
   stream.setTimeout(15_000, () => stream.destroy(new Error(`status request timed out for ${node.name}`)));
   session.on('error', error => stream.destroy(error));
   try {
     const response = once(stream, 'response');
-    stream.end();
+    stream.end(payload === undefined ? undefined : JSON.stringify(payload));
     const [headers] = await response;
-    expect(headers[':status']).toBe(200);
     let body = '';
     for await (const chunk of stream) body += chunk;
-    return JSON.parse(body) as NodeStatus;
+    return { status: Number(headers[':status']), body };
   } finally {
     session.destroy();
   }
+}
+
+export async function nodeStatus(node: Node, region?: string): Promise<NodeStatus> {
+  const response = await nodeRequest(node, `/v1/rollout/status${region ? `?region=${region}` : ''}`);
+  expect(response.status).toBe(200);
+  return JSON.parse(response.body) as NodeStatus;
 }
 
 export async function topology(): Promise<Node[]> {
@@ -148,7 +158,7 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
   return { sent, outcome: outcome.then(() => ({ error: undefined }), (error: Error) => ({ error })) };
 }
 
-export function restartAfterKill(node: Node, observe?: () => Promise<void>): () => Promise<void> {
+export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }, observe?: () => Promise<void>): () => Promise<void> {
   const pidFile = join(stateDir, 'pids', `${node.service}.pid`);
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   const environment = Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
@@ -160,6 +170,14 @@ export function restartAfterKill(node: Node, observe?: () => Promise<void>): () 
   process.kill(pid, 'SIGKILL');
   console.log(`SIGKILL ${node.name}: client write flushed, response outstanding`);
   return async () => {
+    await expect.poll(() => {
+      try {
+        return readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ')[2] === 'Z';
+      } catch (error) {
+        expect((error as NodeJS.ErrnoException).code).toBe('ENOENT');
+        return true;
+      }
+    }, { message: 'the killed process releases its data directory before restart' }).toBe(true);
     const log = join(stateDir, 'logs', `${node.service}.log`);
     const offset = readFileSync(log).length;
     const output = openSync(log, 'a', 0o600);
@@ -175,8 +193,30 @@ export function restartAfterKill(node: Node, observe?: () => Promise<void>): () 
       message: 'the restarted writer opens its listeners',
     }).toBe(true);
     await observe?.();
-    await expect.poll(async () => (await nodeStatus(node)).writer, {
-      message: 'the restarted node reacquires its fenced writer lease',
-    }).toBe(true);
+    await expect.poll(() => nodeStatus(node), {
+      message: 'the restarted node restores its ready regional role',
+    }).toMatchObject({ writer, ready: true });
+    if (access) {
+      const context = await apiRequest.newContext({ extraHTTPHeaders: { authorization: `Bearer ${access.token}` } });
+      try {
+        await tokenReady(node, context, access.path);
+      } finally {
+        await context.dispose();
+      }
+    }
   };
+}
+
+export async function tokenReady(node: Node, cells: Pick<Cells, 'get'>, path: string): Promise<void> {
+  await expect.poll(async () => {
+    const response = await cells.get(`http://127.0.0.1:${node.port}${path}`);
+    const status = response.status();
+    await response.dispose();
+    return status;
+  }, { message: `${node.name} must verify the existing token before authenticated recovery checks` }).toBe(200);
+}
+
+export function faultId(): string {
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  return '01' + Array.from(randomBytes(24), value => alphabet[value % 32]).join('');
 }

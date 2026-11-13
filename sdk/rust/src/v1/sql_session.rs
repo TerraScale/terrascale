@@ -48,7 +48,11 @@ struct Answer {
     transaction: bool,
 }
 
-type Waiter = oneshot::Sender<Result<Answer>>;
+struct Waiter {
+    answer: oneshot::Sender<Result<Answer>>,
+    committing: bool,
+    control: bool,
+}
 
 /// What the reader task shares with callers.
 struct Wire {
@@ -82,6 +86,7 @@ struct State {
     /// The socket dropped inside a transaction; only `rollback` clears it.
     lost: bool,
     closed: bool,
+    uncertain: bool,
 }
 
 struct Shared {
@@ -110,11 +115,10 @@ enum Ready {
 /// opens one that lasts at most 5 seconds. Calls may overlap; answers are
 /// matched by frame id. Nothing is resent. Clones share the session.
 ///
-/// When the socket drops, calls in flight fail with [`Error::Transport`] and
-/// the next call opens a new socket with a fresh credential. If a transaction
-/// was open, the server rolled it back: every call except
-/// [`Self::rollback`] returns [`Error::Sql`] `transaction_rolled_back`
-/// (40000) until `rollback`, which only clears the lost transaction.
+/// A lost committing answer returns [`Error::CommitUncertain`] and closes
+/// the session; every later call returns that error. Without a committing
+/// request, a lost open transaction returns `transaction_rolled_back`
+/// (40000) until [`Self::rollback`] clears it.
 ///
 /// ```no_run
 /// # async fn demo(client: terrascale::v1::Client) -> terrascale::v1::Result<()> {
@@ -288,10 +292,10 @@ impl SqlSession {
         let link = {
             let mut state = lock(&self.shared.state);
             state.closed = true;
-            state.lost = false;
-            state.link.take()
+            state.link.clone()
         };
         if let Some(link) = link {
+            fail(&link.wire, &self.shared, "the session closed");
             let mut sink = link.sink.lock().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), sink.close()).await;
             drop(lock(&link.wire.pending).take());
@@ -320,27 +324,48 @@ impl SqlSession {
                     transaction: false,
                 });
             };
+            let mut sink = link.sink.lock().await;
             let (waiter, answer) = oneshot::channel();
-            match lock(&link.wire.pending).as_mut() {
-                Some(pending) => pending.insert(id, waiter),
-                // It dropped before this frame was sent: open a new one.
-                None => continue,
-            };
-            let sent = link
-                .sink
-                .lock()
-                .await
-                .send(Message::Text(frame.as_str().into()))
-                .await;
-            if let Err(error) = sent {
-                if let Some(pending) = lock(&link.wire.pending).as_mut() {
-                    pending.remove(&id);
+            {
+                let state = lock(&self.shared.state);
+                if state.uncertain {
+                    return Err(Error::CommitUncertain);
                 }
-                return Err(Error::Transport(format!("SQL session: {error}")));
+                let mut pending = lock(&link.wire.pending);
+                let Some(pending) = pending.as_mut() else {
+                    continue;
+                };
+                let committing = kind == "commit"
+                    || kind == "execute"
+                        && (!link.wire.transaction.load(Ordering::Acquire)
+                            || pending.values().any(|waiter| waiter.control));
+                pending.insert(
+                    id,
+                    Waiter {
+                        answer: waiter,
+                        committing,
+                        control: matches!(kind, "begin" | "commit" | "rollback"),
+                    },
+                );
             }
+            let flight = Flight {
+                shared: self.shared.clone(),
+                link: link.clone(),
+                id,
+            };
+            if let Err(error) = sink.send(Message::Text(frame.as_str().into())).await {
+                fail(&link.wire, &self.shared, &error.to_string());
+                return if lock(&self.shared.state).uncertain {
+                    Err(Error::CommitUncertain)
+                } else {
+                    Err(Error::Transport(format!("SQL session: {error}")))
+                };
+            }
+            drop(sink);
             let answer = answer
                 .await
                 .unwrap_or_else(|_| Err(Error::Transport("SQL session closed".into())))?;
+            drop(flight);
             return match answer.error {
                 Some(error) => Err(Error::Sql {
                     status: None,
@@ -353,6 +378,9 @@ impl SqlSession {
 
     fn ready(&self, rollback: bool) -> Result<Ready> {
         let mut state = lock(&self.shared.state);
+        if state.uncertain {
+            return Err(Error::CommitUncertain);
+        }
         if state.closed {
             return Err(Error::InvalidInput("the SQL session is closed".into()));
         }
@@ -380,8 +408,10 @@ impl SqlSession {
     /// The open socket, opening one if needed; `None` when a lost
     /// transaction was cleared by `rollback`.
     async fn link(&self, rollback: bool) -> Result<Option<Arc<Link>>> {
-        if let Ready::Link(link) = self.ready(rollback)? {
-            return Ok(Some(link));
+        match self.ready(rollback)? {
+            Ready::Link(link) => return Ok(Some(link)),
+            Ready::Cleared => return Ok(None),
+            Ready::Connect => {}
         }
         let _opening = self.shared.opening.lock().await;
         match self.ready(rollback)? {
@@ -410,6 +440,9 @@ impl SqlSession {
             reader: reader.abort_handle(),
         });
         let mut state = lock(&self.shared.state);
+        if state.uncertain {
+            return Err(Error::CommitUncertain);
+        }
         if state.closed {
             return Err(Error::InvalidInput("the SQL session is closed".into()));
         }
@@ -425,13 +458,31 @@ async fn read(mut stream: SplitStream<WebSocket>, wire: Arc<Wire>, shared: Weak<
         match stream.next().await {
             Some(Ok(Message::Text(text))) => match serde_json::from_str::<Answer>(&text) {
                 Ok(answer) => {
-                    wire.transaction
-                        .store(answer.transaction, Ordering::Release);
-                    let waiter = answer
-                        .id
-                        .and_then(|id| lock(&wire.pending).as_mut()?.remove(&id));
+                    let uncertain = answer.error.as_ref().is_some_and(|error| {
+                        matches!(
+                            error.code.as_str(),
+                            "write_outcome_unknown" | "commit_uncertain"
+                        )
+                    });
+                    let waiter = if let Some(shared) = shared.upgrade() {
+                        let mut state = lock(&shared.state);
+                        state.uncertain |= uncertain;
+                        wire.transaction
+                            .store(answer.transaction, Ordering::Release);
+                        answer
+                            .id
+                            .and_then(|id| lock(&wire.pending).as_mut()?.remove(&id))
+                    } else {
+                        None
+                    };
+                    if uncertain {
+                        if let Some(waiter) = waiter {
+                            drop(waiter.answer.send(Err(Error::CommitUncertain)));
+                        }
+                        break "the server reported an uncertain write".into();
+                    }
                     match (waiter, &answer.error) {
-                        (Some(waiter), _) => drop(waiter.send(Ok(answer))),
+                        (Some(waiter), _) => drop(waiter.answer.send(Ok(answer))),
                         (None, Some(error)) => {
                             break format!("TerraBase refused the session: {error}")
                         }
@@ -458,21 +509,66 @@ async fn read(mut stream: SplitStream<WebSocket>, wire: Arc<Wire>, shared: Weak<
             None => break "the socket ended".into(),
         }
     };
-    let pending = lock(&wire.pending).take();
     if let Some(shared) = shared.upgrade() {
-        let mut state = lock(&shared.state);
-        if state
-            .link
-            .as_ref()
-            .is_some_and(|link| Arc::ptr_eq(&link.wire, &wire))
-        {
-            state.link = None;
-            state.lost = wire.transaction.load(Ordering::Acquire);
-        }
+        fail(&wire, &shared, &reason);
+    }
+}
+
+fn fail(wire: &Wire, shared: &Shared, reason: &str) {
+    let mut state = lock(&shared.state);
+    let pending = lock(&wire.pending).take();
+    let committing = pending
+        .as_ref()
+        .is_some_and(|pending| pending.values().any(|waiter| waiter.committing));
+    if state
+        .link
+        .as_ref()
+        .is_some_and(|link| std::ptr::eq(Arc::as_ptr(&link.wire), wire))
+    {
+        state.uncertain |= committing;
+        state.lost = !state.uncertain && wire.transaction.load(Ordering::Acquire);
+        state.link = None;
     }
     for (_, waiter) in pending.into_iter().flatten() {
-        let _ = waiter.send(Err(Error::Transport(format!(
-            "SQL session closed: {reason}"
-        ))));
+        let error = if state.uncertain {
+            Error::CommitUncertain
+        } else if state.lost {
+            Error::Sql {
+                status: None,
+                error: SqlError {
+                    code: sql_error_codes::TRANSACTION_ROLLED_BACK.into(),
+                    message: format!(
+                        "the transaction rolled back when the SQL session closed: {reason}"
+                    ),
+                    statement: 0,
+                    sqlstate: Some("40000".into()),
+                },
+            }
+        } else {
+            Error::Transport(format!("SQL session closed: {reason}"))
+        };
+        drop(waiter.answer.send(Err(error)));
+    }
+}
+
+struct Flight {
+    shared: Arc<Shared>,
+    link: Arc<Link>,
+    id: u64,
+}
+
+impl Drop for Flight {
+    fn drop(&mut self) {
+        let pending = lock(&self.link.wire.pending)
+            .as_ref()
+            .is_some_and(|pending| pending.contains_key(&self.id));
+        if pending {
+            fail(
+                &self.link.wire,
+                &self.shared,
+                "the caller stopped waiting for its answer",
+            );
+            self.link.reader.abort();
+        }
     }
 }

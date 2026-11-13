@@ -2,9 +2,9 @@
 
 Outside a transaction every call runs as its own transaction; ``begin()`` opens one
 that lasts at most 5 seconds. Nothing on a session is resent. When the socket drops,
-calls in flight fail and the next call opens a new socket with a fresh credential; a
-transaction open at the drop was rolled back by the server, so every call except
-``rollback()`` raises ``transaction_rolled_back`` until ``rollback()`` clears it.
+an unanswered committing request closes the session with ``CommitUncertainError``;
+every later call raises that error. Without a committing request, a lost open
+transaction raises ``transaction_rolled_back`` until ``rollback()`` clears it.
 """
 
 from __future__ import annotations
@@ -91,13 +91,11 @@ def _wrong_protocol() -> InvalidResponseError:
     return InvalidResponseError(0, "invalid_response", f"TerraBase did not select the {SUBPROTOCOL} subprotocol")
 
 
-def _closed(exc: BaseException, uncertain: bool) -> TerraScaleError:
+def _closed(exc: BaseException) -> TerraScaleError:
     """A call in flight when the socket dropped; it is never resent."""
     if isinstance(exc, TerraScaleError):
         return exc
     text = f"the SQL session closed: {type(exc).__name__}: {exc}".rstrip(": ")
-    if uncertain:
-        return CommitUncertainError(0, "commit_uncertain", text + "; the statements may have committed")
     return TerraScaleError(text)
 
 
@@ -109,11 +107,18 @@ class _State:
         self.transaction = False
         self.lost = False
         self.closed = False
+        self.failure: CommitUncertainError | None = None
+        self.pending: dict[int, bool] = {}
+        self.controls: set[int] = set()
 
-    def local(self, kind: str) -> bool:
-        """Answer locally when the session is closed or lost a transaction; True means done."""
+    def check_open(self) -> None:
+        if self.failure is not None:
+            raise self.failure
         if self.closed:
             raise TerraScaleError("the SQL session is closed")
+
+    def local(self, kind: str) -> bool:
+        self.check_open()
         if not self.lost:
             return False
         if kind == "rollback":
@@ -134,12 +139,22 @@ class _State:
         return self.next_id, text
 
     def uncertain(self, kind: str) -> bool:
-        return kind == "commit" or (kind == "execute" and not self.transaction)
+        return kind == "commit" or (kind == "execute" and (not self.transaction or bool(self.controls)))
+
+    def sent(self, frame_id: int, kind: str) -> None:
+        self.pending[frame_id] = self.uncertain(kind)
+        if kind in {"begin", "commit", "rollback"}:
+            self.controls.add(frame_id)
 
     def dropped(self) -> None:
-        if self.transaction:
+        if any(self.pending.values()) and self.failure is None:
+            self.failure = CommitUncertainError(
+                0, "commit_uncertain", "the SQL session lost a committing answer; reconcile before repeating")
+        if self.transaction and self.failure is None:
             self.lost = True
         self.transaction = False
+        self.pending.clear()
+        self.controls.clear()
 
     def answer(self, raw: str | bytes) -> tuple[int | None, dict[str, Any]]:
         """Decode a server frame and record its transaction flag."""
@@ -149,10 +164,20 @@ class _State:
                 raise ValueError("unknown SQL frame")
             if type(body.get("transaction")) is not bool:
                 raise ValueError("missing transaction flag")
+            if body["type"] == "error" and (
+                not isinstance(body.get("error"), dict) or not isinstance(body["error"].get("code"), str)
+            ):
+                raise ValueError("invalid SQL error")
         except ValueError:
             raise InvalidResponseError(0, "invalid_response", "TerraBase sent an invalid SQL frame") from None
-        self.transaction = body["transaction"]
         frame_id = body.get("id")
+        if type(frame_id) is int:
+            self.pending.pop(frame_id, None)
+            self.controls.discard(frame_id)
+        self.transaction = body["transaction"]
+        error = body.get("error")
+        if isinstance(error, dict) and error.get("code") in {"commit_uncertain", "write_outcome_unknown"}:
+            self.failure = CommitUncertainError(0, str(error["code"]), "the server reported an uncertain write outcome")
         return (frame_id if type(frame_id) is int else None), body
 
 
@@ -190,6 +215,7 @@ class SqlSession:
         self._ws: ClientConnection | None = self._open()
 
     def _open(self) -> ClientConnection:
+        self._state.check_open()
         client = self._db._c
         url = _url(client.base_url, client.project, self._db.name)
         refreshed = False
@@ -232,21 +258,27 @@ class SqlSession:
             if state.local(kind):
                 return {"results": []}
             frame_id, frame = state.frame(kind, statements)
-            uncertain = state.uncertain(kind)
             if self._ws is None:
                 self._ws = self._open()
             ws = self._ws
+            state.sent(frame_id, kind)
             try:
                 ws.send(frame)
                 while True:
                     answer_id, body = state.answer(ws.recv())
                     if answer_id == frame_id or answer_id is None and body["type"] == "error":
                         break
-            except Exception as exc:
+            except BaseException as exc:
                 self._drop()
-                raise _closed(exc, uncertain) from exc
-            if answer_id is None:
+                if state.failure is not None:
+                    raise state.failure from exc
+                if not isinstance(exc, Exception):
+                    raise
+                raise _closed(exc) from exc
+            if answer_id is None or state.failure is not None:
                 self._drop()
+            if state.failure is not None:
+                raise state.failure
             _raise_error(body)
             return body
 
@@ -303,11 +335,13 @@ class SqlSession:
     def close(self) -> None:
         """Close normally; the server rolls back an open transaction. The session stays closed."""
         self._state.closed = True
+        self._state.dropped()
         ws, self._ws = self._ws, None
         if ws is not None:
             ws.close()
 
     def __enter__(self) -> SqlSession:
+        self._state.check_open()
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -338,13 +372,13 @@ class AsyncSqlSession:
         return self._start().__await__()
 
     async def _start(self) -> AsyncSqlSession:
-        if self._state.closed:
-            raise TerraScaleError("the SQL session is closed")
+        self._state.check_open()
         await self._connected()
         return self
 
     async def _connected(self) -> _Link:
         async with self._opening:
+            self._state.check_open()
             if self._link is None:
                 link = _Link(await self._open())
                 link.reader = asyncio.create_task(self._read(link))
@@ -352,6 +386,7 @@ class AsyncSqlSession:
             return self._link
 
     async def _open(self) -> AsyncConnection:
+        self._state.check_open()
         client = self._db._c
         url = _url(client.base_url, client.project, self._db.name)
         refreshed = False
@@ -394,33 +429,45 @@ class AsyncSqlSession:
             with contextlib.suppress(Exception):
                 await link.ws.close()
 
-    def _drop(self, link: _Link, exc: Exception) -> None:
+    def _drop(self, link: _Link, exc: BaseException) -> None:
         if self._link is link:
             self._link = None
             self._state.dropped()
         for waiter in link.pending.values():
             if not waiter.done():
-                waiter.set_exception(exc)
+                waiter.set_exception(self._state.failure or exc)
         link.pending.clear()
 
     async def _call(self, kind: str, statements: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         state = self._state
+        if self._link is not None and self._link.ws.state is not State.OPEN:
+            self._drop(self._link, TerraScaleError("the SQL session closed"))
         if state.local(kind):
             return {"results": []}
         frame_id, frame = state.frame(kind, statements)
-        uncertain = state.uncertain(kind)
         link = await self._connected()
+        state.local(kind)
         waiter = asyncio.get_running_loop().create_future()
         link.pending[frame_id] = waiter
+        state.sent(frame_id, kind)
         try:
             await link.ws.send(frame)
             body = await waiter
-        except Exception as exc:
-            if not isinstance(exc, TerraScaleError):
-                self._drop(link, exc)
-            raise _closed(exc, uncertain) from exc
+        except (Exception, asyncio.CancelledError) as exc:
+            self._drop(link, exc)
+            with contextlib.suppress(Exception):
+                await link.ws.close()
+            if state.failure is not None:
+                raise state.failure from exc
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            raise _closed(exc) from exc
         finally:
             link.pending.pop(frame_id, None)
+        if state.failure is not None:
+            self._drop(link, state.failure)
+            await link.ws.close()
+            raise state.failure
         _raise_error(body)
         return body
 
@@ -477,6 +524,7 @@ class AsyncSqlSession:
     async def close(self) -> None:
         """Close normally; the server rolls back an open transaction. The session stays closed."""
         self._state.closed = True
+        self._state.dropped()
         link, self._link = self._link, None
         if link is not None:
             await link.ws.close()

@@ -5,6 +5,11 @@ import { createTerraBaseClient, createTerraBaseClientFromEnvironment, generateId
 
 import { createTsAuthClient } from '../../../sdk/js/src/ts-auth.js';
 
+if (process.env.E2E_SESSION_FAULT) {
+  await (await import('./session-fault.mjs')).sessionFault();
+  process.exit(0);
+}
+
 const spec = JSON.parse(readFileSync(process.env.E2E_OPERATIONS, 'utf8'));
 const run = process.env.E2E_RUN_ID;
 const project = process.env.TERRASCALE_PROJECT_ID;

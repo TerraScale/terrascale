@@ -123,11 +123,12 @@ export async function signingNode(request: APIRequestContext) {
     closeSync(output);
     await expect.poll(async () => {
       expect(child?.exitCode, log()).toBeNull();
+      expect(child?.signalCode, log()).toBeNull();
       return request.get('http://127.0.0.1:18780/readyz').then(response => response.status(), () => 0);
     }, { message: 'the signing-key node starts regardless of stored file contents' }).toBe(200);
   };
   const stop = async () => {
-    if (child && child.exitCode === null) {
+    if (child && child.exitCode === null && child.signalCode === null) {
       child.kill('SIGKILL');
       await once(child, 'exit');
     }
