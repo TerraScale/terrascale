@@ -14,7 +14,7 @@ internal interface ICdcBackupRetention
 
     ValueTask<CdcCursor> CursorAsync(CancellationToken cancellationToken);
 
-    ValueTask<CdcRetained> RetainedAsync(long stored, CancellationToken cancellationToken);
+    ValueTask<CdcRetained> RetainedAsync(CdcCursor? stored, CancellationToken cancellationToken);
 
     ValueTask<long> CommittedAsync(CancellationToken cancellationToken);
 

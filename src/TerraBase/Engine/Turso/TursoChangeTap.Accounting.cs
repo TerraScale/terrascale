@@ -9,7 +9,7 @@ internal sealed partial class TursoChangeTap
             (string)Scalar(TursoStatements.Incarnation, 0)!,
             [.. _schema.Select(item => new CdcSchema(item.Key, item.Value.Type, item.Value.Name))]), cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
 
-    public async ValueTask<CdcRetained> RetainedAsync(long stored, CancellationToken cancellationToken) =>
+    public async ValueTask<CdcRetained> RetainedAsync(CdcCursor? stored, CancellationToken cancellationToken) =>
         await AdmittedAsync(async () => await _io.RunAsync(() =>
         {
             Execute("BEGIN;");
@@ -20,10 +20,12 @@ internal sealed partial class TursoChangeTap
                 var oldest = Scalar("SELECT min(change_id) FROM turso_cdc;", 0) as long?;
                 var newest = Scalar("SELECT max(change_id) FROM turso_cdc;", 0) as long? ?? 0;
                 var first = Math.Max(start, oldest ?? start);
-                var anchor = stored > newest ? stored + 1 : first > 1 ? first : 0;
-                return new CdcRetained((string)Scalar(TursoStatements.Incarnation, 0)!, anchor, start, oldest,
+                var incarnation = (string)Scalar(TursoStatements.Incarnation, 0)!;
+                var position = stored is { } cursor && cursor.Incarnation == incarnation ? cursor.Position : 0;
+                var anchor = position > newest ? position + 1 : first > 1 ? first : 0;
+                return new CdcRetained(incarnation, anchor, start, oldest,
                     Time(Scalar("SELECT change_time FROM turso_cdc WHERE change_id = $anchor;", anchor)),
-                    Time(Scalar("SELECT change_time FROM turso_cdc WHERE change_id > $anchor AND change_type = 2 ORDER BY change_id LIMIT 1;", stored)));
+                    Time(Scalar("SELECT change_time FROM turso_cdc WHERE change_id > $anchor AND change_type = 2 ORDER BY change_id LIMIT 1;", position)));
             }
             finally
             {

@@ -2,7 +2,21 @@ import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
 import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
-import { backupStore, crashWrite, endpoint, Ledger, logEvents, logLength, metric, probe, regions, restartAfterKill, topology } from './support';
+import { backupStore, continuity, crashWrite, endpoint, Ledger, metric, probe, regions, restartAfterKill, topology } from './support';
+import type { Cells } from '../placement/support';
+
+async function neverUnauthorized(cells: Cells, url: string): Promise<void> {
+  const answers: string[] = [];
+  await expect.poll(async () => {
+    const response = await cells.get(url).catch(() => undefined);
+    if (response === undefined) return 0;
+    const body = await response.text();
+    answers.push(`${response.status()} ${response.status() === 503 ? body.slice(0, 160) : ''}`);
+    expect(response.status(), `a valid token after a restart: ${answers.join(' | ')}`).not.toBe(401);
+    return response.status();
+  }, { message: 'the restarted node answers a valid token without 401' }).toBe(200);
+  console.log(`first answers to a valid token after the restart: ${[...new Set(answers)].join(' | ')}`);
+}
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -38,6 +52,7 @@ test('a writer killed during a write restarts without losing acknowledged rows i
     } finally {
       await restart();
     }
+    await neverUnauthorized(cells, `${endpoint('gru')}${database(created.id)}`);
     await expect.poll(async () => {
       const response = await request.get(`http://127.0.0.1:${writer.port}/readyz`);
       return response.status();
@@ -88,7 +103,7 @@ test('restore a backup into another database and compare its rows with the snaps
   }
 });
 
-test('history lost while the backup store is unreachable is one hole, survives a restart and is refused by restores', async ({ cells }) => {
+test('history lost while the backup store is unreachable is one hole each time, also across a generation restart and a node restart, and restores refuse every hole', async ({ cells }) => {
   const writer = (await topology()).find(node => node.region === 'gru')!;
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
     data: { name: name('backup-hole'), regions: ['gru'] },
@@ -96,6 +111,27 @@ test('history lost while the backup store is unreachable is one hole, survives a
   const ledger = new Ledger(created.id);
   const restored: string[] = [];
   let outage = false;
+  const churn = async (batches: number) => {
+    let inside = 0;
+    for (let batch = 0; batch < batches; batch++) {
+      if (batch === Math.floor(batches / 2)) inside = Date.now();
+      const response = await cells.post(`${endpoint('gru')}${database(created.id)}/sql/execute`, {
+        data: { statements: Array.from({ length: 2 }, (_, index) => ({ sql: `UPDATE fault_blob SET body = zeroblob(${1_048_576 + batch * 2 + index}) WHERE id = 1` })) },
+      });
+      expect(response.status(), await response.text()).toBe(200);
+    }
+    return inside;
+  };
+  const refusal = async (at: number) => {
+    const refused = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+      data: { pointInTime: new Date(at).toISOString(), name: name('hole-inside') },
+    });
+    expect(refused.status()).toBe(409);
+    const error = (await refused.json() as { error: { code: string; message: string; unavailableFrom: string; unavailableTo: string } }).error;
+    expect(error.code).toBe('backup_history_incomplete');
+    expect(error.message).toContain('was lost before it was stored');
+    return error;
+  };
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await ledger.write(cells, 'gru', [[1, 'before-outage']]);
@@ -106,39 +142,30 @@ test('history lost while the backup store is unreachable is one hole, survives a
     await expect.poll(async () => {
       const window = await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`);
       return window.status() === 200 ? Date.parse((await window.json() as { latest: string }).latest) : 0;
-    }, { message: 'the database has a stored generation before the outage' }).toBeGreaterThanOrEqual(blobAt - blobAt % 1000);
+    }, { message: 'the proven restore time reaches the acknowledgement of the last write before the outage' }).toBeGreaterThanOrEqual(blobAt);
     await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships every file before the outage' }).toBe(200);
     const holes = await metric(writer, 'terrabase_backup_holes');
     const recordedHoles = await metric(writer, 'terrabase_backup_holes_recorded_total');
     const generations = await metric(writer, 'terrabase_backup_generations_total');
-    const logStart = logLength(writer);
+    const shipped = await continuity(writer, created.id);
+    expect(shipped).toMatchObject({ replacing: false, storedIncarnation: shipped.incarnation, holes: [] });
 
     await backupStore('down');
     outage = true;
-    let inside = 0;
-    for (let batch = 0; batch < 75; batch++) {
-      if (batch === 38) inside = Date.now();
-      const response = await cells.post(`${endpoint('gru')}${database(created.id)}/sql/execute`, {
-        data: { statements: Array.from({ length: 2 }, (_, index) => ({ sql: `UPDATE fault_blob SET body = zeroblob(${1_048_576 + batch * 2 + index}) WHERE id = 1` })) },
-      });
-      expect(response.status(), await response.text()).toBe(200);
-    }
+    const inside = await churn(75);
     const duringSent = Date.now();
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
     const duringAcked = Date.now();
     await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the discarded history becomes exactly one hole' }).toBe(holes + 1);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 1);
-    const events = logEvents(writer, logStart, `v1/`).filter(event => event.File!.includes(`/${created.id}/nodes/`));
-    const recorded = events.filter(event => event.msg.includes('lost its history'));
-    expect(recorded, JSON.stringify(events)).toHaveLength(1);
-    const { From: cursor, To: start } = recorded[0]!;
-    const discards = events.slice(0, events.indexOf(recorded[0]!)).filter(event => event.msg.includes('history now starts at'));
-    expect(discards.length, JSON.stringify(events)).toBeGreaterThan(0);
-    const discarded = discards[discards.length - 1]!;
-    expect(discarded.Oldest).toBe(discarded.Start);
-    expect(start).toBe(discarded.Start);
-    expect(cursor!).toBeLessThan(start!);
-    expect(events.filter(event => event.msg.includes('differs from its oldest retained change'))).toEqual([]);
+    await expect.poll(async () => {
+      const state = await continuity(writer, created.id);
+      return state.holes.length === 1 && state.holes[0]!.to === state.historyStart && state.oldestRetained === state.historyStart;
+    }, { message: 'the open hole ends where the change log now starts' }).toBe(true);
+    const opened = await continuity(writer, created.id);
+    expect(opened).toMatchObject({ replacing: true, storedPosition: shipped.storedPosition, storedIncarnation: opened.incarnation });
+    expect(opened.holes[0]).toMatchObject({ incarnation: opened.incarnation, from: shipped.storedPosition, open: true });
+    expect(opened.holes[0]!.from).toBeLessThan(opened.holes[0]!.to);
     expect(await probe(writer, '/backupz')).toBe(503);
     expect(await probe(writer, '/readyz')).toBe(200);
 
@@ -146,34 +173,66 @@ test('history lost while the backup store is unreachable is one hole, survives a
     outage = false;
     await expect.poll(() => probe(writer, '/backupz'), { message: 'a replacement snapshot makes the writer healthy again' }).toBe(200);
     expect(await metric(writer, 'terrabase_backup_generations_total')).toBeGreaterThan(generations);
-    expect(await probe(writer, '/readyz')).toBe(200);
     expect(await metric(writer, 'terrabase_backup_holes')).toBe(holes + 1);
     const uploaded = await metric(writer, 'terrabase_backup_uploaded_bytes_total', 'kind="segment"');
     await ledger.write(cells, 'gru', [[3, 'after-outage']]);
     await expect.poll(() => metric(writer, 'terrabase_backup_uploaded_bytes_total', 'kind="segment"'), { message: 'later passes store the writes after the outage' }).toBeGreaterThan(uploaded);
-    expect(await probe(writer, '/backupz')).toBe(200);
-    expect(await metric(writer, 'terrabase_backup_holes')).toBe(holes + 1);
-    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 1);
+    const closed = await continuity(writer, created.id);
+    expect(closed).toMatchObject({ replacing: false, storedIncarnation: closed.incarnation });
+    expect(closed.holes).toHaveLength(1);
+    expect(closed.holes[0]).toMatchObject({ incarnation: closed.incarnation, from: opened.holes[0]!.from, open: false });
+    expect(closed.holes[0]!.to).toBeGreaterThanOrEqual(opened.holes[0]!.to);
+    expect(closed.holes[0]!.to).toBeLessThanOrEqual(closed.storedPosition!);
+
+    const unplaceable = await metric(writer, 'terrabase_backup_generation_restarts_total', 'reason="log_unplaceable"');
+    await backupStore('down');
+    outage = true;
+    await sql(cells, endpoint('gru'), created.id, 'ALTER TABLE fault_rows ADD COLUMN note TEXT');
+    await expect.poll(() => metric(writer, 'terrabase_backup_generation_restarts_total', 'reason="log_unplaceable"'),
+      { message: 'the schema change restarts the generation' }).toBe(unplaceable + 1);
+    const kept = await continuity(writer, created.id);
+    expect(kept, 'the restart keeps the last stored position until a replacement is stored').toMatchObject({ replacing: true, storedIncarnation: kept.incarnation });
+    expect(kept.storedPosition).toBeGreaterThanOrEqual(closed.storedPosition!);
+    const insideSecond = await churn(75);
+    await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'history discarded while the replacement cannot be stored is one more hole' }).toBe(holes + 2);
+    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 2);
+    const twoHoles = (await continuity(writer, created.id)).holes;
+    expect(twoHoles).toHaveLength(2);
+    expect(twoHoles[1]).toMatchObject({ incarnation: kept.incarnation, from: kept.storedPosition, open: true });
+    await churn(65);
+    await expect.poll(async () => (await continuity(writer, created.id)).holes[1]!.to,
+      { message: 'a later discard moves the open hole to the new start of the change log' }).toBeGreaterThan(twoHoles[1]!.to);
+    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 2);
 
     const restart = restartAfterKill(writer);
     await restart();
-    await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
-    expect((await cells.get(`${endpoint('gru')}${database(created.id)}`)).status(), 'the first request after readiness is authenticated').toBe(200);
-    await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the restarted writer publishes the durable hole total' }).toBe(holes + 1);
-    await expect.poll(() => probe(writer, '/backupz'), { message: 'the restarted writer resumes its generation' }).toBe(200);
+    await neverUnauthorized(cells, `${endpoint('gru')}${database(created.id)}`);
+    await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready while its backup store is down' }).toBe(200);
+    await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the restarted writer publishes the durable hole total' }).toBe(holes + 2);
+    const resumed = await continuity(writer, created.id);
+    expect(resumed).toMatchObject({ replacing: true, storedPosition: kept.storedPosition, storedIncarnation: kept.incarnation });
+    expect(resumed.holes[1]).toMatchObject({ incarnation: kept.incarnation, from: kept.storedPosition, open: true });
+    const openError = await refusal(insideSecond);
+    expect(openError.message).toContain('no recovery point after it is stored yet');
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(0);
+    await backupStore('up');
+    outage = false;
+    await expect.poll(() => probe(writer, '/backupz'), { message: 'a replacement snapshot after the restart closes the second hole' }).toBe(200);
+    const settled = await continuity(writer, created.id);
+    expect(settled.holes.map(hole => hole.open)).toEqual([false, false]);
+    expect(settled.holes[1]!.from).toBe(kept.storedPosition);
+    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(0);
+    expect(await metric(writer, 'terrabase_backup_holes')).toBe(holes + 2);
 
-    const refused = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
-      data: { pointInTime: new Date(inside).toISOString(), name: name('hole-inside') },
-    });
-    expect(refused.status()).toBe(409);
-    const error = (await refused.json() as { error: { code: string; message: string; unavailableFrom: string; unavailableTo: string } }).error;
-    expect(error.code).toBe('backup_history_incomplete');
-    expect(error.message).toContain('was lost before it was stored');
+    const error = await refusal(inside);
     const [from, to] = [Date.parse(error.unavailableFrom), Date.parse(error.unavailableTo)];
     expect(from).toBeLessThan(inside);
     expect(to).toBeGreaterThan(inside);
-    console.log(`hole of ${created.id}: positions ${cursor}..${start} (recorded start ${discarded.Start!}, oldest retained ${discarded.Oldest!}), unavailable ${error.unavailableFrom} to ${error.unavailableTo}, refused inside at ${new Date(inside).toISOString()}; ${holes + 1} on ${writer.name} after its restart`);
+    expect([from, to]).toEqual([Date.parse(settled.holes[0]!.fromAt!), Date.parse(settled.holes[0]!.toAt!)]);
+    const secondError = await refusal(insideSecond);
+    expect([Date.parse(secondError.unavailableFrom), Date.parse(secondError.unavailableTo)]).toEqual([Date.parse(settled.holes[1]!.fromAt!), Date.parse(settled.holes[1]!.toAt!)]);
+    expect(Date.parse(secondError.unavailableFrom)).toBeGreaterThan(to);
+    console.log(`holes of ${created.id}: ${JSON.stringify(settled.holes)}; refused inside at ${new Date(inside).toISOString()} and ${new Date(insideSecond).toISOString()}`);
 
     const restore = async (at: number) => {
       const started = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {

@@ -7,23 +7,38 @@ using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
-public sealed record BackupHole(long From, long To, DateTimeOffset? FromAt, DateTimeOffset? ToAt, bool Open);
+public sealed record BackupHole(string Incarnation, long From, long To, DateTimeOffset? FromAt, DateTimeOffset? ToAt, bool Open);
+
+public sealed record BackupContinuity(
+    string Incarnation, long? HistoryStart, long? OldestRetained, long? StoredPosition, string? StoredIncarnation, bool Replacing, IReadOnlyList<BackupHole> Holes);
 
 internal sealed record BackupStored(CdcCursor Cursor, Ulid Generation, string GenerationKey, long Position,
     DateTimeOffset SnapshotAt, DateTimeOffset ShippedAt, DateTimeOffset? PlatformAt);
 
 internal sealed record BackupUpload(BackupStored Stored, string Key, string Hash);
 
-internal sealed record BackupAccount(string Incarnation, string Destination, BackupStored? Stored, BackupUpload? Upload, long Holes, BackupHole? LastHole);
+internal sealed record BackupAccount(
+    string Incarnation, string Destination, BackupStored? Stored, bool Replacing, BackupUpload? Upload, long Holes, IReadOnlyList<BackupHole> Lost);
 
 internal sealed partial class ContinuousBackup
 {
     private const string AccountKind = "backup_continuity";
 
+    private const int KeptHoles = 32;
+
     private ICdcBackupRetention Accounting => (ICdcBackupRetention)_files[BackupLayout.File(null, _node)].Tap;
 
-    public async Task<BackupHole?> HoleAsync(TenantContext database, CancellationToken cancellationToken) =>
-        (await ReadAccountAsync(BackupLayout.File(database, _node), cancellationToken).ConfigureAwait(false))?.LastHole;
+    public async Task<IReadOnlyList<BackupHole>> HolesAsync(TenantContext database, CancellationToken cancellationToken) =>
+        (await ReadAccountAsync(BackupLayout.File(database, _node), cancellationToken).ConfigureAwait(false))?.Lost ?? [];
+
+    private static BackupContinuity? Continuity(ShippedFile file) => file.Account is not { } account ? null
+        : new(account.Incarnation,
+            file.History is { } history && history.Incarnation == account.Incarnation ? history.Start : null,
+            file.History is { } retained && retained.Incarnation == account.Incarnation ? retained.Oldest : null,
+            account.Stored?.Cursor.Position, account.Stored?.Cursor.Incarnation, account.Replacing, account.Lost);
+
+    private static long StoredPosition(BackupAccount? account) =>
+        account is { Stored: { } stored } && stored.Cursor.Incarnation == account.Incarnation ? stored.Cursor.Position : 0;
 
     private async Task<BackupAccount?> ReadAccountAsync(string prefix, CancellationToken cancellationToken)
     {
@@ -70,7 +85,8 @@ internal sealed partial class ContinuousBackup
     {
         var retention = (ICdcBackupRetention)file.Tap;
         var account = file.Account;
-        var retained = await retention.RetainedAsync(account?.Stored?.Cursor.Position ?? 0, cancellationToken).ConfigureAwait(false);
+        var retained = await retention.RetainedAsync(account?.Stored?.Cursor, cancellationToken).ConfigureAwait(false);
+        file.History = retained;
         file.BacklogCommittedAt = retained.PendingAt;
         if (retained.Oldest is { } oldest && oldest != retained.Start)
         {
@@ -79,35 +95,58 @@ internal sealed partial class ContinuousBackup
 
         if (account is null)
         {
-            await RestartAsync(file, new BackupAccount(retained.Incarnation, file.Target.Revision, null, null, 0, null), null, cancellationToken).ConfigureAwait(false);
+            await RestartAsync(file, new BackupAccount(retained.Incarnation, file.Target.Revision, null, true, null, 0, []), null, cancellationToken).ConfigureAwait(false);
             return false;
         }
 
-        if (account.Incarnation != retained.Incarnation || account.Destination != file.Target.Revision)
+        if (account.Incarnation != retained.Incarnation)
         {
-            await RestartAsync(file, account with { Incarnation = retained.Incarnation, Destination = file.Target.Revision, Stored = null, Upload = null },
-                "lineage", cancellationToken).ConfigureAwait(false);
+            await RestartAsync(file, account with
+            {
+                Incarnation = retained.Incarnation, Destination = file.Target.Revision, Replacing = true, Upload = null,
+                Lost = [.. account.Lost.Select(hole => hole.Open && hole.Incarnation == account.Incarnation ? hole with { Open = false } : hole)],
+            }, "lineage", cancellationToken).ConfigureAwait(false);
             return false;
         }
 
-        if (account.Stored is not { } stored)
+        if (account.Destination != file.Target.Revision)
+        {
+            await RestartAsync(file, account with { Destination = file.Target.Revision, Stored = null, Replacing = true, Upload = null }, "lineage", cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
+        if (account.Stored is { } kept && kept.Cursor.Incarnation == retained.Incarnation && retained.Anchor > kept.Cursor.Position)
+        {
+            var open = account.Lost.FirstOrDefault(hole => hole.Open && hole.Incarnation == retained.Incarnation && hole.From == kept.Cursor.Position);
+            if (open is null)
+            {
+                var hole = new BackupHole(retained.Incarnation, kept.Cursor.Position, retained.Anchor, Millisecond(kept.PlatformAt ?? kept.ShippedAt), retained.AnchorAt, Open: true);
+                await RestartAsync(file, account with { Replacing = true, Upload = null, Holes = account.Holes + 1, Lost = [.. account.Lost.TakeLast(KeptHoles - 1), hole] },
+                    null, cancellationToken).ConfigureAwait(false);
+                _holesRecorded.Add(1);
+                _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} lost its history from position {hole.From:@From} to {hole.To:@To} of incarnation {hole.Incarnation:@Incarnation} before it was stored; hole {account.Holes + 1:@Holes} is recorded and a new generation starts");
+                return false;
+            }
+
+            if (retained.Anchor > open.To)
+            {
+                await SaveAsync(file, account with
+                {
+                    Lost = [.. account.Lost.Select(hole => ReferenceEquals(hole, open) ? hole with { To = retained.Anchor, ToAt = retained.AnchorAt ?? hole.ToAt } : hole)],
+                }, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (account.Replacing)
         {
             file.Rebase = null;
             return false;
         }
 
-        if (retained.Anchor > stored.Cursor.Position)
-        {
-            var hole = new BackupHole(stored.Cursor.Position, retained.Anchor, Millisecond(stored.PlatformAt ?? stored.ShippedAt), retained.AnchorAt, Open: true);
-            await RestartAsync(file, account with { Stored = null, Upload = null, Holes = account.Holes + 1, LastHole = hole }, null, cancellationToken).ConfigureAwait(false);
-            _holesRecorded.Add(1);
-            _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} lost its history from position {hole.From:@From} to {hole.To:@To} before it was stored; hole {account.Holes + 1:@Holes} is recorded and a new generation starts");
-            return false;
-        }
-
+        var stored = account.Stored ?? throw new InvalidDataException("a backup account that is not replacing its generation has no stored position");
         if (file.Rebase is { } reason)
         {
-            await RestartAsync(file, account with { Stored = null, Upload = null }, reason, cancellationToken).ConfigureAwait(false);
+            await RestartAsync(file, account with { Replacing = true, Upload = null }, reason, cancellationToken).ConfigureAwait(false);
             return false;
         }
 
@@ -143,10 +182,11 @@ internal sealed partial class ContinuousBackup
     private static BackupAccount Stored(BackupAccount account, BackupStored stored) => account with
     {
         Stored = stored,
+        Replacing = false,
         Upload = null,
-        LastHole = account.LastHole is { Open: true } hole && account.Stored is null
+        Lost = [.. account.Lost.Select(hole => hole.Open && hole.Incarnation == stored.Cursor.Incarnation
             ? hole with { To = stored.Cursor.Position, ToAt = Millisecond(stored.SnapshotAt), Open = false }
-            : account.LastHole,
+            : hole)],
     };
 
     private static DateTimeOffset Millisecond(DateTimeOffset at) => DateTimeOffset.FromUnixTimeMilliseconds(at.ToUnixTimeMilliseconds());
@@ -213,7 +253,7 @@ internal sealed partial class ContinuousBackup
 
     private void Observe(ShippedFile file, long committed)
     {
-        var stored = file.Account?.Stored?.Cursor.Position ?? 0;
+        var stored = StoredPosition(file.Account);
         file.Backlog = committed <= stored ? null
             : file.Backlog is { } mark && stored < mark.Position ? mark
             : new BacklogMark(committed, _time.GetTimestamp());

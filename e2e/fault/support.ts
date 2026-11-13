@@ -20,11 +20,29 @@ type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
 
-async function nodeStatus(node: Node): Promise<NodeStatus> {
+export type BackupHole = { incarnation: string; from: number; to: number; fromAt: string | null; toAt: string | null; open: boolean };
+export type BackupContinuity = {
+  incarnation: string; historyStart: number | null; oldestRetained: number | null; storedPosition: number | null; storedIncarnation: string | null;
+  replacing: boolean; holes: BackupHole[];
+};
+
+function nodeStatus(node: Node): Promise<NodeStatus> {
+  return internalJson<NodeStatus>(node, '/v1/rollout/status');
+}
+
+export async function continuity(node: Node, id: string): Promise<BackupContinuity> {
+  const status = await internalJson<{ files: { file: string; continuity: BackupContinuity | null }[] }>(node, '/v1/backup');
+  const files = status.files.filter(file => file.file.includes(`/${id}/nodes/`));
+  expect(files, JSON.stringify(status.files.map(file => file.file))).toHaveLength(1);
+  expect(files[0]!.continuity).not.toBeNull();
+  return files[0]!.continuity!;
+}
+
+async function internalJson<T>(node: Node, path: string): Promise<T> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(`http://${node.address}:8081`);
-  const stream = session.request({ ':path': '/v1/rollout/status', 'x-terrabase-peer-credential': credential });
-  stream.setTimeout(15_000, () => stream.destroy(new Error(`status request timed out for ${node.name}`)));
+  const stream = session.request({ ':path': path, 'x-terrabase-peer-credential': credential });
+  stream.setTimeout(15_000, () => stream.destroy(new Error(`${path} timed out for ${node.name}`)));
   session.on('error', error => stream.destroy(error));
   try {
     const response = once(stream, 'response');
@@ -33,7 +51,7 @@ async function nodeStatus(node: Node): Promise<NodeStatus> {
     expect(headers[':status']).toBe(200);
     let body = '';
     for await (const chunk of stream) body += chunk;
-    return JSON.parse(body) as NodeStatus;
+    return JSON.parse(body) as T;
   } finally {
     session.destroy();
   }
@@ -195,24 +213,4 @@ export async function backupStore(state: 'down' | 'up'): Promise<void> {
   const response = await fetch(`${r2StandIn}/fault/backups?state=${state}`, { method: 'POST' });
   expect(response.status).toBe(204);
   console.log(`backup object store ${state}`);
-}
-
-export function logLength(node: Node): number {
-  return readFileSync(join(stateDir, 'logs', `${node.service}.log`)).length;
-}
-
-export type LogEvent = { msg: string; File?: string; From?: number; To?: number; Start?: number; Oldest?: number | null };
-
-export function logEvents(node: Node, from: number, file: string): LogEvent[] {
-  return readFileSync(join(stateDir, 'logs', `${node.service}.log`)).subarray(from).toString().split('\n')
-    .flatMap(line => {
-      const at = line.indexOf('{');
-      if (at < 0) return [];
-      try {
-        return [JSON.parse(line.slice(at)) as LogEvent];
-      } catch {
-        return [];
-      }
-    })
-    .filter(event => event.File?.startsWith(file) === true);
 }

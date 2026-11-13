@@ -241,10 +241,18 @@ file's bucket directory), replaced whole on every write. It holds:
 
 - the lineage: the engine file's incarnation and the destination revision it ships to;
 - the stored generation: its id, data key, snapshot time, byte offset, the time of the newest stored read and the
-  proven restore time, and the **stored cursor**, the capture position up to which history is in the object store.
-  It is empty while a new generation waits for its base snapshot;
+  proven restore time, and the **stored cursor**, the capture position up to which history is in the object store,
+  with the incarnation that position belongs to;
+- whether the generation is being replaced: set when a new generation must start (a hole, a new lineage, `key_lost`,
+  `log_unplaceable`) and cleared only by storing the replacement's base snapshot. While it is set, the stored cursor is
+  kept for comparison but never resumed;
 - the upload intent: the object key and sealed-content hash of an upload that has not been confirmed yet;
-- the hole history: the number of holes and the last hole's range (stored cursor and retained anchor, with their times).
+- the hole history: the number of holes and the last 32 holes, each with its incarnation, its range (from the stored
+  cursor to the history start) with their times, and whether it is still open.
+
+The rule: the last durably stored position is never discarded until a newer durable position replaces it. A generation
+restart keeps it; only a destination change empties it, because the new destination's history starts with its own base
+snapshot.
 
 No path writes an account before it has loaded the existing one, so a file whose recovery has not run is never written
 to, shutdown included. A successful upload is always ordered the same way: the intent is saved, the bucket accepts the
@@ -268,12 +276,17 @@ one. When rows remain, their oldest position must equal the recorded start; a di
 later of the two decides.
 
 That comparison is made in one place: at the start of every shipping pass of a file, before anything is read (the
-recovery after a start runs the same code). When the anchor is beyond the cursor, one account write records the hole
-(the count plus one, the range from the cursor to the anchor) and replaces the stored generation with an empty one; the
-next due pass takes the new generation's base snapshot, and storing it closes the hole's range at the snapshot's
-position and time. Because the write that counts the hole is the same write that removes the cursor it was measured
-from, a crash at any point leaves either the old account (the next pass makes the same decision) or the new one (there
-is no stored cursor left to compare), so a hole is never counted twice and never missed.
+recovery after a start runs the same code), also while a replacement generation waits for its base snapshot. Positions
+are only compared within one incarnation: the stored cursor and every hole carry the incarnation they were measured in,
+and the history start is read with the file's current incarnation. When the anchor is beyond the cursor and no open hole
+starts at that cursor, one account write records the hole (the count plus one, the range from the cursor to the anchor)
+and marks the generation as being replaced, keeping the cursor. A later pass that finds the anchor further on moves the
+open hole's end to it, so the range is what was lost at the time of reading, and counts nothing. Storing the
+replacement's base snapshot closes the hole at the snapshot's position and time. Because the write that counts the hole
+also writes the open hole the next pass looks for, a crash at any point leaves either the old account (the next pass
+makes the same decision) or the new one (the open hole is found and only extended), so a hole is counted once.
+Until this change, a generation restart emptied the stored cursor before its replacement was stored, so history trimmed
+while that replacement could not be stored was lost without a hole.
 
 No event records a hole. Shutdown, a cancelled or failed capture or read, a lease or epoch change, a lost upload
 acknowledgement and buffered log waiting in scratch stop the pass or retry it, nothing more. Whatever they cost shows up
@@ -283,11 +296,17 @@ before the cursor and resumes; a restart after history was trimmed finds the anc
 A destination change, a restore or a fork gives the file a new lineage (another incarnation or destination than the
 account's). It starts a new generation with a base snapshot and is not a hole, because nothing of the file's history
 was lost; `terrabase_backup_generation_restarts_total{reason="lineage"}` counts it, beside `key_lost` (the
-generation's data key is gone) and `log_unplaceable` (step 3 above). The hole history is kept across lineages.
+generation's data key is gone) and `log_unplaceable` (step 3 above). The hole history is kept across lineages. When the
+incarnation changes, a hole still open in the old incarnation is closed with its own bounds before anything is recorded
+for the new one: what was lost stays reported as lost (from, to, incarnation), and positions of the new incarnation are
+never compared with or written into it. A restore asks by time, so a time inside that hole is refused with its times
+after the change exactly as before it.
 
 The hole total of each file is published from its account: `terrabase_backup_holes` is the sum over the files this node
-has loaded, so after a restart it equals the durable total again, and `GET /v1/backup` shows each file's `holes` and
-`lastHole`. `terrabase_backup_holes_recorded_total` counts the account writes that recorded a hole on this process, and
+has loaded, so after a restart it equals the durable total again, and `GET /v1/backup` (internal listener, peer
+credential) shows each file's `holes` total and its `continuity`: the incarnation, the history start and oldest retained
+change, the stored cursor and its incarnation, whether the generation is being replaced, and the open and closed holes
+with their bounds. `terrabase_backup_holes_recorded_total` counts the account writes that recorded a hole on this process, and
 each one logs a warning with the range.
 
 ### The cap
@@ -300,8 +319,8 @@ trims older rows as far as its other readers allow (a replica region that has no
 them). The trim records where the history now starts, and the discard logs that start beside the oldest change still
 retained. While those readers hold the rows, the next pass is still over the cap and discards again, so the trim
 continues batch by batch. Once the trim passes the stored cursor, the next pass finds the anchor beyond it and records
-the hole, whose range ends at the recorded start. A later discard during the same outage finds no stored cursor (the
-generation waits for its base snapshot) and adds no hole, so an outage of any length is exactly one hole.
+the hole, whose range ends at the recorded start. A later discard during the same outage finds the open hole and moves
+its end to the new start without counting, so an outage of any length is exactly one hole.
 
 ### Lag and health
 
@@ -530,8 +549,9 @@ time by itself.
 - Nothing after the replayed log proves T: an unshipped or missing final segment, a generation that ended (a hole or a
   new generation; the next generation's snapshot time restores), or a quiet period not yet closed by a later write or
   snapshot.
-- T inside the last recorded hole of the file: after its last proven time and before the snapshot that followed the
-  hole. The 409 `backup_history_incomplete` names that interval in its message and in `unavailableFrom` and
+- T inside a recorded hole of the file (any of the last 32): after its last proven time and before the snapshot that
+  followed the hole, or, while the hole is still open, any time after its last proven time (the range then ends at the
+  current history start, and the message says no recovery point after it is stored yet). The 409 `backup_history_incomplete` names that interval in its message and in `unavailableFrom` and
   `unavailableTo`; it is not retryable. A restore request is refused at admission, before any work starts.
 - A snapshot or segment that disappears between listing and download (retention racing the restore). Admitting a
   point-in-time restore writes a generation lease (source database + the plan's generation, renewed every 5 minutes

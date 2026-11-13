@@ -14,13 +14,13 @@ namespace TerraBase.Features.Backup;
 
 public sealed record BackupFileStatus(
     string File, string? Generation, long LogBytes, DateTimeOffset? LastShippedAt, double LagSeconds, long PendingBytes, string? LastError, bool Shipping,
-    long? SizeBytes, BackupDrill? LastDrill, DateTimeOffset? BacklogCommittedAt, long Holes, BackupHole? LastHole);
+    long? SizeBytes, BackupDrill? LastDrill, DateTimeOffset? BacklogCommittedAt, long Holes, BackupContinuity? Continuity);
 public sealed record BackupStatus(bool Shipping, IReadOnlyList<BackupFileStatus> Files);
 public interface IContinuousBackup
 {
     BackupStatus Status { get; }
     bool Healthy { get; }
-    Task<BackupHole?> HoleAsync(TenantContext database, CancellationToken cancellationToken);
+    Task<IReadOnlyList<BackupHole>> HolesAsync(TenantContext database, CancellationToken cancellationToken);
     DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null);
     Task RunOnceAsync(CancellationToken cancellationToken);
 }
@@ -125,7 +125,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             return new(true, [.. _files.Values.OrderBy(file => file.Prefix, StringComparer.Ordinal).Select(file => new BackupFileStatus(
                 file.Prefix, file.Generation?.ToString(), file.Position, file.LastShipped, Lag(file), file.PendingBytes, file.LastError, file.Shipping,
-                file.SizeBytes, file.LastDrill, file.Backlog is null ? null : file.BacklogCommittedAt, file.Account?.Holes ?? 0, file.Account?.LastHole))]);
+                file.SizeBytes, file.LastDrill, file.Backlog is null ? null : file.BacklogCommittedAt, file.Account?.Holes ?? 0, Continuity(file)))]);
         }
     }
 
@@ -705,6 +705,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public BackupScratchStream Pending { get; } = pending;
         public CdcCursor? PendingCursor { get; set; }
         public BackupAccount? Account { get; set; }
+        public CdcRetained? History { get; set; }
         public bool Loaded { get; set; }
         public bool Recovered { get; set; }
         public bool Resumed { get; set; }

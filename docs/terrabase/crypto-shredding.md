@@ -60,7 +60,8 @@ deleted database and back it up under a new key.
    generation (`terrabase.backup.generation_restarts` with reason `key_lost`). After marker removal, the next
    eligible pass selects fresh keys and writes a new base snapshot and generation proof. No restart or daily snapshot
    is needed. Check `GET /v1/backup` for a new generation and `"lastError":null`, and verify a new wrapped key appears
-   under the custody prefix. A process restart also begins a fresh generation.
+   under the custody prefix. A process restart resumes the stored generation from its durable backup account; it starts
+   a fresh generation only when that account is being replaced or history was lost.
 4. If the marker was removed before the writer encountered it, sealing first resolves the active generation's base key
    through the existing key cache. Healthy cache hits add no custody requests or key-read-slot usage. If custody reports
    that the key is missing, the writer invalidates its selection and, counted with reason `key_lost`,

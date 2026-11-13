@@ -389,10 +389,12 @@ internal sealed class PointInTimeRestore(
         new("continuous backup cannot prove this database's history complete up to pointInTime", "backup_history_incomplete");
 
     private async Task<Conflict?> LostAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken) =>
-        await shipper.HoleAsync(database, cancellationToken).ConfigureAwait(false) is { FromAt: { } from, ToAt: { } to } && at > from && at < to
+        (await shipper.HolesAsync(database, cancellationToken).ConfigureAwait(false))
+            .LastOrDefault(hole => hole is { FromAt: { } from, ToAt: { } to } && at > from && (hole.Open || at < to)) is { FromAt: { } lostFrom, ToAt: { } lostTo } lost
             ? new(string.Create(CultureInfo.InvariantCulture,
-                $"continuous backup cannot prove this database's history complete up to pointInTime: its history from {from:O} to {to:O} was lost before it was stored"),
-                "backup_history_incomplete", new HistoryGap(from, to))
+                    $"continuous backup cannot prove this database's history complete up to pointInTime: its history from {lostFrom:O} to {lostTo:O} was lost before it was stored")
+                + (lost.Open ? ", and no recovery point after it is stored yet" : ""),
+                "backup_history_incomplete", new HistoryGap(lostFrom, lostTo))
             : null;
 
     internal static bool Covers(DateTimeOffset readAt, DateTimeOffset at) => at.ToUnixTimeMilliseconds() <= readAt.ToUnixTimeMilliseconds();
