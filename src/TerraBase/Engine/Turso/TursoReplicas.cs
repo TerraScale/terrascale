@@ -277,13 +277,13 @@ internal sealed partial class TursoReplicas(
                         EncryptionCipher = "aegis256",
                         EncryptionKey = hexKey,
                     }.ToString());
-                    TursoSession.OpenExisting(connection, path);
+                    connection.Open();
                     return StorageMigrations.FileFormat(connection);
                 }).ConfigureAwait(false);
             }
             catch (SqliteException error)
             {
-                logger.ZLogWarning($"A replica could not be read and is started again: {error.GetType().Name:@Error}");
+                logger.ZLogWarning($"A replica format could not be probed; its replication driver will reopen it: {error.GetType().Name:@Error}");
             }
 
             if (format is { } held && !StorageFormat.IsSupported(held))
@@ -291,16 +291,13 @@ internal sealed partial class TursoReplicas(
                 throw new InvalidOperationException(StorageFormat.Refusal("the replica cache", held));
             }
 
-            if (format is not null)
+            try
             {
-                try
-                {
-                    return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: true);
-                }
-                catch (TursoException error)
-                {
-                    logger.ZLogWarning($"A replica could not be reopened and is started again: {error.GetType().Name:@Error}");
-                }
+                return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: true);
+            }
+            catch (TursoException error)
+            {
+                logger.ZLogWarning($"A replica could not be reopened and is started again: {error.GetType().Name:@Error}");
             }
         }
 
@@ -320,9 +317,24 @@ internal sealed partial class TursoReplicas(
         }
     }
 
-    private static bool Readable(HttpResponseMessage response) =>
-        StorageFormat.FromMarker(response.Headers.TryGetValues(StorageFormat.Header, out var formats) ? formats.SingleOrDefault() ?? string.Empty : null) is { } format
-        && StorageFormat.IsSupported(format);
+    private static bool Readable(HttpResponseMessage response)
+    {
+        string? marker = null;
+        if (response.Headers.TryGetValues(StorageFormat.Header, out var formats))
+        {
+            using var values = formats.GetEnumerator();
+            if (!values.MoveNext())
+            {
+                return false;
+            }
+            marker = values.Current;
+            if (values.MoveNext())
+            {
+                return false;
+            }
+        }
+        return StorageFormat.FromMarker(marker) is { } format && StorageFormat.IsSupported(format);
+    }
 
     private static TursoSyncDatabaseOptions Options(string path, string hexKey, Uri source, HttpClient http) => new(path, source)
     {

@@ -20,6 +20,7 @@ check: it fails when any job it needs failed or was cancelled, and a skipped job
 - The storage gate (`scripts/check-storage-format.sh`) checks the Supported and Target rules of
   [Storage migrations](storage-migrations.md) against the base branch. A change to an on-disk format file needs a new
   format step or the `storage-format-unchanged` label after review; raising Target needs the `storage-format` label.
+  Changing a label starts no run: re-run the `checks` job by hand after changing it.
 - `libs`, `auth` and `terrabase` restore their own solution filter locked and check whitespace format; `terrabase`,
   the only leg that builds the native-library driver, also verifies the pinned native libraries. `libs` and `auth`
   build their solution filter in Release with analyzers and warnings as errors; `libs` also checks code style, `auth`

@@ -20,7 +20,8 @@ Today Supported is 23 to 24 and Target is 23, so this build rewrites nothing tha
 | 24 | `24` | 24 | `TerraBase-Storage-Format: 24`, 6th subject token `24` |
 
 Format 23 keeps the exact identity earlier builds wrote, so a build that targets 23 is byte-compatible on the wire
-and on disk with them. Format 24 has the same layout as 23; only the stamp differs.
+and on disk with them. Format 24 has the same layout as 23; only the stamp differs. Format 24 is frozen as this
+no-op step, including its lock entry and migration step; the first real layout change will be format 25.
 
 The directory record names the highest format written into the directory. While a migration runs, it reads
 `migrating:<from>-><to>`; that record is the migration journal.
@@ -29,7 +30,12 @@ The directory record names the highest format written into the directory. While 
 
 1. Ship a build that adds the new format to Supported, with its migration step and lock entry, and keeps Target.
    It opens data in either format and writes the old one.
-2. Later, ship the one-line change that raises Target. After a rehearsal, label that pull request `storage-format`.
+2. Before raising Target, every node in every region and the image the release system would reinstall must
+   already support the new format. Otherwise previous-build followers refuse the new format and drop its notices.
+   Then ship the one-line change that raises Target. After a rehearsal, label that pull request `storage-format`.
+
+Before ever raising the lowest supported format (`SupportedFrom`), `terrabase.storage.old_format_files` must be 0
+on every node.
 
 If step 2 does not become ready, the automatic reinstall of the previous image lands on the step 1 build, which
 supports the migrated directory and simply runs. No undo is needed for an ordinary rollback. The undo below is for
@@ -124,7 +130,10 @@ backups predate the current layout and must not be restored by this build.
 ## Proof
 
 `e2e/storage/format-upgrade.py <previous build> <candidate build> <work directory>` runs two built TerraBase
-directories in Development on loopback ports 18580 to 18583 and checks: an upgrade rewrites nothing, going back
+directories in Development on loopback ports 18580 to 18587 and checks: an upgrade rewrites nothing, going back
 needs no undo, a directory stamped 24 by a scratch build whose Target is 24 (made from the same source with that one
-constant changed) works on the candidate, kills during the migration resume, readiness recovers by itself after a
-failed recovery attempt, and the undo with one unstampable file.
+constant changed) works on the candidate, kills during the migration resume, a previous-build replica cache is
+kept on a candidate restart and applies new pages without a rebootstrap, and the undo with one unstampable file.
+
+A node with a failed recovery attempt stays unready; the release system reinstalls the previous image, which
+runs on the directory. This release-system recovery is not covered by the script.

@@ -284,6 +284,122 @@ def build_target(target):
     return output
 
 
+def build_follower(name, revision=None):
+    source = work / ("source-follower-" + name)
+    output = work / ("build-follower-" + name)
+    shutil.rmtree(source, ignore_errors=True)
+    source.mkdir()
+    if revision:
+        with subprocess.Popen(["git", "archive", revision], cwd=repo, stdout=subprocess.PIPE) as archive:
+            subprocess.run(["tar", "-x", "-C", str(source)], stdin=archive.stdout, check=True)
+            assert archive.wait() == 0
+    else:
+        subprocess.run(
+            ["rsync", "-a", "--exclude", ".git", "--exclude", "node_modules", "--exclude", "bin", "--exclude", "obj",
+             str(repo) + "/", str(source) + "/"], check=True
+        )
+    native = next(repo.glob("src/vendor/*.Data.Sqlite/native/runtimes"))
+    shutil.copytree(native, source / native.relative_to(repo), dirs_exist_ok=True)
+    program = source / "src/TerraBase/Program.cs"
+    original = program.read_text()
+    call = "await ApplicationRunCompletion.RunAsync(app);"
+    assert original.count(call) == 1
+    replacement = (
+        "await app.StartAsync(); "
+        "await ReplicaCacheProof.RunAsync(app.Services, app.Lifetime.ApplicationStopping); "
+        "await app.StopAsync();"
+    )
+    program.write_text(original.replace(call, replacement))
+    shutil.copyfile(repo / "e2e/storage/ReplicaCacheProof.cs", source / "src/TerraBase/ReplicaCacheProof.cs")
+    with (work / ("build-follower-" + name + ".log")).open("w") as output_log:
+        subprocess.run(
+            ["nice", "-n", "19", dotnet, "build", str(source / "src/TerraBase/TerraBase.csproj"),
+             "-c", "Release", "-o", str(output)], stdout=output_log, stderr=output_log, check=True
+        )
+    return output
+
+
+def follower(build, directory, tenant, name, command="open"):
+    log = work / (name + ".log")
+    source = (
+        f"http://127.0.0.1:{port + 1}/v1/sync/organizations/{tenant.parts[-3]}"
+        f"/projects/{tenant.parts[-2]}/databases/{tenant.stem}"
+    )
+    identity = "/".join((tenant.parts[-3], tenant.parts[-2], tenant.stem))
+    follower_env = env | {"TERRABASE_DATA_DIRECTORY": str(directory)} | {
+        key: str(port + 4 + index)
+        for index, key in enumerate(
+            ("TERRABASE_PORT", "TERRABASE_INTERNAL_PORT", "TERRABASE_POSTGRES_PORT", "TERRABASE_METRICS_PORT")
+        )
+    }
+    with log.open("w") as output:
+        process = subprocess.Popen(
+            ["nice", "-n", "19", dotnet, str(build / "terrabase.dll")], env=follower_env,
+            stdin=subprocess.PIPE, stdout=output, stderr=output, text=True
+        )
+        try:
+            process.communicate(source + "\n" + identity + "\n" + command + "\n", timeout=180)
+            assert process.returncode == 0, name_tail(log)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=60)
+    lines = log.read_text().splitlines()
+    if command == "write":
+        assert "CACHE_WRITE committed" in lines, name_tail(log)
+        return None
+    opened = next(line for line in lines if line.startswith("CACHE_OPEN ")).split()
+    done = next(line for line in lines if line.startswith("CACHE_DONE ")).split()
+    return int(opened[1]), opened[2], dict(field.split("=") for field in done[1:])
+
+
+def cache_bytes(directory):
+    return {
+        str(path.relative_to(directory)): path.read_bytes()
+        for path in (directory / ".replicas").rglob("*") if path.is_file()
+    }
+
+
+def follower_cache(seed):
+    main_follower = build_follower("previous", "origin/main")
+    candidate_follower = build_follower("candidate")
+    home = copy(seed, "follower-home")
+    tenant = tenants(home)[0]
+    populated = work / "follower-populated"
+    shutil.rmtree(populated, ignore_errors=True)
+    with node(previous, home, "follower-home-seed") as (child, log):
+        wait_ready(child, log)
+        size, _, bootstrap = follower(main_follower, populated, tenant, "follower-previous-populate")
+    assert int(bootstrap["pages"]) > 0
+    original = cache_bytes(populated)
+    control = copy(populated, "follower-control")
+    upgraded = copy(populated, "follower-upgrade")
+    with node(previous, home, "follower-home-reopen") as (child, log):
+        wait_ready(child, log)
+        follower(main_follower, control, tenant, "follower-main-reopen")
+        _, _, reopened = follower(candidate_follower, upgraded, tenant, "follower-candidate-reopen")
+    after_main, after_candidate = cache_bytes(control), cache_bytes(upgraded)
+    assert original.keys() == after_main.keys() == after_candidate.keys()
+    main_changes, candidate_changes = 0, 0
+    for name, before in original.items():
+        main_bytes, candidate_bytes = after_main[name], after_candidate[name]
+        assert len(before) == len(main_bytes) == len(candidate_bytes), name
+        normal = {index for index, (a, b) in enumerate(zip(before, main_bytes, strict=True)) if a != b}
+        changed = {index for index, (a, b) in enumerate(zip(before, candidate_bytes, strict=True)) if a != b}
+        assert changed <= normal, (name, len(normal), len(changed))
+        main_changes += len(normal)
+        candidate_changes += len(changed)
+    follower(main_follower, home, tenant, "follower-home-write", command="write")
+    with node(previous, home, "follower-home-new-pages") as (child, log):
+        wait_ready(child, log)
+        _, _, applied = follower(candidate_follower, upgraded, tenant, "follower-candidate-new-pages", command="pull")
+    assert reopened["rebootstraps"] == applied["rebootstraps"] == "0"
+    result(
+        f"1 follower cache: {size} bytes, candidate changed {candidate_changes} bytes (main normal open {main_changes}), "
+        f"terrabase.replica.rebootstraps=0, {applied['pages']} new pages applied, new row read"
+    )
+
+
 GDB = """set pagination off
 set confirm off
 set print thread-events off
@@ -369,6 +485,8 @@ result(
 start(previous, upgrade, "back-to-previous")
 assert all(sql(path, "SELECT value FROM format_proof;") == [["written-by-previous"]] for path in databases(upgrade))
 result("2 rollback: previous build ready on the candidate's directory with no undo; every proof row read")
+
+follower_cache(seed)
 
 target24 = build_target(24)
 stamped = copy(seed, "stamped-24")

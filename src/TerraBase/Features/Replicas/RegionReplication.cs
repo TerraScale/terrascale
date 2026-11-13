@@ -337,7 +337,6 @@ internal sealed partial class RegionReplication(
         var format = StorageFormat.FromMarker(parts.Length == 6 ? parts[5] : null);
         var readable = format is { } noticed && StorageFormat.IsSupported(noticed);
         if (replica != options.Region || (home == options.Region && owners.Writer)
-            || (home != options.Region && !_peers.Any(peer => peer.Region == home))
             || !RevisionPush.TryRead(data, out var notice, out var answer) || notice is null)
         {
             return;
@@ -348,7 +347,7 @@ internal sealed partial class RegionReplication(
             follower.ObserveNotice(notice.CommittedAt, !readable);
             if (!readable)
             {
-                _formatRefused?.Add(1, new KeyValuePair<string, object?>("peer_region", home));
+                _formatRefused?.Add(1, new KeyValuePair<string, object?>("peer_region", home == options.Region || _peers.Any(peer => peer.Region == home) ? home : "other"));
                 return;
             }
 

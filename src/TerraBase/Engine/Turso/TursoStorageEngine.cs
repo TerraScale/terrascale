@@ -597,7 +597,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     ThrowIfIntentPending(key);
                 }
 
-                if (!_initializing.TryGetValue(key, out var pending))
+                var pending = (Task?)_initializing.GetValueOrDefault(key) ?? _migrating.GetValueOrDefault(key);
+                if (pending is null)
                 {
                     var existed = File.Exists(path);
                     await Io.RunAsync(() =>
@@ -664,7 +665,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
             try
             {
-                await initialization.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await initialization.WaitAsync(QueryBudget, Time, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception) when (initialization.IsCompleted && !cancellationToken.IsCancellationRequested)
             {
@@ -1451,8 +1452,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             async () =>
             {
                 await release.Task.ConfigureAwait(false);
-                await migration.ConfigureAwait(false);
-                return await Io.WithAdmissionAsync(() => InitializeStoreAsync(key, path, cancellationToken)).ConfigureAwait(false);
+                return await Io.WithAdmissionAsync(() => InitializeStoreAsync(key, path, migration, cancellationToken)).ConfigureAwait(false);
             },
             CancellationToken.None);
         _initializing.Add(key, initialization);
@@ -1491,7 +1491,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         };
 
     private async ValueTask<TursoDatabaseStore> InitializeStoreAsync(
-        (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
+        (string Organization, string Project, string Database) key, string path, Task migration, CancellationToken cancellationToken)
     {
         var store = CreateTenantStore(key, path);
         var published = false;
@@ -1502,6 +1502,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             Io.Admit();
             admitted = true;
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
+            await migration.WaitAsync(QueryBudget, Time, lifetime.Token).ConfigureAwait(false);
             RejectDatabaseLinks(path);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
             _ = _oldFormatPaths.TryRemove(path, out _);
