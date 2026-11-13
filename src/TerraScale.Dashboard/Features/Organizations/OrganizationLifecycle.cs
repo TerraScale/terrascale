@@ -1,12 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
-    public sealed class OrganizationLifecycleService(OrganizationStore organizations, AccountService accounts, ITsAuthPlatform platform, IAuthStepUpGateway stepUp, StripeBilling billing, TimeProvider time)
+    public sealed class OrganizationLifecycleService(OrganizationStore organizations, AccountService accounts, ITsAuthPlatform platform, IAuthStepUpGateway stepUp, TimeProvider time)
     {
         public async Task LeaveAsync(AccountContext context, CancellationToken cancellationToken)
         {
@@ -72,7 +71,6 @@ namespace TerraScale.Dashboard.Features.Organizations
                 current.DeletionRequested = true;
                 current.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "organization.deletion_requested", current.Name, "organization", time.GetUtcNow()));
             }, cancellationToken);
-            await billing.EndSubscriptionAsync(org.Id, cancellationToken, authorizedDeletionPreflight: true);
             // ts-auth refuses an organization that still has projects; a 404 is a delete an interrupted request already made.
             foreach (var projectId in org.Projects.Keys)
             {

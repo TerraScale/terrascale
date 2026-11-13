@@ -76,6 +76,27 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
   await shell(page, identity);
   await audit.check('paid owner billing on Pro');
 
+  const stripeKey = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n').find((line) => line.startsWith('sk_test_'));
+  if (!stripeKey) throw new Error('The local stack has no Stripe credential');
+  const stripeHeaders = { authorization: 'Bearer ' + stripeKey, 'stripe-version': '2026-09-30.endive' };
+  const checkoutResponse = await page.request.get('https://api.stripe.com/v1/checkout/sessions/' + session, { headers: stripeHeaders });
+  expect(checkoutResponse.status()).toBe(200);
+  const checkoutSession = await checkoutResponse.json();
+  expect(checkoutSession.automatic_tax.enabled, 'Checkout collects automatic tax').toBe(true);
+  const subscriptionTax = async () => {
+    const response = await page.request.get('https://api.stripe.com/v1/subscriptions/' + checkoutSession.subscription, { headers: stripeHeaders });
+    expect(response.status()).toBe(200);
+    return (await response.json()).automatic_tax.enabled;
+  };
+  expect(await subscriptionTax(), 'Checkout subscriptions retain automatic tax').toBe(true);
+  const taxDisabled = await fetch(stripeStandIn + '/subscription-tax', {
+    method: 'POST', body: JSON.stringify({ subscription: checkoutSession.subscription }),
+  });
+  expect(taxDisabled.status).toBe(200);
+  expect(await subscriptionTax(), 'canonical subscription refresh restores automatic tax').toBe(true);
+  expect((await stripeLog()).events.filter((event) => event.object === checkoutSession.subscription).map((event) => [event.type, event.status]))
+    .toEqual([['customer.subscription.updated', 200]]);
+
   const delivered = (await stripeLog()).events.filter((event) => event.object === session);
   expect(delivered.map((event) => [event.type, event.status]), 'signed events the Stripe stand-in delivered for the checkout').toEqual([['checkout.session.completed', 200]]);
   const created = Math.floor(Date.now() / 1000);

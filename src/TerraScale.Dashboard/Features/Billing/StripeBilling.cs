@@ -293,9 +293,7 @@ namespace TerraScale.Dashboard.Features.Billing
             logger.StripeEventAppliedForOrganization(@event.Id, @event.Type, orgId);
         }
 
-        // Organization deletion ends the organization's Stripe subscription now, without proration.
-        // A live owner preflight or a completed auth deletion proof authorizes the scope.
-        internal async Task<BillingBinding?> EndSubscriptionAsync(string orgId, CancellationToken cancellationToken, bool completedDeletion = false, bool authorizedDeletionPreflight = false)
+        internal async Task<BillingBinding?> EndSubscriptionAsync(string orgId, CancellationToken cancellationToken, bool completedDeletion = false)
         {
             var row = await storage.BindingRowAsync(orgId, cancellationToken);
             if (row is null || row.ErasureId is not null)
@@ -309,7 +307,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return binding;
             }
 
-            var terminalDeletion = completedDeletion || authorizedDeletionPreflight;
+            var terminalDeletion = completedDeletion;
             if (terminalDeletion)
             {
                 binding = await UpdateAsync(orgId, current => current.State = "deleting", cancellationToken, allowDeletion: true);
@@ -453,6 +451,12 @@ namespace TerraScale.Dashboard.Features.Billing
                     if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
                     {
                         throw new IOException("Subscription ownership does not match.");
+                    }
+
+                    if (subscription.AutomaticTax?.Enabled != true && subscription.Status is not ("canceled" or "incomplete_expired"))
+                    {
+                        await client.V1.Subscriptions.UpdateAsync(subscription.Id, new()
+                        { AutomaticTax = new() { Enabled = true } }, cancellationToken: cancellationToken);
                     }
 
                     var item = subscription.Items.Data.Count == 1 ? subscription.Items.Data[0] : null;
@@ -756,6 +760,7 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 options.AllowedPaymentMethodTypes = ["card", "link"];
                 options.PaymentMethodCollection = "always";
+                options.AutomaticTax = new() { Enabled = true };
                 options.TaxIdCollection = new() { Enabled = true };
                 options.CustomerUpdate = new() { Address = "auto", Name = "auto" };
             }

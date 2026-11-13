@@ -66,17 +66,18 @@ const api = [
     if (form.get('mode') !== 'subscription' || !price || form.get('line_items[0][quantity]') !== '1' || !find('cus', form.get('customer'))) return undefined;
     const session = store({
       object: 'checkout.session', id: id('cs_test'), client_reference_id: form.get('client_reference_id'), customer: form.get('customer'),
-      metadata: fields(form, 'metadata'), mode: 'subscription', status: 'open', url: null,
+      metadata: fields(form, 'metadata'), mode: 'subscription', status: 'open', url: null, automatic_tax: { enabled: form.get('automatic_tax[enabled]') === 'true' },
     });
     session.url = `https://checkout.stripe.com/c/pay/${session.id}`;
     checkouts.set(session.id, { price, metadata: fields(form, 'subscription_data[metadata]'), success: form.get('success_url'), cancel: form.get('cancel_url') });
     return session;
   }, {}, {
     expires_at: within(hour / 2, 24 * hour),
+    'automatic_tax[enabled]': (value) => value === 'true',
     'allowed_payment_method_types[0]': (value) => value === 'card',
     'allowed_payment_method_types[1]': (value) => value === 'link',
     'allowed_payment_method_types[2]': (value) => value === null,
-  }, ['mode', 'customer', 'client_reference_id', 'success_url', 'cancel_url', 'expires_at', 'billing_address_collection', 'payment_method_collection', 'allowed_payment_method_types', 'line_items', 'metadata', 'tax_id_collection', 'customer_update', 'subscription_data']],
+  }, ['mode', 'customer', 'client_reference_id', 'success_url', 'cancel_url', 'expires_at', 'billing_address_collection', 'payment_method_collection', 'allowed_payment_method_types', 'line_items', 'metadata', 'tax_id_collection', 'customer_update', 'subscription_data', 'automatic_tax']],
   ['GET', /^\/v1\/checkout\/sessions$/, (query) => list(owned('cs', query.get('customer'))), { customer: customerId }, {}, ['customer', 'limit', 'starting_after']],
   ['GET', /^\/v1\/checkout\/sessions\/(cs_test_\w+)$/, (query, [session]) => find('cs', session), {}, {}, ['expand']],
   ['POST', /^\/v1\/checkout\/sessions\/(cs_test_\w+)\/expire$/, (form, [session]) => {
@@ -87,8 +88,9 @@ const api = [
   ['GET', /^\/v1\/subscriptions\/(sub_\w+)$/, (query, [subscription]) => find('sub', subscription), {}, {}, ['expand']],
   ['POST', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [subscription]) => {
     const found = find('sub', subscription);
+    if (found && form.has('automatic_tax[enabled]')) found.automatic_tax = { enabled: true };
     return found && Object.assign(found, { metadata: { ...found.metadata, ...fields(form, 'metadata') } });
-  }, {}, {}, ['metadata']],
+  }, {}, { 'automatic_tax[enabled]': (value) => value === null || value === 'true' }, ['metadata', 'automatic_tax']],
   ['DELETE', /^\/v1\/subscriptions\/(sub_\w+)$/, (form, [key]) => {
     const subscription = find('sub', key);
     if (subscription?.status === 'canceled') return { refused: 'A canceled subscription can only update its metadata and cancellation_details.' };
@@ -126,7 +128,7 @@ function complete(session) {
     lines: list([{ period: { end, start } }]), number: `${randomBytes(4).toString('hex').toUpperCase()}-0001`, period_end: start, period_start: start, status: 'paid',
   });
   const subscription = store({
-    id: subscriptionId, customer: session.customer, default_payment_method: method.id, metadata, status: 'active',
+    id: subscriptionId, customer: session.customer, default_payment_method: method.id, metadata, status: 'active', automatic_tax: structuredClone(session.automatic_tax),
     items: list([{ current_period_end: end, current_period_start: start, price: structuredClone(price), quantity: 1 }]),
   });
   objects.get(session.customer).address = { city: 'Sao Paulo', country: 'BR', line1: 'Avenida Paulista 1000', line2: null, postal_code: '01310-100', state: 'SP' };
@@ -175,6 +177,13 @@ async function handle(request, response, body) {
   }
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/auth-failure') {
     authFailures.add(JSON.parse(body).checkout);
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/subscription-tax') {
+    const subscription = find('sub', JSON.parse(body).subscription);
+    if (!subscription) return reply(response, 404, {});
+    subscription.automatic_tax = { enabled: false };
+    await deliver('customer.subscription.updated', structuredClone(subscription));
     return reply(response, 200, {});
   }
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/log') return reply(response, 200, log);
