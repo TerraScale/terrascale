@@ -92,8 +92,9 @@ internal sealed class SqlSocket(
             ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time)
             : new CancellationTokenSource();
         await using var expired = expiry.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the token expired")).ConfigureAwait(false);
-        using var moved = context.RequestServices.GetRequiredService<DatabaseFences>()
-            .WatchMoved(Database.DatabaseId!, () => _ = CloseAfterFrameAsync());
+        var fences = context.RequestServices.GetRequiredService<DatabaseFences>();
+        var previousHome = fences.MovedTo(Database.DatabaseId!);
+        using var moved = fences.WatchMoved(Database.DatabaseId!, previousHome, () => _ = CloseAfterFrameAsync());
         _session = sql.Open(Database, _canWrite);
         _session.Prefer(WritePreference.Parse(context.Request.Headers[WritePreference.Header]) ?? WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))

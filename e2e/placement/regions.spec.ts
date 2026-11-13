@@ -107,6 +107,21 @@ test('R2 add a region and read a row committed before the addition', async ({ ce
   }
 });
 
+async function headerRows(page: Page, url: string): Promise<number[][]> {
+  return page.evaluate(url => new Promise<number[][]>((resolve, reject) => {
+    const socket = new WebSocket(url, 'terrascale.sql.v1');
+    socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] }));
+    socket.onerror = () => reject(new Error('header-authenticated session failed'));
+    socket.onmessage = message => {
+      const answer = JSON.parse(String(message.data));
+      socket.close();
+      if (answer.type === 'error') reject(new Error(JSON.stringify(answer.error)));
+      else resolve(answer.results[0].rows);
+    };
+    socket.onclose = () => reject(new Error('header-authenticated session closed before answering'));
+  }), url);
+}
+
 test('R3 replace the writer and proxy REST and WebSocket through a removed region', async ({ cells, request, page }) => {
   const created = await create(cells, ['gru', 'fra']);
   let pg: ReturnType<typeof spawn> | undefined;
@@ -179,18 +194,7 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
       return { region: response.headers()['x-terrabase-region'], rows: (await response.json()).results[0].rows };
     }, { message: 'the non-member listener proxies to fra', timeout: 45_000, intervals: [250, 500, 1000] })
       .toEqual({ region: 'fra', rows: [[1], [2], [3], [4]] });
-    const headerResult = await page.evaluate(url => new Promise<number[][]>((resolve, reject) => {
-      const socket = new WebSocket(url, 'terrascale.sql.v1');
-      socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] }));
-      socket.onerror = () => reject(new Error('header-authenticated proxy failed'));
-      socket.onmessage = message => {
-        const answer = JSON.parse(String(message.data));
-        socket.close();
-        if (answer.type === 'error') reject(new Error(JSON.stringify(answer.error)));
-        else resolve(answer.results[0].rows);
-      };
-      socket.onclose = () => reject(new Error('header-authenticated proxy closed before answering'));
-    }), `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`);
+    const headerResult = await headerRows(page, `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`);
     expect(headerResult).toEqual([[1], [2], [3], [4]]);
     await page.setExtraHTTPHeaders({});
     const result = await page.evaluate(({ url, token }) => new Promise<{ rows: number[][] }>((resolve, reject) => {
@@ -267,11 +271,11 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     } finally {
       writeFileSync(peers, original);
     }
-    const rule = ['OUTPUT', '-p', 'tcp', '-d', '127.0.0.4', '--dport', '8081', '-j', 'DROP'];
+    const rule = ['OUTPUT', '-p', 'tcp', '-d', '127.0.0.9', '--dport', '8081', '-j', 'DROP'];
     const firewall = { env: { ...process.env, XTABLES_LOCKFILE: join(stateDir, 'iptables.lock') } };
     execFileSync('iptables', ['-A', ...rule], firewall);
     try {
-      writeFileSync(peers, original.replace('journey-2 fra 127.0.0.2', 'journey-2 fra 127.0.0.4'));
+      writeFileSync(peers, original.replace(/^(journey-\d+ fra) \S+$/gm, '$1 127.0.0.9'));
       const started = performance.now();
       const response = await cells.post(`${home}${database(created.id)}/sql/execute`, {
         data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
@@ -279,7 +283,7 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
       const elapsed = performance.now() - started;
       await answer(response, 503, 'unavailable');
       expect(response.headers()['retry-after']).toBe('1');
-      expect(await response.text()).not.toContain('127.0.0.4');
+      expect(await response.text()).not.toContain('127.0.0.9');
       expect(elapsed).toBeGreaterThan(4000);
       expect(elapsed).toBeLessThan(10_000);
       console.log(`R3 unreachable REST: 503 unavailable, Retry-After 1, ${Math.round(elapsed)} ms, no internal host`);
@@ -287,6 +291,21 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
       writeFileSync(peers, original);
       execFileSync('iptables', ['-D', ...rule], firewall);
     }
+    await answer(await cells.patch(`${replica}${database(created.id)}`, { data: { regions: ['fra', 'gru'] } }), 200, '200 copy rejoined');
+    await replicated(cells, home, created.id, 4);
+    const rejoinedGrant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
+      form: {
+        grant_type: 'client_credentials',
+        client_id: current.apiKey.slice(0, 26),
+        client_secret: current.apiKey,
+        project: current.projectId,
+        scope: 'sql:read sql:write databases:read',
+      },
+    }));
+    saveSecret('placement-rejoined-socket-token', rejoinedGrant.access_token);
+    await page.setExtraHTTPHeaders({ Authorization: `Bearer ${rejoinedGrant.access_token}`, 'X-TerraScale-Region-Pin': 'gru' });
+    expect(await headerRows(page, `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`)).toEqual([[1], [2], [3], [4]]);
+    console.log('R3 rejoined copy: a new header-authenticated session reads current rows despite its historical writer fence');
   } finally {
     if (pg && pg.exitCode === null) {
       pg.kill('SIGTERM');

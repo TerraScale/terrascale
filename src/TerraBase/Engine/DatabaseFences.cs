@@ -53,7 +53,7 @@ internal sealed class DatabaseFences
 
     private event Action<string>? WriterMoved;
 
-    public IDisposable WatchMoved(string database, Action moved) => new MoveWatch(this, database, moved);
+    public IDisposable WatchMoved(string database, string? previousHome, Action moved) => new MoveWatch(this, database, previousHome, moved);
 
     public void Moved(string database, string home)
     {
@@ -133,11 +133,14 @@ internal sealed class DatabaseFences
         private readonly Lock _gate = new();
         private bool _disposed;
 
-        public MoveWatch(DatabaseFences fences, string database, Action moved)
+        public MoveWatch(DatabaseFences fences, string database, string? previousHome, Action moved)
         {
             (_fences, _database, _moved) = (fences, database, moved);
             fences.WriterMoved += Notify;
-            Notify(database);
+            if (fences.MovedTo(database) != previousHome)
+            {
+                Notify(database);
+            }
         }
 
         private void Notify(string database)

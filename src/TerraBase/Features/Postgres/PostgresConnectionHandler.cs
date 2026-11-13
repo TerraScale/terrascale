@@ -92,7 +92,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, session.Project, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
                     refused, services.GetRequiredService<TimeProvider>());
                 using var moving = CancellationTokenSource.CreateLinkedTokenSource(closed);
-                using var moved = services.GetRequiredService<DatabaseFences>().WatchMoved(session.DatabaseId, moving.Cancel);
+                using var moved = services.GetRequiredService<DatabaseFences>().WatchMoved(session.DatabaseId, session.PreviousHome, moving.Cancel);
                 try
                 {
                     await ServeAsync(session, input, output, moving.Token).ConfigureAwait(false);
@@ -247,6 +247,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 case HomeNode home:
                     return (null, new Relay(home, PostgresRelay.Startup(parameters, secret), client));
                 case Authorized authorized:
+                    var previousHome = services.GetRequiredService<DatabaseFences>().MovedTo(authorized.Database.DatabaseId!);
                     var sql = services.GetRequiredService<ISqlService>().Open(authorized.Database, authorized.CanWrite);
                     var project = database.IndexOf('/', StringComparison.Ordinal) is var slash && slash >= 0 ? database[..slash] : null;
                     Session session;
@@ -256,6 +257,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                             parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
                         {
                             DatabaseId = authorized.Database.DatabaseId!,
+                            PreviousHome = previousHome,
                             Key = authorized.Key,
                             Until = authorized.Until,
                             TokenExpiry = authorized.TokenExpiry,
@@ -1169,6 +1171,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, IPAddress? Client, ISqlSession Sql, Dictionary<string, string> Settings)
     {
         public required string DatabaseId { get; init; }
+
+        public string? PreviousHome { get; init; }
 
         public KeyToken? Key { get; init; }
         public DateTimeOffset? Until { get; init; }
