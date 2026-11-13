@@ -248,6 +248,7 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         await preparing;
         var operation = (IAsyncDisposable)preparing.GetType().GetProperty("Result")!.GetValue(preparing)!;
         var control = Environment.GetEnvironmentVariable("ENGINE_CHECKPOINT_CONTROL")!;
+        File.Delete(control + ".entered");
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var watcher = new FileSystemWatcher(Path.GetDirectoryName(control)!);
         watcher.Created += (_, change) =>
