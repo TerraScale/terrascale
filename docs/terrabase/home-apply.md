@@ -19,15 +19,13 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
   [`HlcTimestamp`](hlc-clock.md), ordered by milliseconds, logical counter, then node id (ordinal) as the tie-breaker. A change to a column applies only when its stamp is greater.
   A losing column is not applied and is recorded in `terrascale.conflicts` as `superseded`, with its value.
 - **Delete tombstones.** A delete keeps a tombstone with its stamp, so an older insert or update of that row cannot
-  bring it back (`superseded`). An update newer than the tombstone is not superseded: the row is missing, so it reverts
-  as `missing_row` like any update of a row the home does not have. A delete older than a column write of the row loses
-  (`superseded`), and the row stays.
+  bring it back (`superseded`). A delete older than a column write of the row loses (`superseded`), and the row stays.
 - **Inserts never overwrite.** An insert of a key that exists at the home is a `primary_key` conflict and reverts its
   transaction (D12: tables that take local writes use ULID keys). An update of a row that the home never had reverts
   as `missing_row`.
 - **Clock trust.** A node issues a stamp for its own write only while its clock is [trusted](hlc-clock.md#clock-trust):
-  a replica that is refused forwards the write home, and a home that is refused answers `503 unavailable` (retry) and
-  commits nothing. Applying a received transaction uses the stamp it carries and works whatever the receiver's clock.
+  a replica that is refused forwards the write home, and a home that is refused answers `409 serialization_conflict` with
+  `Retry-After: 1` and commits nothing. Applying a received transaction uses the stamp it carries and works whatever the receiver's clock.
   Receiving an otherwise valid transaction with a future timestamp does not cause a clock conflict. Observation limits
   the remote contribution to local UTC plus 50 ms and emits a warning and counter when it clips a timestamp; the
   effect retains its original stamp.

@@ -347,6 +347,11 @@ internal sealed class SqlExecuteEndpoint(
             Listeners.ReplayIn(HttpContext, home);
         }
 
+        if (failure.Error.RetryAfterSeconds is { } seconds)
+        {
+            HttpContext.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
+        }
+
         return TypedResults.Json(SqlBatch.Body(failure, HttpContext.TraceIdentifier), SqlJsonContext.Default.SqlErrorBody, statusCode: failure.Error.Status);
     }
 }

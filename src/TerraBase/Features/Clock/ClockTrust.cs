@@ -24,6 +24,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     private static readonly TimeSpan Round = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan AnswerFor = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan AskFor = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan KernelGrace = TimeSpan.FromSeconds(60);
     private static readonly IReadOnlyList<(Mode Mode, KeyValuePair<string, object?>[] Tags)> ModeTags =
         [.. Enum.GetValues<Mode>().Select(mode => (mode, new KeyValuePair<string, object?>[] { new("mode", Labels(mode).Mode), new("reason", Labels(mode).Reason) }))];
     private readonly TimeProvider _monotonic = TimeProvider.System;
@@ -31,6 +32,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     private readonly Dictionary<string, PeerAnswer> _answers = new(StringComparer.Ordinal);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private Counter<long>? _steps;
+    private long? _kernelFailingSince;
     private HttpClient? _http;
     private Sample? _last;
     private long _closedAt;
@@ -63,39 +65,48 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _steps = _meter.CreateCounter<long>("terrabase.clock.steps", "{step}", "Wall-clock steps this node detected against its monotonic clock.");
+        var failedRounds = _meter.CreateCounter<long>("terrabase.clock.failed_rounds", "{round}", "Trust rounds that ended with an unexpected error; the loop goes on.");
         _ = _meter.CreateObservableGauge("terrabase.clock.skew", Skew, "ms");
         _ = _meter.CreateObservableGauge("terrabase.clock.local_writes_allowed", () => Trusted ? 1 : 0);
         _ = _meter.CreateObservableGauge("terrabase.clock.agreeing_rounds", () => Volatile.Read(ref _agreeingRounds), "{round}");
         _ = _meter.CreateObservableGauge("terrabase.clock.peers_answering", () => Volatile.Read(ref _answering), "{node}");
         _ = _meter.CreateObservableGauge("terrabase.clock.peers_agreeing", () => Volatile.Read(ref _agreeing), "{node}");
         _ = _meter.CreateObservableGauge("terrabase.clock.reported", () => Volatile.Read(ref _reported));
-        _ = _meter.CreateObservableGauge("terrabase.clock.mode", Modes, description: "One for the clock trust mode this node is in (peers_agree, first_of_build, no_peers or closed) and, while closed, the reason.");
+        _ = _meter.CreateObservableGauge("terrabase.clock.mode", Modes, description: "One for the clock trust mode this node is in (peers_agree, peers_lost, first_of_build, no_peers or closed) and, while closed, the reason.");
         await using var reports = new ClockReports(options);
         using var timer = new PeriodicTimer(Round, time);
         long round = 0;
         do
         {
-            var begun = _monotonic.GetTimestamp();
-            bool everyone;
-            lock (_gate)
+            try
             {
-                everyone = !TrustedLocked() || _mode == Mode.FirstOfBuild;
-            }
+                var begun = _monotonic.GetTimestamp();
+                bool everyone;
+                lock (_gate)
+                {
+                    everyone = !TrustedLocked() || _mode is Mode.FirstOfBuild or Mode.PeersLost;
+                }
 
-            var peers = await PeersAsync(stoppingToken).ConfigureAwait(false);
-            var asked = peers.Where(peer => everyone || peer.Region == options.Region || round % OtherRegionsEvery == 0).ToList();
-            var answers = await Task.WhenAll(asked.Select(peer => AskAsync(peer, stoppingToken))).ConfigureAwait(false);
-            lock (_gate)
-            {
-                Finish(begun, peers.Count, asked, answers);
-            }
+                var peers = await PeersAsync(stoppingToken).ConfigureAwait(false);
+                var asked = peers.Where(peer => everyone || peer.Region == options.Region || round % OtherRegionsEvery == 0).ToList();
+                var answers = await Task.WhenAll(asked.Select(peer => AskAsync(peer, stoppingToken))).ConfigureAwait(false);
+                lock (_gate)
+                {
+                    Finish(begun, peers.Count, asked, answers);
+                }
 
-            if (round % ReportEvery == 0)
+                if (round % ReportEvery == 0)
+                {
+                    var skew = Skew();
+                    var stored = await reports.PublishAsync(new ClockReport(options.MachineId, options.Region, double.IsFinite(skew) ? skew : null, Trusted, time.GetUtcNow()),
+                        stoppingToken).ConfigureAwait(false);
+                    Volatile.Write(ref _reported, stored ? 1 : 0);
+                }
+            }
+            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
-                var skew = Skew();
-                var stored = await reports.PublishAsync(new ClockReport(options.MachineId, options.Region, double.IsFinite(skew) ? skew : null, Trusted, time.GetUtcNow()),
-                    stoppingToken).ConfigureAwait(false);
-                Volatile.Write(ref _reported, stored ? 1 : 0);
+                failedRounds.Add(1);
+                logger.ZLogWarning(error, $"Clock trust round {round:@Round} failed");
             }
 
             round++;
@@ -118,10 +129,6 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
             {
                 _answers[asked[i].Name] = answer;
             }
-            else
-            {
-                _ = _answers.Remove(asked[i].Name);
-            }
         }
 
         foreach (var stale in _answers.Where(pair => _monotonic.GetElapsedTime(pair.Value.At, now) > AnswerFor).Select(pair => pair.Key).ToList())
@@ -136,8 +143,9 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
         var peers = configured == 0 ? Mode.NoPeers
             : answered.Count > 0 ? 2 * (agreeing + 1) > answered.Count + 1 ? Mode.PeersAgree : Mode.PeersDisagree
             : _answers.Count > 0 ? Mode.FirstOfBuild
+            : _agreeingRounds >= RoundsToOpen ? Mode.PeersLost
             : Mode.NoContact;
-        if (KernelClock.ErrorMilliseconds > BudgetMilliseconds)
+        if (KernelFails(now))
         {
             Close(now, Mode.Kernel);
         }
@@ -157,7 +165,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     {
         Check();
         var now = _monotonic.GetTimestamp();
-        if (KernelClock.ErrorMilliseconds > BudgetMilliseconds)
+        if (KernelFails(now))
         {
             Close(now, Mode.Kernel);
         }
@@ -167,6 +175,18 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
         }
 
         return _agreeingRounds >= RoundsToOpen;
+    }
+
+    private bool KernelFails(long now)
+    {
+        if (KernelClock.ErrorMilliseconds <= BudgetMilliseconds)
+        {
+            _kernelFailingSince = null;
+            return false;
+        }
+
+        _kernelFailingSince ??= now;
+        return _agreeingRounds < RoundsToOpen || _monotonic.GetElapsedTime(_kernelFailingSince.Value, now) >= KernelGrace;
     }
 
     private void Check()
@@ -224,6 +244,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     private static (string Mode, string Reason) Labels(Mode mode) => mode switch
     {
         Mode.PeersAgree => ("peers_agree", "none"),
+        Mode.PeersLost => ("peers_lost", "none"),
         Mode.FirstOfBuild => ("first_of_build", "none"),
         Mode.NoPeers => ("no_peers", "none"),
         Mode.Opening => ("closed", "opening"),
@@ -303,6 +324,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     private enum Mode
     {
         PeersAgree,
+        PeersLost,
         FirstOfBuild,
         NoPeers,
         Opening,

@@ -821,7 +821,7 @@ internal sealed class SqlSession(
         {
             if (!await ChargedAsync(() => apply.StampHomeWritesAsync(transaction, cancellationToken)).ConfigureAwait(false))
             {
-                return new SqlError(SqlErrors.Unavailable, "this node's clock is not known to be good, so it cannot stamp the write; retry");
+                return new SqlError(SqlErrors.SerializationConflict, "this node's clock is not known to be good, so it stamped nothing and committed nothing; retry", RetryAfterSeconds: 1);
             }
 
             if (_publishId is { } publishId && !await ChargedAsync(() => apply.ClaimAsync(transaction, publishId, cancellationToken)).ConfigureAwait(false))

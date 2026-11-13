@@ -116,8 +116,8 @@ test('future remote stamps apply once without advancing the local clock beyond i
     await expect.poll(supersededCount, { message: 'an update older than the tombstone is superseded and counted' }).toBe(baseline + 2);
     expect(await json('POST', applyPath, change(5, at + 100, 'delete'))).toMatchObject({ state: 'confirmed', conflicts: [] });
     expect(await json('POST', applyPath, change(5, at + 200, 'update', { value: 'newer than the delete' })))
-      .toMatchObject({ state: 'reverted', conflicts: [{ kind: 'missing_row' }] });
-    expect(await supersededCount()).toBe(baseline + 2);
+      .toMatchObject({ state: 'confirmed', conflicts: [{ kind: 'superseded' }] });
+    await expect.poll(supersededCount, { message: 'an update newer than the tombstone is superseded and counted' }).toBe(baseline + 3);
     await sql("INSERT INTO clock_rows VALUES (2, 'origin still writes')");
     expect((await sql('SELECT id, value FROM clock_rows ORDER BY id')).results[0].rows).toEqual([[1, 'delivered'], [2, 'origin still writes'], [3, 'current']]);
   } finally {

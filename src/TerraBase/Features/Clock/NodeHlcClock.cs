@@ -7,7 +7,7 @@ using ZLogger;
 
 namespace TerraBase.Features.Clock;
 
-internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions options, TimeProvider time, ClockTrust trust, IMeterFactory meters, ILogger<NodeHlcClock> logger) : IHlcClock, IDisposable
+internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions options, TimeProvider time, ClockTrust trust, IMeterFactory meters, ILogger<NodeHlcClock> logger) : IHlcClock, IAsyncDisposable
 {
     private const long ReservationMilliseconds = 5_000;
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
@@ -22,7 +22,25 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
 
     private long HighWater => Volatile.Read(ref _highWater);
 
-    public void Dispose() => _gate.Dispose();
+    public async ValueTask DisposeAsync()
+    {
+        await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            if (_initialized && _previous < _reserved)
+            {
+                await SaveAsync(_previous, CancellationToken.None).ConfigureAwait(false);
+                _reserved = _previous;
+                logger.ZLogInformation($"Saved the last HLC stamp {_previous.PhysicalMilliseconds:@Physical}.{_previous.Logical:@Logical} at shutdown");
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        _gate.Dispose();
+    }
 
     public async ValueTask<HlcTimestamp?> IssueAsync(CancellationToken cancellationToken)
     {
@@ -40,7 +58,7 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
                 return Refused();
             }
 
-            var stamp = await AdvanceLockedAsync(default, cancellationToken).ConfigureAwait(false);
+            var stamp = await AdvanceLockedAsync(null, cancellationToken).ConfigureAwait(false);
             if (!trust.Trusted || stamp.PhysicalMilliseconds > time.GetUtcNow().ToUnixTimeMilliseconds() + ClockTrust.BudgetMilliseconds)
             {
                 return Refused();
@@ -96,22 +114,10 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
         _initialized = true;
     }
 
-    private async ValueTask<HlcTimestamp> AdvanceLockedAsync(HlcTimestamp remote, CancellationToken cancellationToken)
+    private async ValueTask<HlcTimestamp> AdvanceLockedAsync(HlcTimestamp? remote, CancellationToken cancellationToken)
     {
-        var utc = time.GetUtcNow().ToUnixTimeMilliseconds();
-        var ceiling = checked(utc + ClockTrust.BudgetMilliseconds);
-        if (remote.PhysicalMilliseconds > ceiling)
-        {
-            _capped.Add(1);
-            logger.ZLogWarning($"Remote clock from {remote.NodeId:@Node} is {remote.PhysicalMilliseconds - utc:@AheadMilliseconds} ms ahead; observing at {ceiling:@Ceiling}");
-            remote = remote with { PhysicalMilliseconds = ceiling, Logical = 0 };
-        }
-
         var previous = _previous;
-        var physical = Math.Max(utc, Math.Max(previous.PhysicalMilliseconds, remote.PhysicalMilliseconds));
-        var logical = physical == previous.PhysicalMilliseconds && physical == remote.PhysicalMilliseconds ? (long)Math.Max(previous.Logical, remote.Logical) + 1
-            : physical == previous.PhysicalMilliseconds ? (long)previous.Logical + 1
-            : physical == remote.PhysicalMilliseconds ? (long)remote.Logical + 1 : 0;
+        var (physical, logical) = remote is { } received ? Merge(previous, Capped(received)) : Tick(previous, time.GetUtcNow().ToUnixTimeMilliseconds());
         if (logical > uint.MaxValue)
         {
             physical = checked(physical + 1);
@@ -122,17 +128,44 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
         if (timestamp > _reserved)
         {
             var reserved = new HlcTimestamp(checked(physical + ReservationMilliseconds), uint.MaxValue, options.MachineId);
-            var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-            await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
-            _ = await transaction.PutAsync("node_clocks", options.MachineId,
-                JsonSerializer.SerializeToUtf8Bytes(new HlcState(1, reserved), ClockJsonContext.Default.HlcState), cancellationToken).ConfigureAwait(false);
-            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await SaveAsync(reserved, cancellationToken).ConfigureAwait(false);
             _reserved = reserved;
         }
 
         _previous = timestamp;
         Remember(timestamp.PhysicalMilliseconds);
         return timestamp;
+    }
+
+    private static (long Physical, long Logical) Merge(HlcTimestamp previous, HlcTimestamp received) =>
+        previous.PhysicalMilliseconds == received.PhysicalMilliseconds ? (previous.PhysicalMilliseconds, (long)Math.Max(previous.Logical, received.Logical) + 1)
+        : previous.PhysicalMilliseconds > received.PhysicalMilliseconds ? (previous.PhysicalMilliseconds, (long)previous.Logical + 1)
+        : (received.PhysicalMilliseconds, (long)received.Logical + 1);
+
+    private static (long Physical, long Logical) Tick(HlcTimestamp previous, long utc) =>
+        utc > previous.PhysicalMilliseconds ? (utc, 0) : (previous.PhysicalMilliseconds, (long)previous.Logical + 1);
+
+    private HlcTimestamp Capped(HlcTimestamp remote)
+    {
+        var utc = time.GetUtcNow().ToUnixTimeMilliseconds();
+        var ceiling = checked(utc + ClockTrust.BudgetMilliseconds);
+        if (remote.PhysicalMilliseconds <= ceiling)
+        {
+            return remote;
+        }
+
+        _capped.Add(1);
+        logger.ZLogWarning($"Remote clock from {remote.NodeId:@Node} is {remote.PhysicalMilliseconds - utc:@AheadMilliseconds} ms ahead; observing at {ceiling:@Ceiling}");
+        return remote with { PhysicalMilliseconds = ceiling, Logical = 0 };
+    }
+
+    private async ValueTask SaveAsync(HlcTimestamp timestamp, CancellationToken cancellationToken)
+    {
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+        _ = await transaction.PutAsync("node_clocks", options.MachineId,
+            JsonSerializer.SerializeToUtf8Bytes(new HlcState(1, timestamp), ClockJsonContext.Default.HlcState), cancellationToken).ConfigureAwait(false);
+        _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private HlcTimestamp? Refused()
@@ -171,7 +204,6 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
             previous = observed;
         }
     }
-
 }
 
 internal sealed record HlcState(int Version, HlcTimestamp Timestamp);
