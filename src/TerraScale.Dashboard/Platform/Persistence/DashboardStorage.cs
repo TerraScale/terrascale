@@ -38,6 +38,11 @@ public static class DashboardStorage
             var credentials = await identity.ReadAsync(cancellationToken);
             request.Headers.Remove(TerraBaseRpc.PeerCredentialHeader);
             request.Headers.Add(TerraBaseRpc.PeerCredentialHeader, credentials.TerraBasePeerSecret);
+            if (credentials.Caller is { } caller)
+            {
+                request.Headers.Remove(CallerCredential.HeaderName);
+                request.Headers.Add(CallerCredential.HeaderName, caller.Token);
+            }
             request.Headers.Remove(WriteHeader);
             request.Headers.Add(WriteHeader, "home");
             return await ServerTiming.RpcAsync("state/sql/" + request.RequestUri?.Segments[^1], false,

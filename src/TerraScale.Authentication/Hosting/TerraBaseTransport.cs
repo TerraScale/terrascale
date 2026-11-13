@@ -20,7 +20,7 @@ public static class TerraBaseTransport
 
     public delegate Task<IPAddress[]> HostResolver(string host, CancellationToken cancellationToken);
 
-    public static HttpMessageHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger, HostResolver? resolve = null, string? peerSecret = null)
+    public static HttpMessageHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger, HostResolver? resolve = null, string? peerSecret = null, CallerCredential? caller = null)
     {
         resolve ??= Dns.GetHostAddressesAsync;
         ArgumentNullException.ThrowIfNull(otherRegions);
@@ -57,13 +57,27 @@ public static class TerraBaseTransport
             throw new HttpRequestException(HttpRequestError.ConnectionError, $"No TerraBase machine answered at {context.DnsEndPoint.Host}");
         };
         HttpMessageHandler pipeline = new HomeReads.Handler { InnerHandler = new FailClosed(handler) };
-        return peerSecret is null ? pipeline : new PeerCredentialHandler(peerSecret) { InnerHandler = pipeline };
+        if (peerSecret is not null)
+        {
+            pipeline = new PeerCredentialHandler(peerSecret) { InnerHandler = pipeline };
+        }
+        return caller is null ? pipeline : new CallerHandler(caller) { InnerHandler = pipeline };
     }
 
     internal static string Validated(string peerSecret) =>
         peerSecret.Length == 64 && peerSecret.All(char.IsAsciiHexDigit)
             ? peerSecret
             : throw new AuthConfigurationException($"{PeerSecretVariable} must contain 64 hexadecimal characters");
+
+    private sealed class CallerHandler(CallerCredential caller) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            request.Headers.Remove(CallerCredential.HeaderName);
+            request.Headers.Add(CallerCredential.HeaderName, caller.Token);
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
 
     private sealed class PeerCredentialHandler(string peerSecret) : DelegatingHandler
     {
