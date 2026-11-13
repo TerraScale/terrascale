@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using TerraBase.Hosting;
+using TerraBase.Features.Replicas;
 
 namespace TerraBase.Features.Regions;
 
@@ -11,19 +12,20 @@ public interface IHomeLocator
     ValueTask<HomeNode?> LocateAsync(string project, string? database, CancellationToken cancellationToken);
 }
 
-internal sealed class HomeLocator(IRegionPeers peers, IHttpClientFactory http, InternalCredential credential, TimeProvider time) : IHomeLocator
+internal sealed class HomeLocator(IRegionPeers peers, IHttpClientFactory http, InternalCredential credential, TimeProvider time, RegionalOwners owners) : IHomeLocator
 {
     internal const string HttpClientName = "terrabase-peers";
     internal const string Path = "/v1/internal/home";
     private const int MaxEntries = 4096;
     private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan AskTimeout = TimeSpan.FromSeconds(3);
-    private readonly ConcurrentDictionary<(string Project, string? Database), (HomeNode Home, DateTimeOffset Until)> _found = new();
+    private readonly ConcurrentDictionary<(string Project, string? Database), (HomeNode Home, string? Owner, DateTimeOffset Until)> _found = new();
 
     public async ValueTask<HomeNode?> LocateAsync(string project, string? database, CancellationToken cancellationToken)
     {
         var key = (project, database);
-        if (_found.TryGetValue(key, out var cached) && time.GetUtcNow() < cached.Until)
+        if (_found.TryGetValue(key, out var cached) && time.GetUtcNow() < cached.Until
+            && (owners.Confirmed(cached.Home.Region) is not { } owner || owner.Node == cached.Owner))
         {
             return cached.Home;
         }
@@ -47,7 +49,7 @@ internal sealed class HomeLocator(IRegionPeers peers, IHttpClientFactory http, I
                     _found.Clear();
                 }
 
-                _found[key] = (home, time.GetUtcNow() + Lifetime);
+                _found[key] = (home, owners.Confirmed(home.Region)?.Node, time.GetUtcNow() + Lifetime);
                 return home;
             }
         }
