@@ -200,6 +200,9 @@ try {
   const seed = await request(1, database(owner.databaseId));
   if (seed.status === 200) await checked(1, database(owner.databaseId), 'DELETE', undefined, 204);
   const created = [];
+  const coldCandidate = nodes.find(node => node.name === 'node-2');
+  coldCandidate.process.kill('SIGSTOP');
+  try {
   for (const name of ['restore', 'purge', 'unreachable', 'expiry']) {
     const record = (await checked(1, project + '/databases', 'POST', { name: 'retained-handoff-' + name, regions: ['gru'] }, 201)).json();
     await checked(1, database(record.id) + '/sql/execute', 'POST', { statements: [{ sql: 'CREATE TABLE kept (value INTEGER)' }, { sql: 'INSERT INTO kept VALUES (11), (22), (33)' }] });
@@ -210,6 +213,9 @@ try {
     assert.equal(hidden.status, 404);
     created.push(record.id);
     console.log('created rows [11,22,33], backup and key present, DELETE 204, client SQL 404: ' + record.id);
+  }
+  } finally {
+    coldCandidate.process.kill('SIGCONT');
   }
   const [restoreId, purgeId, unreachableId, expiryId] = created;
   await expect.poll(() => files(roots[1], restoreId), { message: 'candidate has no retained source files before handoff', timeout: 45_000 }).toEqual([]);

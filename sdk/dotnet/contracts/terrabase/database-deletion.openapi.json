@@ -11,7 +11,7 @@
           "Databases"
         ],
         "summary": "Moves a database to the seven-day deleted state",
-        "description": "The database is unreachable and is listed under deleted-databases for seven days. Restore it there by immutable ID before purgeAt. Data, backups and keys are retained until then; storage remains counted against the organization quota until purge. Permanent cleanup begins after that deadline or an explicit DELETE of the deleted-database resource. A call outside placement returns 421 wrong_region; a move in progress or deletion outside the home region returns 409. Other regions drop their copies at deletion and are re-seeded after restore. Branches are independent. Platform databases are protected. Authorization: Bearer <ts-auth project access token>. project_id must equal {project}; scope must grant the operation. {database} is the immutable database ULID or its name. A token narrowed to one database cannot reach another. Tokens for another project or database answer 404.\n\nRequired JWT scopes: databases:write.",
+        "description": "The database is unreachable and is listed under deleted-databases for at least seven days. Restore it there by immutable ID until permanent purge is authorized. Data, backups and keys are retained until then; storage remains counted against the organization quota until purge. Permanent cleanup begins after that deadline or an explicit DELETE of the deleted-database resource. A call outside placement returns 421 wrong_region; a move in progress or deletion outside the home region returns 409. Other regions drop their copies at deletion and are re-seeded after restore. Branches are independent. Platform databases are protected. Authorization: Bearer <ts-auth project access token>. project_id must equal {project}; scope must grant the operation. {database} is the immutable database ULID or its name. A token narrowed to one database cannot reach another. Tokens for another project or database answer 404.\n\nRequired JWT scopes: databases:write.",
         "operationId": "deleteDatabase",
         "parameters": [
           {
@@ -1279,12 +1279,322 @@
       }
     },
     "/v1/projects/{project}/deleted-databases/{deletedDatabase}": {
+      "get": {
+        "tags": [
+          "Databases"
+        ],
+        "summary": "Reads the durable database purge job",
+        "description": "Requires a project token without a database restriction and databases:write, the same scope as restore. Call the region that accepted deletion. Starts durable destruction, ending the restore window. 202 includes the job state until files, keys on every holder and backup objects are verified absent; 204 confirms verified completion. Repeating an incomplete request returns its current job; a completed job returns 404 gone on a later DELETE. GET on this path reads the job, including after completion. Storage is released at purge, not at soft deletion. A call outside the home region returns 409 wrong_region.\n\nRequired JWT scopes: databases:write.",
+        "operationId": "getDatabasePurge",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "deletedDatabase",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-TerraScale-Region-Pin",
+            "in": "header",
+            "description": "Optional single raw region ID. An empty, duplicate or malformed pin returns 421 invalid_region_pin and a pin naming another region 421 region_pin_mismatch, both before execution and with recovery guidance; behind the edge a mismatched pin also answers ts-replay: region=<pin>.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DatabasePurgeBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden Error codes: forbidden_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found Error codes: unknown_database, unknown_route, not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict Error codes: conflict.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable Error codes: storage_busy, capacity, unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized: missing, unknown or expired credential. Error codes: invalid_key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Misdirected Request; X-TerraBase-Region identifies the serving node. Error codes: region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "required": [
+                        "code"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "op": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int32"
+                        },
+                        "details": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "path",
+                              "keyword"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "keyword": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "region": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "machine": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "url": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "requestId": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "docsUrl": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "TsAuth": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "Databases"
         ],
         "summary": "Permanently purges a deleted database and releases its storage",
-        "description": "Requires a project token without a database restriction and databases:write, the same scope as restore. Call the region that accepted deletion. Permanently deletes retained data and starts backup-key destruction immediately, ending the restore window. Storage is released at purge, not at soft deletion. A call outside the home region returns 409 wrong_region.\n\nRequired JWT scopes: databases:write.",
+        "description": "Requires a project token without a database restriction and databases:write, the same scope as restore. Call the region that accepted deletion. Starts durable destruction, ending the restore window. 202 includes the job state until files, keys on every holder and backup objects are verified absent; 204 confirms verified completion. Repeating an incomplete request returns its current job; a completed job returns 404 gone on a later DELETE. GET on this path reads the job, including after completion. Storage is released at purge, not at soft deletion. A call outside the home region returns 409 wrong_region.\n\nRequired JWT scopes: databases:write.",
         "operationId": "purgeDeletedDatabase",
         "parameters": [
           {
@@ -1313,6 +1623,23 @@
           }
         ],
         "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DatabasePurgeBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "204": {
             "description": "No Content"
           },
@@ -1579,6 +1906,28 @@
   },
   "components": {
     "schemas": {
+      "DatabasePurgeBody": {
+        "required": [
+          "id",
+          "state",
+          "outstanding"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "outstanding": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "DeletedDatabaseBody": {
         "required": [
           "id",
