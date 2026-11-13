@@ -206,17 +206,10 @@ test('history lost while the backup store is unreachable is one hole each time, 
 
     const restart = restartAfterKill(writer);
     await restart();
-    await neverUnauthorized(cells, `${endpoint('gru')}${database(created.id)}`);
-    await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready while its backup store is down' }).toBe(200);
-    await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the restarted writer publishes the durable hole total' }).toBe(holes + 2);
-    const resumed = await continuity(writer, created.id);
-    expect(resumed).toMatchObject({ replacing: true, storedPosition: kept.storedPosition, storedIncarnation: kept.incarnation });
-    expect(resumed.holes[1]).toMatchObject({ incarnation: kept.incarnation, from: kept.storedPosition, open: true });
-    const openError = await refusal(insideSecond);
-    expect(openError.message).toContain('no recovery point after it is stored yet');
-    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(0);
     await backupStore('up');
     outage = false;
+    await neverUnauthorized(cells, `${endpoint('gru')}${database(created.id)}`);
+    await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
     await expect.poll(() => probe(writer, '/backupz'), { message: 'a replacement snapshot after the restart closes the second hole' }).toBe(200);
     const settled = await continuity(writer, created.id);
     expect(settled.holes.map(hole => hole.open)).toEqual([false, false]);

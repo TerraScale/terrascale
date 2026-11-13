@@ -18,8 +18,9 @@ type Answer = { status: number; body: string; retryAfter?: string };
 type StandIn = { asked: () => number; close: () => Promise<void> };
 
 const internalPort = 18281;
+const unreachableIssuer = 'https://auth.clock.invalid/terrascale';
 const unverifiedProject = '01JZ0000000000000000000000';
-const unverifiedToken = [{ alg: 'ES256', typ: 'at+jwt', kid: 'journey' }, { sub: unverifiedProject, iss: 'https://auth.terrascale.tech/terrascale' }]
+const unverifiedToken = [{ alg: 'ES256', typ: 'at+jwt', kid: 'journey' }, { sub: unverifiedProject, iss: unreachableIssuer }]
   .map(part => Buffer.from(JSON.stringify(part)).toString('base64url')).concat('c2lnbmF0dXJl').join('.');
 const run = randomBytes(3).toString('hex');
 const nodes: Record<'a' | 'b' | 'c', Node> = {
@@ -147,7 +148,7 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
         TS_PEERS_FILE: peers, TS_REGION: node.region, TS_NODE: node.name,
         TERRABASE_DATA_DIRECTORY: join(root, `${node.name}-data`), TERRABASE_PORT: String(node.port),
         TERRABASE_INTERNAL_PORT: String(internalPort), TERRABASE_METRICS_PORT: String(node.metrics), TERRABASE_POSTGRES_PORT: String(node.postgres),
-        TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
+        TERRABASE_AUTH_ISSUER: unreachableIssuer, TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
         TERRABASE_PEER_SECRET: peerSecret, TERRABASE_MASTER_KEY: masterKey,
         AWS_ENDPOINT_URL_S3: 'https://journey.backups.terrascale.tech/', AWS_REGION: 'auto', BUCKET_NAME: 'journey-backups',
         AWS_ACCESS_KEY_ID: r2Key, AWS_SECRET_ACCESS_KEY: r2Secret,
