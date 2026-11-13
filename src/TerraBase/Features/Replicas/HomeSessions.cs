@@ -413,7 +413,7 @@ internal sealed class HomeSqlSession(
             catch (Exception error) when (error is IOException or InvalidDataException or HttpRequestException or OperationCanceledException or ObjectDisposedException)
             {
                 await stop.CancelAsync().ConfigureAwait(false);
-                if (error is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                if (error is OperationCanceledException && cancellationToken.IsCancellationRequested && !(commits && sent))
                 {
                     Break();
                     throw;

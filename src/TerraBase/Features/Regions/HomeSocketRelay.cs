@@ -85,6 +85,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                     context.User = authenticated.Principal;
                     context.Request.Headers.Remove("Authorization");
                     authFrame = bytes[..length];
+                    context.Features.GetRequiredFeature<SqlSocketInput>().Complete();
                 }
 
                 tenant = await TenantAsync(context, preauthentication.Token).ConfigureAwait(false);

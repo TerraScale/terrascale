@@ -10,6 +10,7 @@ internal sealed class SessionMessageDeadline : IDisposable
     private readonly ITimer _timer;
     private bool _completed;
     private bool _expired;
+    private bool _cancelling;
     private long? _started;
     private long _bytes;
     private long _armedAt;
@@ -23,7 +24,12 @@ internal sealed class SessionMessageDeadline : IDisposable
             : transaction is not null ? SqlLimits.MaxTransactionTime : QosSessions.IdleTimeout;
         _armedAt = time.GetTimestamp();
         _budget = executing ? Timeout.InfiniteTimeSpan : idle;
-        _timer = time.CreateTimer(_ => Expire(), null, _budget, Timeout.InfiniteTimeSpan);
+        _timer = time.CreateTimer(_ => Expire(), null, _budget == TimeSpan.Zero ? Timeout.InfiniteTimeSpan : _budget, Timeout.InfiniteTimeSpan);
+        if (_budget == TimeSpan.Zero)
+        {
+            _expired = true;
+            _stop.Cancel();
+        }
     }
 
     public CancellationToken Token => _stop.Token;
@@ -43,12 +49,22 @@ internal sealed class SessionMessageDeadline : IDisposable
                 return;
             }
 
-            _started ??= started ?? _time.GetTimestamp();
-            _bytes += bytes;
-            var remaining = QosSessions.MessageTimeout + TimeSpan.FromSeconds((double)_bytes / QosSessions.MinimumMessageBytesPerSecond)
-                - _time.GetElapsedTime(_started.Value);
-            Arm(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+            var arrived = started ?? _time.GetTimestamp();
+            if (_started is null && _budget != Timeout.InfiniteTimeSpan && _time.GetElapsedTime(_armedAt, arrived) >= _budget)
+            {
+                _expired = true;
+            }
+            else
+            {
+                _started ??= arrived;
+                _bytes += bytes;
+                var remaining = QosSessions.MessageTimeout + TimeSpan.FromSeconds((double)_bytes / QosSessions.MinimumMessageBytesPerSecond)
+                    - _time.GetElapsedTime(_started.Value);
+                Arm(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+            }
         }
+
+        CancelExpired();
     }
 
     public void Resume(TimeSpan? transaction)
@@ -63,6 +79,8 @@ internal sealed class SessionMessageDeadline : IDisposable
                 Arm(idle);
             }
         }
+
+        CancelExpired();
     }
 
     public void Complete()
@@ -85,16 +103,25 @@ internal sealed class SessionMessageDeadline : IDisposable
         {
             _completed = true;
             _timer.Dispose();
+            if (!_cancelling)
+            {
+                _stop.Dispose();
+            }
         }
-
-        _stop.Dispose();
     }
 
     private void Arm(TimeSpan budget)
     {
         _armedAt = _time.GetTimestamp();
         _budget = budget;
-        _timer.Change(budget, Timeout.InfiniteTimeSpan);
+        if (budget == TimeSpan.Zero)
+        {
+            _expired = true;
+        }
+        else
+        {
+            _timer.Change(budget, Timeout.InfiniteTimeSpan);
+        }
     }
 
     private void Expire()
@@ -111,7 +138,37 @@ internal sealed class SessionMessageDeadline : IDisposable
                 }
 
                 _expired = true;
-                _stop.Cancel();
+            }
+        }
+
+        CancelExpired();
+    }
+
+    private void CancelExpired()
+    {
+        lock (_gate)
+        {
+            if (!_expired || _completed || _cancelling || _stop.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _cancelling = true;
+        }
+
+        try
+        {
+            _stop.Cancel();
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _cancelling = false;
+                if (_completed)
+                {
+                    _stop.Dispose();
+                }
             }
         }
     }
