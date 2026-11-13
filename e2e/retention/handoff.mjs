@@ -14,17 +14,26 @@ const owner = JSON.parse(readFileSync(join(state, 'placement-setup.journey.json'
 const secret = readFileSync(join(state, 'secrets'), 'utf8').split('\n')[0];
 const directory = join(state, 'retained-handoff');
 mkdirSync(directory, { recursive: true, mode: 0o700 });
-const tokenResponse = await fetch('https://auth.terrascale.tech/terrascale/oauth/token', {
-  method: 'POST',
-  headers: { 'content-type': 'application/x-www-form-urlencoded' },
-  body: new URLSearchParams({
-    grant_type: 'client_credentials', client_id: owner.apiKey.slice(0, 26), client_secret: owner.apiKey,
-    project: owner.projectId, scope: 'sql:read sql:write databases:read databases:write',
-  }),
-});
-assert.equal(tokenResponse.status, 200);
-const token = (await tokenResponse.json()).access_token;
-writeFileSync(join(state, 'secrets.d', 'retained-handoff-token'), token, { mode: 0o600 });
+let token;
+let tokenUntil = 0;
+async function projectToken() {
+  if (Date.now() + 10_000 < tokenUntil) return token;
+  const response = await fetch('https://auth.terrascale.tech/terrascale/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials', client_id: owner.apiKey.slice(0, 26), client_secret: owner.apiKey,
+      project: owner.projectId, scope: 'sql:read sql:write databases:read databases:write',
+    }),
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  token = result.access_token;
+  tokenUntil = Date.now() + result.expires_in * 1000;
+  writeFileSync(join(state, 'secrets.d', 'retained-handoff-token-' + tokenUntil), token, { mode: 0o600 });
+  return token;
+}
+await projectToken();
 const environment = Object.fromEntries(readFileSync('/proc/' + readFileSync(join(state, 'pids', 'terrabase.pid'), 'utf8').trim() + '/environ', 'utf8')
   .split('\0').filter(Boolean).map(value => { const at = value.indexOf('='); return [value.slice(0, at), value.slice(at + 1)]; }));
 const nodes = [];
@@ -54,7 +63,28 @@ function start(name, executable, args, env) {
   return process;
 }
 
+const authPid = Number(readFileSync(join(state, 'pids', 'ts-auth.pid'), 'utf8'));
+const authEnvironment = Object.fromEntries(readFileSync('/proc/' + authPid + '/environ', 'utf8')
+  .split('\0').filter(Boolean).map(value => { const at = value.indexOf('='); return [value.slice(0, at), value.slice(at + 1)]; }));
+let authProcess;
+async function routeAuthToWriter(node) {
+  if (authProcess) {
+    authProcess.kill('SIGTERM');
+    await nodes.find(entry => entry.process === authProcess).stopped;
+  } else {
+    process.kill(authPid, 'SIGTERM');
+    await expect.poll(() => existsSync('/proc/' + authPid) && !readFileSync('/proc/' + authPid + '/stat', 'utf8').split(')')[1].trim().startsWith('Z'), { timeout: 45_000 }).toBe(false);
+  }
+  authProcess = start('auth-on-writer-' + node, 'dotnet', [join(build, 'ts-auth', 'ts-auth.dll')], {
+    ...authEnvironment, TS_AUTH_TERRABASE_URL: 'http://127.0.0.' + node + ':8081', TS_NODE: 'journey-' + node,
+  });
+  await expect.poll(async () => {
+    try { return (await fetch('https://auth.terrascale.tech/readyz')).status; } catch { return 0; }
+  }, { message: 'auth uses the current regional writer for its platform database', timeout: 45_000 }).toBe(200);
+}
+
 async function request(node, path, method = 'GET', body, headers = {}, localAddress) {
+  await projectToken();
   if (path.startsWith('/v1/projects/')) {
     const response = await fetch('http://127.0.0.1:' + (node === 1 ? 8080 : 8180) + path, {
       method, headers: { authorization: 'Bearer ' + token, ...headers },
@@ -119,7 +149,22 @@ async function objects(prefix, bucket = 'journey-backups') {
 const scope = id => owner.organizationId + '/' + owner.projectId + '/' + id;
 const keys = id => objects('v1/keys/' + scope(id) + '/', 'ts-terrabase-shapes-prod');
 const backups = id => objects('v1/' + scope(id) + '/');
-const files = (root, id) => readdirSync(root, { recursive: true }).filter(file => file.split('/').pop().startsWith(id));
+function files(root, id) {
+  function visit(relative) {
+    let entries;
+    try {
+      entries = readdirSync(join(root, relative), { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
+    return entries.flatMap(entry => {
+      const name = join(relative, entry.name);
+      return entry.isDirectory() ? visit(name) : entry.name.startsWith(id) || entry.name.startsWith('.' + id + '.') ? [name] : [];
+    });
+  }
+  return visit('');
+}
 const roots = [join(state, 'terrabase'), join(state, 'terrabase-fra')];
 function displace(root, id, target) {
   const moved = files(root, id).map(file => [join(root, file), join(target, file)]);
@@ -192,8 +237,11 @@ try {
     try { return (await request(2, '/v1/rollout/status')).json().ready; } catch { return false; }
   }, { message: 'peer is ready for handoff', timeout: 45_000 }).toBe(true);
   for (const address of ['127.0.0.1:9091', '127.0.0.2:9191']) {
-    await expect.poll(async () => (await fetch('http://' + address + '/metrics')).text(),
-      { message: 'node loaded the real auth signing keys', timeout: 45_000 })
+    await expect.poll(async () => {
+      const metrics = await (await fetch('http://' + address + '/metrics')).text();
+      writeFileSync(join(directory, 'initial-metrics-' + address.split(':')[1] + '.txt'), metrics);
+      return metrics;
+    }, { message: 'node loaded the real auth signing keys', timeout: 45_000 })
       .toMatch(/terrabase_auth_key_fetches_total\{[^}]*outcome="success"[^}]*\} [1-9]/);
   }
   console.log('real nodes: journey-1 and journey-2, gru, shared NATS writer lease, auth keys loaded');
@@ -249,6 +297,7 @@ try {
   }
   await checked(1, '/v1/rollout/drain?target=journey-2', 'POST', undefined, 204);
   assert.equal((await checked(2, '/v1/rollout/status')).json().writer, true);
+  await routeAuthToWriter(2);
   assert(files(roots[1], restoreId).some(file => file.endsWith('.db')));
   assert(files(roots[1], purgeId).some(file => file.endsWith('.db')));
   console.log('POST /v1/rollout/drain?target=journey-2 -> 204; peer writer=true; both retained databases have files');
@@ -257,7 +306,13 @@ try {
   assert.deepEqual(rows, [[11], [22], [33]]);
   console.log('restore on peer -> 200; original rows ' + JSON.stringify(rows));
   const eightDays = 8 * 24 * 60 * 60;
-  const skipped = async () => Number((await (await fetch('http://127.0.0.1:9091/metrics')).text()).match(/terrabase_retention_nonwriter_maintenance_passes (\d+)/)?.[1]);
+  const skipped = async () => {
+    const metrics = await (await fetch('http://127.0.0.1:9091/metrics')).text();
+    writeFileSync(join(directory, 'outgoing-metrics.txt'), metrics);
+    const sample = metrics.match(/^terrabase_retention_nonwriter_maintenance_passes(?:\{[^}]*\})? (\d+)/m);
+    assert(sample, 'outgoing metrics must expose the nonwriter maintenance gauge');
+    return Number(sample[1]);
+  };
   const beforeSkipped = await skipped();
   setClock(eightDays, 1);
   await expect.poll(skipped, { message: 'outgoing maintenance runs after the old retention deadline', timeout: 45_000 }).toBeGreaterThan(beforeSkipped);
@@ -293,17 +348,11 @@ try {
   await expect.poll(() => files(roots[0], unreachableId).filter(file => file.endsWith('.db') || file.endsWith('.key')), { timeout: 45_000 }).toEqual([]);
   console.log('A returns: repeated purge addresses same job, A files and keys erased');
 
-  await expect.poll(async () => (await checked(2, deleted(purgeId), 'GET')).json().state, { timeout: 45_000 }).toBe('complete');
-  assert.deepEqual((await checked(2, deleted(purgeId), 'GET')).json().outstanding, []);
-  assert.deepEqual(await backups(purgeId), []);
-  await checked(2, deleted(purgeId), 'DELETE', undefined, 404);
-  console.log('verified files=0, keys=0, backup objects=0: GET complete; subsequent DELETE 404 gone');
-
   const beforeExpiryKeys = await keys(expiryId);
   setClock(eightDays, 2);
   setClock(eightDays);
   await expect.poll(async () => (await fetch('http://127.0.0.2:9191/metrics')).text(), { timeout: 45_000 })
-    .toMatch(/terrabase_retention_expiries_waiting_confirmation [1-9]/);
+    .toMatch(/terrabase_retention_expiries_waiting_confirmation(?:\{[^}]*\})? [1-9]/);
   assert(files(roots[1], expiryId).some(file => file.endsWith('.db')));
   assert.deepEqual(await keys(expiryId), beforeExpiryKeys);
   console.log('writer B clock +8d, partner A correct: expiry waits for confirmation; retained files and keys intact');
@@ -331,10 +380,20 @@ try {
     await checked(2, database(record.id), 'DELETE', undefined, 204);
     pageIds.push(record.id);
   }
+  await expect.poll(async () => (await checked(2, deleted(purgeId), 'GET')).json().state, { timeout: 45_000 }).toBe('complete');
+  assert.deepEqual((await checked(2, deleted(purgeId), 'GET')).json().outstanding, []);
+  assert.deepEqual(await backups(purgeId), []);
+  await checked(2, deleted(purgeId), 'DELETE', undefined, 404);
+  await expect.poll(async () => (await checked(2, deleted(unreachableId), 'GET')).json().state, { timeout: 45_000 }).toBe('complete');
+  assert.deepEqual((await checked(2, deleted(unreachableId), 'GET')).json().outstanding, []);
+  assert.deepEqual(await backups(unreachableId), []);
+  console.log('verified files=0, keys=0, backup objects=0: both purge jobs GET complete; subsequent DELETE 404 gone');
+
   const handoffStarted = performance.now();
 
   await checked(2, '/v1/rollout/drain?target=journey-1', 'POST', undefined, 204);
   assert.equal((await checked(1, '/v1/rollout/status')).json().writer, true);
+  await routeAuthToWriter(1);
   const received = [];
   let retainedAfter;
   do {
