@@ -100,7 +100,7 @@ internal static class HomeSessionFrames
         }
     }
 
-    public static async ValueTask WriteAsync<T>(PipeWriter output, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken)
+    public static async ValueTask WriteAsync<T>(PipeWriter output, T value, JsonTypeInfo<T> type, Action? sending, CancellationToken cancellationToken)
     {
         var json = JsonSerializer.SerializeToUtf8Bytes(value, type);
         if (json.Length > MaxBytes)
@@ -112,6 +112,7 @@ internal static class HomeSessionFrames
         BinaryPrimitives.WriteInt32BigEndian(prefix, json.Length);
         output.Advance(4);
         output.Write(json);
+        sending?.Invoke();
         _ = await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -154,7 +155,7 @@ internal sealed class HomeSessions(
         {
             await HomeSessionFrames.WriteAsync(upstream.Writer,
                 new HomeSessionOpen(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, canWrite, local.LastPushed(database), epoch),
-                ReplicasJsonContext.Default.HomeSessionOpen, cancellationToken).ConfigureAwait(false);
+                ReplicasJsonContext.Default.HomeSessionOpen, sending: null, cancellationToken).ConfigureAwait(false);
             var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stop.Token).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
             {
@@ -267,9 +268,9 @@ internal sealed class HomeSqlSession(
 
     public bool IsAutocommit => _autocommit;
 
-    public SqlTransactionDeadline TransactionDeadline { get; set; } = new(time);
+    public SqlTransactionClock TransactionClock { get; set; } = new(time);
 
-    public TimeSpan? TransactionRemaining => TransactionDeadline.Remaining;
+    public TimeSpan? TransactionRemaining => _autocommit ? null : TransactionClock.Remaining;
 
     public bool IsBroken => _broken;
 
@@ -352,13 +353,13 @@ internal sealed class HomeSqlSession(
         {
             if (_autocommit && !answer.Autocommit)
             {
-                TransactionDeadline.Limit(SqlLimits.MaxTransactionTime - time.GetElapsedTime(_started));
+                TransactionClock.Limit(SqlLimits.MaxTransactionTime - time.GetElapsedTime(_started));
             }
 
             _autocommit = answer.Autocommit;
             if (_autocommit)
             {
-                TransactionDeadline.Clear();
+                TransactionClock.End();
             }
         }
 
@@ -384,8 +385,7 @@ internal sealed class HomeSqlSession(
 
     private async ValueTask<HomeSessionAnswer?> CallAsync(HomeSessionCall call, bool commits, CancellationToken cancellationToken)
     {
-        using var bounded = TransactionDeadline.Bound(SqlLimits.ForwardedRequestTime, cancellationToken);
-        await _gate.WaitAsync(bounded.Token).ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (_broken)
@@ -393,22 +393,20 @@ internal sealed class HomeSqlSession(
                 return null;
             }
 
-            using var dispatched = commits ? TransactionDeadline.Dispatch() : null;
-            if (commits && dispatched is null)
-            {
-                Break();
-                await stop.CancelAsync().ConfigureAwait(false);
-                return new HomeSessionAnswer(true, SqlErrors.TransactionExpired);
-            }
-
+            var sent = false;
             try
             {
                 _started = time.GetTimestamp();
-                await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database), Remaining = TransactionDeadline.Remaining }, ReplicasJsonContext.Default.HomeSessionCall,
-                    bounded.Token).ConfigureAwait(false);
-                if (await ReceiveAsync(bounded.Token).ConfigureAwait(false) is not { } answer)
+                if (call.Op == "execute" && SqlScript.Classify(call.Sql) is SqlStatementPlan { Kind: SqlStatementKind.Begin })
                 {
-                    return Lost(commits);
+                    TransactionClock.Start();
+                }
+
+                await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database), Remaining = TransactionClock.Remaining }, ReplicasJsonContext.Default.HomeSessionCall,
+                    () => sent = true, cancellationToken).ConfigureAwait(false);
+                if (await ReceiveAsync(cancellationToken).ConfigureAwait(false) is not { } answer)
+                {
+                    return Lost(commits && sent);
                 }
 
                 local.Forwarded(database);
@@ -423,7 +421,7 @@ internal sealed class HomeSqlSession(
                     throw;
                 }
 
-                return Lost(commits);
+                return Lost(commits && sent);
             }
         }
         finally
@@ -432,17 +430,10 @@ internal sealed class HomeSqlSession(
         }
     }
 
-    private HomeSessionAnswer? Lost(bool commits)
+    private HomeSessionAnswer? Lost(bool sentWrite)
     {
-        var expired = !commits && TransactionDeadline.Expired;
         Break();
-        if (commits)
-        {
-            TransactionDeadline.Clear();
-            return new HomeSessionAnswer(true, _unknown);
-        }
-
-        return expired ? new HomeSessionAnswer(true, SqlErrors.TransactionExpired) : null;
+        return sentWrite ? new HomeSessionAnswer(true, _unknown) : null;
     }
 
     private HomeSessionAnswer? Break()

@@ -50,7 +50,7 @@ export async function postgres(port = 6432, database = journey().databaseId) {
   })();
   socket.write(Buffer.concat([prefix, parameters]));
   return {
-    socket, connected, closed, results,
+    socket, connected, closed, results, errors,
     begin: async () => {
       const ready = once(results, 'ready');
       socket.write(message('Q', Buffer.from('BEGIN\0')));
@@ -95,6 +95,19 @@ export async function stalledPostgres(port: number, database: string, pipelined:
     socket.on('data', received);
     socket.write(Buffer.concat([prefix, parameters]));
   });
+  const drain = async () => {
+    let rows = 0;
+    const errors: string[] = [];
+    try {
+      for await (const packet of messages(socket)) {
+        if (packet.type === 'D') rows++;
+        if (packet.type === 'E') errors.push(packet.body.toString());
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ECONNRESET') throw error;
+    }
+    return { rows, errors };
+  };
   socket.write(pipelined);
-  return { socket, closed };
+  return { socket, closed, drain };
 }

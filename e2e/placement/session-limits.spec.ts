@@ -85,7 +85,7 @@ async function credential(request: import('@playwright/test').APIRequestContext)
 
 async function execute(ws: Awaited<ReturnType<typeof rawSqlSocket>>, sql: string) {
   const reply = once(ws.events, 'message');
-  ws.socket.write(frame(1, Buffer.from(JSON.stringify(sql === 'BEGIN' ? { id: 1, type: 'begin' } : { id: 1, type: 'execute', statements: [{ sql }] }))));
+  ws.socket.write(frame(1, Buffer.from(JSON.stringify(['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql) ? { id: 1, type: sql.toLowerCase() } : { id: 1, type: 'execute', statements: [{ sql }] }))));
   return (await reply)[0];
 }
 
@@ -188,44 +188,35 @@ test('authenticated relays share the tenant cap and leave relay capacity for ano
   }
 });
 
-test('replica promotion and late replica reads retain the original transaction deadline', async ({ cells, request }) => {
+test('replica promotion retains the original BEGIN at the next input wait', async ({ cells, request }) => {
   const created = await json<Database>(await cells.post(home + project() + '/databases', {
-    data: { name: name('transaction-deadline'), homeRegion: 'gru', replicaRegions: ['fra'] },
+    data: { name: name('transaction-wait'), homeRegion: 'gru', replicaRegions: ['fra'] },
   }), 201);
   const token = await credential(request);
   try {
     await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
     await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (1)');
     await replicated(cells, replica, created.id, 1);
-    for (let sample = 0; sample < 3; sample++) {
-      for (const promotion of [true, false]) {
-        const ws = await rawSqlSocket('http://127.0.0.1:8180' + database(created.id) + '/sql/ws', token);
-        const expired = new Promise<unknown>(resolve => {
-          ws.events.on('message', reply => { if (reply.type === 'error') resolve(reply); });
-        });
-        const began = performance.now();
-        let cancel = () => {};
-        try {
-          expect((await execute(ws, 'BEGIN')).transaction).toBe(true);
-          const statement = promotion ? 'INSERT INTO placement_rows SELECT value FROM placement_rows'
-            : 'WITH RECURSIVE r(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM r WHERE x<1000000000) SELECT SUM(x) FROM r';
-          cancel = scheduleStatement(ws.socket, frame(1, Buffer.from(JSON.stringify({
-            id: 2, type: 'execute', statements: [{ sql: statement }],
-          }))), began, promotion ? 4900 : 4500);
-          expect(await expired).toMatchObject({ type: 'error', error: { code: 'query_canceled', sqlstate: '57014' } });
-          expect((await ws.closing).code).toBe(1008);
-          ws.socket.destroy();
-          await ws.closed;
-          expect(performance.now() - began).toBeLessThan(6500);
-        } finally {
-          cancel();
-          ws.socket.destroy();
-          await ws.closed;
-        }
-      }
+    const ws = await rawSqlSocket('http://127.0.0.1:8180' + database(created.id) + '/sql/ws', token);
+    let cancel = () => {};
+    try {
+      const began = performance.now();
+      expect((await execute(ws, 'BEGIN')).transaction).toBe(true);
+      const inserted = once(ws.events, 'message');
+      cancel = scheduleStatement(ws.socket, frame(1, Buffer.from(JSON.stringify({
+        id: 2, type: 'execute', statements: [{ sql: 'INSERT INTO placement_rows VALUES (2)' }],
+      }))), began, 3000);
+      expect((await inserted)[0]).toMatchObject({ type: 'result', transaction: true });
+      expect(await ws.closing).toEqual({ code: 1008, reason: 'the transaction expired: it was open for more than 5 seconds and was rolled back' });
+      expect(performance.now() - began).toBeLessThan(6500);
+      ws.socket.destroy();
+      await ws.closed;
+    } finally {
+      cancel();
+      ws.socket.destroy();
+      await ws.closed;
     }
-    const read = await sql(cells, home, created.id, 'SELECT value FROM placement_rows');
-    expect(read.results[0].rows).toEqual([[1]]);
+    expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows')).results[0].rows).toEqual([[1]]);
   } finally {
     await removeDatabase(cells, created.id);
   }
@@ -304,6 +295,19 @@ test('a commit whose answer arrives after the transaction deadline is reported a
     expect(replies.filter(reply => reply.error?.message.includes('rolled back'))).toEqual([]);
     const read = await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value');
     expect(read.results[0].rows).toEqual([[1], [2]]);
+    ws.socket.destroy();
+    await ws.closed;
+    ws = await rawSqlSocket('http://127.0.0.1:8180' + database(created.id) + '/sql/ws', token);
+    expect((await execute(ws, 'BEGIN')).transaction).toBe(true);
+    expect((await execute(ws, 'INSERT INTO placement_rows VALUES (3)')).type).toBe('result');
+    fault.hold();
+    const cutAnswer = once(fault.events, 'held');
+    const unknown = once(ws.events, 'message');
+    ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 4, type: 'commit' }))));
+    await cutAnswer;
+    fault.cut();
+    expect((await unknown)[0]).toMatchObject({ id: 4, type: 'error', error: { code: 'write_outcome_unknown', sqlstate: '08007' } });
+    expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3]]);
   } finally {
     clearTimeout(release);
     fault.release();
@@ -326,6 +330,13 @@ test('a Postgres relay whose client stops reading returns its admission', async 
     expect(metric).toBeDefined();
     return Number(metric!.split(' ').at(-1));
   };
+  const stalls = async () => {
+    const response = await request.get('http://127.0.0.1:9191/metrics');
+    expect(response.status()).toBe(200);
+    const metric = (await response.text()).split('\n').find(line => /^terrabase_qos_relay_output_timeouts_total(?:\{| )/.test(line));
+    return metric ? Number(metric.split(' ').at(-1)) : 0;
+  };
+  const stalledBefore = await stalls();
   let pg: Awaited<ReturnType<typeof stalledPostgres>> | undefined;
   try {
     const prior = await active();
@@ -334,9 +345,113 @@ test('a Postgres relay whose client stops reading returns its admission', async 
     await expect.poll(active, { message: 'the relay holds an admission while its client is connected' }).toBe(prior + 1);
     await expect.poll(active, { message: 'the relay whose client stopped reading returns its admission', timeout: 45_000, intervals: [250, 500, 1000] })
       .toBe(prior);
+    const drained = await pg.drain();
+    expect(drained.rows, 'the unread query produced real rows before backpressure closed it').toBeGreaterThan(0);
+    expect(drained.errors).toEqual([]);
+    await expect.poll(stalls, { message: 'the relay output flush exceeded its own budget' }).toBe(stalledBefore + 1);
   } finally {
     pg?.socket.destroy();
     if (pg) await pg.closed;
+    await removeDatabase(cells, created.id);
+  }
+});
+
+for (const kind of ['local WebSocket', 'local Postgres', 'forwarded SQL', 'WebSocket relay', 'Postgres relay'] as const) {
+  test(kind + ' expires a silent transaction, rolls back and returns both admissions', async ({ cells, request }) => {
+    const relayed = kind.endsWith('relay');
+    const remote = relayed || kind === 'forwarded SQL';
+    const created = await json<Database>(await cells.post(home + project() + '/databases', {
+      data: { name: name('silent-' + kind.replaceAll(' ', '-').toLowerCase()), homeRegion: 'gru', replicaRegions: relayed ? [] : ['fra'] },
+    }), 201);
+    const token = await credential(request);
+    const active = async (port: number) => {
+      const response = await request.get('http://127.0.0.1:' + port + '/metrics');
+      expect(response.status()).toBe(200);
+      const metric = (await response.text()).split('\n').find(line => /^terrabase_qos_active_sessions(?:\{| )/.test(line));
+      expect(metric).toBeDefined();
+      return Number(metric!.split(' ').at(-1));
+    };
+    const ports = remote ? [9091, 9191] : [9091];
+    const before = await Promise.all(ports.map(active));
+    let ws: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
+    let pg: Awaited<ReturnType<typeof postgres>> | undefined;
+    try {
+      await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
+      await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (1)');
+      if (!relayed) await replicated(cells, replica, created.id, 1);
+      if (kind.includes('Postgres')) {
+        pg = await postgres(remote ? 6532 : 6432, created.id);
+        expect(await pg.connected).toBe(true);
+        await pg.begin();
+        const ready = once(pg.results, 'ready');
+        pg.socket.write(message('Q', Buffer.from('INSERT INTO placement_rows VALUES (2)\0')));
+        await ready;
+        expect(pg.errors).toEqual([]);
+        const errors = await pg.closed;
+        expect(errors).toContain('C57014');
+        expect(errors).toContain('Mthe transaction expired: it was open for more than 5 seconds and was rolled back');
+      } else {
+        ws = await rawSqlSocket('http://127.0.0.1:' + (remote ? 8180 : 8080) + database(created.id) + '/sql/ws', token);
+        expect((await execute(ws, 'BEGIN')).transaction).toBe(true);
+        expect(await execute(ws, 'INSERT INTO placement_rows VALUES (2)')).toMatchObject({ type: 'result', transaction: true });
+        expect(await ws.closing).toEqual({ code: 1008, reason: 'the transaction expired: it was open for more than 5 seconds and was rolled back' });
+        ws.socket.destroy();
+        await ws.closed;
+      }
+      expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows')).results[0].rows).toEqual([[1]]);
+      for (let index = 0; index < ports.length; index++) {
+        await expect.poll(() => active(ports[index]), { message: kind + ' returned admission on port ' + ports[index] }).toBe(before[index]);
+      }
+    } finally {
+      pg?.socket.destroy();
+      ws?.socket.destroy();
+      if (pg) await pg.closed;
+      if (ws) await ws.closed;
+      await removeDatabase(cells, created.id);
+    }
+  });
+}
+
+test('an established Postgres relay delivers a late commit answer without a transaction timer or retry error', async ({ cells }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('relay-late-commit'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  const peersPath = join(stateDir, 'peers');
+  const peers = readFileSync(peersPath, 'utf8');
+  const fault = await holdPeerReplies('127.0.0.5', 8081, 'http://127.0.0.1:8081', '/v1/internal/postgres');
+  let pg: Awaited<ReturnType<typeof postgres>> | undefined;
+  let cancel = () => {};
+  let release: NodeJS.Timeout | undefined;
+  try {
+    await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
+    writeFileSync(peersPath, peers.replace('journey-1 gru 127.0.0.1', 'journey-1 gru 127.0.0.5'));
+    pg = await postgres(6532, created.id);
+    expect(await pg.connected).toBe(true);
+    const began = performance.now();
+    await pg.begin();
+    const inserted = once(pg.results, 'ready');
+    pg.socket.write(message('Q', Buffer.from('INSERT INTO placement_rows VALUES (7)\0')));
+    await inserted;
+    fault.hold();
+    const held = once(fault.events, 'held');
+    const committed = once(pg.results, 'ready');
+    cancel = scheduleStatement(pg.socket, message('Q', Buffer.from('COMMIT\0')), began, 4500);
+    await held;
+    release = setTimeout(fault.release, Math.max(0, began + 6500 - performance.now()));
+    await committed;
+    expect(performance.now() - began).toBeGreaterThan(5000);
+    expect(pg.errors).toEqual([]);
+    expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows')).results[0].rows).toEqual([[7]]);
+    fault.cut();
+    expect(await pg.closed).not.toContain('C08001');
+  } finally {
+    cancel();
+    clearTimeout(release);
+    fault.release();
+    writeFileSync(peersPath, peers);
+    pg?.socket.destroy();
+    if (pg) await pg.closed;
+    await fault.close();
     await removeDatabase(cells, created.id);
   }
 });

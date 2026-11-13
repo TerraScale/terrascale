@@ -6,7 +6,7 @@ title: Errors and safe retries
 
 Decide recovery from the typed status and code, and from whether an operation may have committed. A timeout does not prove a write failed.
 
-`query_canceled` (400, SQLSTATE 57014) has two messages: `query too expensive: it exceeds the work budget` when a query passes the plan's scan or work budget, and `the request exceeded its 5 s time limit; split the batch or narrow the query` when the request's shared 5 s of statement and commit execution runs out. Time spent admitted, queued or waiting on the organization's limits does not count. Narrow the query, add indexes or split the batch before retrying.
+`query_canceled` (400, SQLSTATE 57014) has two messages: `query too expensive: it exceeds the work budget` when a query passes the plan's scan or work budget, and `the request exceeded its 5 s time limit; split the batch or narrow the query` when the request's shared 5 s of statement and commit execution runs out. Time spent admitted, queued or waiting on the organization's limits does not count. Narrow the query, add indexes or split the batch before retrying. SQL sessions also use `query_canceled` when a transaction expires while waiting for the next message: five seconds idle in transaction or five seconds total since BEGIN. The session closes and rolls back. Bytes already arriving use the message-progress budget instead; accepted statements and commits finish with their real results under the existing execution budgets, even past the transaction limit. A managed statement cancellation in an explicit transaction leaves it aborted until ROLLBACK or COMMIT.
 
 ## Typed status codes
 
@@ -479,7 +479,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `write_outcome_unknown`
 
-503, SQLSTATE 08007 — a write committed or may have committed: its durable copy in another region was not confirmed in time, or the region you called forwarded it, or a SQL session's commit, to the database's writer and got no answer. Read what the write would have produced before repeating it, above all for a non-idempotent write. Retry: not blindly.
+503, SQLSTATE 08007 — a write committed or may have committed: its durable copy in another region was not confirmed in time, or the region you called forwarded it, or a SQL session's commit, to the database's writer and got no answer. Read what the write would have produced before repeating it, above all for a non-idempotent write. This classification depends on sending the request, not its transaction age. A delayed commit answer remains the commit's real result. An old server forwarding this unfamiliar code preserves its code and message but uses its unknown-code mapping, SQLSTATE 0A000 and HTTP 400. Mixed builds do not guarantee the new mapping or transaction-wait behaviour end to end. Retry: not blindly.
 
 ### `wrong_region`
 

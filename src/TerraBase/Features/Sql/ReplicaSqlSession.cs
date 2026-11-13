@@ -12,7 +12,6 @@ internal sealed class ReplicaSqlSession(
 {
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly SqlError ReadOnlyWrite = new(SqlErrors.ReadOnlyTransaction, "a READ ONLY transaction cannot write");
-    private static readonly SqlError Expired = SqlErrors.TransactionExpired;
     private static readonly SqlError ReadThenWrite = new(SqlErrors.SerializationConflict,
         "the transaction read in this region and then wrote: retry it, and the retry runs at the database's home");
 
@@ -25,14 +24,13 @@ internal sealed class ReplicaSqlSession(
     private bool _conflicted;
     private string? _first;
     private WriteOverride _preference;
-    private bool _expired;
     private long _position = -1;
 
     public bool IsAutocommit => !_readOnlyTransaction && (_home?.IsAutocommit ?? true);
 
-    public SqlTransactionDeadline TransactionDeadline { get; set; } = new(transactionTime);
+    public SqlTransactionClock TransactionClock { get; set; } = new(transactionTime);
 
-    public TimeSpan? TransactionRemaining => TransactionDeadline.Remaining;
+    public TimeSpan? TransactionRemaining => IsAutocommit ? null : TransactionClock.Remaining;
 
     public WriteRoute? LastRoute { get; private set; }
 
@@ -52,36 +50,7 @@ internal sealed class ReplicaSqlSession(
     public ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken) =>
         ExecuteAsync(plan, command, admit: null, cancellationToken);
 
-    public ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken) =>
-        BoundAsync(token => ExecuteCoreAsync(plan, command, admit, token), static error => error, cancellationToken);
-
-    private async ValueTask<T> BoundAsync<T>(Func<CancellationToken, ValueTask<T>> run, Func<SqlError, T> failed, CancellationToken cancellationToken)
-    {
-        using var bounded = TransactionDeadline.Bound(cancellationToken);
-        try
-        {
-            var outcome = await run(bounded.Token).ConfigureAwait(false);
-            if (!IsAutocommit && TransactionDeadline.Expired)
-            {
-                await DisposeAsync().ConfigureAwait(false);
-                return failed(Expired);
-            }
-
-            if (IsAutocommit)
-            {
-                TransactionDeadline.Clear();
-            }
-
-            return outcome;
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            await DisposeAsync().ConfigureAwait(false);
-            return failed(TransactionDeadline.Expired ? Expired : SqlErrors.Deadline);
-        }
-    }
-
-    private async ValueTask<SqlOutcome> ExecuteCoreAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
+    public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         await UsePrimaryAsync(cancellationToken).ConfigureAwait(false);
@@ -101,8 +70,8 @@ internal sealed class ReplicaSqlSession(
                 return read;
             case SqlStatementKind.Begin when (plan.ReadOnly || _preference != WriteOverride.Home)
                 && await replicas.BeginReadAsync(database, _position, cancellationToken).ConfigureAwait(false) is { } snapshot:
-                TransactionDeadline.Start();
-                (_snapshot, _readOnlyTransaction, _declaredReadOnly, _expired) = (snapshot, true, plan.ReadOnly, false);
+                TransactionClock.Start();
+                (_snapshot, _readOnlyTransaction, _declaredReadOnly) = (snapshot, true, plan.ReadOnly);
                 (_readLocally, _conflicted, _first) = (false, false, null);
                 return Empty;
             case SqlStatementKind.Write when !canWrite:
@@ -123,10 +92,7 @@ internal sealed class ReplicaSqlSession(
         }
     }
 
-    public ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken) =>
-        BoundAsync(token => TryBatchCoreAsync(commands, token), static error => (SqlBatchOutcome?)new SqlBatchFailure(error, 0), cancellationToken);
-
-    private async ValueTask<SqlBatchOutcome?> TryBatchCoreAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken)
+    public async ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken)
     {
         if (_readOnlyTransaction)
         {
@@ -157,20 +123,21 @@ internal sealed class ReplicaSqlSession(
         }
     }
 
-    public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken) =>
-        ExecuteScriptAsync(sql, SqlSession.MaxStatements, cancellationToken);
-
-    public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken) =>
-        BoundAsync(async token => await OpenHomeAsync(token).ConfigureAwait(false) switch
+    public async ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken) =>
+        await OpenHomeAsync(cancellationToken).ConfigureAwait(false) switch
         {
             (_, { } error) => error,
-            (var home, _) => await MarkAsync(await home!.ExecuteScriptAsync(sql, maxStatements, token).ConfigureAwait(false)).ConfigureAwait(false),
-        }, static error => error, cancellationToken);
+            (var home, _) => await MarkAsync(await home!.ExecuteScriptAsync(sql, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false),
+        };
 
-    public ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken) =>
-        BoundAsync(token => DescribeCoreAsync(plan, command, token), static error => (SqlDescribeOutcome)error, cancellationToken);
+    public async ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken) =>
+        await OpenHomeAsync(cancellationToken).ConfigureAwait(false) switch
+        {
+            (_, { } error) => error,
+            (var home, _) => await MarkAsync(await home!.ExecuteScriptAsync(sql, maxStatements, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false),
+        };
 
-    private async ValueTask<SqlDescribeOutcome> DescribeCoreAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
+    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         await UsePrimaryAsync(cancellationToken).ConfigureAwait(false);
@@ -208,7 +175,7 @@ internal sealed class ReplicaSqlSession(
         if (_readOnlyTransaction)
         {
             return plan.Kind == SqlStatementKind.Write ? (canWrite ? ReadOnlyWrite : SqlErrors.Auth)
-                : _snapshot is { } snapshot ? await DescribeOnAsync(snapshot, plan, cancellationToken).ConfigureAwait(false) : Expired;
+                : _snapshot is { } snapshot ? await DescribeOnAsync(snapshot, plan, cancellationToken).ConfigureAwait(false) : SqlErrors.InFailedTransaction;
         }
 
         if (plan.Kind == SqlStatementKind.Write)
@@ -264,10 +231,10 @@ internal sealed class ReplicaSqlSession(
     {
         if (plan.Kind is SqlStatementKind.Commit or SqlStatementKind.Rollback)
         {
-            var expired = _expired && !_conflicted;
             await DropSnapshotAsync().ConfigureAwait(false);
             (_readOnlyTransaction, _conflicted) = (false, false);
-            return expired && plan.Kind == SqlStatementKind.Commit ? Expired : Empty;
+            TransactionClock.End();
+            return Empty;
         }
 
         if (_conflicted)
@@ -275,16 +242,10 @@ internal sealed class ReplicaSqlSession(
             return SqlErrors.InFailedTransaction;
         }
 
-        if (!_expired && TransactionDeadline.Expired)
-        {
-            _expired = true;
-            await DropSnapshotAsync().ConfigureAwait(false);
-        }
-
         switch (plan.Kind)
         {
-            case var _ when _expired || _snapshot is null:
-                return Expired;
+            case var _ when _snapshot is null:
+                return SqlErrors.InFailedTransaction;
             case SqlStatementKind.Begin:
                 return SqlErrors.Error("cannot start a transaction within a transaction");
             case SqlStatementKind.Write when !canWrite:
@@ -402,7 +363,7 @@ internal sealed class ReplicaSqlSession(
             && await service.UsePrimaryAsync(database, cancellationToken).ConfigureAwait(false))
         {
             _home ??= local();
-            _home.TransactionDeadline = TransactionDeadline;
+            _home.TransactionClock = TransactionClock;
             _primary = true;
         }
     }
@@ -422,14 +383,14 @@ internal sealed class ReplicaSqlSession(
         if (home == options.Region)
         {
             _home = local();
-            _home.TransactionDeadline = TransactionDeadline;
+            _home.TransactionClock = TransactionClock;
             return (_home, null);
         }
 
         switch (await homes.OpenAsync(database, home, epoch, canWrite, cancellationToken).ConfigureAwait(false))
         {
             case HomeSqlSession session:
-                session.TransactionDeadline = TransactionDeadline;
+                session.TransactionClock = TransactionClock;
                 session.BeginRequest();
                 _home = session;
                 return (session, null);

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Authorization;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
+using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Features.Qos;
@@ -16,7 +17,7 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Regions;
 
-internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredential credential, QosSessions sessions)
+internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredential credential, QosSessions sessions, TimeProvider time)
 {
     private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
@@ -175,8 +176,15 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
 
         var closing = 0;
-        var toHome = PumpAsync(client, upstream, BeginClose, shutdown.Token);
-        var toClient = PumpAsync(upstream, client, BeginClose, shutdown.Token);
+        using var state = new SessionRelay(time);
+        if (authFrame is not null)
+        {
+            state.Sent('R');
+        }
+
+        var memory = context.RequestServices.GetRequiredService<IMemoryBudget>();
+        var toHome = PumpAsync(client, upstream, BeginClose, state, context.Features.GetRequiredFeature<SqlSocketInput>(), time, memory, tenant, shutdown.Token);
+        var toClient = PumpAsync(upstream, client, BeginClose, state, input: null, time, memory, tenant, shutdown.Token);
         try
         {
             await Task.WhenAny(toHome, toClient).ConfigureAwait(false);
@@ -234,7 +242,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
     }
 
-    private static async Task PumpAsync(WebSocket from, WebSocket to, Action beginClose, CancellationToken cancellationToken)
+    private static async Task PumpAsync(WebSocket from, WebSocket to, Action beginClose, SessionRelay state, SqlSocketInput? input, TimeProvider time, IMemoryBudget memory, TenantContext tenant, CancellationToken cancellationToken)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
         try
@@ -242,13 +250,86 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             while (true)
             {
                 WebSocketReceiveResult read;
+                using var deadline = input is null ? new SessionMessageDeadline(time, null, executing: true) : state.Wait();
+                using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+                if (input is not null)
+                {
+                    input.Progress = (bytes, started) => deadline.Progress(bytes, started);
+                }
+
+                var maxBytes = input is null ? HomeSessionFrames.MaxBytes : SqlBatch.MaxBytes;
+                using var reservation = memory.TryReserve(16 * 1024, tenant) ?? throw new QosMemoryException();
+                using var message = new MemoryStream(16 * 1024);
                 try
                 {
-                    read = await from.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    do
+                    {
+                        read = await from.ReceiveAsync(buffer, waiting.Token).ConfigureAwait(false);
+                        if (input is null && read.Count > 0)
+                        {
+                            deadline.Progress(read.Count);
+                        }
+
+                        if (read.MessageType == WebSocketMessageType.Close)
+                        {
+                            break;
+                        }
+
+                        if (message.Length + read.Count > maxBytes)
+                        {
+                            throw new InvalidDataException("relay message too large");
+                        }
+
+                        if (message.Length + read.Count > message.Capacity)
+                        {
+                            var capacity = Math.Min(maxBytes, Math.Max(message.Capacity * 2, (int)message.Length + read.Count));
+                            if (!memory.TryGrow(reservation, capacity))
+                            {
+                                throw new QosMemoryException();
+                            }
+
+                            var previous = message.Capacity;
+                            message.Capacity = capacity;
+                            memory.Shrink(reservation, previous);
+                        }
+
+                        message.Write(buffer, 0, read.Count);
+                    }
+                    while (!read.EndOfMessage);
+                    deadline.Complete();
+                    input?.Complete();
+                    if (read.MessageType != WebSocketMessageType.Close)
+                    {
+                        if (input is not null)
+                        {
+                            using var call = JsonDocument.Parse(message.GetBuffer().AsMemory(0, (int)message.Length));
+                            state.Sent('R', call.RootElement.TryGetProperty("type", out var kind) && kind.GetString() == "begin");
+                        }
+                        else
+                        {
+                            using var answer = JsonDocument.Parse(message.GetBuffer().AsMemory(0, (int)message.Length));
+                            state.Answered('R', answer.RootElement.TryGetProperty("transaction", out var transaction) && transaction.GetBoolean());
+                        }
+                    }
                 }
-                catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException)
+                catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    await state.DrainAsync(cancellationToken).ConfigureAwait(false);
+                    beginClose();
+                    await CloseAsync(from, WebSocketCloseStatus.PolicyViolation, deadline.IsPartial ? "incomplete message timeout exceeded"
+                        : deadline.IsTransaction ? SqlErrors.TransactionExpired.Message : "session idle timeout exceeded", cancellationToken).ConfigureAwait(false);
+                    break;
+                }
+                catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException or InvalidDataException or JsonException)
                 {
                     break;
+                }
+                finally
+                {
+                    if (input is not null)
+                    {
+                        input.Progress = null;
+                    }
                 }
 
                 if (read.MessageType == WebSocketMessageType.Close)
@@ -262,9 +343,9 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                 {
                     using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     sending.CancelAfter(QosSessions.MessageTimeout);
-                    await to.SendAsync(buffer.AsMemory(0, read.Count), read.MessageType, read.EndOfMessage, sending.Token).ConfigureAwait(false);
+                    await to.SendAsync(message.GetBuffer().AsMemory(0, (int)message.Length), read.MessageType, true, sending.Token).ConfigureAwait(false);
                 }
-                catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException)
+                catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException or InvalidDataException or JsonException)
                 {
                     break;
                 }

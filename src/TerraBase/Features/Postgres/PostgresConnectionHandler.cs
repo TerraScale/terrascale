@@ -40,7 +40,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     private static readonly ReadOnlyDictionary<string, SqlValue> NoNamed = ReadOnlyDictionary<string, SqlValue>.Empty;
 
-    private static readonly PgError Expired = new(SqlErrors.Sqlstate(SqlErrors.TransactionExpired.Code), SqlErrors.TransactionExpired.Message, Fatal: true);
 
     private readonly union Access(Authorized, PgError, RelayAccess);
 
@@ -469,7 +468,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         while (true)
         {
             (byte type, byte[] body, IMemoryReservation reservation) messageRead;
-            var transaction = session.Sql.TransactionRemaining is null ? null : session.Sql.TransactionDeadline;
+            var transaction = session.Sql.TransactionRemaining;
             using (var deadline = new SessionMessageDeadline(Time, transaction))
             using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token))
             {
@@ -483,11 +482,20 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     }
 
                     messageRead = await ReadMessageAsync(input, deadline, waiting.Token).ConfigureAwait(false);
+                    try
+                    {
+                        deadline.Complete();
+                    }
+                    catch
+                    {
+                        messageRead.reservation.Dispose();
+                        throw;
+                    }
                 }
                 catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    output.Error(transaction is not null ? SqlErrors.Sqlstate(SqlErrors.TransactionExpired.Code) : "57P05",
-                        transaction is not null ? SqlErrors.TransactionExpired.Message : deadline.IsPartial ? "incomplete message timeout exceeded" : "session idle timeout exceeded", fatal: true);
+                    output.Error(transaction is not null && !deadline.IsPartial ? SqlErrors.Sqlstate(SqlErrors.TransactionExpired.Code) : "57P05",
+                        transaction is not null && !deadline.IsPartial ? SqlErrors.TransactionExpired.Message : deadline.IsPartial ? "incomplete message timeout exceeded" : "session idle timeout exceeded", fatal: true);
                     await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                     return;
                 }
@@ -1016,7 +1024,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private async ValueTask<PgOutcome> AdmitAsync(Session session, Func<TenantContext, CancellationToken, ValueTask<PgOutcome>> run,
         Action<TenantContext> authorized, CancellationToken cancellationToken)
     {
-        using var running = session.Sql.TransactionDeadline.Bound(cancellationToken);
+        using var running = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         session.Track(running);
         IDatabaseStore? store = null;
         try
@@ -1056,7 +1064,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         catch (OperationCanceledException) when (running.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            return session.Sql.TransactionDeadline.Expired ? Expired : new PgError("57014", "canceling statement due to user request");
+            return new PgError("57014", "canceling statement due to user request");
         }
         catch (StorageCopyFaultedException)
         {

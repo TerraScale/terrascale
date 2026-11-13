@@ -216,7 +216,6 @@ internal sealed class SqlSession(
         : UnknownDatabase;
     private static readonly SqlError TooManyChanges = SqlErrors.TooBig("a transaction changes at most 1024 rows and grows the database by at most 8 MiB");
     internal static readonly SqlError TooManyRows = SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");
-    private static readonly SqlError Expired = SqlErrors.TransactionExpired;
     private static readonly SqlError Aborted = new(SqlErrors.TransactionRolledBack, "the transaction was rolled back after a failed statement; end it with ROLLBACK");
 
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -228,16 +227,14 @@ internal sealed class SqlSession(
     private Pinned? _pinned;
     private IStorageTransaction? _running;
     private SqlError? _lost;
-    private int _generation;
-    private int _expiring = -1;
     private List<IReadOnlyList<CapturedRowChange>>? _committed;
     private string? _publishId;
 
     public bool IsAutocommit => !_inTransaction;
 
-    public SqlTransactionDeadline TransactionDeadline { get; set; } = new(time);
+    public SqlTransactionClock TransactionClock { get; set; } = new(time);
 
-    public TimeSpan? TransactionRemaining => TransactionDeadline.Remaining;
+    public TimeSpan? TransactionRemaining => _inTransaction ? TransactionClock.Remaining : null;
 
     public void KeepCommitted() => _committed ??= [];
 
@@ -264,32 +261,16 @@ internal sealed class SqlSession(
         using var bounded = TransactionDeadline.Bound(StatementTimeout(), cancellationToken);
         try
         {
-            await _gate.WaitAsync(bounded.Token).ConfigureAwait(false);
-            try
-            {
-                var outcome = await ExecuteLockedAsync(plan, command, admit, first: false, bounded.Token).ConfigureAwait(false);
-                if (_inTransaction && TransactionDeadline.Expired)
-                {
-                    await LoseAsync(Expired).ConfigureAwait(false);
-                    return Expired;
-                }
-
-                if (!_inTransaction)
-                {
-                    TransactionDeadline.Clear();
-                }
-
-                return outcome;
-            }
-            finally
-            {
-                _gate.Release();
-            }
+            return await ExecuteLockedAsync(plan, command, admit, first: false, cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            await DisposeAsync().ConfigureAwait(false);
-            return TransactionDeadline.Expired ? Expired : SqlErrors.Deadline;
+            await LoseAsync(Aborted).ConfigureAwait(false);
+            throw;
+        }
+        finally
+        {
+            _gate.Release();
         }
     }
 
@@ -304,20 +285,6 @@ internal sealed class SqlSession(
         ExecuteScriptAsync(sql, MaxStatements, cancellationToken);
 
     public async ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken)
-    {
-        using var bounded = TransactionDeadline.Bound(SqlLimits.MaxRequestTime, cancellationToken);
-        try
-        {
-            return await ExecuteScriptCoreAsync(sql, maxStatements, bounded.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            await DisposeAsync().ConfigureAwait(false);
-            return TransactionDeadline.Expired ? Expired : SqlErrors.Deadline;
-        }
-    }
-
-    private async ValueTask<SqlOutcome> ExecuteScriptCoreAsync(string sql, int maxStatements, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sql);
         if (SqlScript.CountAtMost(sql) > maxStatements)
@@ -356,14 +323,14 @@ internal sealed class SqlSession(
                     _consumed = 0;
                     last = await ExecuteLockedAsync(plan, new SqlCommand(plan.Sql, [], new Dictionary<string, SqlValue>()), admit: null, first: true, cancellationToken)
                         .ConfigureAwait(false);
-                    if (!_inTransaction)
-                    {
-                        TransactionDeadline.Clear();
-                    }
-
                     consumed = remaining.IndexOf(plan.Sql, StringComparison.Ordinal)
                         + (plan.GuardsTrigger && _consumed > 0 ? _consumed - (plan.Run.Length - plan.Sql.Length)
                             : !ReferenceEquals(plan.Run, plan.Sql) ? plan.Sql.Length : _consumed > 0 ? _consumed : SqlScript.SimpleLength(plan.Sql));
+                }
+                catch (OperationCanceledException)
+                {
+                    await LoseAsync(Aborted).ConfigureAwait(false);
+                    throw;
                 }
                 finally
                 {
@@ -393,26 +360,11 @@ internal sealed class SqlSession(
 
     public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
-        using var bounded = TransactionDeadline.Bound(StatementTimeout(), cancellationToken);
-        try
-        {
-            return await DescribeCoreAsync(plan, command, bounded.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            await DisposeAsync().ConfigureAwait(false);
-            return TransactionDeadline.Expired ? Expired : SqlErrors.Deadline;
-        }
-    }
-
-    private async ValueTask<SqlDescribeOutcome> DescribeCoreAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
-    {
         ArgumentNullException.ThrowIfNull(command);
         _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await ExpireIfDueAsync().ConfigureAwait(false);
             if (_lost is { } lost)
             {
                 return lost;
@@ -440,6 +392,11 @@ internal sealed class SqlSession(
                 return await DescribeInAsync(transaction, plan, cancellationToken).ConfigureAwait(false);
             }
         }
+        catch (OperationCanceledException)
+        {
+            await LoseAsync(Aborted).ConfigureAwait(false);
+            throw;
+        }
         finally
         {
             _gate.Release();
@@ -460,6 +417,7 @@ internal sealed class SqlSession(
         {
             await DropAsync().ConfigureAwait(false);
             _inTransaction = false;
+            TransactionClock.End();
             _lost = null;
         }
         finally
@@ -508,7 +466,7 @@ internal sealed class SqlSession(
     private TimeSpan StatementTimeout()
     {
         var timeout = SqlLimits.MaxRequestTime;
-        if (QosContext.Current is { } tenant && QosPolicy.For(tenant.Plan).QueryTimeout is var limit && limit != Timeout.InfiniteTimeSpan)
+        if (QosContext.Current is { } tenant && QosPolicy.For(tenant).QueryTimeout is var limit && limit != Timeout.InfiniteTimeSpan)
         {
             timeout = Min(timeout, limit);
         }
@@ -516,11 +474,6 @@ internal sealed class SqlSession(
         if (_transportStarted is not null || _scriptStarted is not null)
         {
             timeout = Min(timeout, SqlLimits.MaxRequestTime - TimeSpan.FromTicks(_requestExecution));
-        }
-
-        if (TransactionDeadline.Remaining is { } remaining)
-        {
-            timeout = Min(timeout, remaining);
         }
 
         return timeout > TimeSpan.FromMilliseconds(1) ? timeout : TimeSpan.FromMilliseconds(1);
@@ -536,15 +489,16 @@ internal sealed class SqlSession(
             return SqlErrors.NonFinite;
         }
 
-        await ExpireIfDueAsync().ConfigureAwait(false);
         if (_lost is { } lost)
         {
             if (plan.Kind is SqlStatementKind.Rollback or SqlStatementKind.Commit)
             {
                 (_lost, _inTransaction) = (null, false);
+                TransactionClock.End();
             }
 
-            return plan.Kind == SqlStatementKind.Rollback ? admit?.Invoke(Empty) ?? (SqlOutcome)Empty : lost;
+            return plan.Kind == SqlStatementKind.Rollback ? admit?.Invoke(Empty) ?? (SqlOutcome)Empty
+                : plan.Kind == SqlStatementKind.Commit ? lost : SqlErrors.InFailedTransaction;
         }
 
         switch (plan.Kind)
@@ -564,7 +518,7 @@ internal sealed class SqlSession(
             case SqlStatementKind.Noop:
                 return Empty;
             case SqlStatementKind.Begin:
-                TransactionDeadline.Start();
+                TransactionClock.Start();
                 (_inTransaction, _readOnlyTransaction) = (true, plan.ReadOnly);
                 return Empty;
             case SqlStatementKind.Commit:
@@ -572,6 +526,7 @@ internal sealed class SqlSession(
             case SqlStatementKind.Rollback:
                 await DropAsync().ConfigureAwait(false);
                 _inTransaction = false;
+                TransactionClock.End();
                 return Empty;
             case SqlStatementKind.Savepoint or SqlStatementKind.Release or SqlStatementKind.RollbackTo:
                 return await SavepointAsync(plan, admit, first, cancellationToken).ConfigureAwait(false);
@@ -671,9 +626,9 @@ internal sealed class SqlSession(
 
         var before = pinned.Tally.Snapshot();
         var (outcome, ended) = await RunAsync(pinned.Transaction, plan, command, pinned.Tally, admit, first, cancellationToken).ConfigureAwait(false);
-        if (ended)
+        if (ended || outcome is SqlError { Code: SqlErrors.QueryCanceled })
         {
-            await LoseAsync(LostReason()).ConfigureAwait(false);
+            await LoseAsync(Aborted).ConfigureAwait(false);
             return outcome;
         }
 
@@ -747,7 +702,7 @@ internal sealed class SqlSession(
         }
         catch (SqlStatementException error) when (error.TransactionEnded)
         {
-            await LoseAsync(LostReason()).ConfigureAwait(false);
+            await LoseAsync(Aborted).ConfigureAwait(false);
             return Map(error);
         }
         catch (SqlStatementException error)
@@ -755,9 +710,6 @@ internal sealed class SqlSession(
             return Map(error);
         }
     }
-
-    private SqlError LostReason() =>
-        _expiring == _generation || TransactionDeadline.Expired ? Expired : Aborted;
 
     private async ValueTask<(SqlOutcome Outcome, bool Ended)> RunAsync(
         IStorageTransaction transaction, SqlStatementPlan plan, SqlCommand command, Tally tally, Func<SqlResult, SqlError?>? admit, bool first,
@@ -844,7 +796,7 @@ internal sealed class SqlSession(
         {
             if (error.TransactionEnded && _inTransaction)
             {
-                await LoseAsync(LostReason()).ConfigureAwait(false);
+                await LoseAsync(Aborted).ConfigureAwait(false);
             }
 
             return Map(error);
@@ -859,6 +811,7 @@ internal sealed class SqlSession(
     {
         var pinned = _pinned;
         _inTransaction = false;
+        TransactionClock.End();
         if (pinned is null)
         {
             return Empty;
@@ -931,16 +884,7 @@ internal sealed class SqlSession(
                 return SqlErrors.Deadline;
             }
 
-            using (var dispatched = TransactionDeadline.Dispatch())
-            {
-                if (dispatched is null)
-                {
-                    return Expired;
-                }
-
-                _ = await ChargedAsync(() => transaction.CommitAsync(CancellationToken.None)).ConfigureAwait(false);
-            }
-
+            _ = await ChargedAsync(() => transaction.CommitAsync(cancellationToken)).ConfigureAwait(false);
             if (captured is { Count: > 0 })
             {
                 _committed!.Add(captured);
@@ -987,8 +931,6 @@ internal sealed class SqlSession(
             return (pinned, null);
         }
 
-        using var deadline = TransactionDeadline.Bound(SqlLimits.MaxTransactionTime, cancellationToken);
-        cancellationToken = deadline.Token;
         var write = canWrite && !_readOnlyTransaction;
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
@@ -998,13 +940,22 @@ internal sealed class SqlSession(
         StorageQuotaLease? lease = null;
         if (write)
         {
-            switch (await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false))
+            using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            bounded.CancelAfter(SqlLimits.MaxTransactionTime);
+            try
             {
-                case StorageQuotaLease admitted:
-                    lease = admitted;
-                    break;
-                case Unavailable:
-                    return (null, SqlErrors.Busy("storage accounting is unavailable; retry"));
+                switch (await quota.EnterAsync(database, store, bounded.Token).ConfigureAwait(false))
+                {
+                    case StorageQuotaLease admitted:
+                        lease = admitted;
+                        break;
+                    case Unavailable:
+                        return (null, SqlErrors.Busy("storage accounting is unavailable; retry"));
+                }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return (null, SqlErrors.Busy("storage accounting is busy; retry"));
             }
         }
 
@@ -1051,40 +1002,8 @@ internal sealed class SqlSession(
             throw;
         }
 
-        var generation = ++_generation;
-        var expiry = TransactionDeadline.Token.Register(() => _ = ExpireLaterAsync(generation));
-        _pinned = new Pinned(transaction, lease, write, baseline, expiry, new Tally(), []);
+        _pinned = new Pinned(transaction, lease, write, baseline, new Tally(), []);
         return (_pinned, null);
-    }
-
-    private async Task ExpireLaterAsync(int generation)
-    {
-        if (Volatile.Read(ref _pinned) is { } pinned && generation == Volatile.Read(ref _generation))
-        {
-            Volatile.Write(ref _expiring, generation);
-            pinned.Transaction.InterruptStatement();
-        }
-
-        await _gate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            if (generation == _generation && _pinned is not null && _lost is null)
-            {
-                await LoseAsync(Expired).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    private async ValueTask ExpireIfDueAsync()
-    {
-        if (_lost is null && TransactionDeadline.Expired)
-        {
-            await LoseAsync(Expired).ConfigureAwait(false);
-        }
     }
 
     private async ValueTask LoseAsync(SqlError error)
@@ -1101,8 +1020,6 @@ internal sealed class SqlSession(
         }
 
         _pinned = null;
-        _generation++;
-        await pinned.Expiry.DisposeAsync().ConfigureAwait(false);
         try
         {
             await pinned.Transaction.DisposeAsync().ConfigureAwait(false);
@@ -1226,7 +1143,7 @@ internal sealed class SqlSession(
     };
 
     private sealed record Pinned(
-        IStorageTransaction Transaction, StorageQuotaLease? Lease, bool Write, long Baseline, CancellationTokenRegistration Expiry, Tally Tally,
+        IStorageTransaction Transaction, StorageQuotaLease? Lease, bool Write, long Baseline, Tally Tally,
         List<(string Name, TallySnapshot Snapshot)> Savepoints);
 
     private sealed record TallySnapshot(long Rows, bool Wrote, Dictionary<string, int> Operations);

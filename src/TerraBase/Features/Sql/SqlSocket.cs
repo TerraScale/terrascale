@@ -144,24 +144,15 @@ internal sealed class SqlSocket(
                 }
 
                 await _frame.WaitAsync(cancellationToken).ConfigureAwait(false);
-                using var operation = Session.TransactionDeadline.Bound(cancellationToken);
-                var aborted = context.RequestAborted;
-                context.RequestAborted = operation.Token;
                 try
                 {
-                    if (!await AnswerAsync(frame.Value.Bytes.AsMemory(0, frame.Value.Length), operation.Token).ConfigureAwait(false))
+                    if (!await AnswerAsync(frame.Value.Bytes.AsMemory(0, frame.Value.Length), cancellationToken).ConfigureAwait(false))
                     {
                         return;
                     }
                 }
-                catch (OperationCanceledException) when (Session.TransactionDeadline.Expired && !cancellationToken.IsCancellationRequested)
-                {
-                    await ExpireTransactionAsync().ConfigureAwait(false);
-                    return;
-                }
                 finally
                 {
-                    context.RequestAborted = aborted;
                     _frame.Release();
                 }
             }
@@ -287,13 +278,11 @@ internal sealed class SqlSocket(
             return null;
         }
 
-        var transaction = _session?.TransactionRemaining is null ? null : _session.TransactionDeadline;
+        var transaction = _session?.TransactionRemaining;
         using var idle = new SessionMessageDeadline(time, transaction);
-        var closing = Task.CompletedTask;
-        var expired = idle.Token.Register(() => closing = ExpireAsync());
         var input = context.Features.GetRequiredFeature<SqlSocketInput>();
         input.Progress = (bytes, started) => idle.Progress(bytes, started);
-        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closed.Token);
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closed.Token, idle.Token);
         var buffer = ArrayPool<byte>.Shared.Rent(FirstBufferBytes);
         var length = 0;
         try
@@ -344,12 +333,15 @@ internal sealed class SqlSocket(
                 length += read.Count;
                 if (read.EndOfMessage)
                 {
+                    idle.Complete();
+                    input.Complete();
                     return (buffer, length, reservation);
                 }
             }
         }
         catch (OperationCanceledException) when (idle.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
+            await ExpireAsync().ConfigureAwait(false);
             Release();
             return null;
         }
@@ -361,13 +353,11 @@ internal sealed class SqlSocket(
         finally
         {
             input.Progress = null;
-            await expired.DisposeAsync().ConfigureAwait(false);
-            await closing.ConfigureAwait(false);
         }
 
         async Task ExpireAsync()
         {
-            if (transaction is not null)
+            if (transaction is not null && !idle.IsPartial)
             {
                 await ExpireTransactionAsync().ConfigureAwait(false);
                 return;

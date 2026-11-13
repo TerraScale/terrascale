@@ -41,7 +41,7 @@ Frames are JSON text of at most 1 MiB. The server answers each frame in order, o
 | Client frame | Meaning |
 |---|---|
 | `{"id":1,"type":"execute","statements":[{"sql":"…","args":[…],"named":{…}}]}` | Run 1 to 256 statements, with arguments as on `sql/execute`. Outside a transaction they run as one transaction, all or nothing. Inside one they run in it. |
-| `{"id":2,"type":"begin"}` | Open a transaction (at most 5 seconds). |
+| `{"id":2,"type":"begin"}` | Open a transaction. Five-second idle and total limits apply at the next message wait; a message in progress uses its progress budget, and an accepted statement or commit finishes under its execution budget. |
 | `{"id":3,"type":"commit"}` | Commit it. After a failed statement, commit rolls back and answers `transaction_rolled_back`. |
 | `{"id":4,"type":"rollback"}` | Roll it back. |
 

@@ -5,12 +5,12 @@ namespace TerraBase.Features.Management;
 
 internal sealed class DatabaseAllowance
 {
-    public DatabaseAllowance() : this(plan => QosPolicy.For(plan).Databases) { }
+    public DatabaseAllowance() : this(tenant => QosPolicy.For(tenant).Databases) { }
 
-    internal DatabaseAllowance(Func<PlanTier, long> limit)
+    internal DatabaseAllowance(Func<TenantContext, long> limit)
     {
         Limit = limit;
     }
 
-    public Func<PlanTier, long> Limit { get; }
+    public Func<TenantContext, long> Limit { get; }
 }

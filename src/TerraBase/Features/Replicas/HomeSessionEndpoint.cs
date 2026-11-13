@@ -128,7 +128,7 @@ internal sealed class HomeSessionEndpoint(
             await AnswerAsync(output, new HomeSessionAnswer(true), cancellationToken).ConfigureAwait(false);
             while (true)
             {
-                var transaction = session.TransactionRemaining is null ? null : session.TransactionDeadline;
+                var transaction = session.TransactionRemaining;
                 HomeSessionCall? call;
                 using (var deadline = new SessionMessageDeadline(time, transaction))
                 using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token))
@@ -136,11 +136,12 @@ internal sealed class HomeSessionEndpoint(
                     try
                     {
                         call = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionCall, memory, database, deadline, waiting.Token).ConfigureAwait(false);
+                        deadline.Complete();
                     }
                     catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                     {
                         using var drain = new CancellationTokenSource(Shutdown.DrainBudget);
-                        await AnswerAsync(output, new HomeSessionAnswer(true, transaction is not null ? SqlErrors.TransactionExpired : Idle), drain.Token).ConfigureAwait(false);
+                        await AnswerAsync(output, new HomeSessionAnswer(true, transaction is not null && !deadline.IsPartial ? SqlErrors.TransactionExpired : Idle), drain.Token).ConfigureAwait(false);
                         return;
                     }
                 }
@@ -150,15 +151,18 @@ internal sealed class HomeSessionEndpoint(
                     return;
                 }
 
-                if (call.Remaining is { } remaining)
+                if (call.Op == "execute" && SqlScript.Classify(call.Sql) is SqlStatementPlan { Kind: SqlStatementKind.Begin })
                 {
-                    session.TransactionDeadline.Limit(remaining);
+                    session.TransactionClock.Start();
                 }
 
-                using var running = session.TransactionDeadline.Bound(SqlLimits.MaxRequestTime, cancellationToken);
-                var requestToken = running.Token;
+                if (call.Remaining is { } remaining)
+                {
+                    session.TransactionClock.Limit(remaining);
+                }
+
                 HomeSessionAnswer answer;
-                if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, requestToken).ConfigureAwait(false))
+                if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, cancellationToken).ConfigureAwait(false))
                 {
                     await AnswerAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), cancellationToken).ConfigureAwait(false);
                     continue;
@@ -175,7 +179,7 @@ internal sealed class HomeSessionEndpoint(
                             "execute" => SqlScript.Classify(call.Sql) switch
                             {
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
-                                SqlStatementPlan plan => await session.ExecuteAsync(new SqlPlannedCommand(plan, command), requestToken).ConfigureAwait(false) switch
+                                SqlStatementPlan plan => await session.ExecuteAsync(new SqlPlannedCommand(plan, command), cancellationToken).ConfigureAwait(false) switch
                                 {
                                     SqlResult result => Answered(session, result),
                                     SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
@@ -184,13 +188,13 @@ internal sealed class HomeSessionEndpoint(
                             "describe" => SqlScript.Classify(call.Sql) switch
                             {
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
-                                SqlStatementPlan plan => await session.DescribeAsync(plan, command, requestToken).ConfigureAwait(false) switch
+                                SqlStatementPlan plan => await session.DescribeAsync(plan, command, cancellationToken).ConfigureAwait(false) switch
                                 {
                                     SqlDescription description => new HomeSessionAnswer(session.IsAutocommit, Description: description),
                                     SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
                                 },
                             },
-                            "batch" => await BatchAsync(session, call.Batch, requestToken).ConfigureAwait(false),
+                            "batch" => await BatchAsync(session, call.Batch, cancellationToken).ConfigureAwait(false),
                             _ => new HomeSessionAnswer(session.IsAutocommit, new SqlError(SqlErrors.InvalidRequest, "op is execute, describe or batch")),
                         };
                     }
@@ -265,6 +269,6 @@ internal sealed class HomeSessionEndpoint(
     {
         using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         sending.CancelAfter(QosSessions.MessageTimeout);
-        await HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, sending.Token).ConfigureAwait(false);
+        await HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, sending.Token).ConfigureAwait(false);
     }
 }

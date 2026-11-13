@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { connect as peer } from 'node:http2';
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { frame, pacedWrite, rawSqlSocket } from '../support/sql-socket';
+import { frame, pacedWrite, rawSqlSocket, scheduleStatement } from '../support/sql-socket';
 import { message, postgres } from '../support/postgres-wire';
 import { auth, onLocalStack, stateDir } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
@@ -190,35 +190,132 @@ test('data-modifying WITH requires write scope and read-only WITH returns data',
   }
 });
 
-test('transaction silence and partial input close both protocols with the transaction timeout', async ({ request }) => {
+test('silent transactions close, roll back and return admission on both public protocols', async ({ request }) => {
   await onLocalStack(async () => {
     const credential = await token(request, 'sql:read sql:write');
-    for (const partial of [false, true]) {
-      const pg = await postgres();
-      const ws = await rawSqlSocket('http://127.0.0.1:8080' + path() + '/sql/ws', credential);
-      try {
-        expect(await pg.connected).toBe(true);
-        const result = once(ws.events, 'message');
-        const started = performance.now();
-        ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'begin' }))));
-        await pg.begin();
-        expect((await result)[0]).toMatchObject({ type: 'result', transaction: true });
-        const error = once(ws.events, 'message');
-        if (partial) {
-          pg.socket.write(Buffer.from('Q'));
-          ws.socket.write(Buffer.from([1]));
+    const execute = async (sql: string) => {
+      const response = await request.post(api + path() + '/sql/execute', {
+        headers: { authorization: 'Bearer ' + credential }, data: { statements: [{ sql }] },
+      });
+      expect(response.status()).toBe(200);
+      return response.json();
+    };
+    await execute('CREATE TABLE silent_session_rows (value INTEGER)');
+    const pg = await postgres();
+    const ws = await rawSqlSocket('http://127.0.0.1:8080' + path() + '/sql/ws', credential);
+    try {
+      expect(await pg.connected).toBe(true);
+      const result = once(ws.events, 'message');
+      ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'begin' }))));
+      await pg.begin();
+      expect((await result)[0]).toMatchObject({ type: 'result', transaction: true });
+      const inserted = once(ws.events, 'message');
+      ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 2, type: 'execute', statements: [{ sql: 'INSERT INTO silent_session_rows VALUES (1)' }] }))));
+      expect((await inserted)[0].type).toBe('result');
+      const error = once(ws.events, 'message');
+      const [pgErrors, wsError, close] = await Promise.all([pg.closed, error, ws.closing]);
+      expect(pgErrors).toContain('C57014');
+      expect(pgErrors).toContain('Mthe transaction expired: it was open for more than 5 seconds and was rolled back');
+      expect(wsError[0]).toMatchObject({ type: 'error', error: { code: 'query_canceled', sqlstate: '57014' } });
+      expect(close).toEqual({ code: 1008, reason: 'the transaction expired: it was open for more than 5 seconds and was rolled back' });
+      expect((await execute('SELECT value FROM silent_session_rows')).results[0].rows).toEqual([]);
+      const replacement = await postgres();
+      expect(await replacement.connected).toBe(true);
+      replacement.socket.end(message('X', Buffer.alloc(0)));
+      await replacement.closed;
+    } finally {
+      pg.socket.destroy();
+      ws.socket.destroy();
+      await Promise.all([pg.closed, ws.closed]);
+      await execute('DROP TABLE silent_session_rows');
+    }
+  });
+});
+
+for (const protocol of ['WebSocket', 'Postgres'] as const) {
+  test(protocol + ' commit bytes arriving before expiry finish under the progress budget', async ({ request }) => {
+    await onLocalStack(async () => {
+      const credential = await token(request, 'sql:read sql:write');
+      const call = async (sql: string) => {
+        const response = await request.post(api + path() + '/sql/execute', {
+          headers: { authorization: 'Bearer ' + credential }, data: { statements: [{ sql }] },
+        });
+        expect(response.status()).toBe(200);
+        return response.json();
+      };
+      await call('CREATE TABLE progress_commit_rows (value INTEGER)');
+      const cancel: (() => void)[] = [];
+      const pg = protocol === 'Postgres' ? await postgres() : undefined;
+      const ws = protocol === 'WebSocket' ? await rawSqlSocket('http://127.0.0.1:8080' + path() + '/sql/ws', credential) : undefined;
+      const run = async (sql: string) => {
+        if (pg) {
+          const ready = once(pg.results, 'ready');
+          pg.socket.write(message('Q', Buffer.from(sql + '\0')));
+          await ready;
+          expect(pg.errors).toEqual([]);
+        } else {
+          const answer = once(ws!.events, 'message');
+          ws!.socket.write(frame(1, Buffer.from(JSON.stringify(sql === 'BEGIN' ? { id: 1, type: 'begin' }
+            : { id: 1, type: 'execute', statements: [{ sql }] }))));
+          expect((await answer)[0].type).toBe('result');
         }
-        const [pgErrors, wsError, close] = await Promise.all([pg.closed, error, ws.closing]);
-        expect(performance.now() - started).toBeLessThan(8000);
-        expect(pgErrors).toContain('C57014');
-        expect(pgErrors).toContain('Mthe transaction expired: it was open for more than 5 seconds and was rolled back');
-        expect(wsError[0]).toMatchObject({ type: 'error', error: { code: 'query_canceled', sqlstate: '57014' } });
-        expect(close).toEqual({ code: 1008, reason: 'the transaction expired: it was open for more than 5 seconds and was rolled back' });
+      };
+      try {
+        if (pg) expect(await pg.connected).toBe(true);
+        const began = performance.now();
+        await run('BEGIN');
+        await run('INSERT INTO progress_commit_rows VALUES (7)');
+        const answer = pg ? once(pg.results, 'ready') : once(ws!.events, 'message');
+        const socket = pg?.socket ?? ws!.socket;
+        const bytes = pg ? message('Q', Buffer.from('COMMIT\0')) : frame(1, Buffer.from(JSON.stringify({ id: 2, type: 'commit' })));
+        cancel.push(scheduleStatement(socket, bytes.subarray(0, 1), began, 4500));
+        cancel.push(scheduleStatement(socket, bytes.subarray(1), began, 6500));
+        const result = await answer;
+        if (ws) expect(result[0]).toMatchObject({ id: 2, type: 'result', transaction: false });
+        if (pg) expect(pg.errors).toEqual([]);
+        expect(performance.now() - began).toBeGreaterThan(5000);
+        expect((await call('SELECT value FROM progress_commit_rows')).results[0].rows).toEqual([[7]]);
       } finally {
-        pg.socket.destroy();
-        ws.socket.destroy();
-        await Promise.all([pg.closed, ws.closed]);
+        for (const stop of cancel) stop();
+        pg?.socket.destroy();
+        ws?.socket.destroy();
+        if (pg) await pg.closed;
+        if (ws) await ws.closed;
+        await call('DROP TABLE progress_commit_rows');
       }
+    });
+  });
+}
+
+test('a statement budget failure leaves an explicit transaction aborted until commit', async ({ request }) => {
+  await onLocalStack(async () => {
+    const credential = await token(request, 'sql:read sql:write');
+    const call = (sql: string) => request.post(api + path() + '/sql/execute', {
+      headers: { authorization: 'Bearer ' + credential }, data: { statements: [{ sql }] },
+    });
+    expect((await call('CREATE TABLE cancelled_session_rows (value INTEGER)')).status()).toBe(200);
+    const pg = await postgres();
+    const run = async (sql: string) => {
+      const ready = once(pg.results, 'ready');
+      const errors = pg.errors.length;
+      pg.socket.write(message('Q', Buffer.from(sql + '\0')));
+      await ready;
+      return pg.errors.slice(errors);
+    };
+    try {
+      expect(await pg.connected).toBe(true);
+      expect(await run('BEGIN')).toEqual([]);
+      expect(await run('INSERT INTO cancelled_session_rows VALUES (1)')).toEqual([]);
+      expect(await run('WITH RECURSIVE r(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM r WHERE x<1000000000) SELECT SUM(x) FROM r')).toContain('C57014');
+      expect(await run('INSERT INTO cancelled_session_rows VALUES (2)')).toContain('C25P02');
+      await run('COMMIT');
+      const read = await call('SELECT value FROM cancelled_session_rows');
+      expect(read.status()).toBe(200);
+      expect((await read.json()).results[0].rows).toEqual([]);
+    } finally {
+      pg.socket.destroy();
+      await pg.closed;
+      expect((await call('DROP TABLE cancelled_session_rows')).status()).toBe(200);
     }
   });
 });

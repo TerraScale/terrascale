@@ -87,6 +87,7 @@ export async function holdPeerReplies(address: string, port: number, destination
   await listening;
   return {
     events,
+    cut: () => { for (const session of sessions) session.destroy(); held.splice(0); },
     hold: () => { holding = true; },
     release: () => {
       holding = false;

@@ -27,10 +27,10 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
     private readonly MemoryCache _usage = new(new MemoryCacheOptions { SizeLimit = 1024 });
     private readonly IStorageEngine _engine;
     private readonly ITenantDirectory _directory;
-    private readonly Func<PlanTier, long> _limit;
+    private readonly Func<string, PlanTier, long> _limit;
 
-    public StorageQuota(IStorageEngine engine, ITenantDirectory directory) : this(engine, directory, plan => QosPolicy.For(plan).StorageBytes) { }
-    internal StorageQuota(IStorageEngine engine, ITenantDirectory directory, Func<PlanTier, long> limit)
+    public StorageQuota(IStorageEngine engine, ITenantDirectory directory) : this(engine, directory, (organization, plan) => QosPolicy.For(organization, plan).StorageBytes) { }
+    internal StorageQuota(IStorageEngine engine, ITenantDirectory directory, Func<string, PlanTier, long> limit)
     {
         _engine = engine;
         _directory = directory;
@@ -47,7 +47,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
             return Failure(currentPlan);
         }
 
-        if (_limit(plan) == long.MaxValue)
+        if (_limit(database.OrganizationId, plan) == long.MaxValue)
         {
             return new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult<StorageQuotaBytesResult>(0L), _ => { });
         }
@@ -63,7 +63,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
                 return Failure(checkedPlan);
             }
 
-            var limit = _limit(livePlan);
+            var limit = _limit(database.OrganizationId, livePlan);
             if (limit == long.MaxValue)
             {
                 var unrestricted = new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult<StorageQuotaBytesResult>(0L), _ => { });
@@ -126,7 +126,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
                     return Failure(checkedPlan);
                 }
 
-                limits.Add(organization, _limit(plan));
+                limits.Add(organization, _limit(organization, plan));
             }
 
             return new StorageQuotaGroupLease(gates, limits, OrganizationUsageAsync);

@@ -63,7 +63,7 @@ internal interface ISqlSession : IAsyncDisposable
 
     TimeSpan? TransactionRemaining { get; }
 
-    SqlTransactionDeadline TransactionDeadline { get; set; }
+    SqlTransactionClock TransactionClock { get; set; }
 
     void BeginRequest();
 

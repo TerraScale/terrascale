@@ -4,6 +4,9 @@ namespace TerraBase.Features.Sql;
 
 internal sealed class SqlSocketInput(TimeProvider time)
 {
+    private readonly Lock _gate = new();
+    private readonly Queue<Message> _messages = new();
+    private Message? _current;
     private int _header;
     private bool _invalid;
     private int _extended;
@@ -13,20 +16,30 @@ internal sealed class SqlSocketInput(TimeProvider time)
     private bool _final;
     private bool _control;
 
-    private int _received;
     private int _maskBytes;
-    private long _started;
 
     public Action<int, long>? Progress
     {
         get;
         set
         {
-            field = value;
-            if (_message)
+            lock (_gate)
             {
-                field?.Invoke(_received, _started);
+                field = value;
+                if (_messages.TryPeek(out var first))
+                {
+                    field?.Invoke(first.Received, first.Started);
+                }
             }
+        }
+    }
+
+    public void Complete()
+    {
+        lock (_gate)
+        {
+            _messages.TryDequeue(out _);
+            Progress = null;
         }
     }
 
@@ -54,6 +67,14 @@ internal sealed class SqlSocketInput(TimeProvider time)
 
     private void Inspect(ReadOnlySpan<byte> bytes)
     {
+        lock (_gate)
+        {
+            InspectLocked(bytes);
+        }
+    }
+
+    private void InspectLocked(ReadOnlySpan<byte> bytes)
+    {
         while (!_invalid && !bytes.IsEmpty)
         {
             if (_header == 0)
@@ -64,7 +85,13 @@ internal sealed class SqlSocketInput(TimeProvider time)
                 {
                     if (!_message)
                     {
-                        _started = time.GetTimestamp();
+                        if (_messages.Count >= 256)
+                        {
+                            throw new InvalidDataException("too many buffered WebSocket messages");
+                        }
+
+                        _current = new Message(time.GetTimestamp());
+                        _messages.Enqueue(_current);
                         _message = true;
                     }
 
@@ -131,8 +158,14 @@ internal sealed class SqlSocketInput(TimeProvider time)
 
     private void Report(int bytes)
     {
-        _received += bytes;
-        Progress?.Invoke(bytes, _started);
+        if (_current is { } current)
+        {
+            current.Received += bytes;
+            if (_messages.TryPeek(out var first) && ReferenceEquals(first, current))
+            {
+                Progress?.Invoke(bytes, current.Started);
+            }
+        }
     }
 
     private void Finish()
@@ -141,8 +174,14 @@ internal sealed class SqlSocketInput(TimeProvider time)
         if (!_control && _final)
         {
             _message = false;
-            _received = 0;
+            _current = null;
         }
+    }
+
+    private sealed class Message(long started)
+    {
+        public long Started { get; } = started;
+        public int Received { get; set; }
     }
 
     private sealed class Upgrade(IHttpUpgradeFeature inner, SqlSocketInput input) : IHttpUpgradeFeature

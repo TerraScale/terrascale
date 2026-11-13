@@ -1073,7 +1073,7 @@ internal sealed partial class TursoReplicas(
             {
                 ArgumentNullException.ThrowIfNull(sql);
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                return new(Task.Run(() => Describe(sql, cancellationToken), cancellationToken));
+                return new(Task.Run(() => Describe(sql), cancellationToken));
             }
 
             public ValueTask DisposeAsync()
@@ -1087,9 +1087,8 @@ internal sealed partial class TursoReplicas(
                 return ValueTask.CompletedTask;
             }
 
-            private SqlStatementShape Describe(string sql, CancellationToken cancellationToken)
+            private SqlStatementShape Describe(string sql)
             {
-                var canceled = cancellationToken.Register(static state => TursoBindings.Interrupt((TursoDatabaseHandle)state!), native);
                 try
                 {
                     var (prepared, _) = TursoStorageTransaction.Prepare(native, sql, first: false);
@@ -1114,17 +1113,11 @@ internal sealed partial class TursoReplicas(
                     _healthy = failure is not Error;
                     throw new SqlStatementException(failure, message, transactionEnded: false, error);
                 }
-                finally
-                {
-                    canceled.Dispose();
-                    TursoBindings.ClearInterrupt(native);
-                }
             }
 
             private SqlStatementResult Execute(SqlStatement statement, CancellationToken cancellationToken)
             {
                 var started = Stopwatch.GetTimestamp();
-                var canceled = cancellationToken.Register(static state => TursoBindings.Interrupt((TursoDatabaseHandle)state!), native);
                 try
                 {
                     var (prepared, consumed) = TursoStorageTransaction.Prepare(native, statement.Sql, statement.First);
@@ -1132,13 +1125,17 @@ internal sealed partial class TursoReplicas(
                     TursoBindings.SetMaxValueLength(native, statement.MaxBytes);
                     try
                     {
-                        var (columns, rows, _, truncated) = Step(prepared, statement, cancellationToken);
-                        return new SqlStatementResult(columns, rows, 0, 0, 0, truncated, consumed, Stopwatch.GetElapsedTime(started));
+                        using (cancellationToken.Register(static state => TursoBindings.Interrupt((TursoDatabaseHandle)state!), native))
+                        {
+                            var (columns, rows, _, truncated) = Step(prepared, statement, cancellationToken);
+                            return new SqlStatementResult(columns, rows, 0, 0, 0, truncated, consumed, Stopwatch.GetElapsedTime(started));
+                        }
                     }
                     finally
                     {
                         TursoBindings.SetQueryTimeout(native, TimeSpan.Zero);
                         TursoBindings.SetMaxValueLength(native, long.MaxValue);
+                        TursoBindings.ClearInterrupt(native);
                     }
                 }
                 catch (TursoException error)
@@ -1146,11 +1143,6 @@ internal sealed partial class TursoReplicas(
                     var (failure, message) = TursoStorageTransaction.Classify(native, error);
                     _healthy = failure is not Error;
                     throw new SqlStatementException(failure, message, transactionEnded: false, error);
-                }
-                finally
-                {
-                    canceled.Dispose();
-                    TursoBindings.ClearInterrupt(native);
                 }
             }
 
