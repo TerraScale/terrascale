@@ -1114,7 +1114,7 @@ internal sealed class SqlSession(
         Interrupted => SqlErrors.Interrupt,
         ReadOnly => canWrite ? new SqlError(SqlErrors.ReadOnlyTransaction, error.Message) : SqlErrors.Auth,
         StaleRow => new SqlError(SqlErrors.RowConflict, error.Message),
-        Error => SqlErrors.Error(error.Message),
+        Error or StorageFailure => SqlErrors.Error(error.Message),
     };
 
     private static SqlError? Failure(Exception error) => error switch

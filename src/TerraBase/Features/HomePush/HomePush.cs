@@ -536,8 +536,8 @@ internal class HomePush(
 
     private void Dispatch(NatsConnection nats, INatsJSMsg<byte[]> message, CancellationToken cancellationToken)
     {
-        var key = PushNames.Origin(message.Subject) is { } origin && PushNames.Database(message.Subject) is { } database
-            ? PushNames.DatabaseFilter(origin, database) : message.Subject;
+        var key = PushNames.Database(message.Subject) is { } database
+            ? $"{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}" : message.Subject;
         var start = false;
         lock (_queuesGate)
         {
@@ -558,6 +558,7 @@ internal class HomePush(
 
     private async Task DrainAsync(NatsConnection nats, string subject, CancellationToken cancellationToken)
     {
+        var backoff = new Backoff(TimeSpan.FromMilliseconds(100), MaxBackoff);
         while (!cancellationToken.IsCancellationRequested)
         {
             INatsJSMsg<byte[]> message;
@@ -570,50 +571,39 @@ internal class HomePush(
                     return;
                 }
 
-                message = queue.Dequeue();
+                message = queue.Peek();
             }
 
             try
             {
+                await message.AckProgressAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
                 await ApplyAsync(nats, message, cancellationToken).ConfigureAwait(false);
+                lock (_queuesGate)
+                {
+                    _ = _queues[subject].Dequeue();
+                }
+
+                backoff.Reset();
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                logger.ZLogWarning($"A pushed transaction waits for redelivery: {error.GetType().Name:@Error}");
+                _applyRetries?.Add(1, new KeyValuePair<string, object?>("reason", "unexpected"));
+                logger.ZLogWarning(error, $"A pushed transaction stays at the head of its database queue");
+                await Task.Delay(backoff.Next(), time, cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
     private async Task ApplyAsync(NatsConnection nats, INatsJSMsg<byte[]> message, CancellationToken cancellationToken)
     {
-        if (PushNames.Database(message.Subject) is { } addressed
-            && await catalog.FindAsync(addressed, cancellationToken).ConfigureAwait(false) is var record
-            && (record is NotFound || record is TenantDatabaseRecord { Placement: var placed } && placed.Home != options.Region))
-        {
-            await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
         if (PushNames.Database(message.Subject) is not { } database || message.Data is not { } data)
         {
-            logger.ZLogWarning($"A malformed pushed message is dropped");
-            _applies?.Add(1, new KeyValuePair<string, object?>("state", "malformed"));
-            await message.AckTerminateAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (PushNames.Origin(message.Subject) is { } dropped && message.Metadata is { } at)
-            {
-                Progressed(dropped, PushNames.Database(message.Subject), at.Sequence.Stream);
-            }
-
-            return;
+            throw new InvalidDataException("a malformed pushed message remains in its durable stream");
         }
 
         if (await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
         {
-            logger.ZLogWarning($"An undecodable pushed message is parked");
-            _applies?.Add(1, new KeyValuePair<string, object?>("state", "parked"));
-            await ParkAsync(database, data, message, cancellationToken).ConfigureAwait(false);
-            await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-            return;
+            throw new InvalidDataException("an unreadable pushed transaction remains in its durable stream");
         }
 
         var backoff = new Backoff(TimeSpan.FromMilliseconds(100), MaxBackoff);
@@ -622,15 +612,13 @@ internal class HomePush(
         {
             if (!RegionWriter)
             {
-                await message.NakAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-                return;
+                throw new StorageBusyException();
             }
 
-            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-                && placement.Home != options.Region)
+            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
+                || placement.Home != options.Region)
             {
-                await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-                return;
+                throw new StorageBusyException();
             }
 
             HomeApplyResult? applied;
@@ -675,32 +663,6 @@ internal class HomePush(
         }
 
         _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
-    }
-
-    private async Task ParkAsync(TenantContext database, byte[] data, INatsJSMsg<byte[]> message, CancellationToken cancellationToken)
-    {
-        var js = _js ?? throw new IOException("the push connection is not open");
-        var origin = PushNames.Origin(message.Subject) ?? options.Region;
-        var sequence = message.Metadata?.Sequence.Stream ?? 0UL;
-        _ = await js.CreateOrUpdateStreamAsync(new StreamConfig(PushNames.ParkStream(options.Region), [PushNames.ParkSubjects(options.Region)])
-        {
-            Storage = StreamConfigStorage.File,
-            Retention = StreamConfigRetention.Limits,
-            Discard = StreamConfigDiscard.New,
-            MaxBytes = 1L << 30,
-            MaxMsgSize = MaxPayloadBytes,
-            DuplicateWindow = TimeSpan.FromMinutes(10),
-            NumReplicas = 1,
-        }, cancellationToken).ConfigureAwait(false);
-        var parked = await js.PublishAsync(
-            PushNames.ParkSubject(options.Region, origin, database, sequence),
-            data,
-            opts: new NatsJSPubOpts { MsgId = "park-" + origin + "-" + sequence.ToString(CultureInfo.InvariantCulture) },
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (parked.Error is { } error)
-        {
-            throw new IOException(error.Description);
-        }
     }
 
     protected virtual ValueTask<PubAckResponse> PublishStoredAsync(string subject, byte[] payload, string id, NatsHeaders headers, CancellationToken cancellationToken) =>

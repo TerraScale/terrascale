@@ -43,6 +43,7 @@ internal sealed class InRegionAck(
     private volatile RegionPartner? _answeredPartner;
     private long _lastAnswerTicks;
     private Counter<long>? _finished;
+    private Counter<long>? _unreadable;
     private bool _durabilityLogged;
 
     public bool PartnerHealthy => _partners is [var partner, ..] && partner == _answeredPartner
@@ -56,6 +57,8 @@ internal sealed class InRegionAck(
     {
         _finished = _meter.CreateCounter<long>("terrabase.localack.finished", "{transaction}",
             "Held transactions this node applied at the home after their origin node was lost.");
+        _unreadable = _meter.CreateCounter<long>("terrabase.localack.unreadable", "{attempt}",
+            "Held transactions retained because their payload could not be decrypted or decoded.");
         _ = _meter.CreateObservableGauge("terrabase.localack.held", () => holds.Count, "{transaction}", "Transactions this node holds for its in-region partner.");
         _ = _meter.CreateObservableGauge("terrabase.localack.partner", () => PartnerHealthy ? 1 : 0, "{node}", "1 while the in-region partner answers.");
         try
@@ -196,10 +199,20 @@ internal sealed class InRegionAck(
         {
             var database = new TenantContext(held.Organization!, PlanTier.Hobby, held.Project, held.Database);
             var plain = await crypto.OpenAsync(database, held.Payload!, cancellationToken).ConfigureAwait(false);
-            if (plain is null || !TryDecode(plain, out var transaction))
+            if (plain is null)
             {
-                return true;
+                _unreadable?.Add(1, new KeyValuePair<string, object?>("reason", "decrypt"));
+                logger.ZLogError($"A held transaction could not be decrypted and is retained: {held.Database:@Database} {held.Sequence:@Sequence}");
+                return false;
             }
+
+            if (!TryDecode(plain, out var transaction))
+            {
+                _unreadable?.Add(1, new KeyValuePair<string, object?>("reason", "decode"));
+                logger.ZLogError($"A held transaction could not be decoded and is retained: {held.Database:@Database} {held.Sequence:@Sequence}");
+                return false;
+            }
+
             using var body = Json(JsonSerializer.SerializeToUtf8Bytes(transaction, HomeApplyJsonContext.Default.RegionTransaction));
             using var response = await Http.PostAsync(new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "apply")[1..]), body, cancellationToken)
                 .ConfigureAwait(false);
