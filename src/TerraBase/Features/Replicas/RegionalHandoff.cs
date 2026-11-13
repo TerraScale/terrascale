@@ -172,6 +172,12 @@ internal sealed partial class RegionalHandoff(
         {
             _activatingEpoch = owner.Epoch;
             _activationAfter = null;
+            _checkedAfter = null;
+            _checked = false;
+        }
+        if (!_checked && !await LocalDataCurrentAsync(owner, catalog, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
         }
         do
         {

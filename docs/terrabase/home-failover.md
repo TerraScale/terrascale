@@ -1,8 +1,9 @@
-# Home leases, failover and fencing (PIVOT R8)
+# Home leases and home outages (PIVOT R8)
 
-A database with replica regions keeps serving writes when its home region dies: the most caught-up replica takes over
-as home, and the old home never accepts another write (D17, D18). A database without replica regions has no other copy,
-so it has no failover; it waits for its home.
+An acknowledged write is never lost or undone. A database's home, and a region's writer role, move only to a node that
+has proven it holds everything the previous holder acknowledged; without that proof TerraBase waits, and the database is
+unavailable for the writes that need its home, rather than moving. No node deletes a database file unless another node
+has proven it holds its content. Availability is given up before durability.
 
 ## Lease store
 
@@ -13,10 +14,10 @@ ts-orchestrator): file storage, history 1, three replicas (one per region) in th
 | Key | Value | Written by |
 | --- | --- | --- |
 | `node.<node>` | `{node, region, session}`, TTL 10 s | that node, every 2 s, compare-and-set on the key's revision |
-| `home.<databaseId>` | `{organizationId, projectId, databaseId, home, node, epoch, session}`, no TTL | the database's home, a claiming replica |
+| `home.<databaseId>` | `{organizationId, projectId, databaseId, home, node, epoch, session, adopted}`, no TTL | the database's home, the target of a planned move, a regional writer at activation, an old home taking its database back |
 
 - Liveness is per node, so renewal traffic does not grow with the number of databases.
-- `epoch` is the database's catalog `placement_version`. Every home change (failover or a planned move, R9) is a
+- `epoch` is the database's catalog `placement_version`. Every home change (a planned move, R9, or an old home taking its database back) is a
   compare-and-set on `home.<databaseId>` that raises it by one.
 - `session` is a ULID a node picks each time it creates its `node.<node>` key. A node that restarts or whose key expired
   starts a new session.
@@ -36,43 +37,86 @@ At start a node marks every database it homes with replica regions as leased but
 until it confirmed each `home.<databaseId>` under its new session. Each node confirms its leases on every new session and
 every 15 s, which also picks up databases that gained replica regions.
 
-## Failover
+## When a home's node stops
 
-1. Every node watches the bucket. When `node.<node>` of a database's home expires, each replica region that holds a
-   pulled replica of the database waits 5 s and checks that the node did not come back.
-2. It asks the other replica regions for their held revision (`GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/held`,
-   internal listener, 2 s). The replica with the highest revision (incarnation, generation, frame; ties: region name)
-   claims; the others wait. After three rounds a replica claims even when a better one did not.
-3. The claimer detaches its replica and imports it as the home file (R9's detach), fenced until it holds the lease. The
-   import starts a **new incarnation** (D18): every other replica takes a full answer on its next pull.
-4. It takes the lease with the one compare-and-set that planned moves use too (`HomeLeases.TakeAsync`): `home.<databaseId>`
-   goes from `{home: old, epoch}` to `{home: self, epoch: epoch + 1, session: own}`, only while the old home's node key is
-   still absent. The CAS must replace the exact failed home session: a restarted home's confirmation changes that
-   session even when its placement epoch stays the same. It fails when the old home came back and confirmed the key first,
-   or another replica took it, so two
-   nodes never both hold the lease; the claimer then deletes the imported file and follows the winner.
-   The lease scan rechecks absent home nodes every 15 s, so a refused claim does not hide a later failure of the renewed session.
-5. Only then does it record placement `{home: self, replicas: the others plus the old home, version: epoch + 1}` and
-   prepare home apply (R6).
-6. Every region watches `home.*` and takes the new placement at once, so home routing (421 `wrong_region`, Postgres and
-   WebSocket home sessions) follows within the watch delay; the 30 s catalog sweep stays the backstop.
-7. The new home drains the local writes still addressed to the old home. Each push carries header `Tb-Epoch`, the
-   placement version its origin saw. For every region's push stream (its own included) the new home reads subject
-   `terrabase.push.<origin>.<old home>.<organization>.<project>.<database>` from the start and applies each message
-   stamped with an epoch below its own; `_ts_applied`, which came with the replica file, answers the ones the old home
-   already applied, so each transaction applies once. It keeps reading for 60 s (two catalog sweeps) to catch pushes from
-   regions that had not yet seen the new placement, then publishes each result on the applied subject as the old home
-   would have. Planned moves (R9) drain the same way.
+1. Every node watches the bucket. When `node.<node>` of a database's home expires, each node logs
+   `Home lease lapsed, not moved` once per database and that node's session, and counts it in `terrabase.home.lapses`.
+   No node claims the lease: the home stays where it is.
+2. While the home is down:
+   - reads in every region that holds a pulled replica keep working, from the position that replica last pulled;
+   - safe writes that commit in another region's quorum keep being acknowledged there, and their pushes wait in the
+     push stream for the home;
+   - writes that need the home (unsafe statements, transactions forwarded to the home, writes in the home region whose
+     writer is down) fail with a retryable error until the home is back;
+   - nothing that was acknowledged is lost, and no other node serves the database as home.
+3. When the home's node returns with its disk, it starts a new session and confirms its leases (`Holding a lease`), and
+   serves its databases again; pushes that waited are applied in order.
+4. A region's writer that stays down does not hand its role to the other node of the region on its own either
+   (`regional-rollout-handoff.md`): a planned drain is the only way the writer role moves, and it needs the target's
+   certificate (`Regional writer proof`).
+
+A home whose node and disk are gone for good needs an operator: there is no automatic takeover and, today, no takeover
+call. The lost home's acknowledged writes that no replica pulled cannot be recovered by any automatic path.
+
+## Moving a home (all or nothing)
+
+A home moves only through a planned move (R9), to the current writer of the target region:
+
+1. The target refuses with `move_aborted` when it is not its region's writer, before anything changes
+   (`terrabase.home.refusals{reason="not_writer"}`).
+2. The source pauses writes; the target pulls from the source until a pull changes nothing, so its replica holds the
+   source's final position.
+3. The target imports its replica as the home file and takes the lease with one compare-and-set,
+   `{home: old, epoch}` → `{home: new, epoch + 1, adopted}`. `adopted` is the replica's position before the import,
+   in the old home's incarnation: the proof that the new home holds what the old home acknowledged.
+4. The target records the new placement and prepares home apply. When either fails, it rolls back: the lease returns to
+   the old home's node and session at the next epoch, the target's catalog records the old home at that epoch, the
+   imported copy is removed (the old home holds all of it), and the move answers `move_aborted`. The old home's catalog
+   follows its own lease's epoch, so every region agrees on the version.
+
+A non-writer never holds a home lease: taking one needs the node to be its region's writer.
 
 ## The old home
 
-When the old home reaches JetStream again, its renewal fails (its key expired), so it starts a new session and confirms
-its leases. For a database whose `home.<databaseId>` names another node at an epoch at least its own placement version,
-it demotes itself: it fences the database as moved, records the
-new placement, deletes its file and follows the new home as a replica. Writes it committed that no replica pulled are
-discarded with the file (`terrabase.home.demotions`).
-The lease demotion uses a dedicated catalog write: ordinary replica placement updates cannot replace a region's own
-home record. The old file stays fenced until that catalog write succeeds.
+An old home never deletes its file on its own. When it confirms its leases and `home.<databaseId>` names another node at
+an epoch at least its own placement version, it reads its own file's final position and compares it with the lease's
+`adopted` position:
+
+- **Proven**: `adopted` is in the same incarnation and at or beyond the final position. The old home follows the new
+  home as a replica and removes its file (`terrabase.home.demotions`). A planned move's source does the same after the
+  promote answer, and only with this proof.
+- **Not proven, and the recorded node cannot serve the database**: the lease names a node that is not the current
+  writer of its region, so that node never committed a write as home. The old home, whose copy is the most complete,
+  takes the home back: one compare-and-set to `{home: self, epoch + 1}`, its catalog follows, it drains the pushes
+  addressed to the recorded home and serves again (`terrabase.home.reclaims`, `This node took a database back as home`).
+  The recorded node keeps its stale lease history and any file it imported; nothing is deleted there either. It follows
+  the new lease as a replica region, and an operator removes its leftover file.
+- **Not proven, and the recorded node is its region's writer**: that node may have committed writes the old home lacks,
+  and the old home may hold writes it lacks. The old home keeps its file, stops serving the database as home and logs
+  `Old home kept its copy` (`terrabase.home.kept`). It checks again on every lease scan (15 s), so it takes the home
+  back if the recorded node stops being its region's writer. An operator decides which copy wins.
+
+## Regional writer proof
+
+Only the certificate the target writes in the drain protocol (`prepared.<region>.<target>`, written by the target after
+it applied every position the source certified) authorizes a new owner. The owner record's own `prepared` field is never
+read, so rewriting the owner record, `prepared` field or not, is refused: the named node logs `Regional writer refused`
+and stays a non-writer (`terrabase.home.refusals{scope="writer",reason="unproven"}`).
+
+On every activation, including a new owner key at epoch 1, a node refuses to become writer while any database homed in
+the region has a local replica newer than its primary file, or a replica and no primary file
+(`reason="replica_newer"`, `reason="primary_missing"`). It reports the database and both positions and stays a
+non-writer for that epoch. A missing owner key with existing data is therefore not a new region. A genuinely new region
+has no homed databases, so its first node in name order becomes writer at epoch 1; a restarted writer whose primary files
+are current passes the same check.
+
+## Mixed builds during a rollout
+
+A node on an earlier build still claims homes automatically when a home's lease lapses. A node on this build never
+deletes its file because of such a claim: it takes the home back when the claimant is not its region's writer (the
+claim could not have been served), and keeps its copy and waits for an operator when the claimant is its region's writer.
+Release instruction: upgrade every node before any region's writer is stopped for longer than the lease (10 s), and
+restart writers one at a time through the planned drain.
 
 ## Every write path carries the epoch
 
@@ -83,7 +127,7 @@ home record. The old file stays fenced until that catalog write succeeds.
 
 ## Durability and RPO
 
-| Mode | Acknowledged when | Lost if the home region dies |
+| Mode | Acknowledged when | Lost only if the home's disk is lost for good |
 | --- | --- | --- |
 | default | the home committed it (D16) | at most the writes no replica pulled yet: about the replica lag, ~100 ms with revision notices, plus up to 8 s when the home was cut off from its replicas but not yet from its clients |
 | `"durability": "all"` | the home committed it and every replica region holds it | nothing |
@@ -95,24 +139,23 @@ home record. The old file stays fenced until that catalog write succeeds.
   applied pull.
 - A replica region that does not report within 10 s fails the request with `503 unavailable` after the commit: the
   write stays at the home, but it may be lost if the home region fails before a replica pulls it.
-- Every replica then holds every `all` write, so whichever replica takes over keeps them.
+- Every replica then holds every `all` write, so a replica an operator promotes after a home is lost for good keeps them.
 
 ## Metrics
 
-- `terrabase.home.failovers`: databases this node took over.
-- `terrabase.home.demotions`: databases this node stopped homing because another node holds their lease.
+- `terrabase.home.lapses`: home leases whose node lapsed while this node watched; the home stayed where it was.
+- `terrabase.home.refusals{scope, reason}`: home moves (`scope="home"`) and regional writer changes (`scope="writer"`)
+  this node refused, by reason.
+- `terrabase.home.reclaims`: databases this node took back as home because the recorded home could not serve them.
+- `terrabase.home.kept`: database files this node kept as a former home because the recorded home has not proven it
+  holds them.
+- `terrabase.home.demotions`: databases this node stopped homing after the new home proved it holds their content.
 - `terrabase.home.leased`: databases whose writes on this node need its lease.
-
-## Tests
 
 ## Known gaps
 
 - `durability` is accepted on SQL REST only; the WebSocket frame field and `SET terrascale.durability` follow.
 - A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
-## Planned moves (R9)
-
-A move from gru to sjc at epoch v runs R9's catch-up, pause and drain, then sjc's promote imports its replica and takes the
-lease with the same compare-and-set, `{gru, v}` → `{sjc, v + 1}`, before its catalog takes the placement. A lost
-compare-and-set refuses the promote (`move_aborted`), so gru lifts its pause. R9's abort exchange still settles a promote
-whose answer gru never received. While gru holds R9's durable pause fence, the lease watch leaves the demotion to R9.
+- No operator call promotes a replica when a home's node and disk are lost for good.
+- The activation check sees only the replicas this node has open; a node that restarted and has not reopened a replica
+  cannot compare it with its primary file.

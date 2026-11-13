@@ -139,7 +139,7 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
                 return UnreadableCatalog;
             }
 
-            if (database.ProjectId is null || database.DatabaseId is null || placement.Home == options.Region
+            if (database.ProjectId is null || database.DatabaseId is null
                 || await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is not { } record
                 || record.Home(options.Region) != options.Region || placement.Version <= record.PlacementVersion)
             {
@@ -153,7 +153,11 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
                 PlacementVersion = placement.Version,
                 AllRegions = placement.AllRegions,
             }, cancellationToken).ConfigureAwait(false);
-            _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken).ConfigureAwait(false);
+            if (placement.Home != options.Region)
+            {
+                _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken).ConfigureAwait(false);
+            }
+
             return new PlacementUpdate(Updated: true);
         }, static error => error, cancellationToken);
     }

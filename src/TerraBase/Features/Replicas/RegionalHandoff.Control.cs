@@ -1,6 +1,7 @@
 using NATS.Client.KeyValueStore;
 using System.Diagnostics;
 using System.Text.Json;
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
@@ -25,6 +26,9 @@ internal sealed partial class RegionalHandoff
     }
 
     private PendingStep? _lastRetiringStep;
+    private TenantContext? _checkedAfter;
+    private bool _checked;
+    private long _refusedEpoch;
     private RegionalOwner? _startupOwner;
     private bool _protocolPublished;
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
@@ -129,8 +133,7 @@ internal sealed partial class RegionalHandoff
             }
             var fallback = new RegionalOwner(options.Region, transfer.Target, owner.Epoch + 1, owner.Node,
                 Transfer: transfer with { Phase = Activating, Deadline = DateTimeOffset.UtcNow + ActivationBudget },
-                Version: ProtocolVersion,
-                Prepared: new RegionalPrepared(owner.Node, transfer.Target, owner.Epoch, transfer.Id));
+                Version: ProtocolVersion);
             return await CommitRecoveryAsync(kv, entry, fallback, transfer.Id, token).ConfigureAwait(false);
         }
 
@@ -251,14 +254,24 @@ internal sealed partial class RegionalHandoff
 
     private string PreparedKey(string target) => "prepared." + options.Region + "." + target;
 
-    private async Task<bool> HasPreparedAsync(INatsKVStore kv, RegionalOwner owner, CancellationToken token)
+    private async Task<bool> HasPreparedAsync(INatsKVStore kv, RegionalOwner owner, CancellationToken token) =>
+        await PreparedAsync(kv, owner, token).ConfigureAwait(false) is not null;
+
+    private async Task<RegionalPrepared?> PreparedAsync(INatsKVStore kv, RegionalOwner owner, CancellationToken token)
     {
         var entry = await ReadAsync(kv, PreparedKey(owner.Node), token).ConfigureAwait(false);
-        var prepared = owner.Prepared ?? (entry?.Value is { } bytes
-            ? JsonSerializer.Deserialize(bytes, ReplicasJsonContext.Default.RegionalPrepared) : null);
+        if (entry?.Value is not { } bytes
+            || JsonSerializer.Deserialize(bytes, ReplicasJsonContext.Default.RegionalPrepared) is not { } prepared || prepared.Target != owner.Node)
+        {
+            return null;
+        }
+
         var source = owner.Previous ?? (owner.Version == 0 ? owner.Node : null);
-        return prepared is not null && prepared.Target == owner.Node && prepared.Source == source && prepared.Epoch == owner.Epoch - 1
-            && (owner.Transfer is not { Phase: Activating } transfer || transfer.Id == prepared.Operation);
+        var current = prepared.Source == source && prepared.Epoch == owner.Epoch - 1;
+        return owner.Transfer is { Phase: Activating } transfer
+            ? transfer.Id == prepared.Operation && (current
+                || transfer.Target == owner.Node && prepared.Source == transfer.Source && prepared.Epoch == transfer.PreparedEpoch) ? prepared : null
+            : current ? prepared : null;
     }
 
     private async Task<bool> PreparedOwnerAsync(INatsKVStore kv, RegionalOwner owner, CancellationToken token)
@@ -272,8 +285,12 @@ internal sealed partial class RegionalHandoff
             await WritePreparedAsync(kv, new RegionalPrepared(owner.Previous!, owner.Node, owner.Epoch - 1, recovered.Id), token).ConfigureAwait(false);
             return true;
         }
-        if (await HasPreparedAsync(kv, owner, token).ConfigureAwait(false))
+        if (await PreparedAsync(kv, owner, token).ConfigureAwait(false) is { } prepared)
         {
+            if (owner is { Transfer: { Phase: Activating } transfer, Previous: { } previous } && prepared.Epoch != owner.Epoch - 1)
+            {
+                await WritePreparedAsync(kv, new RegionalPrepared(previous, owner.Node, owner.Epoch - 1, transfer.Id), token).ConfigureAwait(false);
+            }
             return true;
         }
         if (owner.Version == 0 && _startupOwner == owner
@@ -282,7 +299,51 @@ internal sealed partial class RegionalHandoff
             await WritePreparedAsync(kv, new RegionalPrepared(owner.Previous ?? owner.Node, owner.Node, owner.Epoch - 1, null), token).ConfigureAwait(false);
             return true;
         }
+        if (_refusedEpoch != owner.Epoch)
+        {
+            _refusedEpoch = owner.Epoch;
+            services.GetRequiredService<HomeLeases>().Refused(HomeRefusal.Unproven, "writer");
+            logger.ZLogWarning($"Regional writer refused: the owner record names this node at epoch {owner.Epoch:@Epoch} without a certificate this node wrote in a drain");
+        }
         return false;
+    }
+
+    private async Task<bool> LocalDataCurrentAsync(RegionalOwner owner, IReplicaCatalog catalog, CancellationToken token)
+    {
+        if (_refusedEpoch == owner.Epoch)
+        {
+            return false;
+        }
+
+        var replicas = services.GetRequiredService<IDatabaseReplicas>();
+        var revisions = services.GetRequiredService<IDatabaseRevisions>();
+        do
+        {
+            if (await catalog.ListHomedAsync(options.Region, _checkedAfter, token).ConfigureAwait(false) is not TenantDatabasePage page)
+            {
+                return false;
+            }
+            foreach (var database in page.Databases)
+            {
+                if (replicas.HeldRevision(database) is { } replica)
+                {
+                    var primary = await revisions.CurrentRevisionAsync(database, token).ConfigureAwait(false);
+                    if (primary is null || replica.CompareAcrossIncarnations(primary.Value) > 0)
+                    {
+                        _refusedEpoch = owner.Epoch;
+                        var refusal = primary is null ? HomeRefusal.PrimaryMissing : HomeRefusal.ReplicaNewer;
+                        services.GetRequiredService<HomeLeases>().Refused(refusal, "writer");
+                        logger.ZLogWarning($"Regional writer refused at epoch {owner.Epoch:@Epoch}: database {database.DatabaseId:@Database} has a local replica at {replica.ToString():@Replica} newer than its primary file at {primary?.ToString() ?? "none":@Primary}; this node stays a non-writer");
+                        return false;
+                    }
+                }
+                _checkedAfter = database;
+            }
+            _checkedAfter = page.Next;
+        }
+        while (_checkedAfter is not null);
+        _checked = true;
+        return true;
     }
 
     private async Task<DrainReservation> BeginDrainAsync(INatsKVStore kv, string target, DrainProgress progress, CancellationToken token)

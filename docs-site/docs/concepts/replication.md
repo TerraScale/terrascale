@@ -32,7 +32,7 @@ Two regions writing the same column at nearly the same time are resolved by the 
 Regions catch up after a restart or a temporary connection failure. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has. A region that already holds the database can serve SQL reads while
 the ordering region is unreachable, using the state it already holds.
 
-If the region that orders a database's writes stops responding and the database has other regions, the most caught-up one takes over within about 15 to 45 seconds, and writes move there. The region that stopped never accepts another write for that database until it has caught up as a follower of the new one. A database in a single region waits for that region. TerraBase picks the region that orders writes and moves it when the database's regions change. You do not choose that region.
+If the region that orders a database's writes stops responding, the database stays where it is: writes that need that region fail with a retryable error until it is back, while reads and local writes in other regions keep working. TerraBase never moves the ordering role to a region that has not proven it holds every acknowledged write, so an outage costs availability, never an acknowledged write. TerraBase picks the region that orders writes and moves it when the database's regions change. You do not choose that region.
 
 | Durability | A write is acknowledged when | Lost if the ordering region fails |
 | --- | --- | --- |
