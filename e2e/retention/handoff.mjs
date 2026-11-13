@@ -267,6 +267,7 @@ try {
     }, { message: 'node loaded the real auth signing keys', timeout: 45_000 })
       .toMatch(/terrabase_auth_key_fetches_total\{[^}]*outcome="success"[^}]*\} [1-9]/);
   }
+  await routeAuthToWriter(1);
   console.log('real nodes: journey-1 and journey-2, gru, shared NATS writer lease, auth keys loaded');
   const seed = await request(1, database(owner.databaseId));
   if (seed.status === 200) await checked(1, database(owner.databaseId), 'DELETE', undefined, 204);
