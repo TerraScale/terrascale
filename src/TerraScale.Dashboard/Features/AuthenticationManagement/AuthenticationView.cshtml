@@ -2,7 +2,7 @@
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.AuthenticationManagement
 @{
-    var current = Model.Section; var settings = Model.Settings; var manage = Model.Context.CanManageProject;
+    var current = Model.Section; var settings = Model.Settings; var manage = Model.Context.CanManageAuthentication;
     var projectName = Model.Context.Project?.Name ?? "";
     var dangers = new[]
     {
@@ -194,6 +194,9 @@ string Field(string name, string saved) => Model.Draft is { } draft ? draft[name
 <div class="ts-field"><label class="ts-label" for="auth-redirects">Allowed redirect URLs</label><textarea class="ts-input ts-mono" id="auth-redirects" name="redirect_urls" rows="5" maxlength="204899" spellcheck="false" autocomplete="off" placeholder="https://app.example.com/callback (one per line, up to 100)">@Field("redirect_urls", string.Join("\n", config?.RedirectUrls ?? []))</textarea></div>
 <div class="ts-field ts-idp-short"><label class="ts-label" for="auth-lifetime">Session lifetime (seconds)</label><input class="ts-input" id="auth-lifetime" name="session_lifetime_seconds" type="number" inputmode="numeric" required min="300" max="2592000" step="1" value="@Field("session_lifetime_seconds", (config?.SessionLifetimeSeconds ?? 1209600).ToString(System.Globalization.CultureInfo.InvariantCulture))" /></div>
 </fieldset></form> }</div>
+}
+else if (current.Key == "settings") {
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.SignInSettingsView, AuthenticationPage>(Model))
 }
 else if (current.Key == "mfa-sessions") {
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.SecuritySettingsView, AuthenticationPage>(Model))

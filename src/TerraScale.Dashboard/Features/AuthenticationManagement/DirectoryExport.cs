@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return RequestError.FormExpired(http, "/auth/users", Results.StatusCode(403));
             }
 
-            if (!context.CanManageProject || context.Project is null)
+            if (!context.CanManageAuthentication || context.Project is null)
             {
                 return Results.StatusCode(403);
             }

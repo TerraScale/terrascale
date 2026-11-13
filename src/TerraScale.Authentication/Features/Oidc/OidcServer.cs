@@ -67,6 +67,8 @@ public static class OidcIssuer
     /// </summary>
     public const string MfaClaim = "ts_auth_mfa";
 
+    public const string OrganizationPickerClaim = "ts_org_picker";
+
     /// <summary>The discovery document's path under a tenant's issuer.</summary>
     public const string ConfigurationPath = ".well-known/openid-configuration";
 

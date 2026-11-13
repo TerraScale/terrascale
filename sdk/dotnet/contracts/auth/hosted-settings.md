@@ -30,3 +30,8 @@ record deconstruction changes arity; consumers that deconstruct these records
 must update their patterns. The HTTP fixture does not establish live-service or
 installed-dashboard qualification. The owning producer contract landed in TerraScale/terrascale#609. Immutable
 package qualification follows the SDK merge.
+
+Settings return `organization_picker` (false by default). Updates accept a nullable
+`OrganizationPicker`: null leaves it unchanged and false saves false. Only the
+platform bootstrap auth project controls the dashboard organization picker;
+customer hosted sign-in stores this value without adding an organization step.

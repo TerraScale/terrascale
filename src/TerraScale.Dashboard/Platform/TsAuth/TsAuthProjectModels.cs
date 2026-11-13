@@ -48,7 +48,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("counts")] TsAuthProjectCounts Counts,
         [property: JsonPropertyName("providers")] IReadOnlyList<TsAuthProjectProvider> Providers,
         [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectConfiguration? Configuration = null,
-        [property: JsonPropertyName("attack_protection"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthAttackProtection? AttackProtection = null);
+        [property: JsonPropertyName("attack_protection"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthAttackProtection? AttackProtection = null,
+        [property: JsonPropertyName("organization_picker")] bool OrganizationPicker = false);
 
     public sealed record TsAuthProjectProvider(
         [property: JsonPropertyName("provider")] string Provider,
@@ -76,7 +77,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("methods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectMethods? Methods = null,
         [property: JsonPropertyName("branding"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectBranding? Branding = null,
         [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthProjectConfiguration? Configuration = null,
-        [property: JsonPropertyName("attack_protection"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthAttackProtection? AttackProtection = null);
+        [property: JsonPropertyName("attack_protection"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TsAuthAttackProtection? AttackProtection = null,
+        [property: JsonPropertyName("organization_picker"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? OrganizationPicker = null);
 
     public sealed record TsAuthProjectUser(
         [property: JsonPropertyName("id")] string Id,

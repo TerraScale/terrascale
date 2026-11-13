@@ -231,7 +231,9 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
             return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(next)}{notice}{locales}");
         }
 
-        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId));
+        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId),
+            organizationPicker: tenant == OidcIssuer.InstanceId && request.ClientId == OidcIssuer.DashboardClientId
+                && (await settings.GetAsync(PlatformBootstrap.AuthProjectId, cancellationToken)).OrganizationPicker);
     }
 }
 
@@ -361,7 +363,9 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
         }
 
         return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, authenticationTime, principal.GetScopes(),
-            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt);
+            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt,
+            tenant == OidcIssuer.InstanceId && request.ClientId == OidcIssuer.DashboardClientId
+                && (await settings.GetAsync(PlatformBootstrap.AuthProjectId, cancellationToken)).OrganizationPicker);
     }
 }
 
@@ -637,7 +641,7 @@ internal static class OidcResults
     /// platform owner (<see cref="PlatformBootstrap.OwnerEmail"/>) always carries it.
     /// </summary>
     public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
-        DateTimeOffset? refreshExpiresAt = null)
+        DateTimeOffset? refreshExpiresAt = null, bool organizationPicker = false)
     {
         // TerraBase and platform scopes come only from the role-checked token exchange (TS-598), never with a sign-in,
         // although ts-dashboard holds their permissions for the exchange.
@@ -656,6 +660,7 @@ internal static class OidcResults
             .SetClaim("ts_auth_session", user.SessionId)
             .SetClaim(OidcIssuer.MfaClaim, user.MultiFactor ? user.MfaMethod ?? "totp" : null)
             .SetClaim(FixedRefreshTokens.Claim, refreshExpiresAt?.ToUnixTimeSeconds())
+            .SetClaim(OidcIssuer.OrganizationPickerClaim, organizationPicker ? "true" : null)
             .SetScopes(scopes)
             .SetResources(audiences);
         // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
@@ -672,6 +677,7 @@ internal static class OidcResults
             Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
+            OidcIssuer.OrganizationPickerClaim => [Destinations.IdentityToken],
             "ts_auth_session" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             _ => [],
         });

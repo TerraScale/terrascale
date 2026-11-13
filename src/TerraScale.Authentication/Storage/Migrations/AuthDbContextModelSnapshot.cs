@@ -2075,6 +2075,12 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("name");
 
+                    b.Property<bool>("OrganizationPicker")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("organization_picker");
+
                     b.Property<bool>("Passcode")
                         .HasColumnType("INTEGER")
                         .HasColumnName("passcode");

@@ -146,6 +146,7 @@ public sealed partial class AuthDbContext
             settings.ToTable("project_auth_settings", table =>
                 table.HasCheckConstraint("ck_project_auth_settings_title_size", "title_size IS NULL OR title_size BETWEEN 20 AND 40"));
             settings.HasKey(row => row.InstanceId);
+            settings.Property(row => row.OrganizationPicker).HasDefaultValue(false);
             settings.HasOne<ProjectRecord>().WithOne().HasForeignKey<ProjectAuthSettingsRecord>(row => row.InstanceId).OnDelete(DeleteBehavior.Cascade);
             settings.Property(row => row.Providers).HasJson(ProjectAuthSettingsJson.Default.IReadOnlyListSocialProviderRecord);
             settings.Property(row => row.FooterLinks).HasJson(ProjectAuthSettingsJson.Default.IReadOnlyListFooterLinkBody);

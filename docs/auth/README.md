@@ -13,6 +13,7 @@ The served `/openapi/v1.json` and `/scalar` describe current HTTP operations. Pu
 - [Consumer integration](consumer-integration.md).
 - [Hosted continuations](hosted-continuations.md).
 - [Project tenant management](project-tenant-management.md).
+- [Organization picker at dashboard sign-in](organization-picker.md).
 - [Project MFA and session policies](mfa-sessions.md).
 - [Project sign-in attack protection](attack-protection.md).
 - [Scoped end-user tokens](scoped-end-user-tokens.md) for authorized SQL shapes.

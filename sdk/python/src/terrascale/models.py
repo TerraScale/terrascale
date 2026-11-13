@@ -496,6 +496,7 @@ class ProjectSettings:
     counts: ProjectSettingsCounts
     providers: list[ProjectSettingsProvider]
     configuration: ProjectSettingsConfiguration | None = None
+    organization_picker: bool = False
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettings:
@@ -504,6 +505,7 @@ class ProjectSettings:
                 raise ValueError("invalid project settings")
         configuration = body.get("configuration")
         return cls(
+            organization_picker=body.get("organization_picker", False),
             project_id=validate_id(body["project_id"]),
             issuer=body["issuer"],
             discovery_url=body["discovery_url"],
@@ -524,9 +526,12 @@ class ProjectSettingsUpdate:
     methods: ProjectSettingsMethods | None = None
     branding: ProjectSettingsBranding | None = None
     configuration: ProjectSettingsConfiguration | None = None
+    organization_picker: bool | None = None
 
     def to_body(self) -> dict[str, Any]:
         body: dict[str, Any] = {}
+        if self.organization_picker is not None:
+            body["organization_picker"] = self.organization_picker
         if self.methods is not None:
             body["methods"] = {"passcode": self.methods.passcode, "password": self.methods.password,
                                "sign_up": self.methods.sign_up}
