@@ -95,7 +95,7 @@ internal sealed class SqlExecuteEndpoint(
         {
             if (!placement.PlacedIn(options.Region))
             {
-                await DatabaseRegions.ProxyAsync(HttpContext, placement.Home).ConfigureAwait(false);
+                await DatabaseRegions.ProxyAsync(HttpContext, placement.Home, body).ConfigureAwait(false);
                 return Results.Empty;
             }
 
