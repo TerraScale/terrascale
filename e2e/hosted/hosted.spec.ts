@@ -3,6 +3,7 @@ import { createTsAuthClient } from '../../sdk/js/src/ts-auth.js';
 import { createProjectOwner } from '../support/project-owner';
 import { signInToken } from '../support/auth-management';
 import { Audit, auditedContext, test, expect } from '../support/audit';
+import { budgetWindow, waitForBudgetWindow } from '../support/budget-window';
 import { hostedReady, onboard, onHosted, openSignUp, signInWithPassword, signUp, submitSignUp, verify } from '../support/hosted';
 import { regionsSettled } from '../support/overview';
 import { newAddress } from '../support/inbox';
@@ -49,17 +50,29 @@ test('password reservations are returned after sign-in and retained for wrong pa
       const attempt = (address: string, password: string) => context.request.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
         headers: { Origin: auth }, form: { email: address, password },
       });
+      const window = 15 * 60_000;
+      await waitForBudgetWindow(context.request, window);
+      let honestWindow: number | undefined;
       for (let index = 0; index < 11; index++) {
         const signedIn = await attempt(email, current.password);
+        honestWindow ??= budgetWindow(signedIn, window);
+        expect(budgetWindow(signedIn, window)).toBe(honestWindow);
         expect(signedIn.status(), `honest sign-in ${index + 1}`).toBe(200);
         expect(await signedIn.text()).toContain('You are signed in');
       }
+      await waitForBudgetWindow(context.request, window);
+      let firstWindow: number | undefined;
       for (let index = 0; index < 10; index++) {
-        expect((await attempt(email, 'wrong-password-' + index)).status(), `wrong password ${index + 1}`).toBe(401);
-        expect((await attempt(disabledEmail, current.password)).status(), `disabled account ${index + 1}`).toBe(401);
+        const wrong = await attempt(email, 'wrong-password-' + index);
+        firstWindow ??= budgetWindow(wrong, window);
+        expect(wrong.status(), `wrong password ${index + 1}`).toBe(401);
+        const disabled = await attempt(disabledEmail, current.password);
+        expect(budgetWindow(disabled, window)).toBe(firstWindow);
+        expect(disabled.status(), `disabled account ${index + 1}`).toBe(401);
       }
       for (const address of [email, disabledEmail]) {
         const limited = await attempt(address, current.password);
+        expect(budgetWindow(limited, window)).toBe(firstWindow);
         expect(limited.status(), `eleventh charged attempt for ${address}`).toBe(429);
         expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
       }
