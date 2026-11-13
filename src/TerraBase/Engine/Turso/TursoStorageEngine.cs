@@ -1371,8 +1371,11 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             {
                 await Io.RunAsync(() =>
                 {
-                    DeleteFileIfPresent(path + DatabaseKeys.Suffix);
-                    DirectorySync(Path.GetDirectoryName(path)!);
+                    if (!File.Exists(path) && !File.Exists(path + "-wal"))
+                    {
+                        DeleteFileIfPresent(path + DatabaseKeys.Suffix);
+                        DirectorySync(Path.GetDirectoryName(path)!);
+                    }
                 }, CancellationToken.None).ConfigureAwait(false);
             }
         }
