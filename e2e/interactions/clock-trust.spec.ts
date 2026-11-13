@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { connect, createServer } from 'node:http2';
+import { connect, createServer, type IncomingHttpHeaders, type ServerHttp2Session, type ServerHttp2Stream } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -14,6 +14,7 @@ test.skip(production, 'clock trust runs only against throwaway nodes');
 
 type Node = { name: string; region: string; address: string; port: number; metrics: number; postgres: number };
 type Answer = { status: number; body: string };
+type StandIn = { asked: () => number; close: () => Promise<void> };
 
 const internalPort = 18281;
 const run = randomBytes(3).toString('hex');
@@ -48,7 +49,7 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
   const logs: number[] = [];
   const observations: string[] = [];
   const opened: number[] = [];
-  let oldBuild: ReturnType<typeof createServer> | undefined;
+  const standIns = new Set<StandIn>();
 
   const set = (node: Node, offset: number, status = 0, error = 1000) => {
     writeFileSync(join(root, `${node.name}.next`), `${offset} ${status} ${error}\n`);
@@ -64,6 +65,57 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
   };
   const allowed = (node: Node) => metric(node, 'terrabase_clock_local_writes_allowed');
+  const mode = async (node: Node) => {
+    expect(running.get(node)?.exitCode, log(node)).toBeNull();
+    const response = await request.get(`http://127.0.0.1:${node.metrics}/metrics`);
+    expect(response.ok()).toBe(true);
+    const line = (await response.text()).split('\n').find((candidate) => candidate.startsWith('terrabase_clock_mode{') && candidate.endsWith(' 1'));
+    return `${line?.match(/mode="([a-z_]+)"/)?.[1]}/${line?.match(/reason="([a-z_]+)"/)?.[1]}`;
+  };
+  const transitions = (node: Node) => log(node).split('\n').filter((line) => line.includes('Clock trust mode')).slice(-2)
+    .map((line) => JSON.parse(line.slice(line.indexOf('{')))).map((entry: { Mode: string; Reason: string }) => `${entry.Mode}/${entry.Reason}`);
+  const previousBuild = (headers: IncomingHttpHeaders) => headers['x-terrabase-peer-credential'] === peerSecret
+    ? { status: 404, body: { error: { code: 'unknown_route', message: `no route matches ${headers[':method']} ${headers[':path']}; see the API reference at /scalar/` } } }
+    : { status: 401, body: { error: { code: 'invalid_key' } } };
+  const proxy = () => ({ status: 404, body: undefined });
+  const standIn = async (node: Node, answer: (headers: IncomingHttpHeaders) => { status: number; body: unknown }) => {
+    let asked = 0;
+    const sessions = new Set<ServerHttp2Session>();
+    const server = createServer();
+    server.on('session', (session) => {
+      sessions.add(session);
+      session.on('close', () => sessions.delete(session));
+    });
+    server.on('stream', (stream: ServerHttp2Stream, headers: IncomingHttpHeaders) => {
+      asked++;
+      const { status, body } = answer(headers);
+      stream.respond({ ':status': status, ...(body === undefined ? {} : { 'content-type': 'application/json' }) });
+      stream.end(body === undefined ? undefined : JSON.stringify(body));
+    });
+    server.listen(internalPort, node.address);
+    await once(server, 'listening');
+    const handle: StandIn = {
+      asked: () => asked,
+      close: async () => {
+        standIns.delete(handle);
+        for (const session of sessions) session.destroy();
+        const closed = once(server, 'close');
+        server.close();
+        await closed;
+      },
+    };
+    standIns.add(handle);
+    return handle;
+  };
+  const holds = async (node: Node, label: string, expected: string, peers: StandIn[], rounds: number) => {
+    const from = peers.map((peer) => peer.asked());
+    const seen = new Set<string>();
+    await expect.poll(async () => {
+      seen.add(`${await mode(node)} ${await allowed(node)}`);
+      return Math.min(...peers.map((peer, index) => peer.asked() - from[index]));
+    }, { message: label }).toBeGreaterThanOrEqual(rounds);
+    expect([...seen], label).toEqual([expected]);
+  };
   const start = async (node: Node) => {
     const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(TS_|TERRABASE_|AWS_|BUCKET_NAME)/.test(name)));
     const output = openSync(join(root, `${node.name}.log`), 'a');
@@ -147,7 +199,12 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     await expect.poll(() => metric(a, 'terrabase_clock_agreeing_rounds'), { message: 'a lone node with no answering peer stays closed', intervals: [500] })
       .toBe(0);
     expect(await allowed(a)).toBe(0);
-    observations.push('first node with no answering peer: local_writes_allowed=0');
+    expect(await mode(a)).toBe('closed/no_contact');
+    observations.push('first node with no peer reachable: local_writes_allowed=0, mode closed/no_contact');
+    const proxies = [await standIn(b, proxy), await standIn(c, proxy)];
+    await holds(a, 'a bare 404 from the peer address is no contact, not a previous build', 'closed/no_contact 0', proxies, 3);
+    for (const stand of proxies) await stand.close();
+    observations.push('peers answering a bare 404 without the TerraBase error body: mode closed/no_contact through three rounds');
     await opens(b, 'second node');
     await expect.poll(() => allowed(a), { message: 'the first node opens once a second node answers' }).toBe(1);
     await opens(c, 'third node');
@@ -213,25 +270,18 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     observations.push('one wrong clock among three closed alone: b and c stayed open');
 
     await stop(c);
-    let oldBuildAsked = 0;
-    oldBuild = createServer((_, response) => {
-      oldBuildAsked++;
-      response.writeHead(404);
-      response.end();
-    });
-    oldBuild.listen(internalPort, c.address);
-    await once(oldBuild, 'listening');
-    await expect.poll(async () => [oldBuildAsked > 2, await metric(a, 'terrabase_clock_peers_answering'), await allowed(a)],
-      { message: 'a peer whose route answers 404 counts as no answer' }).toEqual([true, 1, 1]);
-    observations.push(`older peer answering 404 (${oldBuildAsked} requests): a counts 1 answering peer and stays open`);
+    const previousC = await standIn(c, previousBuild);
+    await expect.poll(async () => [previousC.asked() > 2, await metric(a, 'terrabase_clock_peers_answering'), await allowed(a), await mode(a)],
+      { message: 'a peer of the previous build does not count as answering when another peer answers' }).toEqual([true, 1, 1, 'peers_agree/none']);
+    observations.push(`peer of the previous build (${previousC.asked()} requests): a counts 1 answering peer and stays open, mode peers_agree`);
 
     set(b, 600_000);
     await expect.poll(async () => [await allowed(a), await allowed(b), await metric(a, 'terrabase_clock_peers_agreeing'), await metric(b, 'terrabase_clock_peers_agreeing')],
       { message: 'two nodes that disagree with nobody else answering both close' }).toEqual([0, 0, 0, 0]);
-    const askedWhenClosed = oldBuildAsked;
+    const askedWhenClosed = previousC.asked();
     await expect.poll(async () => {
       expect([await allowed(a), await allowed(b)]).toEqual([0, 0]);
-      return oldBuildAsked - askedWhenClosed;
+      return previousC.asked() - askedWhenClosed;
     }, { message: 'both stay closed through three more rounds' }).toBeGreaterThanOrEqual(6);
     observations.push('two disagreeing nodes, third silent: both closed through three more rounds');
     set(b, 0);
@@ -244,11 +294,52 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     set(a, 0);
     await expect.poll(() => allowed(a), { message: 'a synchronised kernel within 50 ms reopens it, with a 16 s maximum error' }).toBe(1);
     observations.push('kernel unsynchronised: closed; estimated error 50.001 ms: closed; 1 ms with maximum error 16 s: open');
+
+    await stop(b);
+    const previousB = await standIn(b, previousBuild);
+    await stop(a);
+    await start(a);
+    const bootReadings: string[] = [];
+    await expect.poll(async () => {
+      const open = await allowed(a);
+      bootReadings.push(`${open}@${await metric(a, 'terrabase_clock_agreeing_rounds')}`);
+      return open;
+    }, { message: 'a node whose only peers run the previous build opens', intervals: [100] }).toBe(1);
+    expect(bootReadings.filter((reading) => reading.startsWith('1@')).map((reading) => Number(reading.slice(2))).every((rounds) => rounds >= 2), bootReadings.join(' '))
+      .toBe(true);
+    expect([await mode(a), await metric(a, 'terrabase_clock_peers_answering')]).toEqual(['first_of_build/none', 0]);
+    const bootWrite = await sql(a, "INSERT INTO clock_rows VALUES (5, 'first of its build')");
+    expect(bootWrite.status, bootWrite.body).toBe(200);
+    await expect.poll(() => metric(a, 'terrabase_clock_stamps_total', 'outcome="issued"'), { message: 'the home first of its build issued the stamp' }).toBeGreaterThan(0);
+    observations.push(`home whose peers all run the previous build: opened (readings allowed@rounds ${bootReadings.join(' ')}), mode first_of_build, home write 200`);
+
+    await stop(a);
+    set(a, 600_000, 64);
+    await start(a);
+    await holds(a, 'a node 600 s ahead with an unsynchronised kernel stays closed while its peers run the previous build', 'closed/kernel 0', [previousB, previousC], 4);
+    const refusedFirst = await sql(a, "INSERT INTO clock_rows VALUES (6, 'first of its build ahead')");
+    expect(refusedFirst.status, refusedFirst.body).toBe(503);
+    expect(JSON.parse(refusedFirst.body).error.code).toBe('unavailable');
+    expect(await metric(a, 'terrabase_clock_stamps_total', 'outcome="issued"')).toBe(0);
+    observations.push('first of its build, 600 s ahead with the kernel unsynchronised: mode closed/kernel through four rounds, home write 503 unavailable, issued=0');
+    set(a, 0);
+    await expect.poll(async () => [await mode(a), await allowed(a)], { message: 'the kernel is good again and a reopens as first of its build' })
+      .toEqual(['first_of_build/none', 1]);
+
+    await previousB.close();
+    set(b, 600_000);
+    await start(b);
+    await expect.poll(() => mode(a), { message: 'a peer that answers the route and disagrees closes the node', intervals: [100] }).toBe('closed/peers_disagree');
+    expect(transitions(a)).toEqual(['first_of_build/none', 'closed/peers_disagree']);
+    await holds(a, 'an answering peer outranks a peer of the previous build', 'closed/peers_disagree 0', [previousC], 3);
+    const rows = await json(a, 'POST', sqlPath, { statements: [{ sql: 'SELECT id FROM clock_rows ORDER BY id' }] });
+    expect(rows.results[0].rows).toEqual([[1], [4], [5]]);
+    observations.push('first of its build, then one peer answers 600 s ahead while the other still runs the previous build: first_of_build -> closed/peers_disagree with no step between, closed through three rounds');
     observations.push(`open times after /readyz in ms (second and third node, then restarts 1-3): ${opened.map(Math.round).join(', ')}`);
     console.log(observations.join('\n'));
   } finally {
     for (const node of [...running.keys()]) await stop(node);
-    oldBuild?.close();
+    for (const stand of [...standIns]) await stand.close();
     for (const output of logs) closeSync(output);
     await info.attach('clock-trust', { body: observations.join('\n'), contentType: 'text/plain' });
     rmSync(root, { recursive: true, force: true });

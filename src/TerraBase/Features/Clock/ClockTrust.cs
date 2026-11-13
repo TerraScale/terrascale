@@ -1,9 +1,12 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
+using ZLogger;
 
 namespace TerraBase.Features.Clock;
 
@@ -11,7 +14,8 @@ internal sealed record ClockReport(string Node, string Region, double? SkewMilli
 
 internal sealed record PeerClock(long UtcMilliseconds);
 
-internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential credential, TimeProvider time, IMeterFactory meters) : BackgroundService
+internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential credential, TimeProvider time, IMeterFactory meters, ILogger<ClockTrust> logger)
+    : BackgroundService
 {
     internal const long BudgetMilliseconds = 50;
     internal const int RoundsToOpen = 2;
@@ -20,6 +24,8 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     private static readonly TimeSpan Round = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan AnswerFor = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan AskFor = TimeSpan.FromSeconds(2);
+    private static readonly IReadOnlyList<(Mode Mode, KeyValuePair<string, object?>[] Tags)> ModeTags =
+        [.. Enum.GetValues<Mode>().Select(mode => (mode, new KeyValuePair<string, object?>[] { new("mode", Labels(mode).Mode), new("reason", Labels(mode).Reason) }))];
     private readonly TimeProvider _monotonic = TimeProvider.System;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, PeerAnswer> _answers = new(StringComparer.Ordinal);
@@ -33,6 +39,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     private int _answering;
     private int _agreeing;
     private int _reported;
+    private Mode _mode = Mode.Opening;
 
     public bool Trusted
     {
@@ -62,6 +69,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
         _ = _meter.CreateObservableGauge("terrabase.clock.peers_answering", () => Volatile.Read(ref _answering), "{node}");
         _ = _meter.CreateObservableGauge("terrabase.clock.peers_agreeing", () => Volatile.Read(ref _agreeing), "{node}");
         _ = _meter.CreateObservableGauge("terrabase.clock.reported", () => Volatile.Read(ref _reported));
+        _ = _meter.CreateObservableGauge("terrabase.clock.mode", Modes, description: "One for the clock trust mode this node is in (peers_agree, first_of_build, no_peers or closed) and, while closed, the reason.");
         await using var reports = new ClockReports(options);
         using var timer = new PeriodicTimer(Round, time);
         long round = 0;
@@ -71,7 +79,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
             bool everyone;
             lock (_gate)
             {
-                everyone = !TrustedLocked();
+                everyone = !TrustedLocked() || _mode == Mode.FirstOfBuild;
             }
 
             var peers = await PeersAsync(stoppingToken).ConfigureAwait(false);
@@ -121,19 +129,27 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
             _ = _answers.Remove(stale);
         }
 
-        var answering = _answers.Count;
-        var agreeing = _answers.Values.Count(answer => answer.Agrees);
-        Volatile.Write(ref _answering, answering);
+        var answered = _answers.Values.OfType<Answered>().ToList();
+        var agreeing = answered.Count(answer => answer.Agrees);
+        Volatile.Write(ref _answering, answered.Count);
         Volatile.Write(ref _agreeing, agreeing);
-        var peersAgree = configured == 0 || (answering > 0 && 2 * (agreeing + 1) > answering + 1);
-        if (peersAgree && KernelClock.ErrorMilliseconds <= BudgetMilliseconds)
+        var peers = configured == 0 ? Mode.NoPeers
+            : answered.Count > 0 ? 2 * (agreeing + 1) > answered.Count + 1 ? Mode.PeersAgree : Mode.PeersDisagree
+            : _answers.Count > 0 ? Mode.FirstOfBuild
+            : Mode.NoContact;
+        if (KernelClock.ErrorMilliseconds > BudgetMilliseconds)
         {
-            Volatile.Write(ref _agreeingRounds, _agreeingRounds + 1);
-            _agreedAt = now;
+            Close(now, Mode.Kernel);
+        }
+        else if (peers is Mode.PeersDisagree or Mode.NoContact)
+        {
+            Close(now, peers);
         }
         else
         {
-            Close(now);
+            Volatile.Write(ref _agreeingRounds, _agreeingRounds + 1);
+            _agreedAt = now;
+            Enter(_agreeingRounds >= RoundsToOpen ? peers : Mode.Opening);
         }
     }
 
@@ -141,9 +157,13 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     {
         Check();
         var now = _monotonic.GetTimestamp();
-        if (KernelClock.ErrorMilliseconds > BudgetMilliseconds || (_agreeingRounds > 0 && _monotonic.GetElapsedTime(_agreedAt, now) > AnswerFor))
+        if (KernelClock.ErrorMilliseconds > BudgetMilliseconds)
         {
-            Close(now);
+            Close(now, Mode.Kernel);
+        }
+        else if (_agreeingRounds > 0 && _monotonic.GetElapsedTime(_agreedAt, now) > AnswerFor)
+        {
+            Close(now, Mode.Stalled);
         }
 
         return _agreeingRounds >= RoundsToOpen;
@@ -162,26 +182,65 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
             if (moved < least - BudgetMilliseconds - 1 || moved > most + BudgetMilliseconds + 1)
             {
                 _steps?.Add(1);
-                Close(after);
+                Close(after, Mode.Step);
             }
         }
 
         _last = new Sample(before, wall, after);
     }
 
-    private void Close(long at)
+    private void Close(long at, Mode reason)
     {
         _closedAt = at;
         Volatile.Write(ref _agreeingRounds, 0);
         _answers.Clear();
+        Enter(reason);
     }
+
+    private void Enter(Mode mode)
+    {
+        if (mode == _mode)
+        {
+            return;
+        }
+
+        _mode = mode;
+        var (name, reason) = Labels(mode);
+        logger.ZLogInformation($"Clock trust mode {name:@Mode}, reason {reason:@Reason}");
+    }
+
+    private IEnumerable<Measurement<int>> Modes()
+    {
+        Mode current;
+        lock (_gate)
+        {
+            _ = TrustedLocked();
+            current = _mode;
+        }
+
+        return ModeTags.Select(entry => new Measurement<int>(entry.Mode == current ? 1 : 0, entry.Tags));
+    }
+
+    private static (string Mode, string Reason) Labels(Mode mode) => mode switch
+    {
+        Mode.PeersAgree => ("peers_agree", "none"),
+        Mode.FirstOfBuild => ("first_of_build", "none"),
+        Mode.NoPeers => ("no_peers", "none"),
+        Mode.Opening => ("closed", "opening"),
+        Mode.Kernel => ("closed", "kernel"),
+        Mode.Step => ("closed", "step"),
+        Mode.PeersDisagree => ("closed", "peers_disagree"),
+        Mode.NoContact => ("closed", "no_contact"),
+        Mode.Stalled => ("closed", "stalled"),
+        _ => throw new UnreachableException(),
+    };
 
     private double Skew()
     {
         lock (_gate)
         {
             return TrustedLocked()
-                ? _answers.Values.Where(answer => answer.Agrees).Select(answer => Math.Abs(answer.OffsetMilliseconds) + answer.UncertaintyMilliseconds)
+                ? _answers.Values.OfType<Answered>().Where(answer => answer.Agrees).Select(answer => Math.Abs(answer.OffsetMilliseconds) + answer.UncertaintyMilliseconds)
                     .Append(KernelClock.ErrorMilliseconds).Max()
                 : double.PositiveInfinity;
         }
@@ -207,6 +266,14 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
         try
         {
             using var response = await Http.GetAsync(new Uri(peer.InternalListener(options.InternalPort), "v1/sync/clock"), timeout.Token).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return response.Content.Headers.ContentType?.MediaType == "application/json"
+                    && await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.ErrorBody, timeout.Token).ConfigureAwait(false) is { Error.Code: BadRequests.UnknownRoute }
+                    ? new RouteUnknown(_monotonic.GetTimestamp())
+                    : null;
+            }
+
             if (!response.IsSuccessStatusCode
                 || await response.Content.ReadFromJsonAsync(ClockJsonContext.Default.PeerClock, timeout.Token).ConfigureAwait(false) is not { } clock)
             {
@@ -217,7 +284,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
             var half = _monotonic.GetElapsedTime(sent, received).TotalMilliseconds / 2;
             var offset = clock.UtcMilliseconds - (sentWall + half);
             var uncertainty = half + 1;
-            return new PeerAnswer(received, offset, uncertainty, Math.Abs(offset) <= BudgetMilliseconds + uncertainty);
+            return new Answered(received, offset, uncertainty, Math.Abs(offset) <= BudgetMilliseconds + uncertainty);
         }
         catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
@@ -227,5 +294,22 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
 
     private sealed record Sample(long Before, long Wall, long After);
 
-    private sealed record PeerAnswer(long At, double OffsetMilliseconds, double UncertaintyMilliseconds, bool Agrees);
+    private closed record class PeerAnswer(long At);
+
+    private sealed record class Answered(long At, double OffsetMilliseconds, double UncertaintyMilliseconds, bool Agrees) : PeerAnswer(At);
+
+    private sealed record class RouteUnknown(long At) : PeerAnswer(At);
+
+    private enum Mode
+    {
+        PeersAgree,
+        FirstOfBuild,
+        NoPeers,
+        Opening,
+        Kernel,
+        Step,
+        PeersDisagree,
+        NoContact,
+        Stalled,
+    }
 }

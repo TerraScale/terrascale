@@ -54,25 +54,63 @@ node closed. A measurement taken before the close never counts.
 | Check | What it catches | How |
 | --- | --- | --- |
 | Kernel | small drift, an unsynchronised clock | Linux `adjtimex` (read-only) reports the clock synchronised and its estimated error at most 50 ms, on every read. The maximum error is not used: the kernel adds 500 µs to it every second between time-daemon updates, so it passes 50 ms on a healthy clock after about 100 s. |
-| Peers | gross errors the kernel cannot see: a clock stepped by minutes, a virtual machine resumed with a stale clock, a restart with a wrong clock | Each round asks every reachable peer for its wall clock (below). At least one peer answered in the last 15 s, and the agreeing peers plus this node are a strict majority of the answering peers plus this node. |
+| Peers | gross errors the kernel cannot see: a clock stepped by minutes, a virtual machine resumed with a stale clock, a restart with a wrong clock | Each round asks every peer for its wall clock (below). Either at least one peer answered in the last 15 s and the agreeing peers plus this node are a strict majority of the answering peers plus this node, or no peer answered in the last 15 s but at least one peer of the previous build did (first of its build, below). |
 | No local step | a step between two reads | Between consecutive checks, the wall clock and the monotonic clock advanced by the same amount within 50 ms. A step closes the node at once and latches: only rounds begun after it can reopen it. |
 
 Peer rounds run every second. A round asks the in-region partners every time and the other regions' nodes every fifth
-round; while the node is closed it asks every peer each round. The peers are every other node of the peers file.
-A request is `GET /v1/sync/clock` on the peer's internal listener with the peer credential; the peer answers its wall
-clock in Unix milliseconds. The node records the wall clock when it sends and the monotonic round trip: offset is the
-peer's time minus the send time plus half the round trip, and uncertainty is half the round trip plus 1 ms. A peer
-agrees when the absolute offset is at most 50 ms plus that uncertainty. A peer that does not answer within 2 s, or
-answers an error or `404` (an older build without the route), did not answer: it neither agrees nor disagrees. A node
-with no peers file has nobody to compare with and no replication to protect; only the kernel and step checks apply.
+round; while the node is closed, or first of its build, it asks every peer each round. The peers are every other node of
+the peers file. A request is `GET /v1/sync/clock` on the peer's internal listener with the peer credential; the peer
+answers its wall clock in Unix milliseconds. Each request has one of three outcomes:
 
-Consequences:
+| Outcome | What the peer answered | Effect |
+| --- | --- | --- |
+| Answered | `200` with its wall clock | Counts as agreeing or disagreeing. The node records the wall clock when it sends and the monotonic round trip: offset is the peer's time minus the send time plus half the round trip, and uncertainty is half the round trip plus 1 ms. The peer agrees when the absolute offset is at most 50 ms plus that uncertainty. |
+| Does not know the route | `404` with TerraBase's JSON error body and code `unknown_route` | The peer runs a previous build. It is reachable and accepted the peer credential, but it has no clock to compare. |
+| No contact | anything else: no answer within 2 s, a refused connection, `401`, any other status, a `404` without that body | Nothing. The peer's previous outcome is dropped. |
+
+Only a TerraBase internal listener that holds the same peer secret can answer "does not know the route", as far as
+the node can tell. The request goes over HTTP/2 with prior knowledge (no upgrade, no proxy, no redirect) to the address
+the peers file gives for that peer and to the internal port, so a client-listener port (HTTP/1 only), a web server or
+an HTTP proxy on a wrong address fails the connection. The internal listener checks the peer credential before it
+routes: a wrong or missing credential answers `401`, never `404`. Only after the credential matched does an unknown
+path reach the status-code page, which answers `application/json` with `{"error":{"code":"unknown_route",...}}`; the
+node accepts exactly that, and counts a bare `404`, a `404` of another content type or with another code as no contact.
+The answer itself is not signed: a process that listens on the peer's internal address and imitates that body would
+pass. Such a process already sits on the cluster's private network, where it could do more harm in other ways.
+
+A node with no peers file has nobody to compare with and no replication to protect; only the kernel and step checks
+apply.
+
+## First of its build
+
+During a rollout, the first node that runs a build with the clock route has no peer that answers it: every other node
+still runs the previous build and answers `404 unknown_route`. Waiting for a second node would make that node, as the
+home of its databases, answer `503` to every write until the next node is upgraded. So when no peer answered in the
+last 15 s but at least one peer of the previous build did, the peer check holds and the node relies on the kernel and
+step checks alone, exactly as a node with no peers file does. Its mode is `first_of_build`.
+
+- The rule to open still applies: two consecutive rounds, both begun after the last close. In this mode a round counts
+  when the kernel is good and at least one peer answered `404 unknown_route` in a round begun after the close. A step
+  closes the node and latches as always.
+- A peer that answers the route always outranks peers of the previous build: as soon as one peer answers, the majority
+  rule decides. When that peer disagrees, the node closes at the end of that round, even while other peers still
+  answer `404`.
+- An isolated node (no contact with any peer) still refuses to stamp: it could not replicate what it stamped.
+
+What it catches: an unsynchronised kernel, a kernel error estimate over 50 ms and a local step, all as on any node.
+What it does not catch: a clock that is far off while the kernel still reports it synchronised with a small error (a
+time daemon that follows a wrong source, a virtual machine resumed with a stale clock before the kernel notices). That
+window lasts only until a second node runs the build: from then on the two compare clocks every round.
+
+Consequences:Consequences:
 
 - A healthy node opens about two seconds after its process starts (two rounds: in three journey runs it was trusted 53 to 374 ms after `/readyz`, 1.9 to 3.3 s after a restart began), instead of waiting minutes for the time daemon.
 - One node with a wrong clock among three closes alone: the other two each count one agreeing peer plus themselves.
 - Two nodes that disagree with nobody else answering both close; neither can tell which clock is wrong.
-- During a rollout, the first node on this build has no answering peer: as a replica it forwards its writes home, and
-  as a home it answers `503` for writes to its replicated databases, until a second node runs this build.
+- A rollout refuses no writes by itself. The first node upgraded relies on its kernel and step checks until a second
+  node runs the build (first of its build, above); from then on both compare clocks. Every node should reach
+  `peers_agree` within seconds of the second node being upgraded; every upgraded node does. A node still in `first_of_build` after the rollout
+  means that every peer that answers it still runs an older build.
 - The model cannot detect every node being wrong by the same amount (the peers then agree with each other); a drift
   below 50 ms plus the round-trip uncertainty that the kernel does not report; or a step that the wall/monotonic check
   misses because the host moved both clocks together, until the next peer round.
@@ -82,9 +120,25 @@ Consequences:
 | Start | no | opens after two agreeing rounds, about two seconds |
 | Kernel unsynchronised or error over 50 ms | no | closes on the next read; reopens two rounds after the kernel is good again |
 | Step detected | no | closes on the read that sees it; reopens two rounds begun after the step |
-| A round where peers do not agree, or nobody answers | no | closes at the end of that round |
+| A round where answering peers do not agree, or no peer is in contact | no | closes at the end of that round |
+| No peer answers, at least one answers `404 unknown_route` | yes, after two such rounds | stays open; becomes `peers_agree` when a peer answers and agrees |
 | No agreeing round for 15 s | no | closes on the next read |
 | Two consecutive agreeing rounds after a close | yes | opens at the end of the second round |
+
+`terrabase_clock_mode{mode,reason}` says which mode the node is in: it is one for the current pair and zero for the
+others, with no per-peer label. One log line, `Clock trust mode {Mode}, reason {Reason}`, is written on each change.
+
+| mode | reason | Stamps |
+| --- | --- | --- |
+| `peers_agree` | `none` | issued: a strict majority of the answering peers plus this node agree |
+| `first_of_build` | `none` | issued: no peer answers the route, at least one peer of the previous build is in contact |
+| `no_peers` | `none` | issued: no peers file |
+| `closed` | `opening` | refused: the checks hold, fewer than two rounds since the last close |
+| `closed` | `kernel` | refused: kernel unsynchronised or its estimated error over 50 ms |
+| `closed` | `step` | refused: a local step, no round begun after it has finished |
+| `closed` | `peers_disagree` | refused: peers answered and the majority disagrees |
+| `closed` | `no_contact` | refused: no peer answered or answered `404 unknown_route` in the last 15 s |
+| `closed` | `stalled` | refused: no round finished for 15 s |
 
 `terrabase_clock_local_writes_allowed` is one while the clock is trusted. `terrabase_clock_agreeing_rounds` counts the
 consecutive agreeing rounds since the last close, `terrabase_clock_peers_answering` and
@@ -95,6 +149,14 @@ stores the reports in `tb-clock-skew` with three replicas and a 15-second TTL, a
 when the last report was stored. Trust never depends on that report.
 
 The runtime does not change the clock or require clock-setting privileges, and it needs no time-daemon socket.
+
+## Mixed builds
+
+Nothing new is required of a node on the previous build. Asked for the clock route, it answers `404 unknown_route`
+after checking the peer credential, as for any path it does not know. The stamps a new node issues have the same shape
+and travel in the same `RegionTransaction`, so an old node applies them as before. A new replica whose clock is not
+trusted forwards its writes home over the same forwarding path, and an old home stamps them as it always did. A new
+home that receives a write forwarded by an old replica stamps it under its own trust state, like any write it commits.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
