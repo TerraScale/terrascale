@@ -406,7 +406,7 @@ internal sealed partial class RegionReplication(
         try
         {
             if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-                && placement.Home == home.Region && placement.Includes(options.Region))
+                && placement.Home == home.Region && placement.PlacedIn(options.Region))
             {
                 await FollowRegisteredAsync(key, database, home, cancellationToken).ConfigureAwait(false);
             }

@@ -147,6 +147,7 @@ try
         app.Services.GetRequiredService<InternalCredential>().CorrelationKey);
     app.UseTerraBasePrivateResponses();
     app.UseTerraBasePressure();
+    ProxyRequestBudget.UseTerraBaseProxyBudget(app);
     app.UseTerraBaseUsage();
     app.UseTerraBaseBadRequests();
     app.UseRouting();
@@ -165,7 +166,7 @@ try
 
         return next(context);
     });
-    app.UseTerraBaseRegionalWriter();
+    app.UseTerraBaseRegionalServices();
     app.UseTerraBaseQosMemory();
     app.UseTerraBaseCatalogGate();
     SqlRequestTiming.Checkpoint(app, "admission");
@@ -174,11 +175,12 @@ try
     app.UseTerraBaseProjectCheck();
     app.UseAuthorization();
     SqlRequestTiming.Checkpoint(app, "auth");
-    app.UseTerraBaseHomeForwarding();
-    SqlRequestTiming.Checkpoint(app, "home_lookup");
     app.UseTerraBaseQos();
-    SqlRequestTiming.Checkpoint(app, "qos");
+    app.UseTerraBaseRegionalWriter();
+    app.UseTerraBaseHomeForwarding();
     app.UseTerraBaseProjectCatalog();
+    SqlRequestTiming.Checkpoint(app, "home_lookup");
+    SqlRequestTiming.Checkpoint(app, "qos");
     SqlRequestTiming.Checkpoint(app, "project");
     app.UseTerraBaseDatabasePlacement();
     SqlRequestTiming.Checkpoint(app, "placement");

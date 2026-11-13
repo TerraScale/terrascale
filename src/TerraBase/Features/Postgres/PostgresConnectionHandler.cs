@@ -40,9 +40,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     private static readonly ReadOnlyDictionary<string, SqlValue> NoNamed = ReadOnlyDictionary<string, SqlValue>.Empty;
 
-    private readonly union Access(Authorized, PgError, HomeNode);
+    private readonly union Access(Authorized, RemoteAuthorized, PgError);
 
-    private sealed record Relay(HomeNode Home, byte[] Startup, IPAddress? Client);
+    private sealed record RemoteAuthorized(TenantContext Database);
+
+    private sealed record Relay(HomeNode Home, TenantContext Tenant, byte[] Startup, IPAddress? Client, IDisposable Admission, ProxyRequestBudget Budget);
     private IApiKeyStore Keys => services.GetRequiredService<IApiKeyStore>();
 
     private ITenantDirectory Tenants => services.GetRequiredService<ITenantDirectory>();
@@ -54,30 +56,29 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         ArgumentNullException.ThrowIfNull(connection);
         var peer = (connection.RemoteEndPoint as IPEndPoint)?.Address;
-        await ServeConnectionAsync(connection.Transport.Input, connection.Transport.Output, peer, IpAllowlists.IsEdge(peer), relayed: false,
+        await ServeConnectionAsync(connection.Transport.Input, connection.Transport.Output, peer, IpAllowlists.IsEdge(peer), relayed: false, new ProxyRequestBudget(Time, HandshakeTimeout),
             () => connection.Abort(new ConnectionAbortedException("the API key was refused")), connection.ConnectionClosed).ConfigureAwait(false);
     }
 
-    internal Task ServeRelayedAsync(PipeReader input, PipeWriter output, IPAddress client, Action abort, CancellationToken closed) =>
-        ServeConnectionAsync(input, output, client, edge: true, relayed: true, abort, closed);
+    internal Task ServeRelayedAsync(PipeReader input, PipeWriter output, IPAddress client, ProxyRequestBudget budget, Action abort, CancellationToken closed) =>
+        ServeConnectionAsync(input, output, client, edge: true, relayed: true, budget, abort, closed);
 
-    private async Task ServeConnectionAsync(PipeReader input, PipeWriter pipe, IPAddress? peer, bool edge, bool relayed, Action abortConnection, CancellationToken closed)
+    private async Task ServeConnectionAsync(PipeReader input, PipeWriter pipe, IPAddress? peer, bool edge, bool relayed, ProxyRequestBudget budget, Action abortConnection, CancellationToken closed)
     {
         var output = new PgWriter(pipe);
         Session? session = null;
         try
         {
             Relay? relay;
-            using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(closed))
+            using (var handshake = budget.Link(closed))
             {
-                handshake.CancelAfter(HandshakeTimeout);
                 var client = edge && !relayed ? await ReadProxyHeaderAsync(input, peer, handshake.Token).ConfigureAwait(false) : peer;
                 (session, relay) = await StartAsync(input, output, client, edge, relayed, handshake.Token).ConfigureAwait(false);
             }
 
             if (relay is not null)
             {
-                await services.GetRequiredService<PostgresRelay>().RunAsync(relay.Home, relay.Startup, relay.Client, input, pipe, closed).ConfigureAwait(false);
+                await services.GetRequiredService<PostgresRelay>().RunAsync(relay.Home, relay.Tenant, relay.Startup, relay.Client, input, pipe, relay.Admission, relay.Budget, closed).ConfigureAwait(false);
             }
 
             if (session is not null)
@@ -91,7 +92,17 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, session.Until,
                     async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, session.Project, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
                     refused, services.GetRequiredService<TimeProvider>());
-                await ServeAsync(session, input, output, closed).ConfigureAwait(false);
+                using var moving = CancellationTokenSource.CreateLinkedTokenSource(closed);
+                using var moved = services.GetRequiredService<DatabaseFences>().WatchMoved(session.DatabaseId, session.PreviousHome, moving.Cancel);
+                try
+                {
+                    await ServeAsync(session, input, output, moving.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (moving.IsCancellationRequested && !closed.IsCancellationRequested)
+                {
+                    output.Error("57P01", "the database writer moved; reconnect", fatal: true);
+                    await output.FlushAsync(closed).ConfigureAwait(false);
+                }
             }
         }
         catch (StorageCopyFaultedException)
@@ -227,16 +238,22 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             var secret = new PgReader(body).CString();
             var database = parameters.GetValueOrDefault("database") ?? parameters.GetValueOrDefault("user") ?? "";
-            var access = await AuthorizeAsync(secret, database, client, relayed, cancellationToken).ConfigureAwait(false);
+            var access = await AuthorizeAsync(secret, database, client, cancellationToken).ConfigureAwait(false);
             switch (access)
             {
                 case PgError error:
                     output.Error(error.Code, error.Message, fatal: true);
                     await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                     return default;
-                case HomeNode home:
-                    return (null, new Relay(home, PostgresRelay.Startup(parameters, secret), client));
+                case RemoteAuthorized remote:
+                    return await RelayAsync(remote.Database, parameters, secret, client, relayed, output, cancellationToken).ConfigureAwait(false);
                 case Authorized authorized:
+                    if (await AwayAsync(authorized.Database, cancellationToken).ConfigureAwait(false) is not null)
+                    {
+                        return await RelayAsync(authorized.Database, parameters, secret, client, relayed, output, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    var previousHome = services.GetRequiredService<DatabaseFences>().MovedTo(authorized.Database.DatabaseId!);
                     var sql = services.GetRequiredService<ISqlService>().Open(authorized.Database, authorized.CanWrite);
                     var project = database.IndexOf('/', StringComparison.Ordinal) is var slash && slash >= 0 ? database[..slash] : null;
                     Session session;
@@ -245,6 +262,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                         session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
                             parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
                         {
+                            DatabaseId = authorized.Database.DatabaseId!,
+                            PreviousHome = previousHome,
                             Key = authorized.Key,
                             Until = authorized.Until,
                             TokenExpiry = authorized.TokenExpiry,
@@ -291,7 +310,58 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         output.Ready(session.Status);
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
-    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, bool relayed, CancellationToken cancellationToken)
+    private async ValueTask<(Session? Session, Relay? Relay)> RelayAsync(TenantContext tenant, Dictionary<string, string> parameters,
+        string secret, IPAddress? client, bool relayed, PgWriter output, CancellationToken cancellationToken)
+    {
+        if (relayed)
+        {
+            output.Error("57P03", HomeForwarding.PlacementMissMessage, fatal: true);
+            await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+            return default;
+        }
+        var admission = services.GetRequiredService<IQosAdmission>().TryEnter(tenant, out var retryAfter);
+        if (admission is null)
+        {
+            output.Error("53300", $"tenant busy, retry after {retryAfter}s", fatal: true);
+            await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+            return default;
+        }
+        var budget = new ProxyRequestBudget(Time, SqlLimits.MaxRequestTime);
+        using var deadline = budget.Link(cancellationToken);
+        try
+        {
+            var home = await services.GetRequiredService<IHomeLocator>()
+                .LocateAsync(tenant.ProjectId!, tenant.DatabaseId, deadline.Token).ConfigureAwait(false);
+            if (home is null)
+            {
+                admission.Dispose();
+                output.Error("08001", "the database region could not be reached; retry", fatal: true);
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                return default;
+            }
+            return (null, new Relay(home, tenant, PostgresRelay.Startup(parameters, secret), client, admission, budget));
+        }
+        catch
+        {
+            admission.Dispose();
+            throw;
+        }
+    }
+
+    private async ValueTask<Access> UnheldAsync(string organization, string project, string database, string? restriction, CancellationToken cancellationToken)
+    {
+        if (restriction is not null && restriction != database)
+        {
+            return Denied;
+        }
+        return await Tenants.PlanAsync(organization, cancellationToken).ConfigureAwait(false) switch
+        {
+            PlanTier plan => new RemoteAuthorized(new TenantContext(organization, plan, project, database)),
+            Unavailable => new PgError("57P03", "the database is unavailable; retry"),
+        };
+    }
+
+    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, CancellationToken cancellationToken)
     {
         var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, slash >= 0 ? database[..slash] : null, cancellationToken).ConfigureAwait(false);
         if (grant is Unavailable)
@@ -321,6 +391,16 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return new PgError("57P03", "auth_unavailable: " + KeyAuthorityMessages.Unavailable, Fatal: true);
         }
 
+        switch (await ForwardingAuthorization.AuthorizeAsync(services,
+            new ApiKey(key.Subject, "project grant", [.. key.Scopes], key.OrganizationId, key.ProjectId, key.Database),
+            key.ProjectId, database[(slash + 1)..], [ApiKeyScopes.SqlRead], key.Allowlists, client, cancellationToken).ConfigureAwait(false))
+        {
+            case NotFound or Forbidden:
+                return Denied;
+            case Unavailable:
+                return new PgError("57P03", "the database is unavailable; retry");
+        }
+
         var organization = await services.GetRequiredService<IProjectCatalog>()
             .ResolveProjectAsync(key.ProjectId, key.Subject, createIn: null, cancellationToken).ConfigureAwait(false);
         if (organization is Unavailable)
@@ -330,7 +410,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         if (organization is NotFound)
         {
-            return await ElsewhereAsync(key.ProjectId, database[(slash + 1)..], relayed, cancellationToken).ConfigureAwait(false);
+            return await UnheldAsync(key.OrganizationId, key.ProjectId, database[(slash + 1)..], key.Database, cancellationToken).ConfigureAwait(false);
         }
 
         if (organization is not string found)
@@ -347,7 +427,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             }
             if (narrowed is NotFound)
             {
-                return await ElsewhereAsync(key.ProjectId, database[(slash + 1)..], relayed, cancellationToken).ConfigureAwait(false);
+                return Denied;
             }
 
             if (narrowed is not TenantContext restricted)
@@ -358,16 +438,14 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            TenantContext tenant when (restriction is null || restriction == tenant.DatabaseId)
-                && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until, key.ValidTo),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
-            NotFound => await ElsewhereAsync(key.ProjectId, database[(slash + 1)..], relayed, cancellationToken).ConfigureAwait(false),
+            NotFound => await UnheldAsync(found, key.ProjectId, database[(slash + 1)..], restriction, cancellationToken).ConfigureAwait(false),
             _ => Denied,
         };
     }
 
-    private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, bool relayed, CancellationToken cancellationToken)
+    private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, CancellationToken cancellationToken)
     {
         if (!services.GetRequiredService<ICatalogGate>().IsOpen)
         {
@@ -377,7 +455,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         var slash = database.IndexOf('/', StringComparison.Ordinal);
         if (TsAuthKeyExchange.IsKey(secret))
         {
-            return await AuthorizeDashboardKeyAsync(secret, database, slash, client, relayed, cancellationToken).ConfigureAwait(false);
+            return await AuthorizeDashboardKeyAsync(secret, database, slash, client, cancellationToken).ConfigureAwait(false);
         }
 
         if (await Keys.FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
@@ -389,30 +467,30 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             return Denied;
         }
 
+        switch (await ForwardingAuthorization.AuthorizeAsync(services, key, project, database[(slash + 1)..],
+            [ApiKeyScopes.SqlRead], [], client, cancellationToken).ConfigureAwait(false))
+        {
+            case NotFound or Forbidden:
+                return Denied;
+            case Unavailable:
+                return new PgError("57P03", "the database is unavailable; retry");
+        }
+
         return await Tenants.FindDatabaseAsync(key.OrganizationId, project, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            TenantContext tenant when key.Reaches(tenant) && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite)),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
+            NotFound => await UnheldAsync(key.OrganizationId, project, database[(slash + 1)..], key.DatabaseId, cancellationToken).ConfigureAwait(false),
             _ => Denied,
         };
     }
 
-    private async ValueTask<HomeNode?> AwayAsync(TenantContext tenant, CancellationToken cancellationToken)
+    private async ValueTask<DatabasePlacement?> AwayAsync(TenantContext tenant, CancellationToken cancellationToken)
     {
         var region = services.GetRequiredService<TerraBaseOptions>().Region;
         return await services.GetRequiredService<IReplicaCatalog>().FindAsync(tenant, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-            && !placement.Includes(region)
-            && await services.GetRequiredService<IHomeLocator>().LocateAsync(tenant.ProjectId!, tenant.DatabaseId, cancellationToken).ConfigureAwait(false) is { } home
-            && home.Region != region
-                ? home
-                : null;
+            && !placement.PlacedIn(region) ? placement : null;
     }
-
-    private async ValueTask<Access> ElsewhereAsync(string project, string database, bool relayed, CancellationToken cancellationToken) =>
-        !relayed && await services.GetRequiredService<IHomeLocator>().LocateAsync(project, database, cancellationToken).ConfigureAwait(false) is { } home
-            ? home
-            : new PgError("3D000", "the database does not exist in this project");
 
     private async Task ServeAsync(Session session, PipeReader input, PgWriter output, CancellationToken cancellationToken)
     {
@@ -723,7 +801,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 {
                     return new PgError("0A000", "Execute with a row limit is not supported yet");
                 }
-                if (running.Pending is not null && await AuthorizeAsync(session.ApiKey, session.Database, session.Client, relayed: true, cancellationToken).ConfigureAwait(false) is PgError stale)
+                if (running.Pending is not null && await AuthorizeAsync(session.ApiKey, session.Database, session.Client, cancellationToken).ConfigureAwait(false) is PgError stale)
                 {
                     running.Pending = null;
                     return stale;
@@ -949,7 +1027,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return Denied;
             }
 
-            var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, relayed: true, running.Token).ConfigureAwait(false);
+            var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false);
             if (access is not Authorized { Database: var database })
             {
                 return access is PgError refusal ? refusal : Denied;
@@ -1157,6 +1235,10 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     }
     private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, IPAddress? Client, ISqlSession Sql, Dictionary<string, string> Settings)
     {
+        public required string DatabaseId { get; init; }
+
+        public string? PreviousHome { get; init; }
+
         public KeyToken? Key { get; init; }
         public DateTimeOffset? Until { get; init; }
         public DateTimeOffset? TokenExpiry { get; init; }

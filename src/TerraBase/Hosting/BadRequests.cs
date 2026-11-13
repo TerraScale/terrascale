@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Regions;
 using ZLogger;
 
 namespace TerraBase.Hosting;
@@ -61,15 +60,6 @@ public static class BadRequests
                 Replace(context.Response);
                 context.Response.Headers.RetryAfter = "30";
                 await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "disk_capacity", error.Message, op: null).ConfigureAwait(false);
-            }
-            catch (DatabaseMovedException error) when (!context.Response.HasStarted && error.Home is not null)
-            {
-                Replace(context.Response);
-                context.Response.Headers["X-TerraBase-Database-Home"] = error.Home;
-                Listeners.ReplayIn(context, error.Home);
-                var url = HomeForwarding.RetryUrl(context, error.Home);
-                context.Response.Headers.Location = url;
-                await WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region", error.Message, op: null, url: url).ConfigureAwait(false);
             }
             catch (DatabaseMovedException error) when (!context.Response.HasStarted)
             {

@@ -339,6 +339,12 @@ internal sealed class SqlExecuteEndpoint(
 
     private JsonResult Error(SqlBatchFailure failure)
     {
+        if (failure.Error.Code == SqlErrors.WrongRegion)
+        {
+            HttpContext.Response.Headers.RetryAfter = "1";
+            failure = failure with { Error = new SqlError(SqlErrors.Unavailable, failure.Error.Message) };
+        }
+
         HttpContext.Response.Headers.CacheControl = "no-store";
         if (failure.Error.Home is { } home)
         {

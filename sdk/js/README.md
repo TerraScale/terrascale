@@ -261,8 +261,8 @@ todos.close();
 `shape(table).subscribe()` loads every row of the table, then keeps it current with each committed change. The
 listener runs after the snapshot and after every change, with `rows` keyed by row id (a decimal string) and
 `upToDate` once the shape reached the table's head. Row values decode like SQL results (`Uint8Array` blobs).
-In a replica region, writes made in that region show at once; `provisional` holds the keys of rows whose values the
-database's home has not confirmed yet (such inserts have keys starting with `~`). A write the home rejects disappears
+In a region that holds the database, writes made there show at once; `provisional` holds the keys of rows whose values the
+database's writer has not confirmed yet (such inserts have keys starting with `~`). A write the writer rejects disappears
 from `rows`.
 A schema change of the table restarts the shape from a new snapshot; transient refusals and lost connections retry
 with backoff; authentication, scope and unknown-table errors reject `done`. It needs the data read scope, or an end-user token with a read grant for the selected table.
@@ -454,7 +454,15 @@ and from a rename. Response `regions` are sorted without ordering meaning; integ
 with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
 Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
 `lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+An SDK needs no knowledge of a database's region: it can connect to any region. A region that does not hold the
+database authenticates the client and proxies to a region that holds it, which authenticates again. This adds one
+inter-region round trip (about 170 ms between the current regions) and passes two request admissions, one in each
+region. Completed requests and bytes are attributed to the final destination. A terminal forwarding failure is counted at the receiving region; intermediate placement refusals are not counted. Operation units are recorded where executed.
+
+A writer move closes pinned WebSocket sessions with 1012 and PostgreSQL sessions with 57P01; an open transaction is
+rolled back. Reconnect for later requests. If the proxy leg drops while a statement or commit is in flight, its
+outcome is unknown (`write_outcome_unknown` for REST/WebSocket, SQLSTATE 08007 for PostgreSQL). The proxy never
+replays that request. Check the committed state before deciding whether to send a new write.
 
 Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).

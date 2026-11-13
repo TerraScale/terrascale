@@ -823,17 +823,30 @@ func (r *runner) placementSet() (result error) {
 	if len(after.Regions) != 1 || after.Regions[0].Region != "fra" || after.Regions[0].Role != "writer" {
 		return errors.New("wrong moved status")
 	}
-	_, err = db.Regions(r.ctx)
-	if !errors.Is(err, v1.ErrWrongRegion) {
-		return fmt.Errorf("nonmember endpoint should return wrong_region, got %v", err)
+	proxied, err := db.Regions(r.ctx)
+	if err != nil {
+		return err
 	}
-	rows, err := placed.Database(r.project, created.ID).Query(r.ctx, "SELECT value FROM placement_rows")
+	if len(proxied.Regions) != 1 || proxied.Regions[0].Region != "fra" {
+		return errors.New("wrong proxied nonmember placement")
+	}
+	rows, err := db.Query(r.ctx, "SELECT value FROM placement_rows")
 	if err != nil {
 		return err
 	}
 	if err := same(cells(rows), [][]any{{int64(1)}}, "data survived placement"); err != nil {
 		return err
 	}
-	fmt.Println("go placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region")
+	if _, err := db.Execute(r.ctx, "INSERT INTO placement_rows VALUES (2)"); err != nil {
+		return err
+	}
+	retained, err := placed.Database(r.project, created.ID).Query(r.ctx, "SELECT value FROM placement_rows ORDER BY value")
+	if err != nil {
+		return err
+	}
+	if err := same(cells(retained), [][]any{{int64(1)}, {int64(2)}}, "acknowledged proxied write retained"); err != nil {
+		return err
+	}
+	fmt.Println("go placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]")
 	return nil
 }

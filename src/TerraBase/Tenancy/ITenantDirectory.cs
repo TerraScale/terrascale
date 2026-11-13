@@ -82,7 +82,7 @@ public interface ITenantDirectory
 
 public sealed record DatabasePlacement(string Home, IReadOnlyList<string> Replicas, long Version, bool AllRegions = false)
 {
-    public bool Includes(string region) => AllRegions || Home == region || Replicas.Contains(region);
+    public bool PlacedIn(string region) => AllRegions || Home == region || Replicas.Contains(region);
 
-    public IReadOnlyList<string> Regions => [Home, .. Replicas];
+    public IReadOnlyList<string> Regions => [.. Replicas.Append(Home).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
 }

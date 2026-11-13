@@ -12,7 +12,7 @@ internal sealed class GetManagedDatabaseEndpoint(IManagementService management) 
         Get(ProjectApiRoute.Database);
         Name("getDatabase");
         Summary("Reads a database");
-        Description("Answered by every region of the database's set; a region outside it answers 421 wrong_region with X-TerraBase-Database-Home. " + ProjectApiRoute.IdentityDescription);
+        Description("Answered by every region of the database's set; a region outside it proxies the request to a region holding the database. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);

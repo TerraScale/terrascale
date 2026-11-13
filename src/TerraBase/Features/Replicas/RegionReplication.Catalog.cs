@@ -133,7 +133,7 @@ internal sealed partial class RegionReplication
                 var key = (Organization: database.OrganizationId, Project: database.ProjectId!, Database: database.DatabaseId!);
                 var held = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
                     && placement.Home == home.Region ? placement : null;
-                var replicated = held is not null && (home.Region == options.Region || held.Includes(options.Region));
+                var replicated = held is not null && (home.Region == options.Region || held.PlacedIn(options.Region));
                 try
                 {
                     if (replicated && (listed is null || listed.ContainsKey(key)))
@@ -346,7 +346,7 @@ internal sealed partial class RegionReplication
         try
         {
             if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var held }
-                && held.Version < entry.PlacementVersion && !held.Includes(options.Region)
+                && held.Version < entry.PlacementVersion && !held.PlacedIn(options.Region)
                 && (entry.AllRegions || entry.HomeRegion == options.Region || entry.ReplicaRegions.Contains(options.Region)))
             {
                 await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
