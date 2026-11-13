@@ -194,10 +194,16 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
       await expect(userPage.locator('#account-profile-name')).toHaveText('Grace Hopper');
       await userAudit.check('imported bcrypt user on hosted account page');
       await userPage.screenshot({ path: join(shots, 'hosted-profile-dark-after.png'), fullPage: true });
+      await expect.poll(async () => {
+        const ready = await userPage.request.get(auth + '/readyz');
+        expect(ready.status()).toBe(200);
+        return Date.parse(ready.headers().date) % 60_000;
+      }, { message: 'profile budget probe starts with fifteen seconds left in its fixed minute' }).toBeLessThan(45_000);
       const self = await userPage.request.patch(root + '/me/profile', {
         headers: { Origin: auth }, data: { first_name: 'Amazing', unsafe_metadata: { locale: 'en' } },
       });
       expect(self.status()).toBe(200);
+      const profileWindow = Math.floor(Date.parse(self.headers().date) / 60_000);
       expect(await self.json()).toMatchObject({ first_name: 'Amazing', unsafe_metadata: { locale: 'en' } });
       expect(await self.json()).not.toHaveProperty('private_metadata');
       const forbidden = await userPage.request.patch(root + '/me/profile', {
@@ -222,8 +228,10 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
         expect(await authRows("SELECT version, (SELECT COUNT(*) FROM webhook_outbox WHERE user_id = users.id AND event_type = 'user.updated') FROM users WHERE instance_id = ? AND id = ?", [current.projectId, importedId!])).toEqual(before);
       });
       const limited = await userPage.request.patch(root + '/me/profile', { headers: { Origin: auth }, data: {} });
+      expect(Math.floor(Date.parse(limited.headers().date) / 60_000)).toBe(profileWindow);
       expect(limited.status()).toBe(429);
       expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
+      console.log('profile fixed-minute budget: 20 requests charged; attempt 21 refused');
       const authorization = await userPage.request.get(authorize.href, { maxRedirects: 0 });
       const authorizationPage = await authorization.text();
       expect(authorization.status(), authorizationPage.match(/<(?:title|h1)[^>]*>[^<]*/g)?.join('; ')).toBe(302);
