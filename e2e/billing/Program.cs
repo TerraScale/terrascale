@@ -228,6 +228,8 @@ try
     await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january.AddMonths(3), cancellationToken);
     await CheckAsync(existing, "2028-04", 0);
     await AdvanceAsync("2028-06-01T00:00:00Z");
+    await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january.AddMonths(3), cancellationToken);
+    await CheckAsync(existing, "2028-04", 0);
     await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january.AddMonths(4), cancellationToken);
     await using (var db = await storage.CreateDbContextAsync(cancellationToken))
     {
