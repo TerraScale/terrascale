@@ -265,7 +265,7 @@ class ApiKey:
 
 @dataclass(frozen=True)
 class ApiKeySecret:
-    """A created or rotated key with its whole ``<ULID>_<52 chars>`` string, answered once."""
+    """A created or rotated key with its whole ``<ULID>_<52 chars>`` string, answered once. The string may start with ``sk_``."""
 
     api_key: ApiKey
     key: str = field(repr=False)

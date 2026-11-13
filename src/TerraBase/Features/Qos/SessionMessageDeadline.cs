@@ -13,6 +13,7 @@ internal sealed class SessionMessageDeadline : IDisposable
     private bool _expired;
     private bool _cancelling;
     private long? _started;
+    private long? _pausedAt;
     private long _bytes;
     private long _armedAt;
     private TimeSpan _budget;
@@ -98,6 +99,39 @@ internal sealed class SessionMessageDeadline : IDisposable
         CancelExpired();
     }
 
+    public void Pause()
+    {
+        lock (_gate)
+        {
+            _pausedAt ??= _time.GetTimestamp();
+        }
+    }
+
+    public void Unpause()
+    {
+        lock (_gate)
+        {
+            if (_pausedAt is not { } paused)
+            {
+                return;
+            }
+
+            _pausedAt = null;
+            var now = _time.GetTimestamp();
+            if (_started is { } started)
+            {
+                _started = started + now - Math.Max(paused, started);
+            }
+
+            _armedAt += now - Math.Max(paused, _armedAt);
+            if (!_expired && !_completed && !_disposed && _budget != Timeout.InfiniteTimeSpan)
+            {
+                var remaining = _budget - _time.GetElapsedTime(_armedAt);
+                _timer.Change(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+            }
+        }
+    }
+
     public void Complete()
     {
         lock (_gate)
@@ -143,6 +177,11 @@ internal sealed class SessionMessageDeadline : IDisposable
     {
         lock (_gate)
         {
+            if (_pausedAt is not null)
+            {
+                return;
+            }
+
             if (!_completed && _budget != Timeout.InfiniteTimeSpan)
             {
                 var remaining = _budget - _time.GetElapsedTime(_armedAt);

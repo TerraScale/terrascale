@@ -30,10 +30,12 @@ public static class RegionsExtensions
         services.AddSingleton<IRegionPeers, PeersFileRegionPeers>();
         services.AddSingleton<IHomeLocator, HomeLocator>();
         services.AddSingleton<HomeSocketRelay>();
+        services.AddSingleton<SqlConnectionMetrics>();
         services.AddHttpClient(HomeLocator.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
             .ConfigurePrimaryHttpMessageHandler((handler, _) =>
             {
                 var sockets = (SocketsHttpHandler)handler;
+                sockets.ConnectTimeout = TimeSpan.FromSeconds(5);
                 sockets.AllowAutoRedirect = false;
                 sockets.UseCookies = false;
                 sockets.PooledConnectionLifetime = Timeout.InfiniteTimeSpan;

@@ -46,9 +46,10 @@ public sealed partial class TerraScaleAuthProjectsClient
     {
         TerraScaleIds.Validate(projectId);
         TerraScaleIds.Validate(userId);
-        if (projectApiKey is not { Length: 79 } || projectApiKey[26] != '_' || !TerraScaleIds.IsValid(projectApiKey[..26])
-            || projectApiKey[27..].Any(c => !"0123456789abcdefghjkmnpqrstvwxyz".Contains(c)))
-            throw new ArgumentException("Supply the whole project API key: canonical ULID, underscore and 52 lowercase Base32 characters.", nameof(projectApiKey));
+        var body = projectApiKey.StartsWith("sk_", StringComparison.Ordinal) ? projectApiKey[3..] : projectApiKey;
+        if (body is not { Length: 79 } || body[26] != '_' || !TerraScaleIds.IsValid(body[..26])
+            || body[27..].Any(c => !"0123456789abcdefghjkmnpqrstvwxyz".Contains(c)))
+            throw new ArgumentException("Supply the whole project API key: optional sk_, a canonical ULID, an underscore and 52 lowercase Base32 characters.", nameof(projectApiKey));
         var count = roles?.Count ?? 0;
         if (count > 64) throw new ArgumentException("At most 64 trusted roles are accepted.", nameof(roles));
         var snapshot = new string[count];

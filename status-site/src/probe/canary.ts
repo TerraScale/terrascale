@@ -44,6 +44,15 @@ const REGION_CODE = /^[a-z]{3}$/;
 /** A three-letter deployment region code, e.g. gru or sjc. */
 export const isRegionCode = (value: unknown): value is string => typeof value === "string" && REGION_CODE.test(value);
 
+const projectKeyBody = (key: string): string => (key.startsWith("sk_") ? key.slice(3) : key);
+
+export const projectKeyId = (key: string): string => projectKeyBody(key).slice(0, 26);
+
+const isProjectKey = (key: string): boolean => {
+  const body = projectKeyBody(key);
+  return body.length === 79 && isId(body.slice(0, 26)) && /^_[0-9a-hjkmnp-tv-z]{52}$/.test(body.slice(26));
+};
+
 /** The canary table, quoted, and its fixture row's id (scripts/recover-canaries.py). */
 export const CANARY_TABLE = '"canary"';
 export const CANARY_ROW = "00000000000000000000000007";
@@ -65,9 +74,7 @@ export function isCanaryConfig(value: unknown): value is CanaryConfig {
       typeof entry.database === "string" &&
       NAME.test(entry.database) &&
       typeof entry.key === "string" &&
-      entry.key.length === 79 &&
-      isId(entry.key.slice(0, 26)) &&
-      /^_[0-9a-hjkmnp-tv-z]{52}$/.test(entry.key.slice(26))
+      isProjectKey(entry.key)
     );
   } catch {
     return false;
@@ -115,6 +122,7 @@ export class CanaryError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -123,7 +131,7 @@ export class CanaryError extends Error {
 /** The monitor itself could not run the check: no evidence either way. */
 export class CanaryMonitorError extends CanaryError {}
 
-export class CanaryCredentialError extends CanaryError {
+export class CanaryCredentialError extends CanaryMonitorError {
   constructor() {
     super(CANARY_CREDENTIAL_INVALID);
   }
@@ -182,6 +190,10 @@ const ERROR_CODES = new Set([
   "invalid_schema",
   "invalid_key",
   "invalid_token",
+  "key_revoked",
+  "key_expired",
+  "invalid_target",
+  "insufficient_scope",
   "forbidden_scope",
   "not_found",
   "unknown_database",
@@ -268,7 +280,7 @@ export async function canaryText(
       // A spent plan allowance (quota_exceeded on SQL) leaves the canary unmeasured, not down.
       if (response.status === 429 && (code === " operation_allowance" || code === " quota_exceeded"))
         throw new CanaryQuotaError();
-      throw new CanaryError(`HTTP ${response.status}${code}`, response.status);
+      throw new CanaryError(`HTTP ${response.status}${code}`, response.status, code.trim());
     }
     return text;
   } finally {
@@ -332,6 +344,29 @@ export async function readToken(
   return exchange;
 }
 
+const CREDENTIAL_ERRORS: ReadonlySet<string> = new Set([
+  "invalid_client",
+  "invalid_key",
+  "invalid_token",
+  "key_revoked",
+  "key_expired",
+  "invalid_scope",
+  "insufficient_scope",
+  "forbidden_scope",
+  "invalid_target",
+  "unauthorized_client",
+]);
+
+function tokenError(error: unknown): never {
+  if (
+    error instanceof CanaryError &&
+    [400, 401, 403].includes(error.status ?? 0) &&
+    CREDENTIAL_ERRORS.has(error.code ?? "")
+  )
+    throw new CanaryCredentialError();
+  throw error;
+}
+
 async function exchangeToken(
   config: Pick<CanaryConfig, "issuer" | "project" | "key">,
   fetcher: typeof fetch,
@@ -345,7 +380,7 @@ async function exchangeToken(
       headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": USER_AGENT },
       body: new URLSearchParams({
         grant_type: "client_credentials",
-        client_id: config.key.slice(0, 26),
+        client_id: projectKeyId(config.key),
         client_secret: config.key,
         project: config.project,
         scope,
@@ -354,12 +389,13 @@ async function exchangeToken(
     },
     fetcher,
     [200],
-  ).catch((error: unknown) => {
-    if (error instanceof CanaryError && error.status === 401) throw new CanaryCredentialError();
-    // Named, so a slow or refusing ts-auth is not read as a TerraBase failure.
-    if (error instanceof CanaryError) throw new CanaryError(`Token exchange: ${error.message}`, error.status);
-    throw error;
-  })) as { access_token?: unknown; token_type?: unknown; expires_in?: unknown };
+  )
+    .catch(tokenError)
+    .catch((error: unknown) => {
+      if (error instanceof CanaryMonitorError) throw error;
+      if (error instanceof CanaryError) throw new CanaryError(`Token exchange: ${error.message}`, error.status);
+      throw error;
+    })) as { access_token?: unknown; token_type?: unknown; expires_in?: unknown };
   if (
     typeof body.access_token !== "string" ||
     !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(body.access_token) ||
@@ -390,7 +426,7 @@ export async function runTokenProbe(config: CanaryConfig, fetcher: typeof fetch 
         headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": USER_AGENT },
         body: new URLSearchParams({
           grant_type: "client_credentials",
-          client_id: config.key.slice(0, 26),
+          client_id: projectKeyId(config.key),
           client_secret: config.key,
           project: config.project,
           scope: "sql:read",
@@ -399,10 +435,7 @@ export async function runTokenProbe(config: CanaryConfig, fetcher: typeof fetch 
       },
       fetcher,
       [200],
-    ).catch((error: unknown) => {
-      if (error instanceof CanaryError && error.status === 401) throw new CanaryCredentialError();
-      throw error;
-    })) as { access_token?: unknown; token_type?: unknown };
+    ).catch(tokenError)) as { access_token?: unknown; token_type?: unknown };
     if (typeof body.access_token !== "string" || body.token_type !== "Bearer")
       throw new CanaryError("Invalid response");
     return { ok: true, latencyMs: Date.now() - started, error: null };

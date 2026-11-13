@@ -21,6 +21,7 @@ jobs:
       actions: read
       issues: write
       packages: write
+      attestations: write
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -60,6 +61,44 @@ jobs:
       - name: Build or reuse the target image and publish its main tag
         if: steps.live.outputs.deploy == 'true'
         run: bash "$RUNNER_TEMP/reconcile-image.sh" dashboard
+      - id: dashboarddigest
+        name: Extract the released arm64 child digest
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          IMAGE: ${{ env.IMAGE }}
+        run: |
+          echo "arm64=${IMAGE#*@}" >> "$GITHUB_OUTPUT"
+          echo "name=${IMAGE%@*}" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance (linux/arm64 child)
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.dashboarddigest.outputs.name }}
+          subject-digest: ${{ steps.dashboarddigest.outputs.arm64 }}
+          push-to-registry: true
+      - name: Generate the linux/arm64 child SBOM
+        if: steps.live.outputs.deploy == 'true'
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ steps.dashboarddigest.outputs.name }}@${{ steps.dashboarddigest.outputs.arm64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom.spdx.json
+          upload-artifact: false
+      - name: Attest the SBOM
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ steps.dashboarddigest.outputs.name }}
+          subject-digest: ${{ steps.dashboarddigest.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom.spdx.json
+          push-to-registry: true
+      - name: Verify the attestations
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARM64: ${{ steps.dashboarddigest.outputs.arm64 }}
+          NAME: ${{ steps.dashboarddigest.outputs.name }}
+        run: gh attestation verify "oci://${NAME}@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main --bundle-from-oci
       - name: Release to every region
         if: steps.live.outputs.deploy == 'true'
         env:

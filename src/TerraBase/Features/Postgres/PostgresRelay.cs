@@ -14,7 +14,7 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Postgres;
 
-internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential credential, TimeProvider time, IMeterFactory meters, IMemoryBudget memory)
+internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential credential, TimeProvider time, IMeterFactory meters, IMemoryBudget memory, IQosAdmission admission, IHomeLocator locator)
 {
     private readonly Counter<long> _outputTimeouts = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.qos.relay.output.timeouts");
 
@@ -50,104 +50,145 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
         return message;
     }
 
-    internal async Task RunAsync(HomeNode home, TenantContext tenant, byte[] startup, IPAddress? client, PipeReader input, PipeWriter output, CancellationToken closed)
+    internal async Task RunAsync(HomeNode home, TenantContext tenant, byte[] startup, IPAddress? client, PipeReader input, PipeWriter output, IDisposable admissionLease, ProxyRequestBudget budget, CancellationToken closed)
     {
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(closed);
-        stop.CancelAfter(TimeSpan.FromSeconds(10));
-        using var state = new SessionRelay(time);
-        var established = false;
-        var closing = 0;
-        using var upstream = new Upstream(startup, input, state, memory, tenant, BeginClose, stop.Token);
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Address, Path))
+        using var admitted = admissionLease;
+        for (var attempt = 0; await AttemptAsync(home, attempt) is { } fresh; attempt++)
         {
-            Version = HttpVersion.Version20,
-            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-            Content = upstream,
-        };
-        credential.Sign(request.Headers);
-        request.Headers.TryAddWithoutValidation(ClientHeader, (client ?? IPAddress.None).ToString());
-        try
-        {
-            using var response = await http.CreateClient(HomeLocator.HttpClientName)
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stop.Token).ConfigureAwait(false);
-            if (response.StatusCode != HttpStatusCode.OK)
-            {
-                await RefuseAsync(output, home, closed).ConfigureAwait(false);
-                return;
-            }
-
-            await using var downstream = await response.Content.ReadAsStreamAsync(stop.Token).ConfigureAwait(false);
-            var header = new byte[5];
-            while (true)
-            {
-                await downstream.ReadExactlyAsync(header, stop.Token).ConfigureAwait(false);
-                var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1));
-                if (length is < 4 or > 1024 * 1024)
-                {
-                    throw new InvalidDataException("invalid relay startup message length");
-                }
-
-                var body = new byte[length - 4];
-                await downstream.ReadExactlyAsync(body, stop.Token).ConfigureAwait(false);
-                if (header[0] == 'R' && body.AsSpan().SequenceEqual(CleartextRequest[5..]))
-                {
-                    continue;
-                }
-
-                await output.WriteAsync(header, stop.Token).ConfigureAwait(false);
-                await output.WriteAsync(body, stop.Token).ConfigureAwait(false);
-                if (header[0] == 'E')
-                {
-                    return;
-                }
-
-                if (header[0] == 'Z')
-                {
-                    break;
-                }
-            }
-
-            established = true;
-            stop.CancelAfter(Timeout.InfiniteTimeSpan);
-            await RelayAsync(downstream, output, state, tenant, stop.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (established && !closed.IsCancellationRequested && !stop.IsCancellationRequested && upstream.Expiry is null && !state.Answer.IsCancellationRequested)
-        {
-            _outputTimeouts.Add(1);
-        }
-        catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !closed.IsCancellationRequested)
-        {
-            if (established)
-            {
-                BeginClose();
-                var refusal = state.Pending.Commits ? SqlErrors.OutcomeUnknown(home.Region)
-                    : upstream.Expiry is { } expiry ? new SqlError(SqlErrors.QueryCanceled, expiry.Message) : HomeSessions.Unreachable(home.Region);
-                var writer = new PgWriter(output);
-                writer.Error(state.Pending.Commits ? refusal.Sqlstate : upstream.Expiry?.State ?? refusal.Sqlstate, refusal.Message, fatal: true);
-                await writer.FlushAsync(stop.Token).ConfigureAwait(false);
-            }
-            else if (!established)
-            {
-                await RefuseAsync(output, home, closed).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            await stop.CancelAsync().ConfigureAwait(false);
-            input.CancelPendingRead();
-            await upstream.DrainAsync().ConfigureAwait(false);
+            home = fresh;
         }
 
-        void BeginClose()
+        async Task<HomeNode?> AttemptAsync(HomeNode home, int attempt)
         {
-            if (Interlocked.Exchange(ref closing, 1) == 0)
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(closed);
+            using var handshake = budget.Link(closed);
+            using var opening = CancellationTokenSource.CreateLinkedTokenSource(stop.Token, handshake.Token);
+            using var state = new SessionRelay(time);
+            using var writing = new SemaphoreSlim(1, 1);
+            var established = false;
+            var closing = 0;
+            using var upstream = new Upstream(startup, input, output, writing, state, memory, tenant, BeginClose, Admit, stop.Token);
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Address, Path))
             {
-                stop.CancelAfter(Shutdown.DrainBudget);
+                Version = HttpVersion.Version20,
+                VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+                Content = upstream,
+            };
+            request.Headers.TryAddWithoutValidation(ProxyRequestBudget.RemainingHeader, budget.Milliseconds);
+            credential.Sign(request.Headers);
+            request.Headers.TryAddWithoutValidation(ClientHeader, (client ?? IPAddress.None).ToString());
+            try
+            {
+                using var response = await http.CreateClient(HomeLocator.HttpClientName)
+                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, opening.Token).ConfigureAwait(false);
+                if (response.StatusCode != HttpStatusCode.OK)
+                {
+                    await RefuseAsync(output, home, closed).ConfigureAwait(false);
+                    return null;
+                }
+
+                await using var downstream = await response.Content.ReadAsStreamAsync(opening.Token).ConfigureAwait(false);
+                var header = new byte[5];
+                while (true)
+                {
+                    await downstream.ReadExactlyAsync(header, opening.Token).ConfigureAwait(false);
+                    var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1));
+                    if (length is < 4 or > 1024 * 1024)
+                    {
+                        throw new InvalidDataException("invalid relay startup message length");
+                    }
+
+                    var body = new byte[length - 4];
+                    await downstream.ReadExactlyAsync(body, opening.Token).ConfigureAwait(false);
+                    if (header[0] == 'R' && body.AsSpan().SequenceEqual(CleartextRequest[5..]))
+                    {
+                        continue;
+                    }
+
+                    if (header[0] == 'E' && attempt == 0 && PlacementMiss(body)
+                        && await locator.RefreshAsync(tenant.ProjectId!, tenant.DatabaseId, opening.Token).ConfigureAwait(false) is { } fresh
+                        && fresh.Region != home.Region)
+                    {
+                        return fresh;
+                    }
+
+                    await output.WriteAsync(header, stop.Token).ConfigureAwait(false);
+                    await output.WriteAsync(body, stop.Token).ConfigureAwait(false);
+                    if (header[0] == 'E')
+                    {
+                        return null;
+                    }
+
+                    if (header[0] == 'Z')
+                    {
+                        upstream.Status = body[0];
+                        break;
+                    }
+                }
+
+                established = true;
+                admitted.Dispose();
+                upstream.Open();
+                await RelayAsync(downstream, output, writing, upstream, state, tenant, stop.Token).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (established && !closed.IsCancellationRequested && !stop.IsCancellationRequested && upstream.Expiry is null && !state.Answer.IsCancellationRequested)
+            {
+                _outputTimeouts.Add(1);
+            }
+            catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !closed.IsCancellationRequested)
+            {
+                if (established)
+                {
+                    BeginClose();
+                    var refusal = state.Pending.Commits ? SqlErrors.OutcomeUnknown(home.Region)
+                        : upstream.Expiry is { } expiry ? new SqlError(SqlErrors.QueryCanceled, expiry.Message) : HomeSessions.Unreachable(home.Region);
+                    await writing.WaitAsync(stop.Token).ConfigureAwait(false);
+                    try
+                    {
+                        var writer = new PgWriter(output);
+                        writer.Error(state.Pending.Commits ? refusal.Sqlstate : upstream.Expiry?.State ?? refusal.Sqlstate, refusal.Message, fatal: true);
+                        await writer.FlushAsync(stop.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        writing.Release();
+                    }
+                }
+                else
+                {
+                    await RefuseAsync(output, home, closed).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                await stop.CancelAsync().ConfigureAwait(false);
+                if (established)
+                {
+                    input.CancelPendingRead();
+                }
+
+                await upstream.DrainAsync().ConfigureAwait(false);
+            }
+
+            return null;
+
+            void BeginClose()
+            {
+                if (Interlocked.Exchange(ref closing, 1) == 0)
+                {
+                    stop.CancelAfter(Shutdown.DrainBudget);
+                }
+            }
+        }
+
+        (IDisposable? Lease, int RetryAfter) Admit()
+        {
+            var lease = admission.TryEnter(tenant, out var retryAfter);
+            return (lease, retryAfter);
         }
     }
 
-    private async Task RelayAsync(Stream downstream, PipeWriter output, SessionRelay state, TenantContext tenant, CancellationToken cancellationToken)
+    private async Task RelayAsync(Stream downstream, PipeWriter output, SemaphoreSlim writing, Upstream upstream, SessionRelay state, TenantContext tenant, CancellationToken cancellationToken)
     {
         using var receiving = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, state.Answer.Token);
         var header = new byte[5];
@@ -174,15 +215,36 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
             bool? transaction = header[0] == 'Z' && body.Length > 0 ? body[0] != 'I'
                 : header[0] == 'C' && body.AsSpan().SequenceEqual("BEGIN\0"u8) ? true
                 : header[0] == 'C' && (body.AsSpan().SequenceEqual("COMMIT\0"u8) || body.AsSpan().SequenceEqual("ROLLBACK\0"u8)) ? false : null;
-            output.Write(header);
-            output.Write(body);
-            state.Answered((char)header[0], transaction);
             using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             sending.CancelAfter(QosSessions.MessageTimeout);
-            var flushed = await output.FlushAsync(sending.Token).ConfigureAwait(false);
-            if (flushed.IsCompleted || flushed.IsCanceled)
+            state.Answer.Pause();
+            try
             {
-                return;
+                await writing.WaitAsync(sending.Token).ConfigureAwait(false);
+                try
+                {
+                    output.Write(header);
+                    output.Write(body);
+                    if (header[0] == 'Z' && body.Length > 0)
+                    {
+                        upstream.Status = body[0];
+                    }
+
+                    state.Answered((char)header[0], transaction);
+                    var flushed = await output.FlushAsync(sending.Token).ConfigureAwait(false);
+                    if (flushed.IsCompleted || flushed.IsCanceled)
+                    {
+                        return;
+                    }
+                }
+                finally
+                {
+                    writing.Release();
+                }
+            }
+            finally
+            {
+                state.Answer.Unpause();
             }
         }
     }
@@ -205,6 +267,32 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
         return true;
     }
 
+    private static bool PlacementMiss(ReadOnlySpan<byte> body)
+    {
+        string? code = null;
+        string? message = null;
+        while (!body.IsEmpty && body[0] != 0)
+        {
+            var field = body[0];
+            body = body[1..];
+            var end = body.IndexOf((byte)0);
+            if (end < 0)
+            {
+                return false;
+            }
+            if (field == 'C')
+            {
+                code = Encoding.UTF8.GetString(body[..end]);
+            }
+            else if (field == 'M')
+            {
+                message = Encoding.UTF8.GetString(body[..end]);
+            }
+            body = body[(end + 1)..];
+        }
+        return code == "57P03" && message == HomeForwarding.PlacementMissMessage;
+    }
+
     private static async Task RefuseAsync(PipeWriter output, HomeNode home, CancellationToken cancellationToken)
     {
         var writer = new PgWriter(output);
@@ -218,12 +306,19 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
         writer.Write([(byte)0]);
     }
 
-    private sealed class Upstream(byte[] startup, PipeReader input, SessionRelay state, IMemoryBudget memory, TenantContext tenant, Action beginClose, CancellationToken stop) : HttpContent
+    private sealed class Upstream(byte[] startup, PipeReader input, PipeWriter output, SemaphoreSlim writing, SessionRelay state, IMemoryBudget memory, TenantContext tenant, Action beginClose,
+        Func<(IDisposable? Lease, int RetryAfter)> admit, CancellationToken stop) : HttpContent
     {
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => SerializeToStreamAsync(stream, context, CancellationToken.None);
 
         private readonly PgRelayRequests _requests = new(memory, tenant);
         private Task _forwarding = Task.CompletedTask;
+        private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool _rejectedUntilSync;
+
+        public byte Status { get; set; } = (byte)'I';
+
+        public void Open() => _ready.TrySetResult();
 
         public (string State, string Message)? Expiry { get; private set; }
 
@@ -246,6 +341,7 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
         {
             await stream.WriteAsync(startup, cancellationToken).ConfigureAwait(false);
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await _ready.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             while (true)
             {
                 using var deadline = state.Wait();
@@ -273,6 +369,19 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                     }
 
                     deadline.Complete();
+                    var refused = _rejectedUntilSync;
+                    var retryAfter = 0;
+                    if (!refused && header[0] is (byte)'Q' or (byte)'P' or (byte)'B' or (byte)'E')
+                    {
+                        refused = !state.TryAdmit(admit, out retryAfter);
+                    }
+
+                    if (refused)
+                    {
+                        await RefuseAsync((char)header[0], retryAfter, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
                     var reply = (char)header[0] switch
                     {
                         'Q' or 'S' => 'Z',
@@ -303,6 +412,44 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                     await state.DrainAsync(cancellationToken).ConfigureAwait(false);
                     throw;
                 }
+            }
+        }
+
+        private async Task RefuseAsync(char type, int retryAfter, CancellationToken cancellationToken)
+        {
+            var refusing = !_rejectedUntilSync;
+            _rejectedUntilSync = type switch
+            {
+                'S' => false,
+                'Q' => _rejectedUntilSync,
+                _ => true,
+            };
+            if (!refusing && type != 'S')
+            {
+                return;
+            }
+
+            await writing.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var writer = new PgWriter(output);
+                if (refusing)
+                {
+                    writer.Error("53300", $"tenant busy, retry after {retryAfter}s", fatal: false);
+                }
+
+                if (type is 'Q' or 'S')
+                {
+                    writer.Begin('Z');
+                    writer.Raw(Status);
+                    writer.End();
+                }
+
+                await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                writing.Release();
             }
         }
 

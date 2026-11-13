@@ -35,7 +35,7 @@ export async function createDedicatedProjectOwner(browser: Browser, info: TestIn
   await dialog.locator('#key-name').fill(label);
   await dialog.getByRole('radio', { name: 'Full access', exact: true }).check();
   await dialog.getByRole('button', { name: 'Create key', exact: true }).click();
-  const apiKey = (await page.locator('.ts-apikeys-secret-value').innerText()).trim();
+  const apiKey = (await page.locator('#api-key-secret').textContent() ?? '').trim();
   saveSecret(label + '-api-key', apiKey);
   const current = { runId, email, password, projectId, organizationId, apiKey };
   await audit.check(label + ' provisioned');

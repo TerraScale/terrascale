@@ -41,6 +41,7 @@ with tempfile.TemporaryDirectory(prefix='journey-receipts-') as directory:
     handoff = source / 'src/TerraBase/Features/Replicas/RegionalHandoff.cs'
     handoff.write_text(handoff.read_text().replace('await RegionalCatalog.ExportAsync(', 'await SendingCatalog.ExportAsync('))
     shutil.copyfile(repo / 'e2e/fault/ReceiptImportProof.cs', source / 'src/TerraBase/ReceiptImportProof.cs')
+    shutil.copyfile(repo / 'e2e/fault/RetainedReceiverProof.cs', source / 'src/TerraBase/RetainedReceiverProof.cs')
     subprocess.run(
         ['dotnet', 'build', str(source / 'src/TerraBase/TerraBase.csproj'), '-c', 'Release', '-o', str(output)],
         check=True, env=os.environ

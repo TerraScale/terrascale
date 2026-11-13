@@ -1,6 +1,7 @@
 import { expect, type APIRequestContext, type Page, type Response } from '@playwright/test';
 import { test as base, type Audit } from './audit';
 import { auth, dash } from './stack';
+import { keyId } from './api-key';
 import { journey, saveSecret } from './state';
 
 export { expect };
@@ -90,7 +91,7 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
 
   async function removeThroughApi(): Promise<void> {
     const token = await request.post(auth + '/terrascale/oauth/token', {
-      headers: { Authorization: 'Basic ' + Buffer.from(current.apiKey.slice(0, 26) + ':' + current.apiKey).toString('base64') },
+      headers: { Authorization: 'Basic ' + Buffer.from(keyId(current.apiKey) + ':' + current.apiKey).toString('base64') },
       form: { grant_type: 'client_credentials', project: current.projectId },
     });
     expect(token.status()).toBe(200);

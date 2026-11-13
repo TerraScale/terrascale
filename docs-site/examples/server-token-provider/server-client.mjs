@@ -12,9 +12,10 @@ function required(name) {
 export function createServerClient() {
   const project = requireId(required('TERRASCALE_PROJECT_ID'), 'project')
   const apiKey = required('TERRASCALE_API_KEY')
-  const separator = apiKey.indexOf('_')
+  const body = apiKey.startsWith('sk_') ? apiKey.slice(3) : apiKey
+  const separator = body.indexOf('_')
   if (separator < 1) throw new Error('Expected a dashboard project API key.')
-  const keyId = requireId(apiKey.slice(0, separator), 'key ID')
+  const keyId = requireId(body.slice(0, separator), 'key ID')
   const auth = createTsAuthClient({
     apiBaseUrl: 'https://auth.terrascale.tech',
     instanceSlug: 'terrascale',

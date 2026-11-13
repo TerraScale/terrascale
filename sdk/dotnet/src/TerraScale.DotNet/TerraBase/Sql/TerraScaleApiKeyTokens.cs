@@ -28,14 +28,15 @@ internal sealed partial class TerraScaleApiKeyTokens
     {
         if (!KeyPattern().IsMatch(key))
         {
-            throw new ArgumentException("ApiKey must be a TerraScale API key from the dashboard: a ULID, an underscore and 52 secret characters.", keyName);
+            throw new ArgumentException("ApiKey must be a TerraScale API key from the dashboard: optional sk_, a ULID, an underscore and 52 secret characters.", keyName);
         }
 
+        var id = key.StartsWith("sk_", StringComparison.Ordinal) ? key[3..29] : key[..26];
         this.http = http;
         this.time = time;
         tokenEndpoint = new Uri(authOrigin, "terrascale/oauth/token");
         scopedKeysEndpoint = new Uri(authOrigin, "v1/terrascale/api-keys/self/scoped-keys");
-        basic = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{key[..26]}:{key}")));
+        basic = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{id}:{key}")));
     }
 
     /// <summary>Returns the access-token provider for <paramref name="project"/>.</summary>
@@ -74,7 +75,7 @@ internal sealed partial class TerraScaleApiKeyTokens
         }
     }
 
-    [GeneratedRegex("^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^(?:sk_)?[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$", RegexOptions.CultureInvariant)]
     private static partial Regex KeyPattern();
 
     private async Task<(string Token, TimeSpan Lifetime)> ExchangeAsync(string project, CancellationToken cancellationToken)

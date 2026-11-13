@@ -25,7 +25,7 @@ PROJECT = STATE["projectId"]
 def bearer():
     form = urllib.parse.urlencode({"grant_type": "client_credentials", "project": PROJECT}).encode()
     headers = {
-        "Authorization": "Basic " + base64.b64encode((KEY[:26] + ":" + KEY).encode()).decode(),
+        "Authorization": "Basic " + base64.b64encode((KEY.removeprefix("sk_")[:26] + ":" + KEY).encode()).decode(),
         "Content-Type": "application/x-www-form-urlencoded",
     }
     request = urllib.request.Request("https://auth.terrascale.tech/terrascale/oauth/token", form, headers)

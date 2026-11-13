@@ -18,6 +18,12 @@ internal sealed class SessionPreauthentication : IDisposable
 
     public bool Expired => _deadline.IsCancellationRequested && !_outer.IsCancellationRequested;
 
+    public void Authenticated()
+    {
+        _allowance.Dispose();
+        _deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+    }
+
     public void Dispose()
     {
         _allowance.Dispose();

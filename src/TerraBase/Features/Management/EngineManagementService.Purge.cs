@@ -64,9 +64,22 @@ internal sealed partial class EngineManagementService
 
         return await WriteAsync<bool>(async transaction =>
         {
-            if (await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, ManagementJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false) is { } known)
+            var known = await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, ManagementJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false);
+            if (known is not null && (known.FormatVersion != 1 || !DatabasePurge.SameDatabase(known.Database, database)))
             {
-                return DatabasePurge.SameDatabase(known.Database, database);
+                return false;
+            }
+            if (await GetAsync(transaction, DeletedDatabases.Kind, database.DatabaseId!, ManagementJsonContext.Default.DeletedDatabaseRecord, token).ConfigureAwait(false) is { } retained)
+            {
+                if (!DatabasePurge.SameDatabase(retained.Storage, database))
+                {
+                    return false;
+                }
+                await DeletedDatabases.RemoveAsync(transaction, retained, token).ConfigureAwait(false);
+            }
+            if (known is not null)
+            {
+                return true;
             }
             if (await CatalogTables.DatabaseAsync(transaction, database.ProjectId!, database.DatabaseId!, token).ConfigureAwait(false) is { } registered)
             {

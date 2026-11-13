@@ -13,6 +13,7 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
     private Task? _ending;
     private bool _inTransaction;
     private bool _failed;
+    private IDisposable? _admitted;
     private readonly SessionMessageDeadline _answer = new(time, null, executing: true);
 
     public SessionMessageDeadline Answer => _answer;
@@ -52,6 +53,7 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
         lock (_gate)
         {
             _answer.Dispose();
+            Release();
             _waiting?.Dispose();
             _waiting = null;
             while (_pending.TryDequeue(out var pending))
@@ -68,6 +70,26 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
             _waiting = new SessionMessageDeadline(time, _inTransaction ? _transaction.Remaining : null, _pending.Count > 0);
             return _waiting;
         }
+    }
+
+    public bool TryAdmit(Func<(IDisposable? Lease, int RetryAfter)> enter, out int retryAfter)
+    {
+        lock (_gate)
+        {
+            retryAfter = 0;
+            if (_admitted is null)
+            {
+                (_admitted, retryAfter) = enter();
+            }
+
+            return _admitted is not null;
+        }
+    }
+
+    private void Release()
+    {
+        _admitted?.Dispose();
+        _admitted = null;
     }
 
     public void Sent(char reply, bool begins = false, bool commits = false, long? id = null, Action<bool>? completed = null)
@@ -99,6 +121,10 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
             else
             {
                 completed?.Invoke(false);
+                if (_pending.Count == 0)
+                {
+                    Release();
+                }
             }
         }
     }
@@ -173,6 +199,7 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
 
             if (_pending.Count == 0)
             {
+                Release();
                 _settled?.TrySetResult();
                 _waiting?.Resume(_inTransaction ? _transaction.Remaining : null);
             }

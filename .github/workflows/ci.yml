@@ -196,22 +196,27 @@ jobs:
               - landing-site/static/pricing.json
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-go:
               - sdk/go/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-js:
               - sdk/js/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-python:
               - sdk/python/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-rust:
               - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
               - .github/workflows/ci.yml
             docs:
@@ -504,6 +509,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
       # ts-orch accepts this job's OIDC token to release the image it just published.
       id-token: write
       # A failed release dispatches a fresh main run (a newer signed run) so the latest main still ends up live.
@@ -573,6 +579,31 @@ jobs:
           INDEX: ${{ steps.image.outputs.digest }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${ARM64}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Attest build provenance (linux/arm64 child)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
+          subject-digest: ${{ steps.digest.outputs.arm64 }}
+          push-to-registry: true
+      - name: Generate the linux/arm64 child SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom.spdx.json
+          upload-artifact: false
+      - name: Attest the SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
+          subject-digest: ${{ steps.digest.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom.spdx.json
+          push-to-registry: true
+      - name: Verify the attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARM64: ${{ steps.digest.outputs.arm64 }}
+        run: gh attestation verify "oci://ghcr.io/terrascale/${SERVICE}@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
 
   main-build-only:
     needs: [changes, terrabase, test]
@@ -590,6 +621,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
       id-token: write
       actions: read
     steps: *production-steps
@@ -661,6 +693,7 @@ jobs:
       actions: read
       issues: write
       packages: write
+      attestations: write
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -696,6 +729,41 @@ jobs:
       - name: Build or reuse the target image and publish its main tag
         if: steps.live.outputs.deploy == 'true'
         run: bash "$RUNNER_TEMP/reconcile-image.sh" auth
+      - id: authdigest
+        name: Extract the released arm64 child digest
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          IMAGE: ${{ env.IMAGE }}
+        run: echo "arm64=${IMAGE#*@}" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance (linux/arm64 child)
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/terrascale/ts-auth
+          subject-digest: ${{ steps.authdigest.outputs.arm64 }}
+          push-to-registry: true
+      - name: Generate the linux/arm64 child SBOM
+        if: steps.live.outputs.deploy == 'true'
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ghcr.io/terrascale/ts-auth@${{ steps.authdigest.outputs.arm64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom.spdx.json
+          upload-artifact: false
+      - name: Attest the SBOM
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ghcr.io/terrascale/ts-auth
+          subject-digest: ${{ steps.authdigest.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom.spdx.json
+          push-to-registry: true
+      - name: Verify the attestations
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARM64: ${{ steps.authdigest.outputs.arm64 }}
+        run: gh attestation verify "oci://ghcr.io/terrascale/ts-auth@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
       - name: Release to every region
         if: steps.live.outputs.deploy == 'true'
         env:

@@ -39,7 +39,7 @@ type PostgresConfig struct {
 	Database string
 	// KeyID is optional; when supplied it must equal the ID in Password.
 	KeyID string
-	// Password is the complete dashboard API key: <ULID>_<52 lowercase Crockford base32 characters>.
+	// Password is the complete dashboard API key: <ULID>_<52 lowercase Crockford base32 characters>. It may start with sk_.
 	Password string
 }
 
@@ -163,7 +163,11 @@ func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
 	if config.TLSServerName == "" {
 		config.TLSServerName = config.Host
 	}
-	keyID, secret, _ := strings.Cut(config.Password, "_")
+	password := config.Password
+	if strings.HasPrefix(password, "sk_") {
+		password = password[3:]
+	}
+	keyID, secret, _ := strings.Cut(password, "_")
 	project, name, qualified := strings.Cut(config.Database, "/")
 	if !qualified {
 		name = config.Database

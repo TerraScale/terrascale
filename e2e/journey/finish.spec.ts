@@ -8,11 +8,12 @@ import { deleteProjectOwner } from '../support/project-owner';
 import { checkPasswordFairness } from '../support/password-fairness';
 import { shell } from '../support/shell';
 import { onLocalStack } from '../support/stack';
+import { keyId } from '../support/api-key';
 import { journey, saveSecret, setupFinished } from '../support/state';
 
 async function placementHeaders(request: APIRequestContext): Promise<{ Authorization: string }> {
   const current = journey();
-  const basic = Buffer.from(`${current.apiKey.slice(0, 26)}:${current.apiKey}`).toString('base64');
+  const basic = Buffer.from(`${keyId(current.apiKey)}:${current.apiKey}`).toString('base64');
   const answer = await request.post('https://auth.terrascale.tech/terrascale/oauth/token', {
     headers: { Authorization: `Basic ${basic}` },
     form: { grant_type: 'client_credentials', project: current.projectId },

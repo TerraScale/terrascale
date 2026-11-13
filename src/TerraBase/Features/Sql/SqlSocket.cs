@@ -4,9 +4,9 @@ using System.Buffers;
 using System.Net.WebSockets;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.Json;
-using TerraBase.Engine;
 using TerraBase.Configuration;
 using TerraBase.Errors;
+using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Usage;
@@ -14,6 +14,7 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Regions;
 using TerraBase.Features.Sql.Routing;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
@@ -113,6 +114,9 @@ internal sealed class SqlSocket(
             ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time)
             : new CancellationTokenSource();
         await using var expired = expiry.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the token expired")).ConfigureAwait(false);
+        var fences = context.RequestServices.GetRequiredService<DatabaseFences>();
+        var previousHome = fences.MovedTo(Database.DatabaseId!);
+        using var moved = fences.WatchMoved(Database.DatabaseId!, previousHome, () => _ = CloseAfterFrameAsync());
         _session = sql.Open(Database, _canWrite);
         await using (_session.ConfigureAwait(false))
         {
@@ -138,14 +142,14 @@ internal sealed class SqlSocket(
 
             try
             {
-                if (_closing)
-                {
-                    continue;
-                }
-
                 await _frame.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
+                    if (_closing)
+                    {
+                        continue;
+                    }
+
                     if (!await AnswerAsync(frame.Value.Bytes.AsMemory(0, frame.Value.Length), cancellationToken).ConfigureAwait(false))
                     {
                         return;
@@ -171,7 +175,7 @@ internal sealed class SqlSocket(
         await using var expiry = preauthentication.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, AuthExpired)).ConfigureAwait(false);
         try
         {
-            return await ValidateAsync(preauthentication.Token, cancellationToken).ConfigureAwait(false);
+            return await ValidateAsync(preauthentication, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (preauthentication.Expired)
         {
@@ -183,8 +187,9 @@ internal sealed class SqlSocket(
         }
     }
 
-    private async ValueTask<bool> ValidateAsync(CancellationToken validating, CancellationToken cancellationToken)
+    private async ValueTask<bool> ValidateAsync(SessionPreauthentication preauthentication, CancellationToken cancellationToken)
     {
+        var validating = preauthentication.Token;
         var frame = await ReceiveAsync(FirstBufferBytes, validating).ConfigureAwait(false);
         if (frame is null || _closing)
         {
@@ -198,8 +203,10 @@ internal sealed class SqlSocket(
         }
 
         SqlSocketRequest? request;
+        byte[] authFrame;
         try
         {
+            authFrame = frame.Value.Bytes.AsSpan(0, frame.Value.Length).ToArray();
             request = RequestJson.Read<SqlSocketRequest>(frame.Value.Bytes.AsSpan(0, frame.Value.Length), SqlErrors.InvalidRequest) is SqlSocketRequest read ? read : null;
         }
         finally
@@ -233,6 +240,32 @@ internal sealed class SqlSocket(
             return await RefuseAsync(request.Id, SqlErrors.Auth with { Message = "SQL needs the sql:read scope" }, cancellationToken).ConfigureAwait(false);
         }
 
+        if (context.Features.Get<ProjectAccess>() is { DatabaseName: not null } restricted
+            && context.Request.RouteValues["database"] as string != restricted.DatabaseId)
+        {
+            var reachable = await context.RequestServices.GetRequiredService<IManagementService>()
+                .FindDatabaseRecordAsync(restricted.OrganizationId, restricted.ProjectId, context.RouteValue("database"), cancellationToken).ConfigureAwait(false);
+            if (reachable is not ManagedDatabase record || restricted.DatabaseId != record.Id)
+            {
+                return await RefuseAsync(request.Id, UnknownDatabase, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (!Listeners.IsForwarded(context)
+            && await HomeForwarding.ForwardBrowserAsync(context, socket, authFrame, preauthentication.Authenticated, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        if (Listeners.IsForwarded(context)
+            && await DatabaseRegions.RecordAsync(context, context.RouteValue("project"), context.RouteValue("database"))
+                .ConfigureAwait(false) is ManagedDatabase placement
+            && !placement.Placement(options.Region).PlacedIn(options.Region))
+        {
+            context.Features.Set(new HomeForwarding.ProxiedRequest());
+            return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable, HomeForwarding.PlacementMissMessage), cancellationToken).ConfigureAwait(false);
+        }
+
         _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded;
         switch (await CheckTenantAsync(validating).ConfigureAwait(false))
         {
@@ -250,8 +283,8 @@ internal sealed class SqlSocket(
             .ConfigureAwait(false))
         {
             case ManagedDatabase record when !record.PlacedIn(region) && !record.AllRegions && !record.Replicas.Contains(region):
-                return await RefuseAsync(request.Id, new SqlError(SqlErrors.WrongRegion,
-                    $"the database is served in {string.Join(", ", record.Regions(region))}, not {region}; connect through its home region {record.Home(region)}"),
+                return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable,
+                    $"the database region {record.Home(region)} could not be reached"),
                     cancellationToken).ConfigureAwait(false);
             case Unavailable unavailable:
                 return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);
@@ -602,6 +635,12 @@ internal sealed class SqlSocket(
     private async ValueTask<bool> FinishAsync(
         long? id, SqlBatchOutcome outcome, long received, long started, RequestLogOperations operations, CancellationToken cancellationToken)
     {
+        if (outcome is SqlBatchFailure { Error.Code: SqlErrors.WrongRegion })
+        {
+            await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
+            return false;
+        }
+
         var (sent, status) = outcome switch
         {
             SqlExecuteBody body => (await SendAsync(new SqlSocketResult(id, "result", body.Results, !Session.IsAutocommit),
@@ -684,6 +723,10 @@ internal sealed class SqlSocket(
         await _frame.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (_session is { } session)
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+            }
             await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
         }
         finally

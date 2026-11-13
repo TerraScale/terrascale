@@ -52,6 +52,17 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     public static bool IsKeyId(string? value) =>
         TerraScaleIds.IsValid(value);
 
+    public static (string Id, string Presented)? Parse(string? secret)
+    {
+        if (secret is null)
+        {
+            return null;
+        }
+
+        var body = secret.StartsWith("sk_", StringComparison.Ordinal) ? secret[3..] : secret;
+        return body.Length == 79 && body[26] == '_' ? (body[..26], secret) : null;
+    }
+
     public static IReadOnlyList<string>? NormalizeCidrs(IReadOnlyList<string>? values)
     {
         if (values is null)
@@ -329,13 +340,13 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
 
     public async Task<ApiKeyRecord?> AuthenticateAsync(string? secret, CancellationToken cancellationToken)
     {
-        if (secret is not { Length: 79 } || secret[26] != '_'
-            || await this.FindAsync(secret[..26], cancellationToken).ConfigureAwait(false) is not { } key)
+        if (Parse(secret) is not { } parsed
+            || await this.FindAsync(parsed.Id, cancellationToken).ConfigureAwait(false) is not { } key)
         {
             return null;
         }
 
-        var digest = Tokens.Sha256Hex(secret);
+        var digest = Tokens.Sha256Hex(parsed.Presented);
         var matched = false;
         foreach (var candidate in this.Digests(key))
         {

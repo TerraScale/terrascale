@@ -15,7 +15,8 @@ class ReceiptNode {
 
   constructor(environment: NodeJS.ProcessEnv, directory: string, role: string) {
     const build = process.env.E2E_BUILD ?? join(stateDir, 'build');
-    this.process = spawn('dotnet', [join(build, 'receipt-import', 'terrabase.dll')], {
+    const executable = role === 'target' && environment.E2E_RETAINED_RECEIVER ? process.env.E2E_RETAINED_RECEIVER_BUILD : undefined;
+    this.process = spawn('dotnet', [executable ?? join(build, 'receipt-import', 'terrabase.dll')], {
       env: { ...environment, E2E_RECEIPT_ROLE: role }, stdio: ['pipe', 'pipe', 'pipe'],
     });
     const log = createWriteStream(join(directory, role + '.log'));
@@ -90,6 +91,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
       TERRABASE_FILES_S3_ENDPOINT: 'https://journey.r2.cloudflarestorage.com/',
       TERRABASE_FILES_S3_ACCESS_KEY_ID: access, TERRABASE_FILES_S3_SECRET_ACCESS_KEY: secret,
     });
+    if (scenario === 'retained') environment.E2E_RETAINED_RECEIVER = '1';
     const source = new ReceiptNode({ ...environment, TS_NODE: sourceName, TERRABASE_DATA_DIRECTORY: join(directory, 'source'),
       TERRABASE_PORT: '8480', TERRABASE_METRICS_PORT: '9491', TERRABASE_POSTGRES_PORT: '6832' }, directory, 'source');
     children.push(source);
@@ -107,8 +109,37 @@ export async function receiptHandoff(scenario: string): Promise<void> {
     children.push(target);
     await target.command('ping');
     await expect.poll(() => status(targetAddress)).toMatchObject({ writer: false, owner: sourceAddress.name, ready: true });
+    let retained: { organization: string; project: string; user: string } | undefined;
+    if (scenario === 'retained') {
+      const user = faultId();
+      const create = async (path: string, body: unknown) => {
+        const response = await nodeRequest(sourceAddress, path, 'POST', body, user);
+        expect(response.status, response.body).toBe(201);
+        return (JSON.parse(response.body) as { id: string }).id;
+      };
+      const organization = await create('/v1/management/organizations', { name: 'retained-receiver' });
+      const project = await create(`/v1/management/organizations/${organization}/projects`, { name: 'retained-receiver' });
+      retained = { organization, project, user };
+    }
     const primed = await nodeRequest(targetAddress, '/v1/rollout/prime?source=' + sourceName, 'POST');
     expect(primed.status, primed.body).toBe(204);
+    if (retained) {
+      const created = await nodeRequest(sourceAddress, `/v1/projects/${retained.project}/databases`, 'POST',
+        { name: 'retained-receiver', regions: ['fra'] }, retained.user);
+      expect(created.status, created.body).toBe(201);
+      const id = (JSON.parse(created.body) as { id: string }).id;
+      const scope = `${retained.organization} ${retained.project} ${id}`;
+      await source.command(`write ${scope} 73`);
+      await target.command(`check ${scope} 73`);
+      await source.command(`retain ${scope}`);
+      await target.command(`check ${scope} 73`);
+      await target.command(`check ${scope} 73`);
+      await source.command(`restore ${scope}`);
+      await source.command(`write ${scope} 74`);
+      await target.command(`check ${scope} 147`);
+      console.log('RETAINED_RECEIVER: missing registration preserves row 73 across repeated sweeps; restoration resumes replication with rows 73 and 74');
+      return;
+    }
     await target.command('stage identical');
     await source.command('stage ' + scenario);
     await target.command('capture');
