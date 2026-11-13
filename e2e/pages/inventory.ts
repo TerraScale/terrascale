@@ -347,7 +347,7 @@ export const dashboardStates: readonly PageState[] = [
     ([section, label]): PageState => ({
       name: `authentication ${label.toLowerCase()}`,
       url: () => `/auth/${section}`,
-      covers: { path: new RegExp(`^/auth/${section}$`), ...(section === 'logs' ? { query: { after: optionalId } } : {}), ...(section === 'attack-protection' ? { query: { saved: /^(1)?$/ } } : {}) },
+      covers: { path: new RegExp(`^/auth/${section}$`), ...(section === 'logs' ? { query: { after: optionalId } } : section === 'users' ? { query: { saved: /^(1)?$/ } } : section === 'sessions' ? { query: { user: optionalId } } : {}), ...(section === 'attack-protection' ? { query: { saved: /^(1)?$/ } } : {}) },
       heading: section === 'overview' ? title('Project authentication', 2) : title(`Authentication: ${label}`),
       data: async (page, journey) => {
         if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);

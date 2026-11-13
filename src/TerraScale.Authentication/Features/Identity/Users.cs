@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
@@ -300,6 +301,8 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 return;
             }
 
+            var impersonations = await data.ReadAsync((db, token) => db.Impersonations.Where(row => row.EndedAt == null
+                && (row.UserId == userId || row.ActorId == userId)).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
             var signUpKey = Passcodes.SignUpKey + current.Email;
             var passcodes = await data.ReadAsync((db, token) => db.Passcodes
                 .Where(row => row.InstanceId == instanceId && (row.Key == signUpKey || row.UserId == userId)).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
@@ -309,6 +312,13 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 DeletionJob.Enqueue(instanceId, "account", userId, clock, closureGeneration: closureGeneration),
                 .. passcodes.Select(passcode => Change.Delete(passcode)),
             ];
+            foreach (var impersonation in impersonations)
+            {
+                changes.Add(Change.Delete(impersonation));
+                changes.AddRange(ImpersonationEndings.Events(impersonation.Value,
+                    impersonation.Value.UserId == userId ? "target_deleted" : "admin_deleted", impersonation.Value.ActorId, outbox, clock));
+            }
+
             if (await outbox.CreateAsync(instanceId, "user.deleted", userId, current.Email, null, cancellationToken).ConfigureAwait(false) is { } deleted)
             {
                 changes.Add(deleted);

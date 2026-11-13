@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 ["invitations", _, "revoke"] or ["waitlist", _, "approve" or "reject"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
-                ["users", _, "disable" or "enable" or "delete" or "sign-out" or "profile"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
+                ["users", _, "disable" or "enable" or "delete" or "impersonate" or "sign-out" or "profile"] or ["users", "impersonations", _, "end"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
                 _ => false
             };
             if (!known)
@@ -79,6 +79,25 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                             Methods: current.Methods with { SignUpMode = form["sign_up_mode"].ToString() },
                             Restrictions: new(RestrictionList(form["allowlist"]), RestrictionList(form["blocklist"]),
                                 form["block_disposable_emails"] == "on", form["block_email_aliases"] == "on")), cancel);
+                        break;
+                    case ["users", var targetUser, "impersonate"]:
+                        var reason = form["reason"].ToString();
+                        var clientId = form["client_id"].ToString();
+                        if (string.IsNullOrWhiteSpace(reason) || reason.Length > 500 || clientId.Length == 0)
+                        {
+                            throw new AccountAccessException("Enter a reason of up to 500 characters and choose an application.", 422);
+                        }
+
+                        var impersonationIntent = StepUpFlow.Intent(http, context, "start_impersonation");
+                        if (impersonationIntent is null)
+                        {
+                            return await StepUpFlow.StartAsync(http, context, "start_impersonation", "ts-auth", boundOrganizationId: project + ":" + targetUser);
+                        }
+
+                        var ticket = await projects.StartImpersonationAsync(session, project, targetUser, new(reason, clientId), impersonationIntent.Challenge.Proof, cancel);
+                        return await PageAsync(http, context, projects, "users", impersonationTicket: ticket);
+                    case ["users", "impersonations", var impersonationId, "end"]:
+                        await projects.EndImpersonationAsync(session, project, impersonationId, cancel);
                         break;
                     case ["settings"]:
                         await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString())), cancel);
@@ -303,7 +322,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         public static readonly string[] LifecycleEvents =
-            ["user.created", "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled"];
+            ["user.created", "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled", "impersonation.started", "impersonation.ended"];
 
         public static TsAuthCreateWebhookEndpoint NewWebhook(string? url, IEnumerable<string?> eventTypes)
         {
@@ -377,7 +396,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
         private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200,
             TsAuthProjectOAuthClient? created = null, TsAuthProjectClientSecret? rotated = null,
-            TsAuthWebhookEndpoint? createdWebhook = null, TsAuthWebhookSecret? rotatedWebhook = null)
+            TsAuthWebhookEndpoint? createdWebhook = null, TsAuthWebhookSecret? rotatedWebhook = null, TsAuthImpersonationTicket? impersonationTicket = null)
         {
             var section = AuthenticationSection.Find(key)!;
             if (key == "branding")
@@ -388,7 +407,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var query = http.Request.Query;
             var page = new AuthenticationPage(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section,
                 query["q"].ToString(), query["after"].ToString(), query["user"].ToString(), error, created, rotated, createdWebhook, rotatedWebhook)
-            { Draft = status >= 400 && http.Request.HasFormContentType ? await http.Request.ReadFormAsync(http.RequestAborted) : null, Saved = query["saved"] == "1" };
+            { ImpersonationTicket = impersonationTicket, Draft = status >= 400 && http.Request.HasFormContentType ? await http.Request.ReadFormAsync(http.RequestAborted) : null, Saved = query["saved"] == "1" };
             var (session, project, cancel) = (context.Session, context.Project!.Id, http.RequestAborted);
             try
             {
@@ -405,7 +424,16 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case "users" when page.User.Length > 0:
                         page = page with { SelectedUser = await projects.GetUserAsync(session, project, page.User, cancel) };
                         break;
-                    case "users": var users = await projects.ListUsersAsync(session, project, Value(page.Search), Value(page.After), cancel); page = page with { Users = users.Items, Next = users.Next }; break;
+                    case "users":
+                        var users = await projects.ListUsersAsync(session, project, Value(page.Search), Value(page.After), cancel);
+                        page = page with
+                        {
+                            Users = users.Items,
+                            Next = users.Next,
+                            Clients = context.CanManageProject ? await projects.ListClientsAsync(session, project, cancel) : [],
+                            Impersonations = context.CanManageProject ? (await projects.ListImpersonationsAsync(session, project, cancel)).Items : []
+                        };
+                        break;
                     case "sessions": var live = await projects.ListSessionsAsync(session, project, Value(page.User), Value(page.After), cancel); page = page with { Sessions = live.Items, Next = live.Next }; break;
                     case "invitations": var invitations = await projects.ListInvitationsAsync(session, project, Value(page.After), cancel); page = page with { Invitations = invitations.Items, Next = invitations.Next }; break;
                     case "waitlist": var waitlist = await projects.ListWaitlistAsync(session, project, Value(page.After), cancel); page = page with { Waitlist = waitlist.Items, Next = waitlist.Next }; break;
@@ -444,6 +472,8 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
     {
         public AccountContext Context => Shell.Context;
         public TsAuthProjectSettings? Settings { get; init; }
+        public TsAuthImpersonationTicket? ImpersonationTicket { get; init; }
+        public IReadOnlyList<TsAuthImpersonation> Impersonations { get; init; } = [];
         public IReadOnlyList<TsAuthProjectUser>? Users { get; init; }
         public TsAuthProjectUser? SelectedUser { get; init; }
         public IReadOnlyList<TsAuthProjectSession>? Sessions { get; init; }

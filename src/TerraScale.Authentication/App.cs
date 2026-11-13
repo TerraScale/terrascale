@@ -1,25 +1,26 @@
 using System.Net;
 using TerraScale.Authentication.Features.AttackProtection;
+using Fido2NetLib;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Http;
-using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Observability;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.RateLimiting;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.SigningKeys;
-using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Ui;
-using Fido2NetLib;
 using TerraScale.Authentication.Features.WebAuthn;
+using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
@@ -123,6 +124,8 @@ public static class App
         builder.Services.AddSingleton<Challenges>();
         builder.Services.AddSingleton<Users>();
         builder.Services.AddSingleton<UserProfiles>();
+        builder.Services.AddSingleton<Impersonations>();
+        builder.Services.AddHostedService<ImpersonationExpiry>();
         builder.Services.AddSingleton<WebhookOutbox>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
@@ -368,6 +371,7 @@ public static class App
         app.UseTenancy();
         app.UseHostedTheme();
         app.UseBotChallenge();
+        app.UseImpersonation();
         // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
         app.UseAuthentication();
         app.MapTerraScaleEndpoints();

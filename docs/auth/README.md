@@ -23,6 +23,8 @@ The served `/openapi/v1.json` and `/scalar` describe current HTTP operations. Pu
 - [Signing keys](signing-keys.md), [MFA](mfa.md), [MFA sign-in](mfa-sign-in.md) and [Passkeys](passkeys.md).
 - [Step-up proof](step-up-proof.md) and [email change](email-change.md).
 
+- [User impersonation](impersonation.md).
+
 ## Storage and security
 
 Each entity type has a table with typed columns, keys, foreign keys, unique indexes and check constraints. Conditional mutations guard the row's ULID version and commit atomically with the credential and closure assertions they depend on. A storage or authority failure fails closed; a process cache never grants authority. Runtime secrets come from OCI Vault through instance principal; CI secrets belong in GitHub Actions.

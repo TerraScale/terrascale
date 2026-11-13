@@ -38,6 +38,7 @@ public sealed partial class AuthDbContext(DbContextOptions<AuthDbContext> option
         ConfigureSignUp(modelBuilder);
         ConfigureIdentity(modelBuilder);
         ConfigureAttackProtection(modelBuilder);
+        ConfigureImpersonation(modelBuilder);
         ConfigurePlatform(modelBuilder);
         ConfigureOidc(modelBuilder);
         ConfigureOperations(modelBuilder);

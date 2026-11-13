@@ -4,7 +4,7 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Features.Webhooks;
 
 public sealed record WebhookOutboxRecord(string InstanceId, string ProjectId, string EventType, string EventId, DateTimeOffset OccurredAt,
-    string UserId, string? Email, string? Provider, string Status, int Attempts, DateTimeOffset NextAttemptAt, string? SessionId = null, string? EndpointId = null);
+    string UserId, string? Email, string? Provider, string Status, int Attempts, DateTimeOffset NextAttemptAt, string? SessionId = null, string? EndpointId = null, string? ActorId = null, string? Reason = null);
 
 
 public sealed class WebhookOutbox(TimeProvider clock)

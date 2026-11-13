@@ -178,6 +178,8 @@ button.secondary:hover, .btn.secondary:hover { background: var(--surface-2); }
 button.danger { background: light-dark(#c81e1e, #d92626); }
 .actions { display: grid; gap: 8px; }
 .alert { --state: var(--danger); display: flex; gap: 12px; padding: 12px 16px; border: 1px solid var(--state); border-radius: var(--radius); background: color-mix(in oklab, var(--state) 12%, transparent); }
+.impersonation-banner { position: sticky; top: 0; z-index: 1; }
+.impersonation-banner strong { overflow-wrap: anywhere; }
 .alert[data-state="limited"] { --state: var(--warning); }
 .alert[data-state="success"] { --state: var(--success); }
 .alert > .icon { margin-top: 2px; color: var(--state); }
