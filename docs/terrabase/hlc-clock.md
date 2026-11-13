@@ -21,7 +21,7 @@ unsigned bytewise comparison has the same order as `HlcTimestamp.CompareTo`.
 
 `ILocalWriteClock.Allowed` is the R4 routing fact: false means forward the whole
 transaction to home instead of taking a local write. `SkewMilliseconds` is the
-current absolute local clock offset; positive infinity means unknown or stale.
+current clock error budget, including the HLC lead; positive infinity means unknown or stale.
 `ClockSkewException` means timestamp issuance must be refused or forwarded home.
 
 The implementation must durably advance before returning a stamp, preserve
@@ -41,7 +41,7 @@ This removes per-stamp system commits and their catalog-cache invalidations.
 On restart, the persisted upper bound becomes the previous timestamp. Every new
 stamp exceeds all stamps the former process could have issued, including after
 an abrupt stop. The guard includes that recovered bound in its high-water mark:
-local writes stay closed until UTC is within the existing 50 ms limit. A normal
+local writes stay closed until the recovered lead plus measured offset bound fits within 50 ms. A normal
 restart can therefore delay local admission by up to five seconds; requests can
 still forward home. A larger backward clock jump remains closed until recovery.
 Invalid persisted state fails closed. Within the running process, admission
@@ -65,7 +65,14 @@ Missing, malformed, unsynchronized or timed-out tracking replies fail closed.
 Peer round-trip time and WAN reachability never enter local write admission.
 Samples expire after 15 seconds, measured with monotonic time. Admission also
 compares the current wall clock with elapsed monotonic time on every read, so a
-clock jump immediately closes admission between samples.
+clock jump immediately closes admission between samples. The baseline belongs to
+chrony’s reference timestamp and survives five-second samples until chrony measures
+again. The error bound includes root dispersion and half the root delay. A separate
+read-only Linux `adjtimex` call on every admission read refuses unsynchronized
+kernel state or a maximum/estimated error above the limit on both arm64 and x64.
+The HLC lead and measured offset bound share the 50 ms budget: if a stamp leads
+its origin by H and a receiver trails it by at most B, H + B must be at most 50 ms.
+This margin protects receivers using the previous clock rule during rollout.
 
 Production TerraBase hosts need a synchronized chrony daemon with its loopback
 monitoring port available, provisioned by ts-orch. The runtime does not change

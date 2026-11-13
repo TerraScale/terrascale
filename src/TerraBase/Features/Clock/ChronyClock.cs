@@ -7,7 +7,7 @@ namespace TerraBase.Features.Clock;
 
 internal sealed class ChronyClock : IClockErrorSource
 {
-    public async ValueTask<double> CorrectionMillisecondsAsync(CancellationToken cancellationToken)
+    public async ValueTask<ClockTracking?> ReadAsync(CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(1));
@@ -31,14 +31,26 @@ internal sealed class ChronyClock : IClockErrorSource
                 BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(52)) is 0 or > 15 ||
                 BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(54)) > 2)
             {
-                return double.PositiveInfinity;
+                return null;
             }
 
-            return DecodeFloat(response.AsSpan(68, 4)) * 1000;
+            var seconds = BinaryPrimitives.ReadUInt64BigEndian(response.AsSpan(56, 8));
+            var nanoseconds = BinaryPrimitives.ReadUInt32BigEndian(response.AsSpan(64, 4));
+            var correction = DecodeFloat(response.AsSpan(68, 4)) * 1000;
+            var delay = DecodeFloat(response.AsSpan(92, 4)) * 1000;
+            var dispersion = DecodeFloat(response.AsSpan(96, 4)) * 1000;
+            if (seconds is 0 or > 253402300798 || nanoseconds >= 1_000_000_000 || delay < 0 || dispersion < 0 ||
+                !double.IsFinite(correction) || !double.IsFinite(delay) || !double.IsFinite(dispersion))
+            {
+                return null;
+            }
+
+            var reference = DateTimeOffset.FromUnixTimeSeconds((long)seconds).AddTicks(nanoseconds / 100);
+            return new ClockTracking(reference, correction, dispersion + delay / 2);
         }
         catch (Exception error) when (error is SocketException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            return double.PositiveInfinity;
+            return null;
         }
     }
 

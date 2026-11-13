@@ -15,6 +15,7 @@ internal sealed class ClockGuard(
     private readonly TimeProvider _elapsed = TimeProvider.System;
     private Reading? _reading;
     private int _reported;
+    private Baseline? _baseline;
 
     public bool Allowed => SkewMilliseconds <= LimitMilliseconds;
 
@@ -31,10 +32,10 @@ internal sealed class ClockGuard(
             var before = _elapsed.GetTimestamp();
             var utc = time.GetUtcNow().ToUnixTimeMilliseconds();
             var after = _elapsed.GetTimestamp();
-            var lower = utc - reading.Utc - _elapsed.GetElapsedTime(reading.At, after).TotalMilliseconds - 1;
-            var upper = utc - reading.Utc - _elapsed.GetElapsedTime(reading.After, before).TotalMilliseconds + 1;
+            var lower = utc - reading.Baseline.Utc - _elapsed.GetElapsedTime(reading.Baseline.At, after).TotalMilliseconds - 1;
+            var upper = utc - reading.Baseline.Utc - _elapsed.GetElapsedTime(reading.Baseline.After, before).TotalMilliseconds + 1;
             var jump = Math.Max(Math.Abs(lower), Math.Abs(upper));
-            return Math.Max(reading.Skew + jump, state.HighWater - utc);
+            return Math.Max(reading.Skew + jump, KernelClock.ErrorMilliseconds) + Math.Max(0, state.HighWater - utc);
         }
     }
 
@@ -56,19 +57,32 @@ internal sealed class ClockGuard(
             try
             {
                 await state.RefreshAsync(stoppingToken).ConfigureAwait(false);
-                var correction = await errors.CorrectionMillisecondsAsync(stoppingToken).ConfigureAwait(false);
-                var before = DateTimeOffset.UtcNow;
-                var application = time.GetUtcNow();
-                var after = DateTimeOffset.UtcNow;
-                skew = Math.Max(Math.Abs((application - before).TotalMilliseconds - correction),
-                    Math.Abs((application - after).TotalMilliseconds - correction));
+                var tracking = await errors.ReadAsync(stoppingToken).ConfigureAwait(false);
+                if (tracking is not null)
+                {
+                    if (_baseline is null || tracking.ReferenceTime > _baseline.ReferenceTime)
+                    {
+                        _baseline = new Baseline(tracking.ReferenceTime, sampleAt, sampleAfter, sampleUtc);
+                    }
+
+                    var correction = tracking.CorrectionMilliseconds;
+                    var before = _elapsed.GetUtcNow();
+                    var application = time.GetUtcNow();
+                    var after = _elapsed.GetUtcNow();
+                    skew = Math.Max(Math.Abs((application - before).TotalMilliseconds - correction),
+                        Math.Abs((application - after).TotalMilliseconds - correction)) + tracking.ErrorMilliseconds;
+                    if (tracking.ReferenceTime != _baseline.ReferenceTime)
+                    {
+                        skew = double.PositiveInfinity;
+                    }
+                }
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or StorageBusyException)
             {
                 skew = double.PositiveInfinity;
             }
 
-            Volatile.Write(ref _reading, new Reading(skew, sampleAt, sampleAfter, sampleUtc));
+            Volatile.Write(ref _reading, new Reading(skew, sampleAt, _baseline ?? new Baseline(default, sampleAt, sampleAfter, sampleUtc)));
             var value = SkewMilliseconds;
             var stored = await reports.PublishAsync(new ClockReport(options.MachineId, options.Region, double.IsFinite(value) ? value : null, value <= LimitMilliseconds, time.GetUtcNow()), stoppingToken)
                 .ConfigureAwait(false);
@@ -77,5 +91,6 @@ internal sealed class ClockGuard(
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
     }
 
-    private sealed record Reading(double Skew, long At, long After, long Utc);
+    private sealed record Baseline(DateTimeOffset ReferenceTime, long At, long After, long Utc);
+    private sealed record Reading(double Skew, long At, Baseline Baseline);
 }

@@ -32,6 +32,10 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 - **Home writes take part.** A write that commits at the home (home-region clients, forwarded transactions) stamps the
   columns it changed with the home's HLC, so a staler change from another region cannot overwrite it.
 
+Upgrade origins before receivers; origins reserve their measured offset bound inside the 50 ms timestamp budget so receivers still using the prior clock rule can accept their writes.
+
+A committed transaction with any superseded changes increments `terrabase_home_apply_superseded_total{region}` once, labelled only by its origin region; duplicate delivery does not increment it.
+
 ## Write states
 
 | State | Meaning |
@@ -121,7 +125,7 @@ home kept; the loser is the region transaction that lost.
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `id` | TEXT | ULID of the record, in record order. |
-| `kind` | TEXT | `superseded`, `unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`, `missing_row`, `schema`. |
+| `kind` | TEXT | `superseded`, `unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`, `missing_row`, `schema`; `clock` may remain from before this release until retention removes it. |
 | `table_name` | TEXT | The table, or null when the rejection is not about one row. |
 | `row_key` | TEXT | JSON object of the row's primary key, or null. |
 | `column_name` | TEXT | The losing column, or null for a row-level loss and for `reverted`. |

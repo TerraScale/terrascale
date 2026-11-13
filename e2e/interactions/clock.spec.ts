@@ -65,6 +65,27 @@ test('future remote stamps apply once without advancing the local clock beyond i
     const sql = (statement: string) => json('POST', `${databasePath}/sql/execute`, { statements: [{ sql: statement }] });
     await sql('CREATE TABLE clock_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     const applyPath = `/v1/sync/organizations/${organization.id}/projects/${project.id}/databases/${created.id}/apply`;
+    const supersededCount = async () => {
+      const metrics = await internal('GET', '/metrics');
+      expect(metrics.status).toBe(200);
+      const match = /^terrabase_home_apply_superseded_total\{[^}]*\bregion="fra"[^}]*\} (\S+)/m.exec(metrics.body);
+      return match ? Number(match[1]) : 0;
+    };
+    const baseline = await supersededCount();
+    const current = {
+      id: id(), region: 'fra',
+      hlc: { physicalMilliseconds: Date.now() - 10_000, logical: 0, nodeId: 'clock-remote' },
+      changes: [{ op: 'insert', table: 'clock_rows', values: { id: 3, value: 'current' } }],
+    };
+    expect(await json('POST', applyPath, current)).toMatchObject({ state: 'confirmed', conflicts: [] });
+    const older = {
+      ...current, id: id(), hlc: { ...current.hlc, physicalMilliseconds: current.hlc.physicalMilliseconds - 1000 },
+      changes: [{ op: 'update', table: 'clock_rows', key: { id: 3 }, values: { value: 'older' } }],
+    };
+    const lost = await json('POST', applyPath, older);
+    expect(lost).toMatchObject({ state: 'confirmed', conflicts: [{ kind: 'superseded' }] });
+    await expect.poll(supersededCount).toBe(baseline + 1);
+    expect(await json('POST', applyPath, older)).toEqual(lost);
     const transaction = {
       id: id(), region: 'fra',
       hlc: { physicalMilliseconds: Date.now() + 86_400_000, logical: 7, nodeId: 'clock-remote' },
@@ -73,21 +94,16 @@ test('future remote stamps apply once without advancing the local clock beyond i
     const applied = await json('POST', applyPath, transaction);
     expect(applied).toMatchObject({ id: transaction.id, state: 'confirmed', conflicts: [] });
     expect(await json('POST', applyPath, transaction)).toEqual(applied);
-    const older = {
-      ...transaction, id: id(), hlc: { ...transaction.hlc, physicalMilliseconds: Date.now() },
-      changes: [{ op: 'update', table: 'clock_rows', key: { id: 1 }, values: { value: 'older' } }],
-    };
-    expect(await json('POST', applyPath, older)).toMatchObject({ state: 'confirmed', conflicts: [{ kind: 'superseded' }] });
-    expect((await sql('SELECT id, value FROM clock_rows')).results[0].rows).toEqual([[1, 'delivered']]);
     await expect.poll(async () => {
       const metrics = await internal('GET', '/metrics');
       expect(metrics.status).toBe(200);
       const ahead = /^terrabase_clock_hlc_ahead_milliseconds(?:\{[^}]*\})? (\S+)/m.exec(metrics.body);
       const capped = /^terrabase_clock_observe_capped_total(?:\{[^}]*\})? (\S+)/m.exec(metrics.body);
-      return ahead && capped && Number(capped[1]) >= 2 && Number(ahead[1]) <= 50;
+      return ahead && capped && Number(capped[1]) >= 1 && Number(ahead[1]) <= 50;
     }, { message: 'the receiver reports capped observations and a bounded HLC' }).toBe(true);
+    expect(await supersededCount()).toBe(baseline + 1);
     await sql("INSERT INTO clock_rows VALUES (2, 'origin still writes')");
-    expect((await sql('SELECT id, value FROM clock_rows ORDER BY id')).results[0].rows).toEqual([[1, 'delivered'], [2, 'origin still writes']]);
+    expect((await sql('SELECT id, value FROM clock_rows ORDER BY id')).results[0].rows).toEqual([[1, 'delivered'], [2, 'origin still writes'], [3, 'current']]);
   } finally {
     for (const path of [databasePath, projectPath, organizationPath]) {
       if (path) {

@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
@@ -14,9 +15,11 @@ using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.HomeApply;
 
-internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHomeWriteLease leases, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger)
+internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHomeWriteLease leases, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger, IMeterFactory meters)
     : IHomeApply
 {
+    private readonly Counter<long> _superseded = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.home_apply.superseded", "{write}");
+
     internal const int MaxChanges = 1024;
     internal const int KeptConflicts = 10_000;
     private static readonly TimeSpan KeptConflictAge = TimeSpan.FromDays(30);
@@ -82,6 +85,11 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
                 }
 
                 _ = await applying.CommitAsync(cancellationToken).ConfigureAwait(false);
+                if (run.Superseded.Count > 0)
+                {
+                    _superseded.Add(1, new KeyValuePair<string, object?>("region", region));
+                }
+
                 return result;
             }
             catch (RejectedException rejected)
