@@ -89,10 +89,10 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
         }, static error => error, cancellationToken);
     }
 
-    public ValueTask<CompleteHomeMoveResult> CompleteHomeMoveAsync(HomeMoveMarker marker, CancellationToken cancellationToken)
+    public async ValueTask<CompleteHomeMoveResult> CompleteHomeMoveAsync(HomeMoveMarker marker, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(marker);
-        return WriteAsync<CompleteHomeMoveResult>(async transaction =>
+        var moved = await WriteAsync<CompleteHomeMoveResult>(async transaction =>
         {
             _ = await transaction.DeleteAsync(HomeMoves, marker.DatabaseId, cancellationToken).ConfigureAwait(false);
             if (await CatalogTables.DatabaseAsync(transaction, marker.ProjectId, marker.DatabaseId, cancellationToken).ConfigureAwait(false) is not { } record)
@@ -106,11 +106,17 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
             }
 
             IReadOnlyList<string> replicas = [.. record.Replicas.Where(region => region != marker.Target).Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-            var moved = record with { HomeRegion = marker.Target, ReplicaRegions = replicas, PlacementVersion = marker.Version };
-            await CatalogTables.PutDatabaseAsync(transaction, moved, cancellationToken).ConfigureAwait(false);
+            var placed = record with { HomeRegion = marker.Target, ReplicaRegions = replicas, PlacementVersion = marker.Version };
+            await CatalogTables.PutDatabaseAsync(transaction, placed, cancellationToken).ConfigureAwait(false);
             _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, marker.DatabaseId, cancellationToken).ConfigureAwait(false);
-            return moved;
-        }, static error => error, cancellationToken);
+            return placed;
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (moved is ManagedDatabase database)
+        {
+            await atlas.QueueAsync(marker.ProjectId, marker.DatabaseId, database.Home(options.Region), cancellationToken).ConfigureAwait(false);
+        }
+
+        return moved;
     }
 
     public async ValueTask AbortHomeMoveAsync(HomeMoveMarker marker, CancellationToken cancellationToken)
@@ -128,11 +134,11 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
         }, static _ => new Done(), cancellationToken).ConfigureAwait(false);
     }
 
-    public ValueTask<UpdatePlacementResult> FollowHomeLeaseAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
+    public async ValueTask<UpdatePlacementResult> FollowHomeLeaseAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(placement);
-        return WriteAsync<UpdatePlacementResult>(async transaction =>
+        var followed = await WriteAsync<UpdatePlacementResult>(async transaction =>
         {
             if (!Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false)))
             {
@@ -155,7 +161,13 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
             }, cancellationToken).ConfigureAwait(false);
             _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken).ConfigureAwait(false);
             return new PlacementUpdate(Updated: true);
-        }, static error => error, cancellationToken);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (followed is PlacementUpdate { Updated: true })
+        {
+            await atlas.QueueAsync(database.ProjectId!, database.DatabaseId!, placement.Home, cancellationToken).ConfigureAwait(false);
+        }
+
+        return followed;
     }
 
     public ValueTask<int> FollowServingRegionsAsync(IReadOnlyList<string> serving, CancellationToken cancellationToken)

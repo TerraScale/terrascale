@@ -63,7 +63,7 @@ internal sealed partial class EngineManagementService
             return false;
         }
 
-        return await DeleteRecordedAsync(
+        var result = await DeleteRecordedAsync(
             deletable.Storage,
             async (transaction, token) =>
                 await UnregisterDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, token).ConfigureAwait(false) switch
@@ -72,7 +72,13 @@ internal sealed partial class EngineManagementService
                     Conflict error => MovedDuringCommit(error),
                     _ => false,
                 },
-            cancellationToken).ConfigureAwait(false) switch
+            cancellationToken).ConfigureAwait(false);
+        if (result is true)
+        {
+            await atlas.QueueAsync(deletable.Storage.ProjectId!, deletable.Storage.DatabaseId!, null, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result switch
         {
             bool deleted => moveRefusal is { } refused ? refused : !deleted ? ManagementErrors.NotFound
                 : await ForgetReplicaRegionsAsync(deletable.Storage, committed ?? deletable.Record, CancellationToken.None).ConfigureAwait(false),
