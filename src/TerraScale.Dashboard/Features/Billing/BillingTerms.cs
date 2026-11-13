@@ -88,7 +88,7 @@ public sealed class BillingTerms
         public void Configure(EntityTypeBuilder<BillingTerms> builder)
         {
             builder.ToTable("billing_terms", table => table.HasCheckConstraint("ck_billing_terms", "length(subscription_id) > 0 AND basis IN ('start_date', 'event', 'first_check', 'unestablished')"));
-            builder.HasKey(row => new { row.OrganizationId, row.SubscriptionId, row.EffectiveFrom, row.PricingVersion });
+            builder.HasKey(row => new { row.OrganizationId, row.SubscriptionId, row.EffectiveFrom, row.PricingVersion, row.Basis });
             builder.HasOne<BillingBinding>().WithMany().HasForeignKey(row => row.OrganizationId).OnDelete(DeleteBehavior.Cascade);
             builder.Property(row => row.EffectiveFrom).HasConversion(BillingColumns.Utc);
             builder.Property(row => row.LearnedAt).HasConversion(BillingColumns.Utc);

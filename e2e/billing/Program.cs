@@ -215,6 +215,7 @@ try
     await AdvanceAsync("2028-01-22T00:00:00Z");
     foreach (var other in new[] { "2027-10", "2027-11", "2027-12" }) { await ItemAsync(previous, 100, 1, null, null, other); }
     var successor = await SucceedAsync(replaced, "price_starter_month");
+    foreach (var organization in new[] { previous, late, noStorage, crashed, raced, mismatched, gated, midpoint, ended, unmapped }) { await RefreshAsync(organization); }
     await ControlAsync("/billing-plan-change", new PlanChangeInput(late.SubscriptionId, "price_pro_month", "2028-01-30T00:00:00Z"));
     await AdvanceAsync("2028-02-01T06:00:00Z");
     foreach (var organization in new[] { binding, previous, successor, noStorage, crashed, raced, mismatched, gated, midpoint, unmapped }) { await RefreshAsync(organization); }

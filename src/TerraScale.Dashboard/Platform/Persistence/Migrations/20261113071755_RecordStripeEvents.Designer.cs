@@ -1076,7 +1076,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("storage_rate");
 
-                    b.HasKey("OrganizationId", "SubscriptionId", "EffectiveFrom", "PricingVersion");
+                    b.HasKey("OrganizationId", "SubscriptionId", "EffectiveFrom", "PricingVersion", "Basis");
 
                     b.ToTable("billing_terms", null, t =>
                         {

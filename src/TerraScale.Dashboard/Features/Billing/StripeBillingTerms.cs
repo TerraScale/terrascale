@@ -77,7 +77,10 @@ public sealed partial class StripeBilling
             var since = events.Count > 0 && events[^1].At > windowStart ? events[^1].At : windowStart;
             added.Add(Retyped(polled, since, BillingTerms.Unestablished));
         }
-        foreach (var terms in added.DistinctBy(item => (item.EffectiveFrom, item.PricingVersion)))
+        var earliest = added.Count > 0 ? added.Min(item => item.EffectiveFrom) : now;
+        var recorded = (await db.BillingTerms.AsNoTracking().Where(item => item.OrganizationId == orgId && item.SubscriptionId == subscription.Id && item.EffectiveFrom >= earliest)
+            .Select(item => new { item.EffectiveFrom, item.PricingVersion, item.Basis }).ToListAsync(cancellationToken)).Select(item => (item.EffectiveFrom, item.PricingVersion, item.Basis)).ToHashSet();
+        foreach (var terms in added.DistinctBy(item => (item.EffectiveFrom, item.PricingVersion, item.Basis)).Where(item => !recorded.Contains((item.EffectiveFrom, item.PricingVersion, item.Basis))))
         {
             db.BillingTerms.Add(terms);
         }

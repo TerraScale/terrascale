@@ -29,7 +29,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_billing_terms", x => new { x.organization_id, x.subscription_id, x.effective_from, x.pricing_version });
+                    table.PrimaryKey("PK_billing_terms", x => new { x.organization_id, x.subscription_id, x.effective_from, x.pricing_version, x.basis });
                     table.CheckConstraint("ck_billing_terms", "length(subscription_id) > 0 AND basis IN ('start_date', 'event', 'first_check', 'unestablished')");
                     table.ForeignKey(
                         name: "FK_billing_terms_billing_organization_id",
