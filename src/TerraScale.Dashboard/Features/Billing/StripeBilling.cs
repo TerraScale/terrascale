@@ -720,7 +720,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 current.RequestId = initial.RequestId; current.StartedAt = initial.StartedAt; current.CheckoutId = "";
                 current.SubscriptionId = ""; current.EffectivePlan = ""; current.EffectiveInterval = "";
                 current.RenewalAt = null;
-                current.OverageStartsAt = new(time.GetUtcNow().Year, time.GetUtcNow().Month, 1, 0, 0, 0, TimeSpan.Zero);
+                var startsAt = new DateTimeOffset(time.GetUtcNow().Year, time.GetUtcNow().Month, 1, 0, 0, 0, TimeSpan.Zero);
+                if (current.OverageStartsAt < startsAt) { current.OverageStartsAt = startsAt; }
                 current.ObservedPricingVersion = "";
                 current.EffectivePlanSince = null;
                 current.Status = "pending";

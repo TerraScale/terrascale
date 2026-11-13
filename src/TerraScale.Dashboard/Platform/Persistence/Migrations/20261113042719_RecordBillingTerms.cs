@@ -91,7 +91,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 type: "TEXT",
                 nullable: false,
                 defaultValue: "");
-            migrationBuilder.Sql("UPDATE billing SET overage_starts_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'start of month') WHERE kind = 'stripe'");
+            migrationBuilder.Sql("UPDATE billing SET overage_starts_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'start of month', '+1 month') WHERE kind = 'stripe'");
         }
 
         /// <inheritdoc />

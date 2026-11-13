@@ -159,9 +159,12 @@ metadata. Accepted provider objects are never updated or deleted by the reporter
 The hourly pass records boundary observations and dispatches pending ledger
 rows. The daily pass freezes closed-month usage; failures remain pending per
 row and neither block nor reopen later months. There is no progress watermark.
-Monthly scans begin at `billing.overage_starts_at`, set to the deployment UTC
-month for existing subscriptions and the first observation month for new ones.
-Months before deployment are never charged by this code. A missing historical
+Monthly scans begin at `billing.overage_starts_at`, set to the first full UTC month after deployment for existing subscriptions
+and the first observation month for new customers. Months before deployment
+are never charged by this code. The deployment month is also excluded for
+existing customers: the previous reporter may already have created items for
+it. That month's unreported overage is forgiven rather than risking a second
+charge. Resubscription cannot move this initial cutoff backwards. A missing historical
 observation is skipped permanently. Annual subscriptions collect overage monthly.
 The billing page estimates current usage; the current month has no provider item.
 
@@ -215,14 +218,15 @@ window but requires a dashboard maintenance interval.
 
 A schema-first rolling deployment with previous instances still serving is
 unsafe: they ignore grace, and their refresh or plan publication can restrict
-a customer in grace. The exposure lasts from schema application until the last
+a customer in grace. Their reporter can also change provider items frozen by
+the new build or create items outside the ledger. The exposure lasts from schema application until the last
 old instance is stopped; there is no application-enforced upper bound. Do not
 claim a 30-second bound: the old job's period bounds detection, not exposure.
 
 Rollback of the application leaves the additive schema and ledger in place.
 The previous build ignores grace, receipts and ledger completion. Do not run
-its reporting jobs against this schema: it can recreate overage items and
-restrict customers in grace. Drain all new instances and keep the dashboard
+its reporting jobs against this schema: it can recreate or change overage
+items and restrict customers in grace. Drain all new instances and keep the dashboard
 stopped until a corrected build with these invariants is available. There is
 no safe supported rollback to the previous dashboard's background jobs.
 

@@ -222,16 +222,18 @@ try
         var sql = new RecordBillingTerms().UpOperations.OfType<SqlOperation>().Single().Sql.Replace("'now'", "{0}", StringComparison.Ordinal) + " AND organization_id = {1}";
         await db.Database.ExecuteSqlRawAsync(sql, [clock.Now.ToString("O", CultureInfo.InvariantCulture), existing.OrganizationId], cancellationToken);
     }
-    if ((await BindingAsync(existing.OrganizationId)).OverageStartsAt != january.AddMonths(3)) { throw new InvalidOperationException("Deployment must exclude all earlier months."); }
+    if ((await BindingAsync(existing.OrganizationId)).OverageStartsAt != january.AddMonths(4)) { throw new InvalidOperationException("Deployment must exclude the deployment month and all earlier months."); }
     await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january, cancellationToken);
     await CheckAsync(existing, "2028-01", 0);
-    await AdvanceAsync("2028-05-01T00:00:00Z");
     await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january.AddMonths(3), cancellationToken);
+    await CheckAsync(existing, "2028-04", 0);
+    await AdvanceAsync("2028-06-01T00:00:00Z");
+    await reporter.ReportAsync(existing.OrganizationId, 1_250_000, 0, january.AddMonths(4), cancellationToken);
     await using (var db = await storage.CreateDbContextAsync(cancellationToken))
     {
-        if (!await db.SkippedBillingMonths.AnyAsync(row => row.OrganizationId == existing.OrganizationId && row.Month == january.AddMonths(3), cancellationToken)) { throw new InvalidOperationException("Unknown plan must have a permanent skipped-month record."); }
+        if (!await db.SkippedBillingMonths.AnyAsync(row => row.OrganizationId == existing.OrganizationId && row.Month == january.AddMonths(4), cancellationToken)) { throw new InvalidOperationException("Unknown plan must have a permanent skipped-month record."); }
     }
-    Console.WriteLine("billing migration journey: months before deployment excluded; missing historical plan permanently skipped");
+    Console.WriteLine("billing migration journey: deployment month and earlier excluded; missing historical plan permanently skipped");
 
     await SetGraceAsync(binding);
     var paid = await billing.ResolveExpiredGraceAsync(binding.OrganizationId, cancellationToken);
