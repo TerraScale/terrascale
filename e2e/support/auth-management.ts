@@ -250,19 +250,6 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
     expect(response.status()).toBe(403);
     expect((await response.json()).error).toMatchObject({ code: 'person_required' });
   }
-  for (const [key, status] of [[readKey, 403], [writeKey, 204]] as const) {
-    const signedOut = await page.request.post(`${root}/users/${user}/sign-out`, {
-      headers: { Authorization: `Bearer ${key}` },
-    });
-    expect(signedOut.status()).toBe(status);
-  }
-  const sessions = await page.request.get(root + '/sessions', { headers: { Authorization: `Bearer ${readKey}` } });
-  expect(sessions.status()).toBe(200);
-  expect((await sessions.json()).items.some((session: { user_id: string }) => session.user_id === user)).toBe(false);
-  const stepUp = await page.request.post(root + '/step-up', {
-    headers: { Authorization: `Bearer ${writeKey}` }, data: { client_id: current.projectId, password: current.password },
-  });
-  expect(stepUp.status()).toBe(401);
   const missing = await page.request.post(root + '/users/' + current.projectId + '/disable', {
     headers: { Authorization: 'Bearer ' + writeKey },
   });
@@ -346,6 +333,19 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
     await checkMachineClient(page, ownerToken, current.projectId);
     await checkUserKeyLifecycle(page.request, root, user, readKey, writeKey);
   }
+  for (const [key, status] of [[readKey, 403], [writeKey, 204]] as const) {
+    const signedOut = await page.request.post(`${root}/users/${user}/sign-out`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    expect(signedOut.status()).toBe(status);
+  }
+  const sessions = await page.request.get(root + '/sessions', { headers: { Authorization: `Bearer ${readKey}` } });
+  expect(sessions.status()).toBe(200);
+  expect((await sessions.json()).items.some((session: { user_id: string }) => session.user_id === user)).toBe(false);
+  const stepUp = await page.request.post(root + '/step-up', {
+    headers: { Authorization: `Bearer ${writeKey}` }, data: { client_id: current.projectId, password: current.password },
+  });
+  expect(stepUp.status()).toBe(401);
   const management = { user, readKey, writeKey, csrf, ownerToken };
   if (sdk === 'dotnet') await checkSignupManagement(page, management);
   return management;

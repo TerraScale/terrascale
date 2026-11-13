@@ -371,9 +371,9 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             PasscodePurpose.StepUp => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } user
                 ? await passcodes.RequestStepUpAsync(user, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
                 : null,
-        PasscodePurpose.EnrollmentInbox => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } enrolling
-            ? await passcodes.RequestEnrollmentInboxAsync(enrolling, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
-            : null,
+            PasscodePurpose.EnrollmentInbox => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } enrolling
+                ? await passcodes.RequestEnrollmentInboxAsync(enrolling, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
+                : null,
             { } purpose => await passcodes.RequestAsync(work.Tenant, work.Email, purpose, CancellationToken.None).ConfigureAwait(false),
             null => throw new InvalidOperationException("A queued outbox row names no code to issue."),
         };
