@@ -33,23 +33,29 @@ Status Workers are compared separately and only the selected Workers deploy.
 
 Auth and dashboard read their readiness revision. Their release jobs run in
 `ci.yml` and `images-ghcr.yml`, as required by the release service's existing
-OIDC policy. When work is due, Sites requests a main dispatch. That job reads
-live and chooses target again inside its release lock. It checks out target,
-reuses an image labeled with that exact commit, or builds and checks one.
-Only then does it move the mutable main tag and release the pinned arm64 digest.
-The trigger commit and the availability of a prior Images run do not matter.
+OIDC policy. The release is signed with the dispatched run's commit, and each
+region refuses an image whose revision label names another commit. So Sites
+requests a main dispatch only when work is due and main's head is the target;
+otherwise the decision says it is waiting for main's head to qualify. The
+dispatched job reads live inside its release lock and releases only its own
+commit, and only if that commit is qualified; if not, it records nothing and
+the next reconcile after main CI tries again. It checks out that commit,
+reuses an image labeled with it, or builds and checks one. Only then does it
+move the mutable main tag and release the pinned arm64 digest. The availability
+of a prior Images run does not matter.
 
 Every site deploy records target as the Worker version message. The proof
 requires that version at 100% traffic. Auth and dashboard verify readiness and
 write `deploy-revision`. The production journey reads this receipt, so it uses
-the deployed source even when the dispatch was created on another commit.
+the deployed source.
 A release job that did not succeed starts no production journey; its own
 state issue and job summary show the failure.
 
 Every decision goes to the job summary with the thing, its live revision and
 the target: deploying (with the attempt number), already live, live ahead,
 inputs unchanged, suppressed after two attempts, waiting on an older target,
-no qualified target, or waiting for a manual run.
+no qualified target, waiting for main's head to qualify, or waiting for a
+manual run.
 
 ## Attempts and suppression
 
