@@ -10,7 +10,7 @@ using Turso.Raw.Public;
 namespace TerraBase.Engine.Turso;
 
 
-internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
+internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 {
 
     private const int PageRows = 1024;
@@ -46,6 +46,7 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
         ArgumentOutOfRangeException.ThrowIfNegative(position);
         await _store.WithWriterAsync(writer =>
         {
+            ObjectDisposedException.ThrowIf(_lineage != _store.Lineage, _store);
             if (position > _anchor)
             {
                 throw new InvalidOperationException("the backup cannot acknowledge unread CDC");
@@ -120,11 +121,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
         return await AdmittedAsync(async () =>
         {
             var read = await ReadCoreAsync(destination, ReadBudget, cancellationToken).ConfigureAwait(false);
-            if (!read.Continuous)
-            {
-                await _store.WithWriterAsync(Reset, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
-            }
-
             return read;
         }).ConfigureAwait(false);
     }
@@ -558,7 +554,10 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     {
         using var command = _reader.CreateCommand();
         command.CommandText = sql;
-        command.Parameters.Add(new TursoParameter("$anchor", anchor));
+        if (sql.Contains("$anchor", StringComparison.Ordinal))
+        {
+            command.Parameters.Add(new TursoParameter("$anchor", anchor));
+        }
         return command.ExecuteScalar();
     }
 }

@@ -38,38 +38,46 @@ internal sealed partial class ContinuousBackup
                 return;
             }
 
+            if (!file.Recovered)
+            {
+                if (_time.GetUtcNow() < file.RetryAt)
+                {
+                    if (file.Continuity is not null && !await WithinRetentionAsync(file, cancellationToken).ConfigureAwait(false))
+                    {
+                        file.Recovered = true;
+                    }
+                    return;
+                }
+
+                if (file.Target.Revision != (file.Configuration?.Revision ?? BackupDestinationNames.Platform))
+                {
+                    file.Target = await _targets.ShippingAsync(file.Database, file.Configuration, cancellationToken).ConfigureAwait(false);
+                }
+
+                await RecoverAsync(file, cancellationToken).ConfigureAwait(false);
+            }
+
+            await ObserveAsync(file, cancellationToken).ConfigureAwait(false);
+            var due = _time.GetUtcNow() >= file.RetryAt;
             if (!await HoldAsync(file, cancellationToken).ConfigureAwait(false))
             {
-                await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
+                await EndContinuityAsync(file, "lease", cancellationToken).ConfigureAwait(false);
                 file.LastError = null;
                 return;
             }
-            if (file.Tap is ICdcBackupRetention retention)
+            if (file.Generation is null && file.Continuity is { EndReason: { } endReason })
             {
-                var bytes = await retention.RetainedBytesAsync(cancellationToken).ConfigureAwait(false);
-                var limit = MaxPendingBytes;
-                try
+                if (!due)
                 {
-                    using var claim = _disk.Reserve(bytes);
-                }
-                catch (DiskCapacityException)
-                {
-                    limit = 0;
-                }
-
-                if (bytes > limit)
-                {
-                    if (file.Generation is not null)
-                    {
-                        Drop(file, "disk");
-                    }
-
-                    await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
+                    await EndContinuityAsync(file, endReason, cancellationToken).ConfigureAwait(false);
                     return;
                 }
             }
+            else if (!await WithinRetentionAsync(file, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
 
-            var due = _time.GetUtcNow() >= file.RetryAt;
             var switched = false;
             if (due)
             {
@@ -81,15 +89,8 @@ internal sealed partial class ContinuousBackup
                     var target = await _targets.ShippingAsync(file.Database, file.Configuration, cancellationToken).ConfigureAwait(false);
                     file.Target.Dispose();
                     file.Target = target;
-                    if (file.Generation is not null)
-                    {
-                        Drop(file, "destination");
-                    }
-                    else
-                    {
-                        Abandon(file);
-                    }
-                    (file.LastShipped, file.StoredThrough, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, null, default, default, default, null, default);
+                    await EndContinuityAsync(file, "destination", cancellationToken).ConfigureAwait(false);
+                    (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, default, default, default, null, default);
                     (file.SnapshotFailures, file.SnapshotRetryAt, file.SnapshotError) = (0, DateTimeOffset.MinValue, null);
                 }
             }
@@ -115,7 +116,7 @@ internal sealed partial class ContinuousBackup
                 }
                 else
                 {
-                    await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
+                    await EndContinuityAsync(file, file.Continuity?.EndReason ?? "reopen", cancellationToken).ConfigureAwait(false);
                 }
 
                 return;
@@ -136,7 +137,6 @@ internal sealed partial class ContinuousBackup
 
             WalRead read;
             var appended = file.Pending.Length;
-            var readAt = _time.GetUtcNow();
             try
             {
                 read = await ReadPendingAsync(file, cancellationToken).ConfigureAwait(false);
@@ -144,12 +144,13 @@ internal sealed partial class ContinuousBackup
             catch
             {
                 file.Pending.SetLength(appended);
+                await EndContinuityAsync(file, "read", CancellationToken.None).ConfigureAwait(false);
                 throw;
             }
 
             if (!read.Continuous)
             {
-                Hole(file);
+                await EndContinuityAsync(file, "read", cancellationToken).ConfigureAwait(false);
                 if (due && !_stopped)
                 {
                     await StartGenerationAsync(file, cancellationToken).ConfigureAwait(false);
@@ -170,11 +171,6 @@ internal sealed partial class ContinuousBackup
             if (!due)
             {
                 return;
-            }
-
-            if (read.Bytes == 0 && file.Buffered == 0 && file.Unstored is null && !file.Behind)
-            {
-                file.StoredThrough = readAt;
             }
 
             if (file.Buffered > 0)
@@ -217,11 +213,15 @@ internal sealed partial class ContinuousBackup
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            Failed(file, error);
+            await FailedAsync(file, error, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             file.PendingBytes = file.Buffered;
+            if (file.Continuity is not null && !file.Tap.Ended)
+            {
+                await ObserveAsync(file, CancellationToken.None).ConfigureAwait(false);
+            }
         }
     }
     private IEnumerable<ShippedFile> Shipped() => _files.Values.Where(file => file.Shipping);
@@ -245,7 +245,7 @@ internal sealed partial class ContinuousBackup
             var read = await file.Tap.ReadAsync(file.Pending, cancellationToken).ConfigureAwait(false);
             if (file.Pending.Length > before)
             {
-                file.PendingCdcPosition = (file.Tap as ICdcBackupRetention)?.Position ?? 0;
+                file.PendingCursor = await ((ICdcBackupRetention)file.Tap).CursorAsync(cancellationToken).ConfigureAwait(false);
                 file.PendingClaims.Add(claim);
                 claim = null;
             }
@@ -283,7 +283,7 @@ internal sealed partial class ContinuousBackup
         {
             file.Pending.Seek(0, SeekOrigin.End);
         }
-        file.Unstored = new(key, sealedObject, file.PendingAt, file.PendingMark, file.PendingEndsMarked, file.PendingCdcPosition);
+        file.Unstored = new(key, sealedObject, file.PendingAt, file.PendingMark, file.PendingEndsMarked, file.PendingCursor ?? throw new InvalidOperationException("the pending log has no cursor"), file.Position);
         (file.PendingMark, file.PendingEndsMarked) = (null, false);
         file.Pending.SetLength(0);
         sealedObject.TakeClaims(file.PendingClaims);
@@ -298,11 +298,9 @@ internal sealed partial class ContinuousBackup
             return;
         }
 
-        await PutAsync(file, segment.Key, segment.Sealed, "segment", cancellationToken).ConfigureAwait(false);
-        if (file.Tap is ICdcBackupRetention segmentRetention)
-        {
-            await segmentRetention.AcknowledgeAsync(segment.CdcPosition, cancellationToken).ConfigureAwait(false);
-        }
+        var stored = new BackupStored(segment.Cursor, file.Generation!.Value, file.GenerationKey!, segment.Position,
+            file.LastSnapshot, segment.At, segment.Mark ?? file.PlatformProgress?.At, file.Target.Revision);
+        await StorePositionAsync(file, stored, segment.Key, segment.Sealed, "segment", cancellationToken).ConfigureAwait(false);
 
         file.Unstored = null;
         await segment.Sealed.DisposeAsync().ConfigureAwait(false);
@@ -314,20 +312,6 @@ internal sealed partial class ContinuousBackup
                 : DateTimeOffset.FromUnixTimeSeconds(mark.ToUnixTimeSeconds()));
         }
     }
-    private static async Task DiscardAsync(ShippedFile file, CancellationToken cancellationToken)
-    {
-        WalRead read;
-        do
-        {
-            read = await file.Tap.ReadAsync(Stream.Null, cancellationToken).ConfigureAwait(false);
-            if (file.Tap is ICdcBackupRetention retention)
-            {
-                await retention.AcknowledgeAsync(retention.Position, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        while (read.Remaining);
-    }
-
     private async Task<string> StoreAsync(ShippedFile file, string key, string path, string kind, CancellationToken cancellationToken)
     {
         await using var bundle = new FileStream(ScratchFile(".snapshot"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
@@ -374,29 +358,15 @@ internal sealed partial class ContinuousBackup
         _uploaded.Add(sealedObject.Length, new KeyValuePair<string, object?>("kind", kind));
     }
 
-    private void Hole(ShippedFile file)
-    {
-        _holes.Add(1);
-        _logger.ZLogWarning($"The log of {file.Prefix:@File} has a hole; its backup starts a new generation");
-        Abandon(file);
-    }
-    private void Drop(ShippedFile file, string reason)
-    {
-        var bytes = file.Buffered;
-        _holes.Add(1);
-        _abandoned.Add(1, new KeyValuePair<string, object?>("reason", reason));
-        _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} dropped {bytes:@Bytes} bytes of log it had not stored ({reason:@Reason}); it starts a new generation");
-        Abandon(file);
-    }
     private static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(MaxBackoff.TotalSeconds, Math.Pow(2, Math.Min(failures - 1, 9))));
     private static void Abandon(ShippedFile file)
     {
         file.PlatformProgress = null;
+        file.DrilledAt = DateTimeOffset.MinValue;
         file.Generation = null;
         file.GenerationKey = null;
         if (file.Side is { Completion.IsCompleted: false } side)
         {
-            file.DrilledAt = DateTimeOffset.MinValue;
             side.Cancellation.Cancel();
         }
 

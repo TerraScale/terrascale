@@ -127,8 +127,8 @@ restored database's name comes from polling `GET …/restores/{operation}` until
 field) or `failed`. A hidden legacy request retains its organization route and the source database's ID in `Location`.
 Encryption and `TBK1` objects are unchanged; restoring either source still requires the master key (`TERRABASE_MASTER_KEY`).
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
-and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload (a drop with
-reason `destination`, see [How shipping works](#how-shipping-works)). Platform files
+and retains the same segment until both copies are stored. A configured destination change ends the generation
+through the continuity boundary described below. Platform files
 and eligible customer jobs in other organizations continue shipping. Retention scans both configured buckets
 independently, including earlier platform backups in customer-only mode; drills exercise the customer copy.
 Retention processes at most 10,000 expired snapshots per file
@@ -181,11 +181,15 @@ transaction. The backup's tap reads that table:
    newest COMMIT row that existed when it started (not a read stopped at 32 MiB), a read mark follows them with that
    start time: every transaction committed before it is in the log before the mark. Both records are additive: the
    object format, the bucket layout and older logs (plain commits only) stay readable.
-2. It then deletes, on the writer, the rows before its anchor, always keeping the newest: an empty the native capture table
-   restarts its ids at 1 after a reopen. The engine does not capture changes to the capture table itself. A read that fails,
-   including this delete, puts its anchor back: the shipper drops what that read appended, and the next read appends
-   the same changes again (or finds a hole, if the delete ran). The change retention of peer streams follows the new
-   anchor only once the delete has succeeded.
+2. Reading advances a cursor without acknowledging it. Only a stored snapshot or segment advances the stored cursor.
+   Its generation, schema map, byte offset and capture position are saved immediately with each upload in the node's
+   durable backup accounting record in the system database. An intent containing the object key and sealed-content hash
+   precedes the upload. After a crash, a completed object matching that intent establishes the saved cursor; an absent
+   object leaves the earlier cursor in place. This accounting is uncaptured engine bookkeeping, so storing the system
+   database's cursor does not itself create another change to ship. The periodic public status is advisory.
+   Acknowledgement follows the saved stored cursor, allowing the engine to trim older rows while retaining the anchor.
+   On reopen, a matching incarnation and retained anchor resume shipping with the saved schema map and generation.
+   A missing generation, changed incarnation or trimmed anchor ends continuity and requires a snapshot.
 3. Anything that moves the log under the tap is a **hole**: the file starts a new generation, and
    `terrabase_backup_holes_total` counts it. Two cases:
    - the anchor row is gone: something else deleted changes the tap had not read;
@@ -202,8 +206,9 @@ A **generation** is one unbroken run of the log from one file on one member. It 
 the database's writer gate, so nothing commits, the tap reads what is left, moves its anchor to the newest change and
 opens a read transaction; then writers go on, and the database is copied row by row, every rowid kept, as of that
 transaction. The copy leaves out the engine's own tables (the native capture table, `sqlite_stat1`).
-A generation starts when shipping starts (every process start), when another member's lease or a new customer
-destination takes over, after a hole, or after unstored log was dropped (below). Before a generation's snapshot holds
+An intact generation resumes after a process restart. A new generation starts when no saved generation can resume,
+when the destination changes or a generation key is unavailable, or after continuity ends (below).
+A clean lease handoff preserves its generation; a handoff with unstored commits requires a snapshot. Before a generation's snapshot holds
 writers, the tap reads any backlog to discard it, so the gate covers only what commits meanwhile. Within a generation a
 snapshot is taken daily, but not while a backlog remains, because the snapshot reads what is left while it holds
 writers. The log read in one pass becomes one **segment**. A backlog, such as the writes committed during a long
@@ -231,34 +236,32 @@ is due, the failed segment is sent again before anything more is read. Between a
 the native capture table stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
 stays in the native capture table, where the backup's durable anchor keeps it. Each shipping pass checks a per-file cap of
 256 MiB of unacknowledged capture payload and row overhead, using the existing pending-log budget. A pass over
-that cap, or one whose retained bytes cannot pass shared disk admission with protected headroom, records a `disk` hole, discards and acknowledges the log through its read position to allow trimming,
-and requires a fresh stored snapshot before shipping resumes. An outage never ends a generation
-just because it reaches the longest backoff. Buffered segments and their disk reservations stay until upload succeeds;
-a refused disk reservation stops further reads without clearing the existing buffer. Transient customer destination
-failures preserve the same pending segment too. A failed snapshot read, a missing generation key or a destination
-change requires a new generation. Every such break logs a warning and counts in both
-`terrabase_backup_abandoned_total{reason}` (`read`, `destination`, `shredded`, `missing_key`, `lease`, `shutdown`, `disk`) and
-`terrabase_backup_holes_total`; a discontinuous tap read also counts as a hole. The replacement generation must store
-a fresh snapshot before shipping segments. A shipper lease change or loss and process shutdown also end a
-generation. If a generation has buffered or unread log, these paths count a hole with reason `lease` or `shutdown` before discarding it. A cancelled daily
-snapshot read counts a `read` hole because its partially consumed log cannot safely be reused.
-At shutdown a file ships its whole backlog, read after read, while the shutdown
-budget lasts and its passes succeed; a daily snapshot upload that shutdown cancels does not stop that. Shutdown starts
-no generation, whose full snapshot would spend the budget other files need: a file without one waits for the next
-start. The exception is a file whose customer destination was just detached, which stores its final snapshot in the
-platform bucket. A daily snapshot due while a backlog remains, or
-while snapshot uploads are busy, waits for a later pass; `terrabase_backup_snapshots_deferred_total{reason}`
-(`backlog`, `busy`) counts each such pass. A daily snapshot upload that fails counts in
-`terrabase_backup_failures_total`, shows as `lastError` until a snapshot is stored, and puts off the next attempt by
-its own backoff (1 s, doubling to 5 minutes), while segments keep shipping.
+that cap, or one whose retained bytes cannot pass shared disk admission with protected headroom, ends continuity with
+reason `disk`. The ended generation records at most one hole while the store remains unreachable. During upload
+backoff it does not read or serialize more payload: it only moves the discard acknowledgement to the current committed
+end to bound retention. A due successful snapshot restores continuity; cap checks cannot prevent that snapshot.
+An outage alone never ends a generation when the disk budget permits retaining its log and pending segments.
 
-Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is the age of the latest time known stored, using the initial
-snapshot as the baseline until a segment is stored. A due, continuous read that returns zero bytes with no
-buffered, unstored or unread log proves the file was stored through the time immediately before that read.
-This keeps idle files healthy without masking pending writes. On discovery, the saved backup status supplies
-the last-shipped baseline when available; otherwise the baseline is file discovery. Clearing a buffer or ending
-a generation cannot reset lag. A daily snapshot being captured or queued does not advance the stored time.
-A successful replacement snapshot establishes the new baseline, but the hole counter still records the break in recovery history.
+One continuity-ending function handles lease change/loss, shutdown, failed or cancelled reads, disk-cap loss,
+destination change, missing generation keys, discontinuous reads and reopening without a resumable generation.
+It samples the engine's committed log end against the stored cursor. If unstored committed changes will be discarded,
+or the saved anchor is no longer retained, it saves one hole and its reason, ends the generation, then acknowledges
+the discarded range. Further discards in that ended generation do not count again. If nothing is unstored it preserves the intact generation without a hole, unless its destination changed or its generation key is unavailable. In particular, a clean shutdown, a lease renewal and a cancelled idle capture count none.
+Reasons appear on `terrabase_backup_abandoned_total{reason}`; `terrabase_backup_holes_total` counts the breaks.
+A replacement snapshot must be stored before any new-generation segment ships.
+
+Shutdown attempts to ship each file's backlog within its budget, then applies that same function to every remaining
+open tap, including files the final flush did not reach. Daily snapshots upload in the background while segments ship;
+a failed upload preserves segment continuity. Their capture failures use the same continuity-ending function.
+Daily snapshot attempts back off independently.
+
+Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is measured from the stored capture position to the committed log
+end sampled in the current shipping pass. It is zero when those positions match. Otherwise it is the age of the
+oldest remaining COMMIT's captured `change_time`, in whole Unix seconds. When that timestamp is absent, the first
+observation of unstored changes supplies a conservative age and remains until a later observation proves storage
+caught up. Uploading a partial backlog cannot reset lag to the upload time: remaining commits retain their age.
+While continuity is ended, lag remains unproven until a new snapshot is stored. The backup probe retains its
+60-second threshold on this lag.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its database's data key, a random salt and the object's

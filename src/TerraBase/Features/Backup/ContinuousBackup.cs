@@ -286,7 +286,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 }
                 catch (Exception error) when (!schedulingToken.IsCancellationRequested)
                 {
-                    Failed(next, error);
+                    await FailedAsync(next, error, schedulingToken).ConfigureAwait(false);
                     next.PendingBytes = next.Buffered;
                     continue;
                 }
@@ -495,11 +495,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 {
                     if (error is OperationCanceledException && cancellationToken.IsCancellationRequested && !callerCancellation.IsCancellationRequested)
                     {
-                        if (file.Generation is not null && (file.Buffered > 0 || file.Behind))
-                        {
-                            Drop(file, "shutdown");
-                        }
-                        _logger.ZLogWarning($"Final backup shipping exhausted its shutdown budget; unshipped changes remain in local storage for the next snapshot");
+                        _logger.ZLogWarning($"Final backup shipping exhausted its shutdown budget; continuity accounting runs before the remaining taps close");
                     }
                     else
                     {
@@ -512,9 +508,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             try
             {
-                if (file.Generation is not null && (file.Buffered > 0 || file.Behind))
+                if (!file.Tap.Ended)
                 {
-                    Drop(file, "shutdown");
+                    await EndContinuityAsync(file, "shutdown", CancellationToken.None).ConfigureAwait(false);
                 }
                 await file.DisposeAsync().ConfigureAwait(false);
             }
@@ -577,15 +573,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         try
         {
-            var store = await _storage.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-            var (kind, id) = RecordKey(database);
-            DateTimeOffset? lastShipped;
-            await using (var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false))
-            {
-                var stored = await transaction.GetAsync(kind, id, cancellationToken).ConfigureAwait(false);
-                lastShipped = stored is null ? null : JsonSerializer.Deserialize(stored.Json.Span, BackupJsonContext.Default.BackupStatusRecord)?.LastShippedAt;
-            }
-
             if (await _engine.OpenTapAsync(database, cancellationToken).ConfigureAwait(false) is { } tap)
             {
                 BackupScratchStream pending;
@@ -599,7 +586,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     throw;
                 }
 
-                _files[prefix] = new ShippedFile(database, prefix, BackupLayout.KeyScope(database), tap, pending, _time.GetUtcNow(), _targets.Platform) { LastShipped = lastShipped };
+                _files[prefix] = new ShippedFile(database, prefix, BackupLayout.KeyScope(database), tap, pending, _targets.Platform);
             }
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -609,7 +596,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
 
 
-    private void Failed(ShippedFile file, Exception error)
+    private async Task FailedAsync(ShippedFile file, Exception error, CancellationToken cancellationToken)
     {
         if (error is ObjectDisposedException)
         {
@@ -622,7 +609,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             file.Target.Keys.Forget(file.Scope);
             if (file.Generation is not null)
             {
-                Drop(file, error is DatabaseShreddedException ? "shredded" : "missing_key");
+                await EndContinuityAsync(file, error is DatabaseShreddedException ? "shredded" : "missing_key", cancellationToken).ConfigureAwait(false);
                 file.DrilledAt = DateTimeOffset.MinValue;
             }
         }
@@ -638,13 +625,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private static double Lag(ShippedFile file, DateTimeOffset now)
     {
-        var stored = file.LastShipped ?? file.Opened;
-        if (file.StoredThrough is { } through && through > stored)
-        {
-            stored = through;
-        }
-
-        return Math.Max(0, (now - stored).TotalSeconds);
+        return file.UnstoredSince is { } since ? Math.Max(0, (now - since).TotalSeconds) : 0;
     }
 
     private string ScratchFile(string extension) => Path.Combine(_scratch, EntityIds.New().ToString() + extension);
@@ -675,7 +656,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private sealed record ShippingProgress(Ulid Generation, DateTimeOffset At);
     private sealed class SideWork(SnapshotKey snapshot, CancellationTokenSource cancellation)
     {
-        public long CdcPosition { get; init; }
         public SnapshotKey Snapshot { get; } = snapshot;
         public CancellationTokenSource Cancellation { get; } = cancellation;
         public TaskCompletionSource? Stored { get; init; }
@@ -685,8 +665,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         public Task Completion { get; set; } = Task.CompletedTask;
     }
-    private sealed record Segment(string Key, FileStream Sealed, DateTimeOffset At, DateTimeOffset? Mark, bool EndsMarked, long CdcPosition);
-    private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, BackupScratchStream pending, DateTimeOffset opened, BackupTarget target)
+    private sealed record Segment(string Key, FileStream Sealed, DateTimeOffset At, DateTimeOffset? Mark, bool EndsMarked, CdcCursor Cursor, long Position);
+    private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, BackupScratchStream pending, BackupTarget target)
         : IAsyncDisposable
     {
         public ShippingJob? Job { get; set; }
@@ -707,7 +687,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public string Scope { get; } = scope;
         public IWalTap Tap { get; } = tap;
         public BackupScratchStream Pending { get; } = pending;
-        public long PendingCdcPosition { get; set; }
+        public CdcCursor? PendingCursor { get; set; }
+        public BackupContinuity? Continuity { get; set; }
+        public bool Recovered { get; set; }
         public List<IDisposable> PendingClaims { get; } = [];
 
         public void ReleasePendingClaims()
@@ -734,9 +716,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public bool PendingEndsMarked { get; set; }
         public DateTimeOffset LastSnapshot { get; set; }
         public DateTimeOffset? LastShipped { get; set; }
-        public DateTimeOffset? StoredThrough { get; set; }
+        public DateTimeOffset? UnstoredSince { get; set; }
         public ShippingProgress? PlatformProgress { get; set; }
-        public DateTimeOffset Opened { get; } = opened;
 
         public string? LastError { get; set; }
         public int Failures { get; set; }

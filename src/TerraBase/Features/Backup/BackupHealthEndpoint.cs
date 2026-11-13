@@ -27,7 +27,7 @@ public sealed class BackupHealthEndpoint(IContinuousBackup backup, TerraBaseOpti
         HttpContext.Response.Headers.CacheControl = "no-store";
         var status = backup.Status;
         var shipping = status.Shipping && status.Files.Count > 0
-            && status.Files.Where(file => file.Shipping).All(file => file.LastShippedAt is not null && file.LagSeconds < MaxLagSeconds);
+            && status.Files.Where(file => file.Shipping).All(file => file.Generation is not null && file.LastShippedAt is not null && file.LagSeconds < MaxLagSeconds);
         return ValueTask.FromResult<IResult>(shipping
             ? TypedResults.Ok(StatusBody.For(HttpContext, "shipping", options))
             : TypedResults.Json(StatusBody.For(HttpContext, "unavailable", options), statusCode: StatusCodes.Status503ServiceUnavailable));
