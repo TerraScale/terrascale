@@ -352,7 +352,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
           const destination = promotedKey(published.id).slice(0, -4);
           const databaseBytes = readFileSync(destination);
           const keyBytes = readFileSync(destination + '.key');
-          for (const state of ['before-key', 'after-key', 'corrupt', 'conflicting-key', 'conflicting-replica']) {
+          for (const state of ['before-key', 'after-key', 'corrupt', 'conflicting-destination', 'conflicting-replica']) {
             restore(published.id, saved);
             writeFileSync(destination, databaseBytes);
             writeFileSync(destination + '.key', keyBytes);
@@ -363,7 +363,10 @@ const test = base.extend<{}, { promotion: Promotion }>({
               expect(existsSync(destination + '.key')).toBe(false);
             } else {
               if (state === 'corrupt') writeFileSync(destination, databaseBytes.subarray(0, 100));
-              if (state === 'conflicting-key') writeFileSync(destination + '.key', readFileSync(promotedKey(active.id)));
+              if (state === 'conflicting-destination') {
+                writeFileSync(destination, readFileSync(promotedKey(active.id).slice(0, -4)));
+                writeFileSync(destination + '.key', readFileSync(promotedKey(active.id)));
+              }
               if (state === 'conflicting-replica') {
                 const other = replicaKey(published.id).slice(0, -4);
                 writeFileSync(other, databaseBytes.subarray(0, 100));
