@@ -1,0 +1,17 @@
+@inherits RazorSlice<WaitlistPageModel>
+@implements IUsesLayout<HostedLayout, HostedLayoutModel>
+<div class="head"><h1>Join the waitlist</h1></div>
+@if (Model.Received)
+{
+<div class="alert" data-state="success" role="status"><p>Your request has been received.</p></div>
+}
+else
+{
+<form method="post" action="@($"/ui/{Model.Tenant}/waitlist")">
+<div class="field"><label for="waitlist-email">Email</label><input id="waitlist-email" type="email" name="email" autocomplete="email" maxlength="254" required></div>
+<button type="submit">Join waitlist</button>
+</form>
+}
+@functions {
+    public HostedLayoutModel LayoutModel => Model.Layout;
+}

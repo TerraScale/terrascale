@@ -114,6 +114,9 @@ const tabStates: Record<string, PagePattern['query']> = {
 const authSections: [string, string][] = [
   ['overview', 'Overview'],
   ['users', 'Users'],
+  ['invitations', 'Invitations'],
+  ['waitlist', 'Waitlist'],
+  ['restrictions', 'Restrictions'],
   ['sessions', 'Sessions'],
   ['sign-in', 'Sign-in methods'],
   ['social', 'Social sign-in'],
@@ -362,6 +365,12 @@ export const dashboardStates: readonly PageState[] = [
           await expect(page.locator('input[name=bot_challenge]')).not.toBeChecked();
         }
         else if (section === 'users') await expect(page.getByText('No users yet.', { exact: true })).toBeVisible();
+        else if (section === 'invitations') await expect(page.getByText('No invitations yet.', { exact: true })).toBeVisible();
+        else if (section === 'waitlist') await expect(page.getByText('The waitlist is empty.', { exact: true })).toBeVisible();
+        else if (section === 'restrictions') {
+          await expect(page.locator('#signup-mode')).toHaveValue('public');
+          await expect(page.locator('#signup-allowlist')).toHaveValue('');
+        }
         else if (section === 'danger') {
           await expect(page.getByText('No records.', { exact: true })).toHaveCount(3);
           await expect(page.locator('main')).toHaveAttribute('data-auth-section', 'danger');

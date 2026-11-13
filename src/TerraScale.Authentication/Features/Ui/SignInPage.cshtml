@@ -124,10 +124,7 @@ case SignInStep.Email:
 {
 <a href="@Model.Link("reset")">@Model.Copy.ForgotPassword</a>
 }
-@if (Model.Theme.SignUp)
-{
-<a href="@Model.Link("sign-up")">@Model.Copy.CreateAccount</a>
-}
+<a href="@Model.Link(Model.Theme.SignUpMode == "waitlist" ? "waitlist" : "sign-up")">@(Model.Theme.SignUpMode == "waitlist" ? "Join waitlist" : Model.Copy.CreateAccount)</a>
 </div>
 break;
 case SignInStep.Password:

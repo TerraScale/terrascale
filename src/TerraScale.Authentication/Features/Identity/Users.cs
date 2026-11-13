@@ -1,14 +1,16 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Identity;
 
-public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock)
+public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock, SignUpRestrictions restrictions)
 {
     public static string? NormalizeEmail(string? email)
     {
@@ -19,9 +21,27 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         }
 
         var at = trimmed.IndexOf('@', StringComparison.Ordinal);
-        return at > 0 && at == trimmed.LastIndexOf('@') && trimmed[(at + 1)..].Split('.') is { Length: > 1 } labels && labels.All(label => label.Length > 0)
-            ? AuthIds.NormalizeEmail(trimmed)
-            : null;
+        if (at <= 0 || at != trimmed.LastIndexOf('@') || NormalizeDomain(trimmed[(at + 1)..]) is not { } domain)
+        {
+            return null;
+        }
+
+        var normalized = AuthIds.NormalizeEmail(trimmed[..at] + "@" + domain);
+        return normalized.Length <= 254 ? normalized : null;
+    }
+
+    internal static string? NormalizeDomain(string domain)
+    {
+        try
+        {
+            var ascii = new IdnMapping().GetAscii(domain).ToLowerInvariant();
+            return Uri.CheckHostName(ascii) == UriHostNameType.Dns && ascii.Split('.') is { Length: > 1 } labels && labels.All(label => label.Length > 0)
+                ? ascii : null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 
     public Task<UserRecord?> CreateAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
@@ -39,9 +59,14 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
     internal async Task<UserRecord?> CreateAccountAsync(string instanceId, string email, string? passwordHash, string userId, CancellationToken cancellationToken)
     {
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));
+        if (await restrictions.AdmissionAsync(instanceId, normalized, true, cancellationToken).ConfigureAwait(false) is not { } admission)
+        {
+            return null;
+        }
+
         var lifecycleEvent = await outbox.CreateAsync(instanceId, "user.signed_up", userId, normalized, null, cancellationToken).ConfigureAwait(false);
         var (user, changes) = this.NewAccount(instanceId, normalized, passwordHash, userId, lifecycleEvent);
-        if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+        if (await data.SaveAsync([.. changes, .. admission], cancellationToken).ConfigureAwait(false))
         {
             return BindAuthenticationState(user);
         }
@@ -68,7 +93,7 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
         return linked is { Disabled: false } && linked.LinkedProviders.Contains(identity) ? BindProvider(linked, identity) : null;
     }
 
-    public async Task<UserRecord?> FromProviderAsync(string tenant, LinkedProvider identity, string verifiedEmail, bool allowCreation, CancellationToken cancellationToken)
+    public async Task<UserRecord?> FromProviderAsync(string tenant, LinkedProvider identity, string verifiedEmail, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(identity);
         if (!Complete(identity))
@@ -83,14 +108,19 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                 return await this.FindByProviderAsync(tenant, identity, cancellationToken).ConfigureAwait(false);
             }
 
-            if (!allowCreation || NormalizeEmail(verifiedEmail) is not { } normalized
+            if (NormalizeEmail(verifiedEmail) is not { } normalized
                 || await this.FindByEmailAsync(tenant, normalized, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return null;
             }
 
+            if (await restrictions.AdmissionAsync(tenant, normalized, true, cancellationToken).ConfigureAwait(false) is not { } admission)
+            {
+                return null;
+            }
+
             var user = new UserRecord(AuthIds.New(), tenant, normalized, 0, clock.GetUtcNow()) { AuthStamp = AuthIds.New(), LinkedProviders = [identity] };
-            List<Change> changes = [Change.Insert(user), Change.Insert(Link(user, identity))];
+            List<Change> changes = [Change.Insert(user), Change.Insert(Link(user, identity)), .. admission];
             if (await outbox.CreateAsync(tenant, "user.signed_up", user.Id, normalized, null, cancellationToken).ConfigureAwait(false) is { } lifecycleEvent)
             {
                 changes.Add(lifecycleEvent);

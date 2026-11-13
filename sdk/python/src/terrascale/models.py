@@ -370,19 +370,26 @@ def _int_or_none(body: dict[str, Any], key: str, what: str) -> int | None:
     return value
 
 
+def _signup_mode(body: dict[str, Any]) -> str:
+    value = body.get("sign_up_mode")
+    if value not in ("public", "restricted", "waitlist"):
+        raise ValueError("invalid sign-up mode")
+    return str(value)
+
+
 @dataclass(frozen=True)
 class ProjectSettingsMethods:
     """The project's enabled end-user sign-in methods."""
 
     passcode: bool
     password: bool
-    sign_up: bool
+    sign_up_mode: str
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettingsMethods:
         return cls(passcode=_bool(body, "passcode", "project sign-in methods"),
                    password=_bool(body, "password", "project sign-in methods"),
-                   sign_up=_bool(body, "sign_up", "project sign-in methods"))
+                   sign_up_mode=_signup_mode(body))
 
 
 @dataclass(frozen=True)
@@ -496,6 +503,7 @@ class ProjectSettings:
     counts: ProjectSettingsCounts
     providers: list[ProjectSettingsProvider]
     configuration: ProjectSettingsConfiguration | None = None
+    restrictions: ProjectRestrictions | None = None
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettings:
@@ -504,6 +512,7 @@ class ProjectSettings:
                 raise ValueError("invalid project settings")
         configuration = body.get("configuration")
         return cls(
+            restrictions=ProjectRestrictions.from_json(body["restrictions"]) if body.get("restrictions") is not None else None,
             project_id=validate_id(body["project_id"]),
             issuer=body["issuer"],
             discovery_url=body["discovery_url"],
@@ -524,12 +533,15 @@ class ProjectSettingsUpdate:
     methods: ProjectSettingsMethods | None = None
     branding: ProjectSettingsBranding | None = None
     configuration: ProjectSettingsConfiguration | None = None
+    restrictions: ProjectRestrictions | None = None
 
     def to_body(self) -> dict[str, Any]:
         body: dict[str, Any] = {}
+        if self.restrictions is not None:
+            body["restrictions"] = self.restrictions.to_body()
         if self.methods is not None:
             body["methods"] = {"passcode": self.methods.passcode, "password": self.methods.password,
-                               "sign_up": self.methods.sign_up}
+                               "sign_up_mode": self.methods.sign_up_mode}
         if self.branding is not None:
             branding: dict[str, Any] = {}
             for key in ("name", "logo_url", "theme_color", "default_theme", "background_color", "text_color",
@@ -755,3 +767,70 @@ class DatabaseRequestLogs:
             raise ValueError("invalid request logs items")
         return cls(validate_id(body["databaseId"]), [DatabaseRequestLog.from_json(i) for i in items],
                    body["truncated"], body["recordingLimited"])
+
+@dataclass(frozen=True)
+class ProjectRestrictions:
+    allowlist: list[str]
+    blocklist: list[str]
+    block_disposable_emails: bool = False
+    block_email_aliases: bool = False
+
+    def to_body(self) -> dict[str, Any]:
+        return {"allowlist": self.allowlist, "blocklist": self.blocklist,
+                "block_disposable_emails": self.block_disposable_emails,
+                "block_email_aliases": self.block_email_aliases}
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectRestrictions:
+        return cls(_strings(body, "allowlist", "restrictions"), _strings(body, "blocklist", "restrictions"),
+                   _bool(body, "block_disposable_emails", "restrictions"),
+                   _bool(body, "block_email_aliases", "restrictions"))
+
+
+@dataclass(frozen=True)
+class ProjectInvitation:
+    id: str
+    email: str
+    redirect_url: str | None
+    created_at: str
+    expires_at: str
+    status: str
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectInvitation:
+        return cls(validate_id(body["id"]), body["email"], body["redirect_url"],
+                   body["created_at"], body["expires_at"], body["status"])
+
+
+@dataclass(frozen=True)
+class ProjectInvitationPage:
+    items: list[ProjectInvitation]
+    next_cursor: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectInvitationPage:
+        return cls([ProjectInvitation.from_json(entry) for entry in body["items"]], body["next"])
+
+
+@dataclass(frozen=True)
+class ProjectWaitlistEntry:
+    id: str
+    project_id: str
+    email: str
+    created_at: str
+    status: str
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectWaitlistEntry:
+        return cls(validate_id(body["id"]), validate_id(body["project_id"]),
+                   body["email"], body["created_at"], body["status"])
+
+
+@dataclass(frozen=True)
+class ProjectWaitlistPage:
+    items: list[ProjectWaitlistEntry]
+    next_cursor: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectWaitlistPage:
+        return cls([ProjectWaitlistEntry.from_json(entry) for entry in body["items"]], body["next"])

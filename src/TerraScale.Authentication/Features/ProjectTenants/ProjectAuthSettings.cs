@@ -6,34 +6,16 @@ using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary>A project tenant's sign-in methods and branding (table <c>project_auth_settings</c>, one per project).</summary>
-/// <param name="InstanceId">The project.</param>
-/// <param name="Passcode">Email passcode sign-in.</param>
-/// <param name="Password">Password sign-in.</param>
-/// <param name="SignUp">Self sign-up.</param>
-/// <param name="Name">Display name, or null for the project's name.</param>
-/// <param name="LogoUrl">An https logo URL, or null.</param>
-/// <param name="ThemeColor"><c>#rrggbb</c>, or null for the default theme.</param>
-/// <param name="Providers">The configured social sign-in providers, or null for none.</param>
-/// <param name="TitleSize">Hosted title size in pixels, or the default.</param>
-/// <param name="DefaultTheme">Light, dark or system appearance.</param>
-/// <param name="FooterLinks">Project footer links, or the default links.</param>
-/// <param name="BackgroundColor">Optional page background colour.</param>
-/// <param name="TextColor">Optional text colour.</param>
-/// <param name="Configuration">Project redirect and absolute session policy.</param>
-/// <param name="EmailMessage">Optional plain-text message in authentication emails, never HTML or a template expression.</param>
-public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode = true, bool Password = true, bool SignUp = true, string? Name = null, string? LogoUrl = null, string? ThemeColor = null,
+public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode = true, bool Password = true, string SignUpMode = "public", string? Name = null, string? LogoUrl = null, string? ThemeColor = null,
     IReadOnlyList<SocialProviderRecord>? Providers = null, int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null,
     string? BackgroundColor = null, string? TextColor = null, ConfigurationBody? Configuration = null, string? EmailMessage = null,
-    IReadOnlyList<string>? SubscribedWebhookEvents = null)
+    IReadOnlyList<string>? SubscribedWebhookEvents = null, RestrictionsBody? Restrictions = null)
 {
     public AttackProtectionSettings AttackProtection { get; init; } = new();
 
-    /// <summary>The configured <paramref name="provider"/>, or null.</summary>
     public SocialProviderRecord? Provider(string provider) => this.Providers?.FirstOrDefault(record => record.Provider == provider);
 }
 
-/// <summary>Per-project sign-in settings, read by the management API and the tenant's hosted pages.</summary>
 public sealed class ProjectAuthSettings(AuthData data)
 {
     public async Task<ProjectAuthSettingsRecord> GetAsync(string projectId, CancellationToken cancellationToken = default) =>

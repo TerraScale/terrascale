@@ -241,3 +241,4 @@ tokio::time::timeout(Duration::from_secs(90), async { loop { match client.set_da
 Pass the project secret API key as the credential to `client.projects()?.disable_user(secret_key, project_id, user_id).await`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
 
 Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.
+Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.

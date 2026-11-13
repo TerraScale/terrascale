@@ -537,3 +537,38 @@ class AsyncAPIKeyTokenSource:
 
     def invalidate(self, token: str) -> None:
         self._x.invalidate(token)
+
+def create_project_invitation_call(issuer: str | None, project: str, email: str,
+                                   redirect_url: str | None) -> _spec.Call:
+    return _spec.Call("POST", _tenant_path(project, "invitations"),
+                      lambda r: models.ProjectInvitation.from_json(r.json()),
+                      body={"email": email, "redirect_url": redirect_url}, base_url=_origin(issuer))
+
+
+def list_project_invitations_call(issuer: str | None, project: str, limit: int | None,
+                                  after: str | None) -> _spec.Call:
+    return _spec.Call("GET", _tenant_path(project, "invitations"),
+                      lambda r: models.ProjectInvitationPage.from_json(r.json()),
+                      params=_spec._page_params(_page_limit(limit), _cursor(after)), base_url=_origin(issuer))
+
+
+def revoke_project_invitation_call(issuer: str | None, project: str, invitation: str) -> _spec.Call:
+    return _spec.Call("DELETE", _tenant_path(project, "invitations", validate_id(invitation)),
+                      lambda r: None, base_url=_origin(issuer))
+
+
+def list_project_waitlist_call(issuer: str | None, project: str, limit: int | None,
+                               after: str | None) -> _spec.Call:
+    return _spec.Call("GET", _tenant_path(project, "waitlist"),
+                      lambda r: models.ProjectWaitlistPage.from_json(r.json()),
+                      params=_spec._page_params(_page_limit(limit), _cursor(after)), base_url=_origin(issuer))
+
+
+def approve_project_waitlist_call(issuer: str | None, project: str, entry: str) -> _spec.Call:
+    return _spec.Call("POST", _tenant_path(project, "waitlist", validate_id(entry), "approve"),
+                      lambda r: None, base_url=_origin(issuer))
+
+
+def reject_project_waitlist_call(issuer: str | None, project: str, entry: str) -> _spec.Call:
+    return _spec.Call("POST", _tenant_path(project, "waitlist", validate_id(entry), "reject"),
+                      lambda r: None, base_url=_origin(issuer))

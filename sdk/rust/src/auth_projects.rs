@@ -14,6 +14,45 @@ use crate::client::{SharedClient, SKIP_AUTH_MARKER, SKIP_SESSION_MARKER};
 use crate::error::{Error, ErrorKind, Result};
 use crate::transport::{Method, Request};
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectRestrictions {
+    pub allowlist: Vec<String>,
+    pub blocklist: Vec<String>,
+    pub block_disposable_emails: bool,
+    pub block_email_aliases: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectInvitation {
+    pub id: String,
+    pub email: String,
+    pub redirect_url: Option<String>,
+    pub created_at: String,
+    pub expires_at: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectInvitationPage {
+    pub items: Vec<ProjectInvitation>,
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectWaitlistEntry {
+    pub id: String,
+    pub project_id: String,
+    pub email: String,
+    pub created_at: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectWaitlistPage {
+    pub items: Vec<ProjectWaitlistEntry>,
+    pub next: Option<String>,
+}
+
 const MAX_EXPORT_CURSOR_BYTES: usize = 8192;
 
 /// Sign-in methods; at least one of passcode and password stays on.
@@ -24,7 +63,7 @@ pub struct ProjectMethods {
     /// Whether the password method is on.
     pub password: bool,
     /// Whether sign-up is allowed.
-    pub sign_up: bool,
+    pub sign_up_mode: String,
 }
 
 /// A labelled link underneath the hosted sign-in card.
@@ -143,6 +182,8 @@ pub struct ProjectSettings {
     /// Session policy, when the project has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ProjectConfiguration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restrictions: Option<ProjectRestrictions>,
 }
 
 /// Settings changes; an omitted part stays unchanged.
@@ -157,6 +198,8 @@ pub struct ProjectSettingsUpdate {
     /// Session policy changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ProjectConfiguration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restrictions: Option<ProjectRestrictions>,
 }
 
 /// A project end user.
@@ -408,6 +451,116 @@ impl ProjectsClient {
     }
 
     /// Read the project's settings (`GET /v1/{project}/settings`).
+    pub async fn list_invitations(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        limit: Option<u32>,
+        after: Option<&str>,
+    ) -> Result<ProjectInvitationPage> {
+        let query = self.page_query(None, limit, after)?;
+        self.send_typed(
+            "auth_projects.list_invitations",
+            Method::Get,
+            &format!("/{}/invitations{query}", self.project(project_id)?),
+            None,
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn list_waitlist(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        limit: Option<u32>,
+        after: Option<&str>,
+    ) -> Result<ProjectWaitlistPage> {
+        let query = self.page_query(None, limit, after)?;
+        self.send_typed(
+            "auth_projects.list_waitlist",
+            Method::Get,
+            &format!("/{}/waitlist{query}", self.project(project_id)?),
+            None,
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn create_invitation(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        email: &str,
+        redirect_url: Option<&str>,
+    ) -> Result<ProjectInvitation> {
+        self.send_typed(
+            "auth_projects.create_invitation",
+            Method::Post,
+            &format!("/{}/invitations", self.project(project_id)?),
+            Some(&serde_json::json!({"email": email, "redirect_url": redirect_url})),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn revoke_invitation(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        invitation_id: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.revoke_invitation",
+            Method::Delete,
+            &format!(
+                "/{}/invitations/{}",
+                self.project(project_id)?,
+                path_id(invitation_id, "invitation_id")?
+            ),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn approve_waitlist(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        entry_id: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.approve_waitlist",
+            Method::Post,
+            &format!(
+                "/{}/waitlist/{}/approve",
+                self.project(project_id)?,
+                path_id(entry_id, "entry_id")?
+            ),
+            sign_in,
+        )
+        .await
+    }
+
+    pub async fn reject_waitlist(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        entry_id: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.reject_waitlist",
+            Method::Post,
+            &format!(
+                "/{}/waitlist/{}/reject",
+                self.project(project_id)?,
+                path_id(entry_id, "entry_id")?
+            ),
+            sign_in,
+        )
+        .await
+    }
+
     pub async fn get_settings(&self, sign_in: &str, project_id: &str) -> Result<ProjectSettings> {
         self.send_typed(
             "auth_projects.get_settings",

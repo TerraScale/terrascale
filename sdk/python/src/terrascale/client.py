@@ -18,8 +18,10 @@ from ._version import __version__
 from .auth import (
     APIKeyTokenSource,
     _scoped_key_call,
+    approve_project_waitlist_call,
     create_api_key_call,
     create_project_client_call,
+    create_project_invitation_call,
     delete_project_client_call,
     delete_provider_call,
     delete_user_call,
@@ -30,9 +32,13 @@ from .auth import (
     get_user_call,
     list_api_keys_call,
     list_project_clients_call,
+    list_project_invitations_call,
+    list_project_waitlist_call,
     list_sessions_call,
     list_users_call,
+    reject_project_waitlist_call,
     revoke_api_key_call,
+    revoke_project_invitation_call,
     revoke_session_call,
     rotate_api_key_call,
     rotate_project_client_secret_call,
@@ -380,6 +386,34 @@ class TerraScale:
         """Delete a registered client."""
         self._send(delete_project_client_call(self._issuer, project if project is not None else self.project,
                                               client_id))
+
+
+    def create_project_invitation(self, email: str, *, redirect_url: str | None = None,
+                                        project: str | None = None) -> models.ProjectInvitation:
+        return self._send(create_project_invitation_call(
+            self._issuer, project if project is not None else self.project, email, redirect_url))
+
+    def list_project_invitations(self, *, limit: int | None = None, after: str | None = None,
+                                 project: str | None = None) -> models.ProjectInvitationPage:
+        return self._send(list_project_invitations_call(
+            self._issuer, project if project is not None else self.project, limit, after))
+
+    def revoke_project_invitation(self, invitation: str, *, project: str | None = None) -> None:
+        self._send(revoke_project_invitation_call(
+            self._issuer, project if project is not None else self.project, invitation))
+
+    def list_project_waitlist(self, *, limit: int | None = None, after: str | None = None,
+                                 project: str | None = None) -> models.ProjectWaitlistPage:
+        return self._send(list_project_waitlist_call(
+            self._issuer, project if project is not None else self.project, limit, after))
+
+    def approve_project_waitlist(self, entry: str, *, project: str | None = None) -> None:
+        self._send(approve_project_waitlist_call(
+            self._issuer, project if project is not None else self.project, entry))
+
+    def reject_project_waitlist(self, entry: str, *, project: str | None = None) -> None:
+        self._send(reject_project_waitlist_call(
+            self._issuer, project if project is not None else self.project, entry))
 
     def get_settings(self, *, project: str | None = None) -> models.ProjectSettings:
         """Read the project's end-user sign-in settings; viewer access with the caller's sign-in token."""

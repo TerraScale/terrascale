@@ -158,10 +158,19 @@ Card("Webhooks");
 <fieldset class="ts-field"><legend class="ts-label">Events</legend><div class="ts-idp-checks">@foreach (var name in AuthenticationConsole.LifecycleEvents) { <label class="ts-check"><input type="checkbox" name="event_types" value="@name" checked="@chosen.Contains(name)" /><span class="ts-mono">@name</span></label> }</div></fieldset>
 @{ DialogFooter("auth-create-webhook-dialog", "Add webhook endpoint"); }</form></div></dialog> }
 }
+else if (current.Key == "invitations") {
+@(await RenderPartialAsync<AuthenticationInvitations, AuthenticationPage>(Model))
+}
+else if (current.Key == "waitlist") {
+@(await RenderPartialAsync<AuthenticationWaitlist, AuthenticationPage>(Model))
+}
+else if (current.Key == "restrictions") {
+@(await RenderPartialAsync<AuthenticationRestrictions, AuthenticationPage>(Model))
+}
 else if (current.Key == "sign-in") {
 Card("Sign-in methods");
 <div class="ts-card-body">@if (settings is null) { Empty("Sign-in methods are unavailable."); } else {
-<form method="post" action="/api/v1/auth-management/settings" id="auth-sign-in-form">@{ Csrf(); }<ul class="ts-list">@foreach (var (name, label, on) in new[] { ("passcode", "Email passcode", settings.Methods.Passcode), ("password", "Password", settings.Methods.Password), ("sign_up", "Self sign-up", settings.Methods.SignUp) }) { <li class="ts-list-item"><label class="ts-list-main ts-strong" for="@("auth-method-" + name)">@label</label><input class="ts-switch" type="checkbox" role="switch" id="@("auth-method-" + name)" name="@name" checked="@on" disabled="@(!manage)" /></li> }</ul></form> }</div>
+<form method="post" action="/api/v1/auth-management/settings" id="auth-sign-in-form">@{ Csrf(); }<ul class="ts-list">@foreach (var (name, label, on) in new[] { ("passcode", "Email passcode", settings.Methods.Passcode), ("password", "Password", settings.Methods.Password) }) { <li class="ts-list-item"><label class="ts-list-main ts-strong" for="@("auth-method-" + name)">@label</label><input class="ts-switch" type="checkbox" role="switch" id="@("auth-method-" + name)" name="@name" checked="@on" disabled="@(!manage)" /></li> }</ul><input type="hidden" name="sign_up_mode" value="@settings.Methods.SignUpMode" /></form> }</div>
 }
 else if (current.Key == "social") {
 Card("Social sign-in");

@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Webhooks;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
 
@@ -34,7 +35,7 @@ public sealed record IssuedPasscode(string Email, string Code, DateTimeOffset Ex
     public override string ToString() => nameof(IssuedPasscode);
 }
 
-public sealed class Passcodes(AuthData data, Credentials credentials, Users users, Sessions sessions, WebhookOutbox outbox, TimeProvider clock, AuthOptions options)
+public sealed class Passcodes(AuthData data, Credentials credentials, Users users, Sessions sessions, WebhookOutbox outbox, TimeProvider clock, AuthOptions options, SignUpRestrictions restrictions)
 {
     public const int MaxAttempts = 5;
 
@@ -109,6 +110,11 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             return null;
         }
 
+        if (await restrictions.AdmissionAsync(instanceId, normalized, false, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return null;
+        }
+
         return await users.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is { } user
             ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.SignIn, null, null, cancellationToken).ConfigureAwait(false)
             : await this.IssueAsync(instanceId, SignUpKey + normalized, AuthIds.New(), normalized, 0, null, PasscodePurpose.SignUp, passwordHash,
@@ -118,6 +124,11 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
     public async Task<IssuedPasscode?> ResendSignUpAsync(string instanceId, string email, CancellationToken cancellationToken = default)
     {
         if (Users.NormalizeEmail(email) is not { } normalized)
+        {
+            return null;
+        }
+
+        if (await restrictions.AdmissionAsync(instanceId, normalized, false, cancellationToken).ConfigureAwait(false) is null)
         {
             return null;
         }
@@ -343,6 +354,12 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             UserRecord? created = null;
             if (matches && createAccount is not null)
             {
+                if (await restrictions.AdmissionAsync(instanceId, passcode.Email, true, cancellationToken).ConfigureAwait(false) is not { } admission)
+                {
+                    return null;
+                }
+
+                changes.AddRange(admission);
                 (created, var creates) = await createAccount(passcode).ConfigureAwait(false);
                 changes.AddRange(creates);
             }

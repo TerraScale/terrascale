@@ -17,7 +17,7 @@ async function received(after: number): Promise<Delivery[]> {
   return await response.json() as Delivery[];
 }
 
-test('auth webhooks verify signup signatures, retry failures and replay the original event', async ({ browser }, info) => {
+test('auth webhooks verify invited signup signatures, retry failures and replay the original event', async ({ browser }, info) => {
   await onLocalStack(async () => {
     const owner = journey();
     const context = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
@@ -49,12 +49,24 @@ test('auth webhooks verify signup signatures, retry failures and replay the orig
       const userPage = await userContext.newPage();
       try {
         const userEmail = await newAddress(`webhook-user-${randomBytes(4).toString('hex')}`);
-        await userPage.goto(`${auth}/ui/${projectId}/sign-up`);
+        await page.goto(dash + '/auth/restrictions');
+        await page.locator('#signup-mode').selectOption('restricted');
+        await page.getByRole('button', { name: 'Save restrictions' }).click();
+        await expect(page.locator('#signup-mode')).toHaveValue('restricted');
+        await page.goto(dash + '/auth/invitations');
+        await page.locator('#invitation-email').fill(userEmail);
+        await page.getByRole('button', { name: 'Invite user' }).click();
+        await expect(page.locator('.ts-list-item').filter({ hasText: userEmail })).toContainText('pending');
+        const invitation = await nextMail(userEmail, 0);
+        const link = invitation.text.match(new RegExp(auth + '/ui/' + projectId + '/invitations/[A-Za-z0-9_-]{43}'))?.[0];
+        expect(link).toBeTruthy();
+        saveSecret('webhook-invitation-token', new URL(link!).pathname.split('/').at(-1)!);
+        await userPage.goto(link!);
         await hostedReady(userPage);
-        await userPage.locator('#sign-up-email').fill(userEmail);
+        await expect(userPage.locator('#sign-up-email')).toHaveValue(userEmail);
         await enterSecret(userPage.locator('#sign-up-password'), password);
         await userPage.locator('form:has(#sign-up-email) button[type=submit]').click();
-        const mail = await nextMail(userEmail, 0);
+        const mail = await nextMail(userEmail, 1);
         const code = /^\s*(\d{6})\s*$/m.exec(mail.text)?.[1] ?? '';
         expect(code).toMatch(/^\d{6}$/);
         await enterSecret(userPage.locator('#sign-up-code-digit'), code);
