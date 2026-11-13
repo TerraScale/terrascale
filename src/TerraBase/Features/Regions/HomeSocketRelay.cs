@@ -158,11 +158,16 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                 using (authReply)
                 {
                     if (authReply.RootElement.TryGetProperty("error", out var error)
-                        && error.TryGetProperty("message", out var message)
-                        && message.GetString() == HomeForwarding.PlacementMissMessage
-                        && await RefreshAsync().ConfigureAwait(false) is { } fresh)
+                        && (error.TryGetProperty("message", out var message) && message.GetString() == HomeForwarding.PlacementMissMessage
+                            || error.TryGetProperty("code", out var code) && code.GetString() == SqlErrors.WrongRegion))
                     {
-                        await RunAsync(context, fresh, cancellationToken, client, authFrame, attempt + 1).ConfigureAwait(false);
+                        if (await RefreshAsync().ConfigureAwait(false) is { } fresh)
+                        {
+                            await RunAsync(context, fresh, cancellationToken, client, authFrame, attempt + 1).ConfigureAwait(false);
+                            return;
+                        }
+                        await RefuseAsync(context, client, context.Features.Get<BrowserConnection>()?.Id, SqlErrors.Unavailable,
+                            $"the database region {home.Region} could not be reached", cancellationToken).ConfigureAwait(false);
                         return;
                     }
                 }

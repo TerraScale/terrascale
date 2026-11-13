@@ -130,6 +130,11 @@ internal static class HomeForwarding
             return null;
         }
 
+        if (!context.WebSockets.IsWebSocketRequest
+            && context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
+        {
+            context.Features.Set(new ForwardedAccounting());
+        }
         var owners = context.RequestServices.GetRequiredService<RegionalOwners>();
         if (!owners.Writer)
         {
