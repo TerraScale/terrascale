@@ -2,6 +2,8 @@ using System.Globalization;
 using System.IO.Pipelines;
 using System.Net;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Management;
+using TerraBase.Configuration;
 using Google.Protobuf;
 using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
@@ -12,7 +14,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Sync;
 
-internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, IReplicaPeers peers) : EndpointWithoutRequest<IResult>, IRevisionPullSink
+internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, IReplicaPeers peers,
+    IStorageEngine engine, TerraBaseOptions options, InternalCredential credential) : EndpointWithoutRequest<IResult>, IRevisionPullSink
 {
     private const string MediaType = PullAnswer.MediaType;
     private const int MaxBodyBytes = 64 * 1024;
@@ -69,10 +72,35 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
 
         return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
         {
-            NotFound error => ErrorResponse.From(error),
+            NotFound error => await PullRetainedAsync(request.ClientRevision, error, cancellationToken).ConfigureAwait(false),
             Unavailable error => ErrorResponse.From(error),
             TenantContext database => await PullAsync(database, request.ClientRevision, cancellationToken).ConfigureAwait(false),
         };
+    }
+
+
+    private async ValueTask<IResult> PullRetainedAsync(string revision, NotFound missing, CancellationToken cancellationToken)
+    {
+        if (options.PeersFile is null || !credential.Matches(HttpContext) || ReplicaRoutes.Database(HttpContext) is not { } database)
+        {
+            return ErrorResponse.From(missing);
+        }
+        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
+        var address = HttpContext.Connection.RemoteIpAddress?.MapToIPv4();
+        if (!nodes.Any(node => node.Region == options.Region && node.Name != options.MachineId && node.Address.Equals(address)))
+        {
+            return ErrorResponse.From(missing);
+        }
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        var retained = await SystemCatalog.GetAsync(transaction, DeletedDatabases.Kind, database.DatabaseId!,
+            ManagementJsonContext.Default.DeletedDatabaseRecord, cancellationToken).ConfigureAwait(false);
+        if (retained is null || retained.Database.Home(options.Region) != options.Region
+            || !DatabasePurge.SameDatabase(retained.Storage, database))
+        {
+            return ErrorResponse.From(missing);
+        }
+        return await PullAsync(retained.Storage, revision, cancellationToken).ConfigureAwait(false);
     }
 
 

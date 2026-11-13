@@ -223,7 +223,7 @@ internal sealed partial class EngineManagementService
     }
 
     private async ValueTask<TenantContext> UnregisterRecordAsync(
-        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool customerDeletion = false)
+        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool customerDeletion = false, bool retireIdentity = true)
     {
         if (customerDeletion)
         {
@@ -231,12 +231,18 @@ internal sealed partial class EngineManagementService
             await BackupDestinationHistory.CaptureAsync(transaction, storage, cancellationToken).ConfigureAwait(false);
         }
         _ = await CatalogTables.PutPendingCleanupAsync(transaction, storage, cancellationToken).ConfigureAwait(false);
-        _ = await CatalogTables.DeleteDatabaseAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false);
+        _ = await CatalogTables.DeleteDatabaseAsync(transaction, database.Id, cancellationToken, retireIdentity).ConfigureAwait(false);
         ClearKeptNames(database.Id);
-        await StorageSweep.AddAsync(transaction, new SweepEntry(StorageSweep.DatabaseBackups, storage.OrganizationId, database.Id), cancellationToken).ConfigureAwait(false);
+        if (retireIdentity)
+        {
+            await StorageSweep.AddAsync(transaction, new SweepEntry(StorageSweep.DatabaseBackups, storage.OrganizationId, database.Id), cancellationToken).ConfigureAwait(false);
+        }
         _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false);
-        await PutAsync(transaction, RetiredDatabases, database.Id, DatabaseOwner.Of(storage), ManagementJsonContext.Default.DatabaseOwner, cancellationToken)
-            .ConfigureAwait(false);
+        if (retireIdentity)
+        {
+            await PutAsync(transaction, RetiredDatabases, database.Id, DatabaseOwner.Of(storage), ManagementJsonContext.Default.DatabaseOwner, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         await transaction.DeleteKindsAsync(SystemCatalog.DatabaseState(database.Id), cancellationToken).ConfigureAwait(false);
 
