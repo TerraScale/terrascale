@@ -15,28 +15,33 @@ export const nodes = [
   { name: 'journey-4', region: 'fra', address: '127.0.0.4', port: 8380, service: 'terrabase-fra-2' },
 ] as const;
 type Node = typeof nodes[number];
-type NodeStatus = { node: string; owner: string; writer: boolean; ready: boolean };
+type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean };
 type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
 
-async function nodeStatus(node: Node): Promise<NodeStatus> {
+export async function nodeRequest(node: Node, path: string, method = 'GET'): Promise<{ status: number; body: string }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(`http://${node.address}:8081`);
-  const stream = session.request({ ':path': '/v1/rollout/status', 'x-terrabase-peer-credential': credential });
+  const stream = session.request({ ':method': method, ':path': path, 'x-terrabase-peer-credential': credential });
   stream.setTimeout(15_000, () => stream.destroy(new Error(`status request timed out for ${node.name}`)));
   session.on('error', error => stream.destroy(error));
   try {
     const response = once(stream, 'response');
     stream.end();
     const [headers] = await response;
-    expect(headers[':status']).toBe(200);
     let body = '';
     for await (const chunk of stream) body += chunk;
-    return JSON.parse(body) as NodeStatus;
+    return { status: Number(headers[':status']), body };
   } finally {
     session.destroy();
   }
+}
+
+export async function nodeStatus(node: Node, region?: string): Promise<NodeStatus> {
+  const response = await nodeRequest(node, `/v1/rollout/status${region ? `?region=${region}` : ''}`);
+  expect(response.status).toBe(200);
+  return JSON.parse(response.body) as NodeStatus;
 }
 
 export async function topology(): Promise<Node[]> {

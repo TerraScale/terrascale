@@ -14,6 +14,31 @@ reply never extends admission. A new epoch cannot acquire that key while the
 previous admission still exists. Planned transfer releases it only after ingress
 and native writers have drained.
 
+Each node refreshes its own region before starting observation of other regions.
+Remote observations run independently of local renewal, with separate failure
+boundaries and a two-second bound for each region. An invalid, missing,
+unreadable or timed-out remote owner record leaves that region's last observed
+owner intact and does not delay local renewal or observations of later regions.
+Regions already observed are still checked when all their peer lines disappear.
+Connection and bucket initialization happen before admission; established stores
+are reused across refreshes instead of reconnecting before each renewal.
+
+A remote observation failure logs its region and error when the failure state
+changes; recovery logs once when observation succeeds again. The counter
+`terrabase_ownership_refresh_errors_total{region}` counts failed remote refresh
+attempts. Its only label is an admitted region name from the peers file or a
+previous observation; it has a dedicated telemetry view with room for region
+series. Repeated failures continue to increment the counter without repeating
+the warning every refresh. Local invalid records and failed local renewals keep
+the existing lease expiry and fencing behavior.
+
+Retained remote owners are routing hints. A stale hint can delay forwarding,
+replica synchronization, placement discovery or a home move until observation
+recovers; it cannot grant writer admission. The destination must prove its own
+exclusive admission and database authority before acknowledging a write.
+Placement deletion treats a failed remote observation as unknown and cannot use
+its retained owner to authorize forgetting data after a `404`.
+
 The durable phases are:
 
 Before the engine reservation, the edge primes bulk state on the peer, then
