@@ -63,12 +63,26 @@ internal sealed class FileEvidence(Dictionary<string, byte[]> files)
 
     internal void Verify()
     {
+        var relocated = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (original, digest) in files)
         {
             var canonical = original.Replace(".promote.db", ".db", StringComparison.Ordinal);
             var moved = !files.ContainsKey(canonical)
                 && (original.EndsWith(".promote.db", StringComparison.Ordinal) || original.Contains(".promote.db-", StringComparison.Ordinal));
             var path = !File.Exists(original) && moved ? canonical : original;
+            if (!File.Exists(path) && original.EndsWith(".db.key", StringComparison.Ordinal)
+                && !File.Exists(original[..^4]) && !File.Exists(original[..^4] + "-wal"))
+            {
+                var name = Path.GetFileName(original)[..^".db.key".Length];
+                var retained = Directory.EnumerateFiles(Path.GetDirectoryName(original)!, $".{name}.*.retained-key")
+                    .Where(file => !files.ContainsKey(file) && !relocated.Contains(file))
+                    .SingleOrDefault(file => SHA256.HashData(File.ReadAllBytes(file)).SequenceEqual(digest));
+                if (retained is not null)
+                {
+                    path = retained;
+                    relocated.Add(path);
+                }
+            }
             if (!File.Exists(path))
             {
                 throw new InvalidDataException("recovery lost file " + Path.GetFileName(original));

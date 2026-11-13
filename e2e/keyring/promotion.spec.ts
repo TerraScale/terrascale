@@ -379,7 +379,12 @@ const test = base.extend<{}, { promotion: Promotion }>({
               rmSync(destination);
               if (state === 'before-key') rmSync(destination + '.key');
               await runRecovery(published, 'recovered');
-              expect(existsSync(destination + '.key')).toBe(state === 'after-key');
+              expect(existsSync(destination + '.key')).toBe(false);
+              if (state === 'after-key') {
+                const retained = readdirSync(join(destination, '..')).filter(name => name.startsWith('.' + published.id + '.') && name.endsWith('.retained-key'));
+                expect(retained).toHaveLength(1);
+                expect(readFileSync(join(destination, '..', retained[0])).equals(keyBytes)).toBe(true);
+              }
             } else {
               if (state === 'corrupt') writeFileSync(destination, databaseBytes.subarray(0, 100));
               if (state === 'conflicting-destination') {
