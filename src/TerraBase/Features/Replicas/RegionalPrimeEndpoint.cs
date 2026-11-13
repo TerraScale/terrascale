@@ -1,5 +1,6 @@
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Replicas;
 
@@ -7,6 +8,7 @@ internal sealed class RegionalPrimeEndpoint(RegionalHandoff handoff) : EndpointW
 {
     public override void Configure()
     {
+        Metadata(new Requires("rollout"));
         Post("/v1/rollout/prime");
         Name("RegionalPrimeEndpoint");
         Summary("Coordinates a caught-up regional writer handoff");

@@ -4,6 +4,7 @@ using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -11,6 +12,7 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
 {
     public override void Configure()
     {
+        Metadata(new Requires("usage.read"));
         Get("/v1/usage/allowances");
         Name("listUsageAllowances");
         Summary("Lists every organization's billed usage this month");

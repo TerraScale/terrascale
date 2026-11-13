@@ -2,6 +2,7 @@ using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Management;
 
@@ -11,6 +12,7 @@ internal sealed class EnrollProjectEndpoint(IProjectCatalog catalog) : Endpoint<
 
     public override void Configure()
     {
+        Metadata(new Requires("admin"));
         Put("/admin/projects/{project}/enrollment");
         Name("enrollProject");
         Summary("Applies a project's enrollment in this region");

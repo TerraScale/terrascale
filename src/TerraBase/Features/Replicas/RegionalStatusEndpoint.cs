@@ -2,6 +2,7 @@ using TerraBase.Configuration;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Replicas;
 
@@ -9,6 +10,7 @@ internal sealed class RegionalStatusEndpoint(RegionalHandoff handoff) : Endpoint
 {
     public override void Configure()
     {
+        Metadata(new Requires("rollout"));
         Get("/v1/rollout/status");
         Name("RegionalStatusEndpoint");
         Summary("Coordinates a caught-up regional writer handoff");

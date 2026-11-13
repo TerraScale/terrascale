@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Net;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -31,6 +32,7 @@ using TerraBase.Features.Functions;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 if (args is ["--storage-format"])
 {
     Console.WriteLine(StorageFormat.Id);
@@ -39,9 +41,11 @@ if (args is ["--storage-format"])
 var environmentName = TerraBaseOptions.EnvironmentName(args);
 TerraBaseOptions options;
 InternalCredential internalCredential;
+CallerRegistry callers;
 IPAddress internalAddress;
 try
 {
+    callers = CallerRegistry.FromProcess();
     TerraBaseOptions.ReadSecretFiles();
     options = TerraBaseOptions.FromProcess(args);
     internalCredential = InternalCredential.FromProcess(options);
@@ -68,6 +72,9 @@ builder.Services.AddSingleton<Shutdown>();
 builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = Shutdown.HostedBudget);
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(internalCredential);
+builder.Services.AddSingleton(callers);
+builder.Services.AddSingleton<CallerTokens>();
+builder.Services.AddSingleton<CallerAdmission>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<NodeHlcClock>();
 builder.Services.AddSingleton<IHlcClock>(provider => provider.GetRequiredService<NodeHlcClock>());
@@ -122,6 +129,7 @@ builder.Services.AddTerraBaseRpc();
 try
 {
     await using var app = builder.Build();
+    callers.Observe(app.Services.GetRequiredService<IMeterFactory>(), app.Services.GetRequiredService<TimeProvider>());
     try
     {
         _ = app.Services.GetRequiredService<IStorageEngine>();
@@ -181,7 +189,7 @@ try
     app.MapTerraBaseMetrics();
     app.MapTerraBaseClock();
     app.MapTerraBaseKeyRevocation(options);
-    app.MapTerraBaseRestRpc().WithMetadata(ListenerMetadata.Internal);
+    app.MapTerraBaseRestRpc().WithMetadata(ListenerMetadata.Internal, new CallerTransport());
     await ApplicationRunCompletion.RunAsync(app);
     return 0;
 }

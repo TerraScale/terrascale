@@ -8,5 +8,7 @@ public static class RpcExtensions
 {
     public static IServiceCollection AddTerraBaseRpc(this IServiceCollection services) =>
         services.AddTerraBaseRestRpc(static (features, user) =>
-            features.Set<IConnectionItemsFeature>(Listeners.AcceptedBy(user ? TerraBaseListener.Client : TerraBaseListener.Internal)));
+        {
+            features.Set<IConnectionItemsFeature>(Listeners.AcceptedBy(user ? TerraBaseListener.Client : TerraBaseListener.Internal));
+        });
 }

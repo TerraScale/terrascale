@@ -28,6 +28,9 @@ printf '%s\n' "$peer_secret" "$terrabase_master_key" "$auth_master_key" "$auth_a
   "$r2_access_key_id" "$r2_secret_access_key" > "$state/secrets"
 if [ -n "${GITHUB_ACTIONS:-}" ]; then sed 's/^/::add-mask::/' "$state/secrets"; fi
 
+node "$here/callers.mjs" "$state"
+export TERRABASE_CALLERS_FILE="$state/callers.json"
+
 dashboard_peers=()
 if [ "${E2E_REGIONS:-1}" = 2 ]; then
   printf 'journey-1 gru 127.0.0.1\njourney-2 fra 127.0.0.2\n' > "$state/peers"

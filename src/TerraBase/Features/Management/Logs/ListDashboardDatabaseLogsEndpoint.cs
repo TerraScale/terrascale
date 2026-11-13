@@ -4,6 +4,7 @@ using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Management.Logs;
 
@@ -11,6 +12,7 @@ internal sealed class ListDashboardDatabaseLogsEndpoint(IProjectCatalog projects
 {
     public override void Configure()
     {
+        Metadata(new Requires("usage.read"));
         Get("/v1/usage/projects/{project}/databases/{databaseId}/logs");
         Name("listDashboardDatabaseLogs");
         Summary("Lists a database's recent requests for the dashboard");

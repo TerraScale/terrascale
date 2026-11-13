@@ -81,6 +81,10 @@ namespace TerraScale.TerraBase.Rpc
                 {
                     request.Headers.Authorization = outer.Request.Headers.Authorization;
                 }
+                else
+                {
+                    request.Headers["X-TerraScale-Caller"] = outer.Request.Headers["X-TerraScale-Caller"];
+                }
             }
 
             return request;
@@ -100,6 +104,7 @@ namespace TerraScale.TerraBase.Rpc
             features.Set(body);
             features.Set<IHttpRequestLifetimeFeature>(new HttpRequestLifetimeFeature { RequestAborted = call.CallContext.CancellationToken });
             features.Set<IHttpRequestIdentifierFeature>(new HttpRequestIdentifierFeature());
+            features.Set(outer);
             features.Set<IItemsFeature>(new ItemsFeature());
             features.Set<IServiceProvidersFeature>(new ServiceProvidersFeature { RequestServices = scope.ServiceProvider });
             features.Set<IHttpConnectionFeature>(new HttpConnectionFeature
@@ -110,7 +115,8 @@ namespace TerraScale.TerraBase.Rpc
                 LocalIpAddress = outer.Connection.LocalIpAddress,
                 LocalPort = outer.Connection.LocalPort,
             });
-            pipeline.Connection(features, request.Headers.Authorization.Count > 0 || request.Headers[TerraBaseRpc.PeerCredentialHeader].Count == 0);
+            pipeline.Connection(features, request.Headers.Authorization.Count > 0 || request.Headers[TerraBaseRpc.PeerCredentialHeader].Count == 0
+                && request.Headers["X-TerraScale-Caller"].Count == 0);
             try
             {
                 await pipeline.Pipeline(new DefaultHttpContext(features)).ConfigureAwait(false);
