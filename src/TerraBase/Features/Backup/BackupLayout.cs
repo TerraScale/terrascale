@@ -58,7 +58,8 @@ internal static class BackupLayout
 
     public static BackupHole? ParseHole(string key) =>
         key[(key.LastIndexOf('/') + 1)..].Split('-') is [{ Length: > 0 } incarnation, var from, var to, var fromAt, var toAt, OpenHole or ClosedHole]
-            && Number(from) is { } start && Number(to) is { } end && Bound(fromAt) is { } lostFrom && Bound(toAt) is { } lostTo
+            && Number(from) is { } start && Number(to) is { } end && end >= start
+            && Bound(fromAt) is { } lostFrom && Bound(toAt) is { } lostTo && !(lostTo.At < lostFrom.At)
             ? new(incarnation, start, end, lostFrom.At, lostTo.At, key.EndsWith("-" + OpenHole, StringComparison.Ordinal))
             : null;
 

@@ -306,7 +306,7 @@ test('restores read the holes recorded with the backup: one the restoring node h
     const secondSent = Date.now();
     await ledger.write(cells, 'gru', [[2, 'second']]);
     const secondAcked = Date.now();
-    await expect.poll(latest, { message: 'the backup proves the second of the second write' }).toBeGreaterThanOrEqual(secondSent - secondSent % 1000);
+    await expect.poll(latest, { message: 'the backup proves a time at or after the second acknowledgement' }).toBeGreaterThanOrEqual(secondAcked);
     const shipped = await continuity(writer, created.id);
     expect(shipped.holes).toEqual([]);
     const newest = await latest();
@@ -324,6 +324,7 @@ test('restores read the holes recorded with the backup: one the restoring node h
     }, { message: 'the restore of the newest proven time completes' }).toBe('completed');
     const written: [[number, string], number, number][] = [[[1, 'first'], firstSent, firstAcked], [[2, 'second'], secondSent, secondAcked]];
     const acknowledged = written.filter(([, , acked]) => acked <= newest).map(([row]) => row);
+    expect(acknowledged, 'both writes were acknowledged before the newest proven time').toHaveLength(2);
     const sent = written.filter(([, at]) => at <= newest).map(([row]) => row);
     expect([acknowledged, sent], 'every row acknowledged before the newest proven time is in its restore').toContainEqual(await ledger.read(cells, 'gru', restored));
     const target = newest - 100;
@@ -354,6 +355,10 @@ test('restores read the holes recorded with the backup: one the restoring node h
     await holeRecords('listed');
     unlisted = false;
     expect(await planned(before), 'once the hole records can be listed again, the time outside every hole is not refused for them').not.toContain('could not be read');
+    await plantHole(shipped.file, { incarnation: shipped.incarnation, from: 2, to: 1, fromAt: before + 100, toAt: before, open: false });
+    const inconsistent = await refused(before);
+    expect(inconsistent.message, 'a hole record whose bounds contradict each other is unreadable, not an empty range').toContain('record of lost history could not be read');
+    expect(inconsistent.unavailableFrom).toBeUndefined();
     console.log(`hole records of ${created.id}: refused ${new Date(target).toISOString()} (planted, unknown to the node; first of 33), ${new Date(after).toISOString()} (open, unknown end) and ${new Date(before).toISOString()} while unlisted`);
   } finally {
     if (unlisted) await holeRecords('listed');
