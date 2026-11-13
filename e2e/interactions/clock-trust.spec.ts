@@ -19,7 +19,6 @@ type StandIn = { asked: () => number; close: () => Promise<void> };
 
 const internalPort = 18281;
 const run = randomBytes(3).toString('hex');
-const masterKey = randomBytes(32).toString('base64');
 const nodes: Record<'a' | 'b' | 'c', Node> = {
   a: { name: `clock-a-${run}`, region: `gru-${run}`, address: '127.0.0.21', port: 18280, metrics: 19280, postgres: 16280 },
   b: { name: `clock-b-${run}`, region: `fra-${run}`, address: '127.0.0.22', port: 18290, metrics: 19290, postgres: 16290 },
@@ -48,9 +47,11 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
   const peers = join(root, 'peers');
   const peerSecret = randomBytes(32).toString('hex');
   saveSecret(`clock-trust-peer-${label}`, peerSecret);
-  saveSecret('clock-trust-master', masterKey);
   const [r2Key, r2Secret] = readFileSync(join(stateDir, 'r2'), 'utf8').split('\n');
-  const cloudflareToken = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[9];
+  const secrets = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n');
+  const masterKey = secrets[1];
+  const cloudflareToken = secrets[9];
+  saveSecret('clock-trust-master', masterKey);
   const running = new Map<Node, ChildProcess>();
   const logs: number[] = [];
   const observations: string[] = [];
@@ -225,7 +226,10 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     return { sql, applyPath, rows };
   };
   const finish = async (info: TestInfo) => {
-    for (const node of [...running.keys()]) await stop(node);
+    for (const node of [...running.keys()]) {
+      await stop(node);
+      await info.attach(`${node.name}.log`, { body: log(node), contentType: 'text/plain' });
+    }
     for (const stand of [...standIns]) await stand.close();
     for (const output of logs) closeSync(output);
     await info.attach(`clock-trust-${label}`, { body: observations.join('\n'), contentType: 'text/plain' });
