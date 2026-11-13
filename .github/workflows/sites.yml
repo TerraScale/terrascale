@@ -8,14 +8,40 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
+    inputs:
+      reset_thing:
+        description: Reset one thing's deployment attempts without deploying
+        type: string
+        default: ''
 
 permissions:
   contents: read
   actions: read
 
 jobs:
+  reset:
+    if: github.ref == 'refs/heads/main' && inputs.reset_thing != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    concurrency:
+      group: ${{ inputs.reset_thing == 'auth' && 'production-auth' || inputs.reset_thing == 'dashboard' && 'dashboard-release' || inputs.reset_thing == 'ts-docs' && 'docs-deploy' || inputs.reset_thing == 'ts-landing' && 'landing-deploy' || format('status-deploy-{0}', inputs.reset_thing) }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          ref: main
+      - name: Reset the validated state under the deployment lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESET_THING: ${{ inputs.reset_thing }}
+        run: node scripts/ci/site-deploy-gate.mjs all --reset
+
   decide:
-    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
+    if: github.ref == 'refs/heads/main' && !inputs.reset_thing && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

@@ -100,76 +100,96 @@ function work(kind, name, deployed, revision) {
 }
 
 async function alerts() {
-  const issues = [];
-  for (let page = 1; ; page++) {
-    const batch = await github(`issues?state=open&labels=${label}&per_page=100&page=${page}`);
-    issues.push(...batch);
-    if (batch.length < 100) return issues;
+  const issues = new Map();
+  for (const query of [`creator=${encodeURIComponent(bot)}`, `labels=${label}`]) {
+    for (let page = 1; ; page++) {
+      const batch = await github(`issues?state=all&${query}&per_page=100&page=${page}`);
+      for (const issue of batch) issues.set(issue.number, issue);
+      if (batch.length < 100) break;
+    }
   }
+  return [...issues.values()];
 }
 
 function alertFor(issues, name) {
-  const title = `Deployment attempts: ${name}`;
-  const matches = issues.filter((issue) => issue.title === title);
-  assert.ok(matches.length <= 1, `${name}: ${matches.length} open deployment alerts (${matches.map((issue) => issue.html_url).join(', ')}); close all but one`);
+  const names = new RegExp(`(?<![a-zA-Z0-9_-])${name}(?![a-zA-Z0-9_-])`);
+  const matches = issues.filter((issue) => {
+    const body = (issue.body ?? '').replaceAll('\r\n', '\n');
+    const blocks = [...body.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)];
+    return names.test(issue.title) || blocks.some((block) => new RegExp(`"thing"\\s*:\\s*"${name}"`).test(block[1]))
+      || (issue.labels.some((entry) => entry.name === label) && names.test(`${issue.title}\n${body}`));
+  });
+  assert.ok(matches.length <= 1, `${name}: multiple deployment state candidates (${matches.map((issue) => issue.html_url).join(', ')}); restore exactly one state issue`);
   if (matches.length === 0) return null;
   const [issue] = matches;
-  const where = `${name}: deployment alert ${issue.html_url}`;
+  const where = `${name}: deployment state ${issue.html_url}`;
+  assert.equal(issue.title, `Deployment state: ${name}`, `${where} has an invalid title; restore it`);
   assert.ok(!issue.pull_request, `${where} is a pull request`);
-  assert.ok(issue.user?.login === bot && issue.user?.type === 'Bot', `${where} was not created by ${bot}; close it`);
-  assert.ok(issue.labels.some((entry) => entry.name === label), `${where} lacks the ${label} label`);
+  assert.ok(issue.user?.login === bot && issue.user?.type === 'Bot', `${where} was not created by ${bot}`);
+  assert.ok(issue.labels.some((entry) => entry.name === label), `${where} lacks the ${label} label; restore it`);
+  assert.equal(issue.state, 'open', `${where} is closed; reopen it`);
   const body = (issue.body ?? '').replaceAll('\r\n', '\n');
-  const blocks = [...body.matchAll(/^```json\n(.*)\n```$/gm)];
-  assert.ok(blocks.length === 1 && body.match(/^```/gm).length === 2, `${where} must hold exactly one fenced state block; close it`);
+  const blocks = [...body.matchAll(/^```json\n([\s\S]*?)\n```$/gm)];
+  assert.ok(blocks.length === 1 && (body.match(/^```/gm) ?? []).length === 2, `${where} must hold exactly one fenced state block`);
   let state = null;
   try {
     state = JSON.parse(blocks[0][1]);
   } catch {
-    assert.fail(`${where} holds a state block that is not JSON; close it`);
+    assert.fail(`${where} holds a state block that is not JSON`);
   }
   assert.ok(state !== null && typeof state === 'object' && !Array.isArray(state)
-    && Object.keys(state).toSorted().join() === 'attempts,target,thing', `${where} state must have exactly thing, target and attempts; close it`);
-  assert.ok(state.thing === name, `${where} records thing ${JSON.stringify(state.thing)}; close it`);
-  assert.ok(typeof state.target === 'string' && /^[0-9a-f]{40}$/.test(state.target), `${where} records an invalid target; close it`);
-  assert.ok(Number.isInteger(state.attempts) && state.attempts >= 1 && state.attempts <= 2, `${where} records ${JSON.stringify(state.attempts)} attempts; close it`);
-  return { issue, body, target: state.target, attempts: state.attempts };
+    && Object.keys(state).toSorted().join() === 'attempts,notified,target,thing', `${where} state must have exactly thing, target, attempts and notified`);
+  assert.ok(state.thing === name, `${where} records thing ${JSON.stringify(state.thing)}`);
+  assert.ok(typeof state.target === 'string' && /^[0-9a-f]{40}$/.test(state.target), `${where} records an invalid target`);
+  assert.ok(Number.isInteger(state.attempts) && state.attempts >= 0 && state.attempts <= 2, `${where} records ${JSON.stringify(state.attempts)} attempts`);
+  assert.equal(typeof state.notified, 'boolean', `${where} records an invalid notified value`);
+  return { issue, body, ...state };
 }
 
 function next(alert, revision) {
   if (alert === null) return 1;
   if (revision === alert.target) return alert.attempts < 2 ? alert.attempts + 1 : 'suppressed after two attempts';
   if (ancestor(alert.target, revision)) return 1;
-  return `waiting: the selected target is not newer than the recorded failed one (${alert.target})`;
+  return `waiting: the selected target is not newer than the recorded one (${alert.target})`;
 }
 
-const covers = (alert, revision) => alert !== null && (revision === alert.target || ancestor(alert.target, revision));
+const healthy = (alert, revision) => alert !== null && alert.target === revision && alert.attempts === 0 && !alert.notified;
 
-async function count(alert, name, revision, attempts) {
-  const kept = alert !== null && alert.target === revision ? alert.body.split('\n').filter((line) => line.startsWith('Attempt ')) : [];
+function due(alert, deployed, revision, decision) {
+  if (deployed === revision) return !healthy(alert, revision);
+  const attempt = next(alert, revision);
+  if (typeof attempt !== 'number') return attempt === 'suppressed after two attempts' && !alert.notified;
+  return decision === 'deploy' || alert === null;
+}
+
+async function writeState(alert, name, revision, attempts, notified, started = false) {
+  const kept = alert !== null && alert.target === revision && attempts > 0
+    ? alert.body.split('\n').filter((line) => line.startsWith('Attempt ')) : [];
   const body = [
-    `Deployment attempts of \`${name}\`, each counted before it starts. The next reconcile closes this issue once live serves this target or a newer one. After two attempts at one commit, deployments of \`${name}\` stop until a newer commit qualifies or this issue is closed.`,
+    `Persistent deployment state for \`${name}\`. Attempts are counted before deployment starts. After two attempts, land a newer qualified commit or run Sites manually with reset_thing=${name}. Keep this issue open; closing or editing it is validated and does not release suppression.`,
     '',
     '```json',
-    JSON.stringify({ thing: name, target: revision, attempts }),
+    JSON.stringify({ thing: name, target: revision, attempts, notified }),
     '```',
     '',
     ...kept,
-    `Attempt ${attempts} at ${revision}: ${runLink}`,
+    ...(started ? [`Attempt ${attempts} at ${revision}: ${runLink}`] : []),
     '',
   ].join('\n');
   if (alert !== null) {
     await github(`issues/${alert.issue.number}`, 'PATCH', { body });
   } else {
     await github('labels', 'POST', { name: label, color: 'b60205' });
-    await github('issues', 'POST', { title: `Deployment attempts: ${name}`, labels: [label], body });
+    await github('issues', 'POST', { title: `Deployment state: ${name}`, labels: [label], body });
   }
 }
 
-async function close(alert, deployed) {
-  await github(`issues/${alert.issue.number}`, 'PATCH', {
-    state: 'closed',
-    body: `${alert.body.trimEnd()}\n\nClosed: live is ${deployed}. ${runLink}\n`,
+async function notify(alert, name, revision) {
+  const runs = alert.body.split('\n').filter((line) => line.startsWith('Attempt '));
+  await github(`issues/${alert.issue.number}/comments`, 'POST', {
+    body: `${name}: deployment of ${revision} is suppressed after two attempts.\n\n${runs.join('\n') || 'Attempt run links are unavailable.'}\n\nLand a newer commit that passes main CI, or run Sites manually on main with reset_thing=${name} after fixing the failure. Keep this issue open.`,
   });
+  await writeState(alert, name, revision, 2, true);
 }
 
 if (args[0] === '--prove') {
@@ -177,6 +197,14 @@ if (args[0] === '--prove') {
   assert.equal(await serviceLive(), process.env.REVISION, `${thing}: deployed revision mismatch`);
   writeFileSync(`${process.env.RUNNER_TEMP}/deploy-revision`, `${process.env.REVISION}\n`);
   report(`${thing}: deployed ${process.env.REVISION}`);
+} else if (args[0] === '--reset') {
+  const name = process.env.RESET_THING;
+  assert.ok(['ts-docs', 'ts-landing', 'ts-status-vantage-sfo', 'ts-status-vantage-gru', 'ts-status', ...Object.keys(services)].includes(name), 'Unknown reset thing');
+  const alert = alertFor(await alerts(), name);
+  assert.ok(alert !== null, `${name}: no deployment state to reset`);
+  await writeState(alert, name, alert.target, 0, false);
+  report(`${name}: reset ${alert.target} to zero attempts; next reconcile may deploy`);
+  console.log(`GitHub API reads: ${reads}`);
 } else {
   git('fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main');
   const groups = thing === 'all'
@@ -194,39 +222,42 @@ if (args[0] === '--prove') {
   for (const [, name, revision] of live) {
     assert.ok(revision === null || ancestor(revision, 'origin/main'), `${name}: live ${revision} is not on main`);
   }
+  const issues = await alerts();
+  const states = new Map();
+  const failures = [];
+  for (const [, name] of live) {
+    try {
+      states.set(name, alertFor(issues, name));
+    } catch (error) {
+      failures.push(error.message);
+      report(`${name}: not started: ${error.message}`);
+    }
+  }
+  if (thing !== 'all') assert.ok(failures.length === 0, failures.join('; '));
+  const revision = await target();
   if (thing === 'all') {
-    const revision = await target();
     const selected = [];
-    const failures = [];
-    if (revision === null) {
-      for (const [, name, deployed] of live) {
-        assert.ok(deployed !== null, `${name}: nothing qualified and no live revision`);
-        report(`${name}: live ${deployed}, no qualified target`);
+    for (const [kind, name, deployed] of live) {
+      if (!states.has(name)) continue;
+      const alert = states.get(name);
+      if (revision === null) {
+        if (deployed === null) failures.push(`${name}: nothing qualified and no live revision`);
+        report(`${name}: live ${deployed ?? 'absent'}, no qualified target`);
+        continue;
       }
-    } else {
-      const issues = await alerts();
-      for (const [kind, name, deployed] of live) {
+      try {
         const decision = work(kind, name, deployed, revision);
-        let note;
-        let due;
-        try {
-          const alert = alertFor(issues, name);
-          if (decision === 'deploy') {
-            const attempt = next(alert, revision);
-            due = typeof attempt === 'number';
-            note = due ? `deploy job starts for attempt ${attempt}` : attempt;
-          } else {
-            due = covers(alert, revision);
-            note = due ? `${decision}; deploy job starts to close the alert` : decision;
-          }
-        } catch (error) {
-          due = false;
-          note = `not started: ${error.message}`;
-          failures.push(error.message);
-        }
-        if (due) selected.push([kind, name]);
+        const selectedJob = due(alert, deployed, revision, decision);
+        if (selectedJob) selected.push([kind, name]);
+        const attempt = deployed === revision ? null : next(alert, revision);
+        const note = selectedJob ? `${decision}; locked job starts to reconcile state` : typeof attempt === 'string' ? attempt : decision;
         report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: ${note}`);
+      } catch (error) {
+        failures.push(error.message);
+        report(`${name}: not started: ${error.message}`);
       }
+    }
+    if (revision !== null) {
       for (const service of ['auth', 'dashboard']) {
         if (!selected.some(([kind]) => kind === service)) continue;
         const workflow = service === 'auth' ? 'ci.yml' : 'images-ghcr.yml';
@@ -251,29 +282,28 @@ if (args[0] === '--prove') {
   } else {
     assert.ok(live.length === 1, 'A locked deploy job reconciles exactly one thing');
     const [[kind, name, deployed]] = live;
-    const alert = alertFor(await alerts(), name);
-    const revision = await target();
+    const alert = states.get(name);
     let deploy = false;
     if (revision === null) {
       assert.ok(deployed !== null, `${name}: nothing qualified and no live revision`);
       report(`${name}: live ${deployed}, no qualified target`);
     } else {
       const decision = work(kind, name, deployed, revision);
-      if (decision !== 'deploy') {
-        if (covers(alert, revision)) {
-          await close(alert, deployed);
-          report(`${name}: live ${deployed}, target ${revision}: ${decision}; closed ${alert.issue.html_url}`);
-        } else {
-          report(`${name}: live ${deployed}, target ${revision}: ${alert === null ? decision : next(alert, revision)}`);
-        }
+      if (deployed === revision) {
+        if (!healthy(alert, revision)) await writeState(alert, name, revision, 0, false);
+        report(`${name}: live ${deployed}, target ${revision}: already live; state healthy`);
       } else {
         const attempt = next(alert, revision);
-        if (typeof attempt === 'number') {
-          await count(alert, name, revision, attempt);
+        if (typeof attempt !== 'number') {
+          if (attempt === 'suppressed after two attempts' && !alert.notified) await notify(alert, name, revision);
+          report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: ${attempt}`);
+        } else if (decision !== 'deploy') {
+          if (alert === null) await writeState(null, name, revision, 0, false);
+          report(`${name}: live ${deployed}, target ${revision}: ${decision}`);
+        } else {
+          await writeState(alert, name, revision, attempt, false, true);
           deploy = true;
           report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: deploying, attempt ${attempt} of 2 recorded`);
-        } else {
-          report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: ${attempt}`);
         }
       }
     }

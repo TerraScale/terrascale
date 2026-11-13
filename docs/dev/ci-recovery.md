@@ -44,7 +44,7 @@ requires that version at 100% traffic. Auth and dashboard verify readiness and
 write `deploy-revision`. The production journey reads this receipt, so it uses
 the deployed source even when the dispatch was created on another commit.
 A release job that did not succeed starts no production journey; its own
-attempt issue and job summary show the failure.
+state issue and job summary show the failure.
 
 Every decision goes to the job summary with the thing, its live revision and
 the target: deploying (with the attempt number), already live, live ahead,
@@ -53,46 +53,67 @@ no qualified target, or waiting for a manual run.
 
 ## Attempts and suppression
 
-Each thing (a Worker name, `auth` or `dashboard`) has at most one open issue
-titled `Deployment attempts: <thing>`, labeled `deployment-alert`, opened by
-`github-actions[bot]`. Its body holds one fenced JSON line with exactly
-`thing`, `target` and `attempts`; the rest of the body is for people, including
-a link to each attempt's run. Nothing reads the run links for decisions.
+Each thing (a Worker name, `auth` or `dashboard`) has one persistent issue
+`Deployment state: <thing>`, labeled `deployment-alert`, created by
+`github-actions[bot]`. Automation never closes it. The machine-readable block
+contains exactly `thing`, `target`, `attempts` (an integer from zero to two), and
+`notified` (a boolean). Attempt run links outside the block are informational.
 
-Only the deploy job writes this issue, while holding that thing's lock, after it
-reads live and selects target again. The decision job only reads it to decide
-whether to start the deploy job. Under the lock, in order:
+When healthy, an operator sees no deployment notification. Initial creation
+happens once per thing; subsequent changes edit only the issue body. The first
+reconcile after a successful deployment records zero attempts. Repeated healthy
+ticks do not write anything. Suppression adds one comment naming the thing,
+target, both attempt runs when known, and the release instructions. Later
+suppressed ticks are quiet.
 
-1. If live already serves target (equal, ahead on main, or the same inputs) and
-   the issue records target or an older commit, the job closes the issue
-   naming the live commit and stops.
-2. With no open issue, it records target with one attempt.
-3. With the same target recorded, it records a second attempt. After two
-   attempts it deploys nothing and the summary says suppressed.
-4. With a newer target than the recorded one, it records target with one
-   attempt.
-5. With an older or unrelated target, it deploys nothing, changes nothing and
-   the summary says it is waiting.
+Only a locked job writes state. The decision job reads and validates all things
+before taking any target-dependent branch, including when no commit qualifies.
+The locked job validates again before deciding. Under the lock, after the fresh
+live read and target selection:
 
-The count is written before the deployment starts. A job that fails, times
-out, is cancelled or crashes has already been counted. Every first attempt
-therefore opens the issue; the next reconcile after a successful deploy closes
-it. For a Worker that is the next schedule; for a service it is the Sites run
-that the release workflow's completion starts.
+1. If live equals target, write `(target, 0, false)` if needed and stop.
+2. If there is no state, record `(target, 1, false)` before deploying.
+3. For the same target with fewer than two attempts, increment attempts before
+   deploying. With two attempts, deploy nothing; if `notified` is false, add
+   the suppression comment and write `notified: true`.
+4. For a strict descendant of the recorded target, record `(target, 1, false)`
+   before deploying.
+5. For an older or unrelated target, change nothing and report waiting.
 
-Before any decision the job checks the issue: exactly one open match, not a
-pull request, opened by `github-actions[bot]`, exactly one state block with
-those three keys, the thing's own name, a full commit hash and one or two
-attempts. Anything else stops that thing with an error that names the issue,
-also when live already equals target: the deploy job fails without deploying,
-and the decision job starts no deploy job for it and fails after starting the
-other things. Other things still deploy.
-A reopened issue counts like any other.
+The live and input comparisons still apply: live ahead on main and unchanged
+build inputs do not deploy. A first reconcile in those states initializes the
+issue with zero attempts; an existing record is preserved unless live equals
+target. A timeout, cancellation or crash after the count write consumes an
+attempt. No deployment starts unless its state write succeeds.
 
-To release a suppressed thing, either land a newer commit that qualifies, or
-fix the cause and close its issue: the next reconcile then starts again at one
-attempt. Do not edit the state line; a wrong edit stops the thing until the
-issue closes. An unqualified commit cannot bypass the gate by closing an issue.
+Discovery lists all open and closed issues created by the workflow bot, without
+filtering title or label. A second open-and-closed labeled listing also catches
+state created by a person. Both are paginated and shared across all things.
+Candidates name the thing in their title, in a fenced block's `thing` field, or
+anywhere while carrying the state label. Duplicate candidates fail with all
+issue links. A single candidate must have the exact title, label, open state,
+bot identity, no pull request identity, exactly one JSON block with the four
+keys, its own thing name, a full 40-character hexadecimal target, valid attempt
+count and boolean notification value. A removed label, edited title or closed
+issue remains discoverable. Closing is an error saying to reopen the issue.
+Invalid state blocks that thing even if live already serves target or no commit
+qualifies; other valid things can still proceed.
+
+To release suppression, fix the cause and either land a newer commit that
+qualifies or run the manual reset for that thing:
+
+```sh
+gh workflow run sites.yml --repo TerraScale/terrascale --ref main -f reset_thing=ts-docs
+```
+
+Accepted names are `ts-docs`, `ts-landing`, `ts-status-vantage-sfo`,
+`ts-status-vantage-gru`, `ts-status`, `auth` and `dashboard`. The reset job takes
+that thing's existing deployment lock, validates its state and writes the same
+recorded target with zero attempts and `notified: false`. It deploys nothing;
+the next normal reconcile can attempt again. Reset does not require a newly
+qualified target. Missing or invalid state fails reset. Reopen a closed issue
+and restore invalid fields before resetting. Hand edits go through the same
+validation; they are not an operator release procedure.
 
 Service dispatches wait while a manual run of their workflow on main is queued
 or running (for auth, any manual CI run). The summary links the oldest such run.
@@ -117,40 +138,59 @@ gh workflow run ci.yml --repo TerraScale/terrascale --ref main -f reconcile_auth
 
 These requests still require journey-qualified main and changed inputs.
 An equal live revision does not deploy again. An issue with two attempts for
-that target still blocks these requests until the issue closes or target changes.
+that target still blocks these requests until a locked reset or a newer target.
 Inspect the summary, release proof and production journey before reporting
 recovery.
 
 ## Read and runner budget
 
-With the newest main commit qualified and nothing changed, a schedule uses one
-runner job, three GitHub API reads (one candidate CI run, one CI jobs page and
-one open `deployment-alert` issue page), ten Cloudflare reads for five existing
-Workers, and two readiness requests. It installs nothing, builds nothing,
-writes nothing and dispatches nothing. CI time excludes scheduled Sites runs,
-so measurement does not add a second no-op runner. Extra open issue pages add
-one read per 100 issues. Checking the newest ten commits takes at most twenty
-qualification reads. Git supplies history and input comparisons.
+Counts below assume the newest main commit qualifies and each issue listing
+fits one page. Let P be the total pages of bot-created issues plus labeled
+issues, including closed history; P is at least two. Issue discovery costs P
+GitHub reads per script invocation, shared by every thing. Qualification costs
+two reads for the newest green commit and at most twenty over the bounded ten
+commits. This adds one minimum read versus the previous label-only lookup to
+also reject person-created state. History pagination adds one read per page;
+it is not bounded by the number of currently open state issues.
 
-With exactly one Worker due, there are two runner jobs: decision and that
-Worker's deploy. They total six GitHub reads (three each), twelve Cloudflare
-reads before deployment and two proof reads afterward, plus the deployment.
-The deploy job writes the issue once before deploying: one update, or on a
-first attempt a label create (accepted when it exists) and an issue create.
-Closing the issue later costs one more deploy job with three reads and one
-update.
+An established no-op schedule uses one runner, P+2 GitHub reads (four), ten
+Cloudflare reads for five existing Workers and two readiness requests. It
+installs, builds, writes and dispatches nothing. CI time excludes scheduled
+Sites runs. Initial state creation is a one-time exception: the decision
+starts each thing's locked job to initialize its persistent issue.
 
-With exactly one service due, the decision uses three reads, five active-run
-reads and one dispatch. Its release job reads the issue and qualification
-again (three reads) and writes the issue once before releasing: eleven GitHub
-reads across decision and deploy, plus four readiness requests including
-proof. The dispatched CI auth reconcile retains three runner jobs (`main-auth`,
-`test`, `all-green`); dashboard has one. A release completion starts a Sites
-decision, which closes the issue through one more dispatch of the same
-workflow (no build or release), and the production journey's detection,
-suite and report jobs. Detection reads the jobs page and, for services, the
-revision artifact metadata and ZIP. These follow-up jobs do not occur from a
-no-op schedule.
+One existing Worker deployment uses decision and deploy jobs: 2(P+2) GitHub reads
+(eight), one body PATCH before deploying, twelve Cloudflare live reads and two
+proof reads, plus the provider deployment. Initial state instead costs two
+writes (ensure label and create issue). The next successful-live reconcile
+costs another decision and locked job (eight reads) and one healthy-state body
+PATCH, with no issue close or comment.
+
+One service deployment uses 2(P+2)+5 GitHub reads (thirteen): decision,
+five active-run checks and locked release. Writes are one workflow dispatch
+and one state-body PATCH; first initialization replaces the PATCH with label
+and issue creation. There are four readiness requests including proof.
+Auth retains three dispatch runner jobs (`main-auth`, `test`, `all-green`),
+dashboard one. Success triggers another Sites decision and a locked state
+refresh, with the same thirteen reads, one dispatch and one body PATCH, no
+build or release. The release also starts production journey detection, suite
+and report; detection reads jobs and the revision artifact metadata and ZIP.
+These follow-ups are outside the deployment gate counts.
+
+A suppressed, already-notified thing adds no writes or deploy job to the
+four-read decision. On first suppression, a Worker adds its four-read locked
+job and two writes (one comment, one body PATCH); a service adds five active-run
+reads, the four-read locked job and three writes (dispatch, comment, PATCH).
+The reset job uses P reads (two) and one body PATCH without live or CI reads.
+
+For fifteen successful deployments of every one of the seven things, an
+established day creates zero issues, adds zero comments and makes 210 body
+edits (two per deployment). If those fifteen deployments include each thing's
+first ever reconcile, seven issues are created and 203 body edits occur, with
+zero comments and seven label-ensure calls. For fewer changed things, count
+two body edits per successful deployment, replacing its first edit with issue
+creation when state is absent. Merely qualifying a merge creates no writes
+when inputs are unchanged and state is already initialized.
 
 Image reuse reads the manifest and its labeled arm64 image. A new build adds
 its push and final manifest read. The release client fetches its qualified
@@ -158,7 +198,7 @@ orchestrator release and region list, then performs regional rollout requests.
 These registry, release asset and rollout calls do not occur on a no-op run.
 Qualification job pages over 100 jobs fail loudly; active-run checks read one
 page for each status. Issue-list pagination is the only unbounded history
-read and reflects the number of currently open alerts, not commit history.
+read and includes the bot and labeled issue histories.
 
 ## Manual releases and rollback
 
@@ -170,7 +210,8 @@ Push SDK tags only after main CI is green for the exact tagged commit.
 To undo this change, revert PR #2011's squash merge commit in a new PR and
 merge it through normal CI. Revert the workflows and the shared reconcile
 script together; this restores the prior triggers, failure handling and
-schedule. Close any remaining `Deployment attempts` issues afterwards.
+schedule. After reverting, manually close the remaining `Deployment state` issues; the
+reconciler never closes them itself.
 Reverting removes the two-attempt bound, so watch failing deploys immediately.
 Do not change repository rules or required check names.
 To undo application code, revert that code through a PR instead. Once the new
