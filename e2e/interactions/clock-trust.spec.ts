@@ -11,6 +11,7 @@ import { saveSecret } from '../support/state';
 import { e2eRoot, production, stateDir } from '../support/stack';
 
 test.skip(production, 'clock trust runs only against throwaway nodes');
+test.describe.configure({ mode: 'default' });
 
 type Node = { name: string; region: string; address: string; port: number; metrics: number; postgres: number };
 type Answer = { status: number; body: string; retryAfter?: string };
