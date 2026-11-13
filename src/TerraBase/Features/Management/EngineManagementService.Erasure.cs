@@ -150,7 +150,7 @@ internal sealed partial class EngineManagementService
             using var authority = await retention.EnterAsync(record.Database.Id, token).ConfigureAwait(false);
             if (authority is null)
             {
-                return false;
+                throw new StorageBusyException();
             }
             authority.Fence(transaction);
             _ = await UnregisterRecordAsync(transaction, record.Storage, record.Database, token, customerDeletion: true).ConfigureAwait(false);
