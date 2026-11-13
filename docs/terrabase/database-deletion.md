@@ -50,7 +50,9 @@ snapshot's unchanged 10,000-row and 4 MiB aggregate bounds. The retained protoco
 allows up to 1,000,000 databases, in pages of at most 100 records and 256 KiB of
 stored payload. Project-index records are reconstructed. The receiver verifies a
 manifest count and SHA-256 digest over ordered database keys, and each certified
-database position, before promotion. A 10,000-database transfer requires at least
+database position, before promotion. Retained records commit by page before file
+imports, protecting staged files; at most four databases import concurrently.
+A 10,000-database transfer requires at least
 100 pages; elapsed time depends on file sizes and catch-up I/O, and has not yet
 been measured. The existing 30-second drain budget still fails closed if exhausted.
 The incoming writer imports their files before completing the handoff. Retained page
