@@ -61,6 +61,9 @@ break;
 case SignInStep.DeviceConfirm:
 <p class="sub">@Model.Copy.SubDeviceConfirm</p>
 break;
+case SignInStep.SsoLink:
+<p class="sub">@Model.Copy.SubSsoLink</p>
+break;
 case SignInStep.RecoveryCodes:
 <p class="sub">@Model.Copy.SubRecoveryCodes</p>
 break;
@@ -213,6 +216,19 @@ case SignInStep.Sso:
 {
 <a class="btn delayed-continue" href="@Model.Refresh">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 }
+break;
+case SignInStep.SsoLink:
+<dl class="facts" id="sso-link-facts">
+<div><dt>@Model.Copy.Organization</dt><dd id="sso-link-organization">@Model.SsoOrganization</dd></div>
+<div><dt>@Model.Copy.IdentityProvider</dt><dd id="sso-link-issuer">@Model.SsoIssuer</dd></div>
+<div><dt>@Model.Copy.Account</dt><dd id="sso-link-email">@Model.Email</dd></div>
+</dl>
+<form method="post" action="/ui/@Model.Slug/sso/link">
+<div class="actions">
+<button type="submit" id="sso-link-confirm"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-shield-check"></use></svg>@Model.Copy.LinkSso</button>
+</div>
+</form>
+<div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.DifferentEmail</a></div>
 break;
 case SignInStep.SignedOut:
 @if (Model.Refresh is { })

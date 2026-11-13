@@ -46,30 +46,30 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         }
     }
 
-    public async Task<string?> ChallengeAsync(UserRecord user, bool enrollment, CancellationToken cancellationToken = default)
+    public async Task<string?> ChallengeAsync(UserRecord user, bool enrollment, string? ssoProof, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
         if (await this.CurrentUserAsync(user, cancellationToken).ConfigureAwait(false) is null
             || enrollment && (!user.InboxProven
-                || await this.HasAllowedFactorAsync(user, cancellationToken).ConfigureAwait(false)))
+                || await this.HasAllowedFactorAsync(user, ssoProof is not null, cancellationToken).ConfigureAwait(false)))
         {
             return null;
         }
 
-        var challenge = new MfaChallenge(AuthIds.New(), user.Id, user.AuthEpoch, user.AuthStamp, clock.GetUtcNow() + ChallengeLifetime, user.AuthenticationBindings, enrollment ? "enrollment" : "verification", user.InboxProven);
+        var challenge = new MfaChallenge(AuthIds.New(), user.Id, user.AuthEpoch, user.AuthStamp, clock.GetUtcNow() + ChallengeLifetime, user.AuthenticationBindings, enrollment ? "enrollment" : "verification", user.InboxProven, ssoProof);
         return SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, MfaJson.Default.MfaChallenge), "mfa-challenge:" + user.InstanceId);
     }
 
     internal async Task<string?> InboxChallengeAsync(UserRecord user, CancellationToken cancellationToken)
     {
         if (await this.CurrentUserAsync(user, cancellationToken).ConfigureAwait(false) is null
-            || await this.HasAllowedFactorAsync(user, cancellationToken).ConfigureAwait(false))
+            || await this.HasAllowedFactorAsync(user, false, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
 
         var challenge = new MfaChallenge(AuthIds.New(), user.Id, user.AuthEpoch, user.AuthStamp, clock.GetUtcNow() + ChallengeLifetime,
-            user.AuthenticationBindings, "enrollment-inbox", false);
+            user.AuthenticationBindings, "enrollment-inbox", false, null);
         return SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, MfaJson.Default.MfaChallenge), "mfa-challenge:" + user.InstanceId);
     }
 
@@ -98,17 +98,17 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         return !await credentials.IsClaimedAsync(instanceId, completion, cancellationToken).ConfigureAwait(false)
             && await users.GetAsync(instanceId, challenge.UserId, cancellationToken).ConfigureAwait(false) is { Disabled: false } user
             && user.AuthEpoch == challenge.AuthEpoch && user.AuthStamp == challenge.AuthStamp
-                ? new ChallengedSignIn(user with { AuthenticationBindings = [.. challenge.Bindings, completion], InboxProven = challenge.InboxProven }, completion, challenge.ExpiresAt)
+                ? new ChallengedSignIn(user with { AuthenticationBindings = [.. challenge.Bindings, completion], InboxProven = challenge.InboxProven }, completion, challenge.ExpiresAt) { SsoProof = challenge.SsoProof }
                 : null;
     }
 
-    internal async Task<bool> HasAllowedFactorAsync(UserRecord user, CancellationToken cancellationToken)
+    internal async Task<bool> HasAllowedFactorAsync(UserRecord user, bool viaSso, CancellationToken cancellationToken)
     {
         var policy = Tenancy.IsProject(user.InstanceId)
             ? (await settings.GetAsync(user.InstanceId, cancellationToken).ConfigureAwait(false)).Configuration ?? ConfigurationBody.Default
             : ConfigurationBody.Default;
         return policy.AllowTotp && (await this.StatusAsync(user.InstanceId, user.Id, cancellationToken).ConfigureAwait(false)).Enabled
-            || Tenancy.IsProject(user.InstanceId) && policy.AllowPasskey && await data.ReadAsync((db, token) => db.Passkeys.AnyAsync(key => key.InstanceId == user.InstanceId && key.UserId == user.Id, token), cancellationToken).ConfigureAwait(false);
+            || (Tenancy.IsProject(user.InstanceId) || viaSso) && policy.AllowPasskey && await data.ReadAsync((db, token) => db.Passkeys.AnyAsync(key => key.InstanceId == user.InstanceId && key.UserId == user.Id, token), cancellationToken).ConfigureAwait(false);
     }
 
     public Task<bool> CompleteAsync(ChallengedSignIn challenged, string code, CancellationToken cancellationToken = default)
@@ -419,9 +419,12 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
     private static string Context(string instanceId, string userId) => "totp:" + AuthIds.Derived(instanceId, "mfa_credentials", userId);
 }
 
-public sealed record ChallengedSignIn(UserRecord User, CredentialBinding Completion, DateTimeOffset ExpiresAt);
+public sealed record ChallengedSignIn(UserRecord User, CredentialBinding Completion, DateTimeOffset ExpiresAt)
+{
+    internal string? SsoProof { get; init; }
+}
 
-internal sealed record MfaChallenge(string Id, string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings, string Purpose, bool InboxProven);
+internal sealed record MfaChallenge(string Id, string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings, string Purpose, bool InboxProven, string? SsoProof);
 
 internal sealed record MfaAuthorization(Change Operation, DateTimeOffset ExpiresAt);
 
