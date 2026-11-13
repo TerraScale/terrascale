@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Audit, auditedContext, test, expect } from '../support/audit';
-import { confirmWithPassword, onboard, signUp, verify } from '../support/hosted';
+import { createProjectOwner } from '../support/project-owner';
+import { signInToken } from '../support/auth-management';
 import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
 import { auth, dash, desktop, mailpit } from '../support/stack';
@@ -8,28 +9,29 @@ import { journey, saveCookies, saveSecret } from '../support/state';
 
 test('restricted sign-up, single-use invitations and waitlist approval', async ({ browser }, info) => {
   const run = journey().runId + Date.now().toString(36);
-  const ownerEmail = await newAddress('restrictions-owner-' + run);
   const invitedEmail = await newAddress('restrictions-invited-' + run);
   const waitingEmail = await newAddress('restrictions-waiting-' + run);
   const password = randomBytes(24).toString('base64url');
   saveSecret('restrictions-password', password);
-  const owner = await auditedContext(browser, { viewport: desktop });
+  const account = await createProjectOwner(browser, info);
+  const owner = account.context;
   const member = await auditedContext(browser, { viewport: desktop });
-  const page = await owner.newPage();
+  const page = account.page;
   const memberPage = await member.newPage();
-  const audit = new Audit(page, info);
+  const audit = account.audit;
   const memberAudit = new Audit(memberPage, info);
   try {
-    await signUp(page, audit, ownerEmail, password, 'restrictions owner');
-    await verify(page, ownerEmail);
-    await onboard(page, audit, 'Restrictions owner', 'Restrictions ' + run, 'restrictions owner');
-    await page.goto(dash + '/auth/overview');
-    const hosted = await page.locator('#auth-sign-in-url').getAttribute('href');
-    expect(hosted).toBeTruthy();
-    const project = new URL(hosted!).pathname.split('/')[2];
+    const token = await signInToken(page.request, 'restrictions-owner');
+    const projects = auth + '/v1/terrascale/organizations/' + account.current.organizationId + '/projects';
+    const created = await page.request.post(projects, {
+      headers: { Authorization: 'Bearer ' + token }, data: { name: 'Restrictions ' + run },
+    });
+    expect(created.status()).toBe(201);
+    const project = (await created.json()).id as string;
+    const selection = '?organizationId=' + account.current.organizationId + '&projectId=' + project;
     const signup = auth + '/ui/' + project + '/sign-up';
 
-    await page.goto(dash + '/auth/restrictions');
+    await page.goto(dash + '/auth/restrictions' + selection);
     await page.locator('#signup-mode').selectOption('restricted');
     await page.getByRole('button', { name: 'Save restrictions' }).click();
     await expect(page.locator('#signup-mode')).toHaveValue('restricted');
@@ -43,7 +45,7 @@ test('restricted sign-up, single-use invitations and waitlist approval', async (
     await expect(memberPage.getByRole('alert')).toContainText('Sign-up is unavailable for this address.');
     await memberAudit.check('restricted stranger refused');
 
-    await page.goto(dash + '/auth/invitations');
+    await page.goto(dash + '/auth/invitations' + selection);
     await page.locator('#invitation-email').fill(invitedEmail);
     await page.getByRole('button', { name: 'Invite user' }).click();
     await expect(page.locator('.ts-list-item').filter({ hasText: invitedEmail })).toContainText('pending');
@@ -86,7 +88,7 @@ test('restricted sign-up, single-use invitations and waitlist approval', async (
     const replay = await memberPage.request.get(link!);
     expect(replay.status()).toBe(404);
 
-    await page.goto(dash + '/auth/restrictions');
+    await page.goto(dash + '/auth/restrictions' + selection);
     await page.locator('#signup-mode').selectOption('public');
     await page.locator('#signup-allowlist').fill('example.com');
     const blockedEmail = await newAddress('restrictions-blocked-' + run);
@@ -136,14 +138,14 @@ test('restricted sign-up, single-use invitations and waitlist approval', async (
     await memberPage.locator('#waitlist-email').fill(invitedEmail);
     await memberPage.getByRole('button', { name: 'Join waitlist' }).click();
     await expect(memberPage.getByRole('status')).toContainText('Your request has been received.');
-    await page.goto(dash + '/auth/waitlist');
+    await page.goto(dash + '/auth/waitlist' + selection);
     await expect(page.locator('.ts-list-item').filter({ hasText: invitedEmail })).toHaveCount(0);
     await memberPage.goto(auth + '/ui/' + project + '/waitlist');
     await memberPage.locator('#waitlist-email').fill(waitingEmail);
     await memberPage.getByRole('button', { name: 'Join waitlist' }).click();
     await expect(memberPage.getByRole('status')).toContainText('Your request has been received.');
     await memberAudit.check('project waitlist joined');
-    await page.goto(dash + '/auth/waitlist');
+    await page.goto(dash + '/auth/waitlist' + selection);
     const entry = page.locator('.ts-list-item').filter({ hasText: waitingEmail });
     await expect(entry).toContainText('pending');
     await entry.getByRole('button', { name: 'Approve', exact: true }).click();
@@ -152,12 +154,8 @@ test('restricted sign-up, single-use invitations and waitlist approval', async (
     expect(approved.text).toContain('/ui/' + project + '/invitations/');
     await audit.check('waitlist approval sends an invitation');
 
-    await page.goto(dash + '/profile?tab=danger');
-    await page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
-    await page.locator('#delete-account-email').fill(ownerEmail);
-    await page.locator('#delete-account').getByRole('button', { name: 'Delete account', exact: true }).click();
-    await confirmWithPassword(page, audit, password, 'restrictions owner deletion');
-    await page.waitForURL(url => url.pathname === '/account-deleted');
+    const deleted = await page.request.delete(projects + '/' + project, { headers: { Authorization: 'Bearer ' + token } });
+    expect(deleted.status()).toBe(204);
   } finally {
     await saveCookies(owner);
     await saveCookies(member);
