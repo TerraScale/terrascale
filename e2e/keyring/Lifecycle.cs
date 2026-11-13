@@ -342,6 +342,11 @@ internal static class Lifecycle
 
     private static async Task PreserveUnregisteredAsync(IServiceProvider services, TenantContext database, CancellationToken cancellationToken)
     {
+        foreach (var background in services.GetServices<IHostedService>().OfType<BackgroundService>().Reverse())
+        {
+            await background.StopAsync(cancellationToken);
+        }
+        await services.GetRequiredService<EngineManagementService>().StopAsync(cancellationToken);
         var system = await services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
         var options = services.GetRequiredService<TerraBaseOptions>();
         var kind = "orphan_database_files/" + options.MachineId;
