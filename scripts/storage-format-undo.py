@@ -129,12 +129,12 @@ with (root / ".terrabase.lock").open("r+b") as ownership:
             if path.is_symlink():
                 raise OSError("database paths must not be symbolic links")
             print(name + ": " + stamp(path), flush=True)
-        except Exception as error:
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             failed.append(name)
             print(name + ": NOT STAMPED: " + type(error).__name__ + ": " + str(error), flush=True)
     if failed:
-        print(str(len(failed)) + " file(s) still at format 24; the directory keeps its record " + recorded.decode()
-              + "; fix them and run this again (stamped files are skipped)", flush=True)
+        print(str(len(failed)) + " file(s) still at format 24; the directory keeps its record " + recorded.decode(), flush=True)
+        print("fix them and run this again; stamped files are skipped", flush=True)
         sys.exit(1)
     ownership.seek(0)
     ownership.write(previous)

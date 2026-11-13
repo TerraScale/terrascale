@@ -38,11 +38,9 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 
 ## Going back after a storage migration
 
-A migrated directory cannot be opened by the previous build. Never empty a data directory or
-discard data in response to that build's refusal message. Automatic image rollback cannot undo
-a storage migration. Keep the stopped directory and roll forward or restore its pre-upgrade backup.
-For the first, version-only 23 to 24 step, follow the exact stopped-node commands in
-[Storage migrations: Going back](storage-migrations.md#going-back): reset the lock to
-`23-41a88901325a` first, then every file's `user_version` to 1, then remove the journal and
-start the previous image. A step that changes data must retain a copy per file or take a
-volume backup first. Check replica format-block and lag metrics throughout a regional rollout.
+Every format change ships in two releases: first a build that supports the new format and still writes the old
+one, then the change that raises Target. The automatic reinstall of the previous image after the second release
+lands on a build that supports the migrated directory, so it simply runs. Never empty a data directory or discard
+data in response to a refusal message. Going back two releases needs the stopped-node undo in
+[Storage migrations](storage-migrations.md#going-back-two-releases). Watch the replica format and lag metrics
+throughout a regional rollout.

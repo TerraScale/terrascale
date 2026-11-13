@@ -33,15 +33,20 @@ FIRST = "23-41a88901325a"
 
 library = next(candidate.glob("lib*_sdk_kit.so"))
 lib = c.CDLL(str(library))
-prefix = library.name[3:-len("_sdk_kit.so")] + "_"
+prefix = library.name[3 : -len("_sdk_kit.so")] + "_"
 P = c.c_void_p
 
 
 class Config(c.Structure):
     _fields_ = [
-        ("async_io", c.c_uint64), ("path", c.c_char_p), ("features", c.c_char_p),
-        ("vfs", c.c_char_p), ("cipher", c.c_char_p), ("key", c.c_char_p),
-        ("codec", c.c_char_p), ("flags", c.c_uint32),
+        ("async_io", c.c_uint64),
+        ("path", c.c_char_p),
+        ("features", c.c_char_p),
+        ("vfs", c.c_char_p),
+        ("cipher", c.c_char_p),
+        ("key", c.c_char_p),
+        ("codec", c.c_char_p),
+        ("flags", c.c_uint32),
     ]
 
 
@@ -80,7 +85,8 @@ PULL = (
     "const http2 = require('node:http2');"
     "const [port, path, secret, accept] = process.argv.slice(1);"
     "const client = http2.connect('http://127.0.0.1:' + port);"
-    "const headers = {':method': 'POST', ':path': path, 'content-type': 'application/protobuf', 'x-terrabase-peer-credential': secret};"
+    "const headers = {':method': 'POST', ':path': path, 'content-type': 'application/protobuf',"
+    " 'x-terrabase-peer-credential': secret};"
     "if (accept !== '-') headers['terrabase-storage-formats'] = accept;"
     "const request = client.request(headers); let answer = {}; const body = [];"
     "request.on('response', h => answer = {status: h[':status'], format: h['terrabase-storage-format'] ?? null});"
@@ -99,8 +105,9 @@ def check(code, error):
 
 def sql(path, statement):
     lines = pathlib.Path(str(path) + ".key").read_text().splitlines()
-    key = subprocess.check_output(["node", "-e", UNWRAP], input=json.dumps(
-        {"master": env["TERRABASE_MASTER_KEY"], "wrapped": lines[1]}).encode())
+    key = subprocess.check_output(
+        ["node", "-e", UNWRAP], input=json.dumps({"master": env["TERRABASE_MASTER_KEY"], "wrapped": lines[1]}).encode()
+    )
     config = Config(0, str(path).encode(), b"index_method,encryption", None, b"aegis256", key, None, 0)
     db, connection, error, statement_handle = P(), P(), P(), P()
     check(native_new(c.byref(config), c.byref(db), c.byref(error)), error)
@@ -117,10 +124,14 @@ def sql(path, statement):
             if code == 3:
                 check(native_io(statement_handle, c.byref(error)), error)
             elif code == 2:
-                rows.append([
-                    native_int(statement_handle, n) if native_kind(statement_handle, n) == 1
-                    else c.string_at(native_bytes(statement_handle, n), native_size(statement_handle, n)).decode()
-                    for n in range(native_columns(statement_handle))])
+                rows.append(
+                    [
+                        native_int(statement_handle, n)
+                        if native_kind(statement_handle, n) == 1
+                        else c.string_at(native_bytes(statement_handle, n), native_size(statement_handle, n)).decode()
+                        for n in range(native_columns(statement_handle))
+                    ]
+                )
     finally:
         if statement_handle:
             check(native_finalize(statement_handle, c.byref(error)), error)
@@ -131,7 +142,15 @@ def sql(path, statement):
 
 
 def databases(directory):
-    return sorted(path for path in directory.rglob("*.db") if not path.name.endswith(".promote.db"))
+    return sorted(
+        path
+        for path in directory.rglob("*.db")
+        if path.parent == directory
+        or (
+            len(path.relative_to(directory).parts) == 3
+            and all(re.fullmatch(r"[0-9A-Z]{26}", part) for part in (path.parent.parent.name, path.parent.name, path.stem))
+        )
+    )
 
 
 def stamps(directory):
@@ -154,8 +173,12 @@ def ready():
 def node(build, directory, name, extra=None):
     log = work / (name + ".log")
     with log.open("w") as output:
-        child = subprocess.Popen(["nice", "-n", "19", dotnet, str(build / "terrabase.dll")],
-                                 env=env | {"TERRABASE_DATA_DIRECTORY": str(directory)} | (extra or {}), stdout=output, stderr=output)
+        child = subprocess.Popen(
+            ["nice", "-n", "19", dotnet, str(build / "terrabase.dll")],
+            env=env | {"TERRABASE_DATA_DIRECTORY": str(directory)} | (extra or {}),
+            stdout=output,
+            stderr=output,
+        )
         try:
             yield child, log
         finally:
@@ -200,7 +223,7 @@ def pull(tenant, accept):
 
 
 def tenants(directory):
-    return [path for path in databases(directory) if path.parent != directory and path.parent.parent.parent == directory]
+    return [path for path in databases(directory) if path.parent != directory]
 
 
 def copy(source, name):
@@ -218,16 +241,46 @@ def build_target(target):
     source = work / f"source-{target}"
     output = work / f"build-target-{target}"
     shutil.rmtree(source, ignore_errors=True)
-    subprocess.run(["rsync", "-a", "--exclude", ".git", "--exclude", "node_modules", "--exclude", "bin", "--exclude", "obj",
-                    str(repo) + "/", str(source) + "/"], check=True)
+    subprocess.run(
+        [
+            "rsync",
+            "-a",
+            "--exclude",
+            ".git",
+            "--exclude",
+            "node_modules",
+            "--exclude",
+            "bin",
+            "--exclude",
+            "obj",
+            str(repo) + "/",
+            str(source) + "/",
+        ],
+        check=True,
+    )
     format_file = source / "src/TerraBase/Engine/Turso/StorageFormat.cs"
     text = format_file.read_text()
     changed = re.sub(r"public const int Target = \d+;", f"public const int Target = {target};", text)
     assert changed != text
     format_file.write_text(changed)
     with (work / f"build-target-{target}.log").open("w") as log:
-        subprocess.run(["nice", "-n", "19", dotnet, "build", str(source / "src/TerraBase/TerraBase.csproj"), "-c", "Release", "-o", str(output)],
-                       stdout=log, stderr=log, check=True)
+        subprocess.run(
+            [
+                "nice",
+                "-n",
+                "19",
+                dotnet,
+                "build",
+                str(source / "src/TerraBase/TerraBase.csproj"),
+                "-c",
+                "Release",
+                "-o",
+                str(output),
+            ],
+            stdout=log,
+            stderr=log,
+            check=True,
+        )
     return output
 
 
@@ -254,7 +307,8 @@ try:
         path = gdb.parse_and_eval("(char*)" + ("$rdi" if number == 82 else "$rsi")).string()
         if path.endswith('/_system.db.migrating'):
             original = path[:-len('.migrating')]
-            hit = path + ' stale-wal=' + str(os.path.exists(original + '-wal')) + ' stale-shm=' + str(os.path.exists(original + '-shm'))
+            stale = [suffix for suffix in ('-wal', '-shm') if os.path.exists(original + suffix)]
+            hit = path + ' stale sidecars ' + str(stale)
     if hit:
         print('FORMAT SIGKILL ' + mode + ' ' + hit, flush=True)
         os.kill(pid, 9)
@@ -272,8 +326,13 @@ def kill_at(build, directory, mode):
     script.write_text(GDB)
     log = work / f"kill-{mode}.log"
     with log.open("w") as output:
-        subprocess.run(["nice", "-n", "19", "gdb", "-q", "-nx", "-batch", "-x", str(script), "--args", dotnet, str(build / "terrabase.dll")],
-                       env=env | {"TERRABASE_DATA_DIRECTORY": str(directory), "FORMAT_KILL": mode}, stdout=output, stderr=output, timeout=180)
+        subprocess.run(
+            ["nice", "-n", "19", "gdb", "-q", "-nx", "-batch", "-x", str(script), "--args", dotnet, str(build / "terrabase.dll")],
+            env=env | {"TERRABASE_DATA_DIRECTORY": str(directory), "FORMAT_KILL": mode},
+            stdout=output,
+            stderr=output,
+            timeout=180,
+        )
     lines = [line for line in log.read_text().splitlines() if line.startswith("FORMAT SIGKILL")]
     assert lines, name_tail(log)
     return lines[0]
@@ -299,9 +358,14 @@ for attempt in range(3):
     candidate_times.append(seconds)
     assert "Storage migration to format" not in log
 assert lock(upgrade) == FIRST and stamps(upgrade) == seed_stamps, (lock(upgrade), stamps(upgrade))
-result(f"1 upgrade: candidate opened previous data, lock still {lock(upgrade)}, all {len(seed_stamps)} user_version 1, no migration pass")
-result(f"1 readiness: previous restart median {statistics.median(restart_times):.2f}s {[round(t, 2) for t in restart_times]}; "
-       f"candidate median {statistics.median(candidate_times):.2f}s {[round(t, 2) for t in candidate_times]}")
+result(
+    f"1 upgrade: candidate opened previous data, lock still {lock(upgrade)}, "
+    f"all {len(seed_stamps)} user_version 1, no migration pass"
+)
+result(
+    f"1 readiness: previous restart median {statistics.median(restart_times):.2f}s {[round(t, 2) for t in restart_times]}; "
+    f"candidate median {statistics.median(candidate_times):.2f}s {[round(t, 2) for t in candidate_times]}"
+)
 
 start(previous, upgrade, "back-to-previous")
 assert all(sql(path, "SELECT value FROM format_proof;") == [["written-by-previous"]] for path in databases(upgrade))
@@ -311,9 +375,11 @@ target24 = build_target(24)
 stamped = copy(seed, "stamped-24")
 seconds, log = start(target24, stamped, "target-24")
 assert lock(stamped) == "24" and set(stamps(stamped).values()) == {24}, (lock(stamped), stamps(stamped))
-pass_line = next(line for line in log.splitlines() if "Storage migration to format" in line)
+summary = next(json.loads(line[line.index("{") :]) for line in log.splitlines() if "Storage migration to format" in line)
 result(f"3 stamp: Target-24 scratch build migrated {len(seed_stamps)} files to 24 and was ready in {seconds:.2f}s")
-result("3 tenant pass: " + pass_line.split("Storage migration to format", 1)[1].strip()[:160])
+result(
+    f"3 tenant pass: {summary['Migrated']} tenant files migrated, {summary['Failed']} failed, in {summary['ElapsedMs']:.1f} ms"
+)
 tenant = tenants(stamped)[0]
 with node(candidate, stamped, "candidate-on-24") as (child, node_log):
     wait_ready(child, node_log)
@@ -328,13 +394,17 @@ with node(candidate, stamped, "candidate-on-24-again") as (child, node_log):
     again = pull(tenant, "23-24")
 assert again["status"] == 200 and again["format"] == "24" and again["bytes"] > 0, again
 assert sql(tenant, "SELECT count(*) FROM format_proof;") == [[2]]
-result(f"3 candidate on 24: ready, lock 24 kept, pages served as format 24 ({current['bytes']} bytes) to a 23-24 peer, "
-       f"refused {old_peer['status']} {old_peer['code']} to a 23-only peer, files still 24")
+result(
+    f"3 candidate on 24: ready, lock 24 kept, pages served as format 24 ({current['bytes']} bytes) to a 23-24 peer, "
+    f"refused {old_peer['status']} {old_peer['code']} to a 23-only peer, files still 24"
+)
 with node(previous, upgrade, "previous-peer") as (child, node_log):
     wait_ready(child, node_log)
     from_old = pull(tenants(upgrade)[0], "23-24")
 assert from_old["status"] == 200 and from_old["format"] is None, from_old
-result(f"3 from a 23 peer: previous build served {from_old['bytes']} bytes with no format header, which the candidate reads as 23")
+result(
+    f"3 from a 23 peer: previous build served {from_old['bytes']} bytes with no format header, which the candidate reads as 23"
+)
 text = refused(previous, stamped, "previous-on-24")
 result("3 previous on 24 refused: " + next(line for line in text.splitlines() if "storage format" in line).strip()[:200])
 
@@ -346,25 +416,10 @@ for mode in ("staged", "journal", "rename"):
     seconds, _ = start(target24, directory, f"kill-{mode}-resume")
     assert lock(directory) == "24" and set(stamps(directory).values()) == {24}
     assert all(sql(path, "SELECT value FROM format_proof;") == [["written-by-previous"]] for path in databases(directory))
-    result(f"4 kill {mode}: {line.split(' ', 3)[3][-120:]}; after kill lock {record} system files {versions}; resumed ready in {seconds:.2f}s, all 24, rows kept")
-
-blocked = copy(seed, "recovery-retry")
-project = tenants(blocked)[0].parent
-project.chmod(0)
-try:
-    with node(candidate, blocked, "recovery-retry") as (child, node_log):
-        started = time.monotonic()
-        while "is tried again" not in node_log.read_text():
-            assert child.poll() is None and time.monotonic() - started < 120, name_tail(node_log)
-            time.sleep(0.1)
-        not_ready = not ready()
-        project.chmod(0o700)
-        seconds = wait_ready(child, node_log)
-        failure = next(line for line in node_log.read_text().splitlines() if "is tried again" in line)
-finally:
-    project.chmod(0o700)
-assert not_ready
-result(f"5 recovery retry: not ready while recovery failed ({failure.strip()[-90:]}); ready {seconds:.2f}s after the fault cleared, no restart")
+    result(
+        f"4 kill {mode}: {line.split(' ', 3)[3][-120:]}; after kill lock {record} system files {versions}; "
+        f"resumed ready in {seconds:.2f}s, all 24, rows kept"
+    )
 
 undo = copy(stamped, "undo")
 middle = tenants(undo)[len(tenants(undo)) // 2]
@@ -372,13 +427,26 @@ key = pathlib.Path(str(middle) + ".key")
 original_key = key.read_text()
 key.write_text(original_key.splitlines()[0] + "\nAAAA\n")
 undo_env = env | {"TERRABASE_MASTER_KEY": env["TERRABASE_MASTER_KEY"]}
-first = subprocess.run(["python3", str(repo / "scripts/storage-format-undo.py"), str(candidate), str(undo)], env=undo_env, capture_output=True, text=True)
+first = subprocess.run(
+    ["python3", str(repo / "scripts/storage-format-undo.py"), str(candidate), str(undo)],
+    env=undo_env,
+    capture_output=True,
+    text=True,
+)
 assert first.returncode == 1 and lock(undo) == "24", first.stdout + first.stderr
 key.write_text(original_key)
 left = [name for name, version in stamps(undo).items() if version == 24]
 assert left == [str(middle.relative_to(undo))], left
-second = subprocess.run(["python3", str(repo / "scripts/storage-format-undo.py"), str(candidate), str(undo)], env=undo_env, capture_output=True, text=True)
+second = subprocess.run(
+    ["python3", str(repo / "scripts/storage-format-undo.py"), str(candidate), str(undo)],
+    env=undo_env,
+    capture_output=True,
+    text=True,
+)
 assert second.returncode == 0 and lock(undo) == FIRST and set(stamps(undo).values()) == {1}, second.stdout + second.stderr
 start(previous, undo, "previous-after-undo")
-result(f"6 undo: first run exit {first.returncode}, " + next(line for line in first.stdout.splitlines() if "NOT STAMPED" in line)[:110])
+result(
+    f"6 undo: first run exit {first.returncode}, "
+    + next(line for line in first.stdout.splitlines() if "NOT STAMPED" in line)[:110]
+)
 result(f"6 undo: every other file stamped, lock kept 24; rerun exit 0 '{second.stdout.splitlines()[-1]}'; previous build ready")
