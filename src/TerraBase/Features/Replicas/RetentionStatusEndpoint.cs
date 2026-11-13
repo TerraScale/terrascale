@@ -31,7 +31,7 @@ internal sealed class RetentionStatusEndpoint(IStorageEngine engine, RegionalOwn
         await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         var retained = await SystemCatalog.GetAsync(transaction, DeletedDatabases.Kind, database.DatabaseId!,
             ManagementJsonContext.Default.DeletedDatabaseRecord, cancellationToken).ConfigureAwait(false);
-        if (!owners.Writer)
+        if (!owners.Writer || await CatalogTables.DatabaseAsync(transaction, database.ProjectId!, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null)
         {
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }

@@ -17,7 +17,11 @@ internal sealed partial class RegionalHandoff
 {
     internal async Task<RetainedPage?> RetainedPageAsync(string operation, long epoch, string? after, IPAddress? caller, CancellationToken token)
     {
-        var owner = owners.Find(options.Region);
+        if (_kv is not { } kv || await ReadAsync(kv, options.Region, token).ConfigureAwait(false) is not { Value: { } value })
+        {
+            return null;
+        }
+        var owner = Decode(value);
         if (owner is not { Transfer: { Phase: Preparing } transfer } || owner.Node != options.MachineId
             || owner.Epoch != epoch || transfer.Id != operation)
         {
