@@ -212,6 +212,7 @@ test('history lost while the backup store is unreachable is one hole each time, 
       outage = false;
     });
     await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
+    await tokenReady(writer, cells, database(created.id));
     expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(0);
     await expect.poll(() => probe(writer, '/backupz'), { message: 'a replacement snapshot after the restart closes the second hole' }).toBe(200);
     const settled = await continuity(writer, created.id);
