@@ -555,10 +555,11 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             }
 
             beginClose();
-            if (input is null && state.Pending.Commits && !cancellationToken.IsCancellationRequested)
+            if (input is null && state.State.Pending && !cancellationToken.IsCancellationRequested)
             {
                 var pending = state.Pending;
-                await state.EndAsync(() => ReportAsync(to, SqlErrors.WriteOutcomeUnknown, SqlErrors.OutcomeUnknown(home).Message, pending.Id, cancellationToken)).ConfigureAwait(false);
+                var error = pending.Commits ? SqlErrors.OutcomeUnknown(home) : HomeSessions.Unreachable(home);
+                await state.EndAsync(() => ReportAsync(to, error.Code, error.Message, pending.Id, cancellationToken)).ConfigureAwait(false);
             }
             else
             {

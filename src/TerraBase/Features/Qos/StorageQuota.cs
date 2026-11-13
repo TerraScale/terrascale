@@ -215,9 +215,16 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
             return null;
         }
 
-        return await _engine.OpenDatabaseAsync(candidate, cancellationToken).ConfigureAwait(false) is { } store
-            ? (await UsageAsync(store, cancellationToken).ConfigureAwait(false)).Bytes
-            : null;
+        try
+        {
+            return await _engine.OpenDatabaseAsync(candidate, cancellationToken).ConfigureAwait(false) is { } store
+                ? (await UsageAsync(store, cancellationToken).ConfigureAwait(false)).Bytes
+                : null;
+        }
+        catch (Exception refused) when (refused is StorageCopyFaultedException or StorageProofPendingException)
+        {
+            return await _engine.GetDatabaseSizeAsync(candidate, cancellationToken).ConfigureAwait(false) is { } resting ? resting : null;
+        }
     }
 
     private async ValueTask<Usage> UsageAsync(IDatabaseStore store, CancellationToken cancellationToken)

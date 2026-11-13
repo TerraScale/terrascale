@@ -21,6 +21,8 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
     internal const string Path = "/v1/internal/postgres";
     internal const string ClientHeader = "X-TerraBase-Postgres-Client";
 
+    private static readonly SqlError SessionEnded = new(SqlErrors.Unavailable, "the relayed session ended; its open transaction was rolled back");
+
     private static readonly byte[] FlushRequest = [(byte)'H', 0, 0, 0, 4];
 
     private static ReadOnlySpan<byte> CleartextRequest => [(byte)'R', 0, 0, 0, 8, 0, 0, 0, 3];
@@ -141,12 +143,12 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                 {
                     BeginClose();
                     var refusal = state.Pending.Commits ? SqlErrors.OutcomeUnknown(home.Region)
-                        : upstream.Expiry is { } expiry ? new SqlError(SqlErrors.QueryCanceled, expiry.Message) : HomeSessions.Unreachable(home.Region);
+                        : upstream.Expiry is { } expiry ? new SqlError(SqlErrors.QueryCanceled, expiry.Message) : SessionEnded;
                     await writing.WaitAsync(stop.Token).ConfigureAwait(false);
                     try
                     {
                         var writer = new PgWriter(output);
-                        writer.Error(state.Pending.Commits ? refusal.Sqlstate : upstream.Expiry?.State ?? refusal.Sqlstate, refusal.Message, fatal: true);
+                        writer.Error(state.Pending.Commits ? refusal.Sqlstate : upstream.Expiry?.State ?? "08006", refusal.Message, fatal: true);
                         await writer.FlushAsync(stop.Token).ConfigureAwait(false);
                     }
                     finally
