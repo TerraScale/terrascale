@@ -59,6 +59,7 @@ internal sealed partial class RegionReplication(
     private NatsConnection? _nats;
     private Histogram<double>? _lag;
     private Counter<long>? _pullCount;
+    private Counter<long>? _formatRefused;
     private Counter<long>? _verifications;
     private Counter<long>? _rebootstraps;
     private ReplicaVerifier? _verifier;
@@ -97,6 +98,11 @@ internal sealed partial class RegionReplication(
             .DefaultIfEmpty(0).Max(), "s", "The longest time any of this node's replicas went without a completed verification against its home.");
         _ = _meter.CreateObservableGauge("terrabase.replica.tracked_followers", () => _followers.Count, "{follower}",
             "The number of followers contributing to replica verification age.");
+        _formatRefused = _meter.CreateCounter<long>("terrabase.replica.format_refused", description: "Revision notices refused because their storage format is not supported by this build, by peer region.");
+        _ = _meter.CreateObservableGauge("terrabase.replica.format_blocked", () => _peers.Select(peer => peer.Region).Append(options.Region).Distinct(StringComparer.Ordinal).Select(region =>
+            new Measurement<int>(_followers.Values.Count(follower => follower.Home.Region == region && follower.FormatBlocked),
+                new KeyValuePair<string, object?>("peer_region", region))),
+            description: "Followers waiting for a build that supports the storage format of their home copy.");
         _verifier = new ReplicaVerifier(replicas, _http);
 
         if (options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
@@ -217,7 +223,7 @@ internal sealed partial class RegionReplication(
 
                     using var push = await RevisionPush.BuildAsync(revisions, memory, revised.Database, _published.GetValueOrDefault(key).Revision, revised.At, cancellationToken)
                         .ConfigureAwait(false);
-                    if (push is not { Notice.Revision: { } revision })
+                    if (push is not { Notice.Revision: { } revision, Result.Format: var format })
                     {
                         continue;
                     }
@@ -230,7 +236,7 @@ internal sealed partial class RegionReplication(
                     _published[key] = (revision, revised.Database);
                     foreach (var region in (placement.AllRegions ? _peers.Select(peer => peer.Region) : placement.Replicas).Append(options.Region).Distinct(StringComparer.Ordinal))
                     {
-                        await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database), push.Payload, cancellationToken: cancellationToken)
+                        await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database, format), push.Payload, cancellationToken: cancellationToken)
                             .ConfigureAwait(false);
                         if (push is { HasPages: true, Result: { } offered })
                         {
@@ -320,7 +326,17 @@ internal sealed partial class RegionReplication(
 
     private void Notice(string subject, byte[]? data)
     {
-        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _] || replica != options.Region || (home == options.Region && owners.Writer) || data is null
+        var parts = subject.Split('.');
+        if (parts.Length is not (5 or 6) || parts[0] != "terrabase" || parts[1] != "revision" || data is null)
+        {
+            return;
+        }
+
+        var replica = parts[2];
+        var home = parts[3];
+        var format = StorageFormat.FromMarker(parts.Length == 6 ? parts[5] : null);
+        var readable = format is { } noticed && StorageFormat.IsSupported(noticed);
+        if (replica != options.Region || (home == options.Region && owners.Writer)
             || !RevisionPush.TryRead(data, out var notice, out var answer) || notice is null)
         {
             return;
@@ -328,9 +344,17 @@ internal sealed partial class RegionReplication(
 
         if (_followers.TryGetValue((notice.OrganizationId, notice.ProjectId, notice.DatabaseId), out var follower) && follower.Home.Region == home)
         {
+            follower.ObserveNotice(notice.CommittedAt, !readable);
+            if (!readable)
+            {
+                _formatRefused?.Add(1, new KeyValuePair<string, object?>("peer_region", home == options.Region || _peers.Any(peer => peer.Region == home) ? home : "other"));
+                return;
+            }
+
             var known = DatabaseRevision.TryParse(notice.Revision, out var to);
             if (known && replicas.HeldRevision(follower.Database) is { } held && held.Incarnation == to.Incarnation && DatabaseRevision.Compare(to, held) <= 0)
             {
+                follower.ConfirmHeld();
                 return;
             }
 
@@ -478,6 +502,8 @@ internal sealed partial class RegionReplication(
         private readonly Uri _source;
         private readonly DateTimeOffset _started;
         private long _noticed;
+        private long _formatMismatchAt;
+        private int _formatBlocked;
         private long _pullStartedAt;
         private DateTimeOffset? _syncedAt;
         private DateTimeOffset? _verifiedAt;
@@ -508,12 +534,29 @@ internal sealed partial class RegionReplication(
 
         public TenantContext Database { get; }
 
+        public bool FormatBlocked => Volatile.Read(ref _formatBlocked) != 0;
+
+        public void ObserveNotice(long committedAt, bool formatBlocked)
+        {
+            Volatile.Write(ref _formatBlocked, formatBlocked ? 1 : 0);
+            if (committedAt > 0)
+            {
+                if (formatBlocked)
+                {
+                    _ = Interlocked.CompareExchange(ref _formatMismatchAt, committedAt, 0);
+                }
+            }
+        }
+
+        public void ConfirmHeld() => Interlocked.Exchange(ref _formatMismatchAt, 0);
+
         public long? LagMs
         {
             get
             {
                 var now = _owner.Time.GetUtcNow().ToUnixTimeMilliseconds();
-                return Volatile.Read(ref _noticed) is > 0 and var noticed ? Math.Max(0, now - noticed)
+                return Volatile.Read(ref _formatMismatchAt) is > 0 and var blocked ? Math.Max(0, now - blocked)
+                    : Volatile.Read(ref _noticed) is > 0 and var noticed ? Math.Max(0, now - noticed)
                     : Volatile.Read(ref _pullStartedAt) is > 0 and var started ? (_owner.Notified ? 0 : Math.Max(0, now - started))
                     : null;
             }
@@ -650,6 +693,8 @@ internal sealed partial class RegionReplication(
 
                 Volatile.Write(ref _pullStartedAt, started.ToUnixTimeMilliseconds());
                 _syncedAt = _owner.Time.GetUtcNow();
+                Volatile.Write(ref _formatBlocked, 0);
+                Interlocked.Exchange(ref _formatMismatchAt, 0);
                 if (changed)
                 {
                     Volatile.Write(ref _lastChangedAt, _syncedAt.Value.ToUnixTimeMilliseconds());

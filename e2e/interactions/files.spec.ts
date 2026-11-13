@@ -4,6 +4,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { csrfToken, objectPath, saveLeftFiles, stored } from '../support/files';
 import { production } from '../support/stack';
+import { deletionHandoff } from '../support/mcp';
 import { journey } from '../support/state';
 
 const unique = (base: string) => `${base}-${journey().runId}${Date.now().toString(36)}`;
@@ -45,7 +46,8 @@ test('a bucket is created, takes an upload, returns the same bytes, is emptied a
 
   const file = `report-${journey().runId}.pdf`;
   const bytes = randomBytes(96 * 1024);
-  await upload(page, file, 'application/pdf', bytes);
+  const id = await upload(page, file, 'application/pdf', bytes);
+  const bucket = bucketId.exec(page.url())?.[1] ?? '';
   const row = page.locator('#bucket-files tr').filter({ hasText: file });
   await expect(row).toContainText('98.3 kB');
   await expect(row).toContainText('application/pdf');
@@ -59,6 +61,14 @@ test('a bucket is created, takes an upload, returns the same bytes, is emptied a
   expect(createHash('sha256').update(received).digest('hex'), 'the downloaded bytes are the uploaded bytes').toBe(createHash('sha256').update(bytes).digest('hex'));
   const object = objectPath(download.url());
   expect(await stored(object), 'the object store holds the uploaded file').toBe(true);
+
+  const current = journey();
+  const scope = { organizationId: current.organizationId, projectId: current.projectId, bucketId: bucket, fileId: id };
+  await deletionHandoff(page.request, current.apiKey, 'delete_file', id, '/storage', { ...scope, confirmFileId: id });
+  await deletionHandoff(page.request, current.apiKey, 'delete_file_bucket', bucket, '/storage', { ...scope, confirmName: name });
+  await page.reload();
+  await expect(page.locator('#bucket-files tr').filter({ hasText: file })).toBeVisible();
+  expect(await stored(object), 'MCP deletion handoffs leave the file in the object store').toBe(true);
 
   await row.getByRole('button', { name: `Delete ${file}`, exact: true }).click();
   const deleteFile = page.locator('dialog[open][id^="delete-file-"]');

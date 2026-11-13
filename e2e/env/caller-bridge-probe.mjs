@@ -8,13 +8,14 @@ import { join } from 'node:path';
 const [state, project, database] = process.argv.slice(2);
 const authorization = process.env.E2E_CALLER_BEARER;
 assert.ok(authorization);
-const key = readFileSync(join(state, 'caller-key.pem'));
+const key = readFileSync(join(state, 'caller-bridge-key.pem'));
 const peer = readFileSync(join(state, 'secrets'), 'utf8').split('\n')[0];
 const path = '/v1/projects/' + project + '/databases/' + database;
 const session = connect('http://127.0.0.1:8081');
 const metrics = port => readMetrics('http://127.0.0.1:' + port + '/metrics');
 const count = (text, credential) => text.split('\n')
-  .filter(line => line.startsWith('terrabase_internal_authentication_requests_total{') && line.includes('credential="' + credential + '"'))
+  .filter(line => line.startsWith('terrabase_internal_authentication_requests_total{') && line.includes('credential="' + credential + '"')
+    && (credential !== 'caller' || line.includes('caller="journey-bridge-probe"')))
   .reduce((total, line) => total + Number(line.split(' ').at(-1)), 0);
 async function posts() {
   const response = await fetch('http://127.0.0.1:8180' + path + '/analytics?region=fra', { headers: { authorization } });
@@ -24,8 +25,8 @@ async function posts() {
 }
 function token() {
   const now = Math.floor(Date.now() / 1000);
-  const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'ts-caller+jwt', kid: 'dashboard.local.1' })).toString('base64url');
-  const claims = Buffer.from(JSON.stringify({ iss: 'dashboard', aud: 'terrabase', iat: now, exp: now + 240, jti: randomUUID() })).toString('base64url');
+  const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'ts-caller+jwt', kid: 'journey-bridge-probe.local.1' })).toString('base64url');
+  const claims = Buffer.from(JSON.stringify({ iss: 'journey-bridge-probe', aud: 'terrabase', iat: now, exp: now + 240, jti: randomUUID() })).toString('base64url');
   const payload = header + '.' + claims;
   return payload + '.' + sign('sha256', Buffer.from(payload), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
 }

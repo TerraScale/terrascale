@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { rpc } from './caller-rpc.mjs';
 import { readMetrics } from './caller-metrics.mjs';
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -9,15 +10,16 @@ const state = process.argv[2];
 const origin = process.argv[3] ?? 'http://127.0.0.1:8081';
 const metrics = process.argv[4] ?? 'http://127.0.0.1:9091/metrics';
 const key = readFileSync(join(state, 'caller-key.pem'));
+const probeKey = readFileSync(join(state, 'caller-probe-key.pem'));
 const peer = readFileSync(join(state, 'secrets'), 'utf8').split('\n')[0];
 const session = connect(origin);
 const sql = '/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute';
 const body = JSON.stringify({ statements: [{ sql: 'SELECT 29 AS caller_value' }] });
 const peerHeader = { 'X-TerraBase-Peer-Credential': peer };
-function token(kid = 'ts-auth.local.1', age = 0, signingKey = key, extra = {}) {
+function token(kid = 'journey-probe.data.1', age = 0, signingKey = typeof kid === 'string' && kid.startsWith('journey-probe.') ? probeKey : key, extra = {}) {
   const now = Math.floor(Date.now() / 1000) + age;
   const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'ts-caller+jwt', ...(kid === false ? {} : { kid }) })).toString('base64url');
-  const claims = Buffer.from(JSON.stringify({ iss: (typeof kid === 'string' && kid.startsWith('op:')) ? 'op:journey' : (typeof kid === 'string' && kid.startsWith('dashboard.')) ? 'dashboard' : 'ts-auth', aud: 'terrabase', iat: now, exp: now + 240, jti: randomUUID(), ...extra })).toString('base64url');
+  const claims = Buffer.from(JSON.stringify({ iss: (typeof kid === 'string' && kid.startsWith('op:')) ? 'op:journey' : (typeof kid === 'string' && kid.startsWith('dashboard.')) ? 'dashboard' : (typeof kid === 'string' && kid.startsWith('journey-probe.')) ? 'journey-probe' : 'ts-auth', aud: 'terrabase', iat: now, exp: now + 240, jti: randomUUID(), ...extra })).toString('base64url');
   const payload = header + '.' + claims;
   return payload + '.' + sign('sha256', Buffer.from(payload), { key: signingKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
 }
@@ -84,37 +86,18 @@ try {
   const write = await request(sql, operator, JSON.stringify({ statements: [{ sql: 'CREATE TABLE caller_proof_write (id INTEGER)' }] }));
   assert.equal(write.status, 403, write.text);
   console.log('operator read capability rejects SQL writes: 403');
-  const peerSql = Buffer.concat([Buffer.from([0x93, 0xba]), Buffer.from('00000000000000000000000002'),
-    Buffer.from([0xa7]), Buffer.from('ts-auth'), Buffer.from([0xc4, Buffer.byteLength(body)]), Buffer.from(body)]);
-  const peerFrame = Buffer.alloc(5);
-  peerFrame.writeUInt32BE(peerSql.length, 1);
-  for (const [label, jwt, expected, path, frame = Buffer.from([0, 0, 0, 0, 1, 0xc0])] of [
+  for (const [label, jwt, expected, path] of [
     ['gRPC caller denied by replay grants', token(), '7', '/IPlatformService/ListDatabasesAsync'],
     ['gRPC public discovery with caller', token(), '0', '/IRegionsService/ListAsync'],
-    ['gRPC peer SQL counted once', null, '0', '/IManagementService/ExecuteSqlAsync', Buffer.concat([peerFrame, peerSql])],
-    ['gRPC catalog caller', token('dashboard.local.1'), '0', '/IPlatformService/ListDatabasesAsync'],
+    ['gRPC catalog caller', token('journey-probe.catalog.1'), '0', '/IPlatformService/ListDatabasesAsync'],
   ]) {
     const grpcBefore = await readMetrics(metrics);
-    const result = await new Promise((resolve, reject) => {
-      const call = session.request({
-        ':method': 'POST', ':path': path,
-        'content-type': 'application/grpc', te: 'trailers', ...(jwt ? { 'X-TerraScale-Caller': jwt } : peerHeader),
-      });
-      let status;
-      let grpc;
-      const chunks = [];
-      call.on('response', headers => { status = headers[':status']; grpc = headers['grpc-status']; });
-      call.on('trailers', headers => { grpc = headers['grpc-status']; });
-      call.on('data', chunk => { chunks.push(chunk); });
-      call.on('error', reject);
-      call.on('end', () => resolve({ status, grpc, body: Buffer.concat(chunks) }));
-      call.end(frame);
-    });
+    const result = await rpc(session, path, { 'X-TerraScale-Caller': jwt });
     assert.equal(result.status, 200, label);
     assert.equal(result.grpc, expected, label);
     if (label === 'gRPC catalog caller') assert.ok(result.body.includes(Buffer.from('ts-auth')), 'gRPC catalog has platform data');
     const grpcAfter = await readMetrics(metrics);
-    const authCount = text => count(text, 'terrabase_internal_authentication_requests_total', ['credential="' + (jwt ? 'caller' : 'peer') + '"']);
+    const authCount = text => count(text, 'terrabase_internal_authentication_requests_total', ['credential="caller"', 'caller="journey-probe"']);
     assert.equal(authCount(grpcAfter) - authCount(grpcBefore), 1, label + ' counted once');
     console.log(label + ': HTTP ' + result.status + ' grpc-status=' + result.grpc + ' counted once');
   }
@@ -129,7 +112,7 @@ try {
   assert.match(after, new RegExp('terrabase_caller_keys_soonest_expiry_seconds(?:\\{[^}]*\\})? ' + soonest + '(?:\\n|$)'));
   console.log('expired registry entry skipped; expired=1; soonest live expiry matches registry');
   for (const [name, labels] of [
-    ['terrabase_internal_authentication_requests_total', ['credential="caller"', 'caller="ts-auth"']],
+    ['terrabase_internal_authentication_requests_total', ['credential="caller"', 'caller="journey-probe"']],
     ['terrabase_internal_authentication_requests_total', ['credential="legacy"']],
     ['terrabase_internal_authentication_requests_total', ['credential="caller_rejected"']],
     ['terrabase_operator_legacy_grants_total', ['kind="data"']],

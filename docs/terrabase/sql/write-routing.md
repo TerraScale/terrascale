@@ -38,9 +38,10 @@ a path from PIVOT Appendix E:
 A transaction or REST batch goes local only when every write in it does; otherwise the whole transaction goes home.
 When in doubt the router sends it home.
 
-**Commit path.** A write decided local commits in the region only when three facts hold: the region has at least two
-nodes in the peers file (D16), the clock skew guard allows local writes (`ILocalWriteClock.Allowed`, R12), and a local
-commit path for the database is ready (`ILocalCommitPath`, provided by R7/R10). Until then every write commits at the
+**Commit path.** A write decided local commits in the region only when the region has at least two nodes in the peers
+file (D16), a local commit path for the database is ready (`ILocalCommitPath`, provided by R7/R10), and the node's
+clock issues the commit stamp ([HLC](../hlc-clock.md#clock-trust)); a node whose clock is not trusted refuses the stamp
+and the write goes home. Until then every write commits at the
 home: `commit=home`. Nothing is configured; the router reads these facts on each decision. A timed-out local publish is
 forwarded with `TerraBase-Publish-Id` set to the same transaction id, and the home claims that id so the write applies
 once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

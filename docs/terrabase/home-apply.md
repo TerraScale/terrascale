@@ -23,8 +23,12 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 - **Inserts never overwrite.** An insert of a key that exists at the home is a `primary_key` conflict and reverts its
   transaction (D12: tables that take local writes use ULID keys). An update of a row that the home never had reverts
   as `missing_row`.
-- **Clock guard.** A transaction stamped more than 50 milliseconds ahead of the peer clocks this process already holds (or its own clock, when that is later) reverts as `clock` and never
-  advances the home's HLC (D21; R12 adds the per-node skew guard).
+- **Clock trust.** A node issues a stamp for its own write only while its clock is [trusted](hlc-clock.md#clock-trust):
+  a replica that is refused forwards the write home, and a home that is refused answers `409 serialization_conflict` with
+  `Retry-After: 1` and commits nothing. Applying a received transaction uses the stamp it carries and works whatever the receiver's clock.
+  Receiving an otherwise valid transaction with a future timestamp does not cause a clock conflict. Observation limits
+  the remote contribution to local UTC plus 50 ms and emits a warning and counter when it clips a timestamp; the
+  effect retains its original stamp.
 - **Triggers do not fire for applied changes.** The origin region already ran them and their writes are part of the
   transaction. See [triggers](#triggers).
 - **Foreign keys are re-checked at the end of the transaction.** Foreign-key actions (`CASCADE`, `SET NULL`) do not run
@@ -32,6 +36,13 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
   change may leave a referencing row behind. A violation reverts the transaction (`foreign_key`).
 - **Home writes take part.** A write that commits at the home (home-region clients, forwarded transactions) stamps the
   columns it changed with the home's HLC, so a staler change from another region cannot overwrite it.
+
+Mixed versions: the 50 ms budget bounds a stamp against its origin's clock only. A receiver's own clock can be off
+by up to the same budget in the other direction, so a receiver can see a valid stamp up to about 100 ms ahead of its
+clock; it clips only its observation of that stamp, never the stamp the effect keeps. A receiver on a build older than
+this rule can still revert such a write for its timestamp. Roll every region to this build without a long hold.
+
+A committed transaction with any superseded changes increments `terrabase_home_apply_superseded_total{region}` once, labelled only by its origin region; duplicate delivery does not increment it.
 
 ## Write states
 
@@ -122,7 +133,7 @@ home kept; the loser is the region transaction that lost.
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `id` | TEXT | ULID of the record, in record order. |
-| `kind` | TEXT | `superseded`, `unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`, `missing_row`, `schema`, `clock`. |
+| `kind` | TEXT | `superseded`, `unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`, `missing_row`, `schema`; `clock` may remain from before this release until retention removes it. |
 | `table_name` | TEXT | The table, or null when the rejection is not about one row. |
 | `row_key` | TEXT | JSON object of the row's primary key, or null. |
 | `column_name` | TEXT | The losing column, or null for a row-level loss and for `reverted`. |

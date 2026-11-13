@@ -27,8 +27,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal const string SystemName = "_system";
 
     private static readonly byte[] LayoutRecord = Encoding.ASCII.GetBytes(StorageFormat.Id);
-    private static readonly SearchValues<char> FormatCharacters = SearchValues.Create("0123456789abcdef-");
-    private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
+    private static readonly string PreTenancyLayout =
+        $"data directory uses the pre-tenancy layout, older than storage format {StorageFormat.SupportedFrom}; this build supports storage formats {StorageFormat.SupportedFrom} to {StorageFormat.SupportedTo} and cannot open it";
 
     internal const string LockFileName = ".terrabase.lock";
     private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix, RevisionManifestFile.Suffix, RevisionManifestFile.StagedSuffix];
@@ -226,7 +226,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         TimeSpan remaining;
         lock (_readinessGate)
         {
-            if (Volatile.Read(ref _disposed) || Ledger.FailedClosed is not null)
+            if (!Volatile.Read(ref _recovered) || Volatile.Read(ref _disposed) || Ledger.FailedClosed is not null)
             {
                 return false;
             }
@@ -312,6 +312,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _rewriteSteps = meter.CreateHistogram<double>("terrabase.storage.rewrite_step", "s",
             "Healthy rewrite work by bounded step and database kind.",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
+        _migrationFailures = meter.CreateCounter<long>("terrabase.storage.migration_failures", description: "Tenant files that failed the startup migration pass.");
+        meter.CreateObservableGauge("terrabase.storage.old_format_files", () => _oldFormatPaths.Count,
+            description: "Tenant files still awaiting a successful format migration.");
         _logger = logger;
         _shutdownGrace = configured.ShutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
@@ -594,7 +597,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     ThrowIfIntentPending(key);
                 }
 
-                if (!_initializing.TryGetValue(key, out var pending))
+                var pending = (Task?)_initializing.GetValueOrDefault(key) ?? _migrating.GetValueOrDefault(key);
+                if (pending is null)
                 {
                     var existed = File.Exists(path);
                     await Io.RunAsync(() =>
@@ -661,7 +665,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
             try
             {
-                await initialization.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await initialization.WaitAsync(QueryBudget, Time, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception) when (initialization.IsCompleted && !cancellationToken.IsCancellationRequested)
             {
@@ -771,7 +775,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     public async ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken)
     {
-
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
 
         if (Volatile.Read(ref _system) is { } system)
@@ -789,6 +792,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 TursoDatabaseStore? openingSystem = null;
                 try
                 {
+                    await PrepareStorageMigrationAsync(cancellationToken).ConfigureAwait(false);
                     _ = await Io.WithAdmissionAsync(async () =>
                     {
                         await OpenIntentStoreLockedAsync(cancellationToken).ConfigureAwait(false);
@@ -1443,11 +1447,12 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _awaitingRelease.Add(release);
+        var migration = _migrating.GetValueOrDefault(key) ?? Task.CompletedTask;
         initialization = Task.Run(
             async () =>
             {
                 await release.Task.ConfigureAwait(false);
-                return await Io.WithAdmissionAsync(() => InitializeStoreAsync(key, path, cancellationToken)).ConfigureAwait(false);
+                return await Io.WithAdmissionAsync(() => InitializeStoreAsync(key, path, migration, cancellationToken)).ConfigureAwait(false);
             },
             CancellationToken.None);
         _initializing.Add(key, initialization);
@@ -1487,7 +1492,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         };
 
     private async ValueTask<TursoDatabaseStore> InitializeStoreAsync(
-        (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
+        (string Organization, string Project, string Database) key, string path, Task migration, CancellationToken cancellationToken)
     {
         var store = CreateTenantStore(key, path);
         var published = false;
@@ -1498,8 +1503,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             Io.Admit();
             admitted = true;
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
+            await migration.WaitAsync(QueryBudget, Time, lifetime.Token).ConfigureAwait(false);
             RejectDatabaseLinks(path);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
+            _ = _oldFormatPaths.TryRemove(path, out _);
 
             await Ledger.LoadAsync(store, lifetime.Token).ConfigureAwait(false);
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);

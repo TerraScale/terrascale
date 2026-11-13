@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { createTsAuthClient } from '../../sdk/js/src/ts-auth.js';
+import { createProjectOwner } from '../support/project-owner';
+import { signInToken } from '../support/auth-management';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { hostedReady, onboard, onHosted, openSignUp, signInWithPassword, signUp, submitSignUp, verify } from '../support/hosted';
 import { regionsSettled } from '../support/overview';
@@ -10,6 +13,66 @@ const sizes = [
   { label: '1440x900', options: { viewport: desktop } },
   { label: '390x844', options: { viewport: mobile, isMobile: true, hasTouch: true, deviceScaleFactor: 2 } },
 ] as const;
+
+test('password reservations are returned after sign-in and retained for wrong passwords and disabled accounts', async ({ browser }, info) => {
+  await onLocalStack(async () => {
+    const account = await createProjectOwner(browser, info);
+    const { page } = account;
+    const audit = new Audit(page, info);
+    const current = { ...account.current };
+    const context = await auditedContext(browser, { storageState: { cookies: [], origins: [] } });
+    const sdk = createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' }).projects;
+    const ids: string[] = [];
+    let key: string | undefined;
+    try {
+      key = await signInToken(page.request, 'password-budget-owner');
+      const project = await page.request.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects`, {
+        headers: { Authorization: 'Bearer ' + key }, data: { name: 'Password budget ' + randomBytes(5).toString('hex') },
+      });
+      expect(project.status()).toBe(201);
+      current.projectId = (await project.json()).id as string;
+      expect(current.projectId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+      await page.goto(`${dash}/auth/attack-protection?organizationId=${current.organizationId}&projectId=${current.projectId}`);
+      await page.locator('input[name=account_lockout]').uncheck();
+      await page.getByRole('button', { name: 'Save attack protection', exact: true }).click();
+      await expect(page.locator('input[name=account_lockout]')).not.toBeChecked();
+      await audit.check('per-email budget active without project account lockout');
+      const email = `password-budget-${randomBytes(8).toString('hex')}@example.com`;
+      const disabledEmail = `disabled-${email}`;
+      for (const address of [email, disabledEmail]) {
+        const user = await sdk.createUser(key, current.projectId, { email: address, password: current.password });
+        expect(user.ok).toBe(true);
+        if (!user.ok) throw new Error('password-budget user creation failed');
+        ids.push(user.value.id);
+      }
+      expect((await sdk.disableUser(key, current.projectId, ids[1])).ok).toBe(true);
+      const attempt = (address: string, password: string) => context.request.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
+        headers: { Origin: auth }, form: { email: address, password },
+      });
+      for (let index = 0; index < 11; index++) {
+        const signedIn = await attempt(email, current.password);
+        expect(signedIn.status(), `honest sign-in ${index + 1}`).toBe(200);
+        expect(await signedIn.text()).toContain('You are signed in');
+      }
+      for (let index = 0; index < 10; index++) {
+        expect((await attempt(email, 'wrong-password-' + index)).status(), `wrong password ${index + 1}`).toBe(401);
+        expect((await attempt(disabledEmail, current.password)).status(), `disabled account ${index + 1}`).toBe(401);
+      }
+      for (const address of [email, disabledEmail]) {
+        const limited = await attempt(address, current.password);
+        expect(limited.status(), `eleventh charged attempt for ${address}`).toBe(429);
+        expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
+      }
+    } finally {
+      if (key) {
+        for (const id of ids) expect((await sdk.deleteUser(key, current.projectId, id)).ok).toBe(true);
+      }
+      await saveCookies(context);
+      await context.close();
+      await account.close();
+    }
+  });
+});
 
 test('a second user enrolls a passkey and signs back in to the dashboard and a requested page', async ({ browser }, info) => {
   const owner = journey();

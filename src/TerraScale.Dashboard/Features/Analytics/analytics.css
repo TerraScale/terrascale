@@ -32,13 +32,6 @@
 .ts-filter-control > .ts-select {
   width: 220px;
 }
-:is(.ts-analytics, .ts-usage) > :is(.ts-card, .ts-grid) {
-  transition: opacity var(--ts-base) var(--ts-ease);
-}
-body.ts-nav-pending :is(.ts-analytics, .ts-usage) > :is(.ts-card, .ts-grid) {
-  opacity: 0.55;
-  transition-delay: var(--ts-fast);
-}
 :is(.ts-analytics, .ts-usage) > .ts-measurement-loading {
   position: absolute;
   width: 1px;

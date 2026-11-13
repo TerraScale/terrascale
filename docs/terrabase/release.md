@@ -35,3 +35,12 @@ Keep the `arm64` digest from the last good `BUILD_ONLY` line (or inspect `ghcr.i
 While a release is in progress, each region's orchestrator swaps to the new digest, waits until the region is ready, and rolls that region back to the image it was running if the release fails. A superseded release exits without installing the digest. Confirm the revision the service is actually running after the job finishes. Do not write that commit into this page.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
+## Going back after a storage migration
+
+Every format change ships in two releases: first a build that supports the new format and still writes the old
+one, then the change that raises Target. The automatic reinstall of the previous image after the second release
+lands on a build that supports the migrated directory, so it simply runs. Never empty a data directory or discard
+data in response to a refusal message. Going back two releases needs the stopped-node undo in
+[Storage migrations](storage-migrations.md#going-back-two-releases). Watch the replica format and lag metrics
+throughout a regional rollout.

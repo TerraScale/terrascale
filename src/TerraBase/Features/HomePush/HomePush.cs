@@ -99,7 +99,7 @@ internal class HomePush(
     private bool RegionWriter => owners.Writer;
 
     public bool LocalAckAvailable => RegionWriter && _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
-        && partner.QuorumHealthy && services.GetService<ILocalWriteClock>() is { Allowed: true };
+        && partner.QuorumHealthy;
 
     private IInRegionAck Partner => partner;
 
@@ -211,7 +211,7 @@ internal class HomePush(
 
     public async ValueTask<ILocalTransaction?> BeginAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        if (!_ready || _js is null || services.GetService<ILocalWriteClock>() is { Allowed: false })
+        if (!_ready || _js is null)
         {
             return null;
         }
@@ -823,8 +823,13 @@ internal class HomePush(
 
             var changes = await PushChanges.FromCapturedAsync(writer, captured, cancellationToken).ConfigureAwait(false);
             Record("local_capture", ref started);
-            var stamp = await push.Clock.NextAsync(cancellationToken).ConfigureAwait(false);
+            if (await push.Clock.IssueAsync(cancellationToken).ConfigureAwait(false) is not { } stamp)
+            {
+                throw new LocalWriteRefusedException("the origin clock is not known to be good; the write commits at the database's home");
+            }
+
             Record("local_hlc", ref started);
+
             var transaction = new RegionTransaction(Ulid.NewUlid().ToString(), push.Region, stamp, changes);
             var payload = await push.Crypto.SealAsync(database, Encode(transaction), cancellationToken).ConfigureAwait(false);
             Record("local_seal", ref started);

@@ -733,14 +733,13 @@ export const dashboardStates: readonly PageState[] = [
     },
   },
   {
-    name: 'platform administration',
+    name: 'removed platform administration',
     url: () => '/admin',
     covers: { path: /^\/admin$/ },
-    heading: title('This request was not allowed'),
-    status: 403,
-    shell: false,
+    heading: title('We can’t find that page.'),
+    status: 404,
     data: async (page) => {
-      await expect(page).toHaveTitle('This request was not allowed · TerraScale');
+      await expect(page).toHaveTitle('Page not found · TerraScale');
     },
   },
 ];

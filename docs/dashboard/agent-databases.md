@@ -24,8 +24,10 @@ the native form uses UTC. With `pointInTime`, `fork_database` starts a point-in-
 restore and returns the running operation at once instead of waiting for the copy;
 poll `get_restore_status` for the new database, and the dashboard fork form redirects
 to the backups tab with the operation's progress. Without it, the fork returns the
-ready database. `run_sql` remains read only. Delete requires the exact
-name. `fork_database` replaces `branch_database`; only the new tool is exposed.
+ready database. `run_sql` remains read only. MCP deletion returns `step_up_required`
+with the database ID and a scoped dashboard `confirmationUrl`; API keys, OAuth and
+personal access tokens never delete through MCP. The database remains until a
+signed-in user completes dashboard deletion with its existing confirmation controls. `fork_database` replaces `branch_database`; only the new tool is exposed.
 Database MCP results include `expiresAt`, explicitly null for permanent databases.
 
 The session and CSRF protected `POST /v1/databases/ttl` form accepts `databaseId`
