@@ -143,7 +143,9 @@ test('another region outside admitted peers cannot interrupt local writer renewa
     expect(await nodeStatus(local, 'fra')).toMatchObject({ owner: foreign.name });
     console.log(`foreign ownership fault: ${Date.now() - started} ms, ${row} acknowledged local writes, fra counter increased`);
     replacePeers(original);
-    await expect.poll(() => topology()).toHaveLength(2);
+    await expect.poll(() => nodeStatus(foreign), { message: 'the restored foreign writer reacquires local admission' })
+      .toMatchObject({ writer: true, ready: true });
+    await topology();
     const drain = await nodeRequest(foreign, `/v1/rollout/drain?target=${target.name}`, 'POST');
     expect(drain.status, drain.body).toBe(204);
     await expect.poll(() => nodeStatus(local, 'fra'), { message: 'the restored foreign owner is observed after handoff' })
