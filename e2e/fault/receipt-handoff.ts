@@ -109,7 +109,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
     children.push(target);
     await target.command('ping');
     await expect.poll(() => status(targetAddress)).toMatchObject({ writer: false, owner: sourceAddress.name, ready: true });
-    let retained: { scope: string; id: string } | undefined;
+    let retained: { scope: string } | undefined;
     if (scenario === 'retained') {
       const user = faultId();
       const create = async (path: string, body: unknown) => {
@@ -120,7 +120,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
       const organization = await create('/v1/management/organizations', { name: 'retained-receiver' });
       const project = await create(`/v1/management/organizations/${organization}/projects`, { name: 'retained-receiver' });
       const id = await create(`/v1/projects/${project}/databases`, { name: 'retained-receiver', regions: ['fra'] });
-      retained = { scope: `${organization} ${project} ${id}`, id };
+      retained = { scope: `${organization} ${project} ${id}` };
       await source.command(`write ${retained.scope} 73`);
     }
     const primed = await nodeRequest(targetAddress, '/v1/rollout/prime?source=' + sourceName, 'POST');

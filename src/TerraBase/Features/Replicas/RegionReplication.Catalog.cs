@@ -430,7 +430,6 @@ internal sealed partial class RegionReplication
         {
             await follower.StopAsync().ConfigureAwait(false);
         }
-
     }
 
 }
