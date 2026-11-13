@@ -69,6 +69,8 @@ rollback_count = 0
 proof_held = threading.Event()
 proof_reads = 0
 publication_late = threading.Event()
+fault_waiting = threading.Event()
+proof_failed = []
 
 
 def request(method, path, body=None, actor=True):
@@ -165,6 +167,12 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
                     proof_reads += 1
                 if b"still waiting for a modification in flight" in line:
                     publication_late.set()
+                if b"A copy fault waits for storage capacity" in line:
+                    fault_waiting.set()
+                if b"recovery proof failed and will retry" in line or b"Recovery proof retries stopped;" in line:
+                    with proof_finished:
+                        proof_failed.append(line.decode().strip())
+                        proof_finished.notify_all()
                 if b"proof file claim held" in line:
                     proof_held.set()
                 if b"engine crash hook ready" in line:
@@ -404,7 +412,8 @@ def boundary_cases(selected=None):
     global proof_reads
     if selected == "isolation":
         for case in (
-            "latency", "native", "native-timeout", "reader-kill", "delete-race", "delete-forget", "memory",
+            "latency", "native", "native-timeout", "barrier-no-intent", "session-open-kill", "delete-race", "delete-forget",
+            "delete-queued", "busy-retry", "shutdown-busy", "proof-isolation", "orphan-key", "memory",
             "recreate", "opened-key", "key-retry", "unknown-key", "creation", "checkpoints",
         ):
             boundary_cases(case)
@@ -473,9 +482,9 @@ def boundary_cases(selected=None):
             "killed during the wait, the restart refused the copy with a permanent fault", flush=True,
         )
 
-    if selected in (None, "reader-kill"):
+    if selected in (None, "barrier-no-intent"):
         start()
-        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "reader-open"})["id"]
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "barrier-no-intent"})["id"]
         hook("check", identity)
         hook("hold-fault", identity)
         assert hook("ledger", identity) == [0, 1]
@@ -487,6 +496,143 @@ def boundary_cases(selected=None):
         unavailable(identity, "copy_faulted")
         end()
         print("barrier held without a write intent at detection, then kill: restart refused the copy", flush=True)
+
+    if selected in (None, "session-open-kill"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "session-open"})["id"]
+        end()
+        control = state / "proof-control"
+        release = state / "proof-control.release"
+        os.mkfifo(release)
+        start(proof_target=identity + ".db")
+        hook("check", identity)
+        hook("close-idle", identity)
+        control.write_text("keyhold")
+        proof_held.clear()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            reading = executor.submit(sql, project, identity, ["SELECT 1;"])
+            assert proof_held.wait(30)
+            hook("fault-recorded", identity)
+            assert hook("ledger", identity) == [0, 1], hook("ledger", identity)
+            assert not reading.done()
+            end(hard=True, rollback=False)
+        control.unlink()
+        release.unlink()
+        start()
+        wait_for_proofs()
+        assert hook("ledger", identity) == [1, 0]
+        unavailable(identity, "copy_faulted")
+        end()
+        print("real session open held the barrier inside the native open, then kill: restart refused the copy", flush=True)
+
+    for variant in ("queued", "busy"):
+        if selected in (None, "delete-queued", "delete-" + variant):
+            start()
+            identity = request("POST", f"/v1/projects/{project}/databases", {"name": "delete-" + variant})["id"]
+            faulted = gauge("terrabase_storage_faulted_databases")
+            hook("delete-" + variant, identity)
+            assert hook("ledger", identity) == [0, 0], hook("ledger", identity)
+            assert gauge("terrabase_storage_faulted_databases") == faulted
+            hook("finish-delete", identity)
+            assert hook("ledger", identity) == [0, 0]
+            assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+            with Postgres(identity) as client:
+                assert client.query("SELECT 1;") == {}
+            end()
+            print(
+                f"fault record after a deletion forgot ({variant}): no fault row, gauge unchanged; same-id creation healthy",
+                flush=True,
+            )
+
+    if selected in (None, "busy-retry"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "busy-retry"})["id"]
+        healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "busy-healthy"})["id"]
+        hook("check", identity)
+        hook("check", healthy)
+        fault_waiting.clear()
+        hook("hold-writer", "journal")
+        hook("fault-async", identity)
+        assert fault_waiting.wait(90)
+        unavailable(identity, "copy_faulted")
+        request("GET", "/readyz", actor=False)
+        assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+        with Postgres(healthy) as client:
+            assert client.query("SELECT 1;") == {}
+        assert hook("ledger", identity) == [0, 0]
+        hook("release-writer", "journal")
+        hook("published", identity)
+        assert hook("ledger", identity) == [1, 0]
+        assert gauge("terrabase_storage_faulted_databases") == hook("ledger", "*")[0]
+        end()
+        print("busy intent store: copy refused, node and other copies served; released writer made the fault durable", flush=True)
+
+    for kind in ("write", "read"):
+        if selected in (None, "shutdown-busy", "shutdown-busy-" + kind):
+            start()
+            identity = request("POST", f"/v1/projects/{project}/databases", {"name": "shutdown-busy-" + kind})["id"]
+            hook("check", identity)
+            if kind == "write":
+                hook("intent", identity)
+            fault_waiting.clear()
+            hook("hold-writer", "journal")
+            hook("fault-async", identity)
+            assert fault_waiting.wait(90)
+            hook("stop-retries", "*")
+            end()
+            start()
+            wait_for_proofs()
+            assert hook("ledger", identity) == [1, 0], hook("ledger", identity)
+            unavailable(identity, "copy_faulted")
+            end()
+            print(f"clean shutdown during a busy fault retry (damage found by a {kind}): restart refused the copy", flush=True)
+
+    if selected in (None, "proof-isolation"):
+        start()
+        waiting = request("POST", f"/v1/projects/{project}/databases", {"name": "proof-isolated"})["id"]
+        hook("intent", waiting)
+        end(hard=True, rollback=False)
+        key = state / "data" / organization / project / (waiting + ".db.key")
+        key.chmod(0)
+        try:
+            start()
+            assert gauge("terrabase_storage_proof_pending") == 1
+            proof_failed.clear()
+            hook("poison-proof", "*")
+            with proof_finished:
+                assert proof_finished.wait_for(lambda: proof_failed, 40)
+            hook("unpoison-proof", "*")
+        finally:
+            key.chmod(0o600)
+        wait_for_proofs()
+        hook("check", waiting)
+        end()
+        print(
+            "one proof retry failed unclassified (" + proof_failed[0][-80:] + "); the other pending proof still completed",
+            flush=True,
+        )
+
+    if selected in (None, "orphan-key"):
+        start()
+        existing = request("POST", f"/v1/projects/{project}/databases", {"name": "orphan-neighbour"})["id"]
+        sql(project, existing, ["CREATE TABLE kept(id INTEGER PRIMARY KEY);", "INSERT INTO kept VALUES (1);"])
+        end()
+        directory = state / "data" / organization / project
+        orphan = "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(26))
+        orphan = "0" + orphan[1:]
+        kept = (directory / (existing + ".db.key")).read_bytes()
+        (directory / (orphan + ".db.key")).write_bytes(kept)
+        start()
+        assert not (directory / (orphan + ".db.key")).exists()
+        assert (directory / (existing + ".db.key")).read_bytes() == kept
+        hook("create", orphan)
+        assert (directory / (orphan + ".db")).exists()
+        assert sql(project, existing, ["SELECT id FROM kept;"])["results"][0]["rows"] == [[1]]
+        end()
+        print(
+            "orphan key without main, log or creation removed at start; same-id creation succeeded; existing key kept",
+            flush=True,
+        )
 
     if selected in (None, "delete-race"):
         start()
@@ -562,8 +708,19 @@ def boundary_cases(selected=None):
         hook("many", "*", 1000)
         end()
         start()
+
+        def memory():
+            status = dict(line.split(":", 1) for line in pathlib.Path(f"/proc/{node.pid}/status").read_text().splitlines())
+            return int(status["VmRSS"].split()[0]) // 1024, int(status["VmHWM"].split()[0]) // 1024
+
+        resident, _ = memory()
         for label in ("first pass after restart", "steady pass"):
-            print(f"idle pass with 1000 idle databases, {label}: {hook('idle-pass', '*')}", flush=True)
+            result = hook("idle-pass", "*")
+            current, peak = memory()
+            print(
+                f"idle pass with 1000 idle databases, {label}: {result}; resident {current} MiB "
+                f"(+{current - resident} MiB since start), peak {peak} MiB", flush=True,
+            )
         end()
 
     if selected in (None, "recreate"):

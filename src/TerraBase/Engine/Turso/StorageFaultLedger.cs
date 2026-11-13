@@ -37,7 +37,11 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
     internal CopyMutationBarrier Mutations(TenantContext database) =>
         _mutations.GetOrAdd(Key.Of(database), _ => new CopyMutationBarrier());
     private readonly CancellationTokenSource _retryStopping = new();
+    private readonly CancellationTokenSource _faultStopping = new();
     private Task? _retry;
+    private readonly ConcurrentDictionary<Key, int> _recording = new();
+    private readonly ConcurrentDictionary<Key, byte> _deleting = new();
+    private readonly ConcurrentDictionary<Task, byte> _publications = new();
 
     private sealed record FaultIntent(Ulid Incarnation, Ulid Creation)
     {
@@ -120,6 +124,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         FailedClosed is { } failed ? $"storage failed closed: {failed}"
         : _pending.ContainsKey(Key.Of(database)) ? "this copy has a pending proof"
         : _faulting.ContainsKey(Key.Of(database)) ? "this location has a durable fault intent"
+        : _recording.ContainsKey(Key.Of(database)) ? "this copy's fault is being recorded"
         : null;
 
     internal void FailClosed(string reason)
@@ -167,31 +172,82 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         }
 
         var key = Key.Of(database);
-        if (engine.OpenStore(key) is { } faulted && faulted.Incarnation == incarnation)
-        {
-            faulted.CopyFault = Bounded(reason);
-        }
-        TursoDatabaseStore system;
+        BeginRecording(key);
+        var publishing = false;
         try
         {
-            system = await SystemAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception error) when (Unusable(error))
-        {
-            FailClosed($"the storage fault ledger could not be opened: {error.GetType().Name}");
-            throw;
-        }
-        var binding = await BindingAsync(key, incarnation).ConfigureAwait(false);
-        if (await DurablyAsync(() => BeginFaultAsync(system, database, key, incarnation, binding)).ConfigureAwait(false) is not { } barrier
-            || incarnation == Ulid.Empty)
-        {
-            return;
-        }
+            if (engine.OpenStore(key) is { } faulted && faulted.Incarnation == incarnation)
+            {
+                faulted.CopyFault = Bounded(reason);
+            }
+            TursoDatabaseStore system;
+            try
+            {
+                system = await SystemAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception error) when (Unusable(error))
+            {
+                FailClosed($"the storage fault ledger could not be opened: {error.GetType().Name}");
+                throw;
+            }
+            var binding = await BindingAsync(key, incarnation).ConfigureAwait(false);
+            if (await DurablyAsync(() => BeginFaultAsync(system, database, key, incarnation, binding)).ConfigureAwait(false) is not { } barrier
+                || incarnation == Ulid.Empty)
+            {
+                return;
+            }
 
-        using var mutation = await barrier.PublishFaultAsync(engine.QueryBudget, () => PublicationLate(key)).ConfigureAwait(false);
-        if (await DurablyAsync(() => CompleteFaultAsync(system, database, key, incarnation, barrier, Bounded(reason))).ConfigureAwait(false))
+            Task publication;
+            using (ExecutionContext.SuppressFlow())
+            {
+                publication = Task.Run(() => PublishAsync(system, database, key, incarnation, barrier, Bounded(reason)));
+            }
+            publishing = true;
+            _ = _publications.TryAdd(publication, 0);
+            _ = publication.ContinueWith(done => _publications.TryRemove(done, out _), CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+        finally
         {
-            logger.ZLogWarning($"A database copy faulted and requires recovery: {reason:@Reason}");
+            if (!publishing)
+            {
+                EndRecording(key);
+            }
+        }
+    }
+
+    private async Task PublishAsync(TursoDatabaseStore system, TenantContext database, Key key, Ulid incarnation, CopyMutationBarrier barrier, string reason)
+    {
+        try
+        {
+            using var mutation = await barrier.PublishFaultAsync(engine.QueryBudget, () => PublicationLate(key)).ConfigureAwait(false);
+            if (await engine.Io.WithAdmissionAsync(async () =>
+                await DurablyAsync(() => CompleteFaultAsync(system, database, key, incarnation, barrier, reason)).ConfigureAwait(false)).ConfigureAwait(false))
+            {
+                logger.ZLogWarning($"A database copy faulted and requires recovery: {reason:@Reason}");
+            }
+        }
+        catch (OperationCanceledException) when (_faultStopping.IsCancellationRequested)
+        {
+            logger.ZLogInformation($"A fault publication stopped at shutdown; its durable fault intent faults the copy at the next start");
+        }
+        catch (Exception error)
+        {
+            logger.ZLogError(error, $"A fault publication did not complete; the copy stays refused and its durable fault intent faults it at the next start");
+        }
+        finally
+        {
+            EndRecording(key);
+        }
+    }
+
+    private void BeginRecording(Key key) => _recording.AddOrUpdate(key, 1, (_, count) => count + 1);
+
+    private void EndRecording(Key key)
+    {
+        while (_recording.TryGetValue(key, out var count)
+            && !(count == 1 ? _recording.TryRemove(new KeyValuePair<Key, int>(key, 1)) : _recording.TryUpdate(key, count - 1, count)))
+        {
         }
     }
 
@@ -200,7 +256,8 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            if (await ReadRowAsync(system, key, CancellationToken.None).ConfigureAwait(false) is not null
+            if (_deleting.ContainsKey(key)
+                || await ReadRowAsync(system, key, CancellationToken.None).ConfigureAwait(false) is not null
                 || Deleted(key)
                 || engine.KnownIncarnation(key) is { } replacement && replacement != incarnation)
             {
@@ -228,7 +285,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            if (!_mutations.TryGetValue(key, out var current) || current != barrier)
+            if (_deleting.ContainsKey(key) || !_mutations.TryGetValue(key, out var current) || current != barrier)
             {
                 return false;
             }
@@ -278,13 +335,13 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
             {
                 return await step().ConfigureAwait(false);
             }
-            catch (StorageBusyException) when (!_retryStopping.IsCancellationRequested)
+            catch (StorageBusyException) when (!_faultStopping.IsCancellationRequested)
             {
                 if (attempt == 0)
                 {
                     logger.ZLogWarning($"A copy fault waits for storage capacity before it is durable; the copy stays refused");
                 }
-                await Task.Delay(TimeSpan.FromSeconds(1 << Math.Min(attempt, 5)), engine.Time, _retryStopping.Token).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromSeconds(1 << Math.Min(attempt, 5)), engine.Time, _faultStopping.Token).ConfigureAwait(false);
             }
         }
     }
@@ -295,7 +352,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
     private static Row? Faulted(Key key, Row? current, Ulid incarnation, string reason) =>
         current is null ? new Row(key, incarnation, reason) : null;
 
-    private bool Deleted(Key key) => engine.OpenStore(key) is null && !engine.FileExists(key.Tenant);
+    private bool Deleted(Key key) => engine.KnownIncarnation(key) is null && !engine.HasCopyFiles(key.Tenant);
 
     internal async Task RecordIntentAsync(TursoDatabaseStore store, CancellationToken cancellationToken)
     {
@@ -336,6 +393,8 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
 
     internal async Task FlagAsync(TursoDatabaseStore store)
     {
+        var key = Key.Of(store.Tenant!);
+        BeginRecording(key);
         try
         {
             _ = await DurablyAsync(async () =>
@@ -343,9 +402,8 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
                 await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
                 try
                 {
-                    if (store.FaultRow is null && !store.IsClosed && engine.IntentStore is { } journal)
+                    if (store.FaultRow is null && !store.IsClosed && !_deleting.ContainsKey(key) && engine.IntentStore is { } journal)
                     {
-                        var key = Key.Of(store.Tenant!);
                         var intent = _faulting.GetOrAdd(key, new FaultIntent(store.Incarnation, store.CreationIdentity));
                         await WriteFaultIntentAsync(journal, key, intent, CancellationToken.None).ConfigureAwait(false);
                         if (_readers.TryGetValue(key, out var reader))
@@ -364,6 +422,10 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         catch (Exception error) when (Unusable(error))
         {
             logger.ZLogError(error, $"A copy fault could not be marked because the fault ledger is unusable");
+        }
+        finally
+        {
+            EndRecording(key);
         }
     }
 
@@ -497,8 +559,11 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         }
     }
 
+    internal void DeletionFinished(Key key) => _deleting.TryRemove(key, out _);
+
     private async Task ForgetAsync(TursoDatabaseStore system, Key key, CancellationToken cancellationToken)
     {
+        _deleting[key] = 0;
         foreach (var (store, table) in new[] { (system, "_tb_fault"), (engine.IntentStore!, "_tb_write_intent"), (engine.IntentStore!, "_tb_fault_binding") })
         {
             _ = await InSystemAsync(store, command =>
@@ -525,16 +590,76 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         {
             return;
         }
-        while (await InSystemAsync(journal, command =>
+        await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
         {
-            using var clean = command("DELETE FROM _tb_write_intent WHERE rowid IN (SELECT rowid FROM _tb_write_intent WHERE run = $run LIMIT $limit);");
-            clean.Parameters.AddWithValue("$run", _run);
-            clean.Parameters.AddWithValue("$limit", (long)Page);
-            return clean.ExecuteNonQuery();
-        }, CancellationToken.None).ConfigureAwait(false) > 0)
+            HashSet<Key> kept = [.. _faulting.Keys, .. _recording.Keys, .. engine.CopyFaulted()];
+            long after = 0;
+            while (await InSystemAsync(journal, command =>
+            {
+                List<(long Rowid, Key Key)> page = [];
+                using (var select = command("SELECT rowid, organization, project, database FROM _tb_write_intent WHERE run = $run AND rowid > $after ORDER BY rowid LIMIT $limit;"))
+                {
+                    select.Parameters.AddWithValue("$run", _run);
+                    select.Parameters.AddWithValue("$after", after);
+                    select.Parameters.AddWithValue("$limit", (long)Page);
+                    using var reader = select.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        page.Add((reader.GetInt64(0), new Key(reader.GetString(1), reader.GetString(2), reader.GetString(3))));
+                    }
+                }
+                foreach (var (rowid, key) in page.Where(row => !kept.Contains(row.Key)))
+                {
+                    using var clean = command("DELETE FROM _tb_write_intent WHERE rowid = $rowid AND run = $run;");
+                    clean.Parameters.AddWithValue("$rowid", rowid);
+                    clean.Parameters.AddWithValue("$run", _run);
+                    clean.ExecuteNonQuery();
+                }
+                return page.Count == 0 ? 0 : after = page[^1].Rowid;
+            }, CancellationToken.None).ConfigureAwait(false) > 0)
+            {
+            }
+            if (kept.Count > 0)
+            {
+                logger.ZLogWarning($"Shutdown kept the write intents of {kept.Count:@Count} refused copies; the next start checks or faults them");
+            }
+        }
+        finally
         {
+            _gate.Release();
         }
     }
+
+    internal async Task FlushFaultIntentsAsync()
+    {
+        if (engine.IntentStore is not { } journal)
+        {
+            return;
+        }
+        await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            foreach (var (key, intent) in _faulting.Where(fault => !_deleting.ContainsKey(fault.Key)))
+            {
+                try
+                {
+                    await WriteFaultIntentAsync(journal, key, intent, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (StorageBusyException)
+                {
+                    logger.ZLogWarning($"Shutdown could not write an outstanding fault intent because storage is busy; the copy's write intent is kept so the next start checks it");
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal Task StopFaultRetriesAsync() => _faultStopping.CancelAsync();
 
     internal async Task RecoverAsync(TursoDatabaseStore system, IReadOnlyList<Key> deletions, CancellationToken cancellationToken)
     {
@@ -645,6 +770,10 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
 
     private async Task CompleteProofAsync(TursoDatabaseStore system, PendingProof intent, StorageProof proof, FaultIntent? binding, CancellationToken cancellationToken)
     {
+        if (_deleting.ContainsKey(intent.Key))
+        {
+            return;
+        }
         var faulting = await InSystemAsync(engine.IntentStore!, command =>
         {
             using var select = command("SELECT run = $faulting FROM _tb_write_intent WHERE rowid = $rowid;");
@@ -738,15 +867,6 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         {
             logger.ZLogInformation($"Recovery proof retries stopped with {_pending.Count:@Count} databases still pending");
         }
-        catch (Exception error) when (Unusable(error))
-        {
-            FailClosed("background recovery bookkeeping could not complete");
-            logger.ZLogError(error, $"Background recovery bookkeeping failed");
-        }
-        catch (Exception error)
-        {
-            logger.ZLogCritical(error, $"Recovery proof retries stopped; {_pending.Count:@Count} pending copies stay refused until restart");
-        }
         finally
         {
             await Task.WhenAll(running).ConfigureAwait(false);
@@ -798,6 +918,16 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             logger.ZLogInformation($"An active recovery proof stopped with its intent retained");
+        }
+        catch (Exception error) when (Unusable(error))
+        {
+            FailClosed("background recovery bookkeeping could not complete");
+            logger.ZLogError(error, $"Background recovery bookkeeping failed");
+        }
+        catch (Exception error)
+        {
+            _ = _pending.TryUpdate(intent.Key, intent with { Attempts = Math.Min(5, intent.Attempts + 1), At = engine.Time.GetTimestamp() }, intent);
+            logger.ZLogError(error, $"A pending database recovery proof failed and will retry; the copy stays refused");
         }
         finally
         {
@@ -863,6 +993,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         _gate.Dispose();
         _refused.Dispose();
         _retryStopping.Dispose();
+        _faultStopping.Dispose();
     }
 
     private async ValueTask<TursoDatabaseStore> SystemAsync(CancellationToken cancellationToken) =>

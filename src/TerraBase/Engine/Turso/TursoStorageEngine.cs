@@ -662,6 +662,11 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     {
                         DeleteFileIfPresent(path + DeletionMarker);
                         SyncExistingDirectory(Path.GetDirectoryName(path)!);
+                        return true;
+                    }, CancellationToken.None).ConfigureAwait(false);
+                    Ledger.DeletionFinished(StorageFaultLedger.Key.Of(database));
+                    await Io.RunAsync(() =>
+                    {
                         DeleteIfEmpty(Path.GetDirectoryName(path)!);
                         SyncExistingDirectory(Path.Combine(_dataDirectory, key.Organization));
                         DeleteIfEmpty(Path.Combine(_dataDirectory, key.Organization));
@@ -987,6 +992,23 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         }
 
         await drained.ConfigureAwait(false);
+
+        try
+        {
+            _ = await Io.WithAdmissionAsync(async () =>
+            {
+                await Ledger.FlushFaultIntentsAsync().ConfigureAwait(false);
+                return true;
+            }).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            errors.Add(error);
+        }
+        finally
+        {
+            await Ledger.StopFaultRetriesAsync().ConfigureAwait(false);
+        }
 
         Task? closed = null;
         List<TursoDatabaseStore> files = [];

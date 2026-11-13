@@ -39,9 +39,14 @@ internal sealed class CdcMaintenance(TursoStorageEngine engine, TimeProvider tim
             try
             {
                 opened++;
+                var resident = engine.OpenStore(key) is not null;
                 if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is TursoDatabaseStore store)
                 {
                     await store.TrimIdleAsync(cancellationToken).ConfigureAwait(false);
+                    if (!resident)
+                    {
+                        await store.EvictWriterAsync().ConfigureAwait(false);
+                    }
                     if (store.IdleClean)
                     {
                         engine.NoteIdleClean(database);

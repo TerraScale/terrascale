@@ -51,8 +51,118 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
             typeof(StartupHook).GetMethod(nameof(Observe), BindingFlags.Static | BindingFlags.NonPublic)!));
     }
 
-    private static Task Record(object ledger, TenantContext tenant, Ulid incarnation, string reason) =>
-        ((ValueTask)ledger.GetType().GetMethod("RecordAsync", Hidden)!.Invoke(ledger, [tenant, incarnation, reason])!).AsTask();
+    private static async Task Record(object ledger, TenantContext tenant, Ulid incarnation, string reason)
+    {
+        await (ValueTask)ledger.GetType().GetMethod("RecordAsync", Hidden)!.Invoke(ledger, [tenant, incarnation, reason])!;
+        await Published(ledger);
+    }
+
+    private static Task Published(object ledger) =>
+        ledger.GetType().GetField("_publications", Hidden)?.GetValue(ledger) is IDictionary publications
+            ? Task.WhenAll(publications.Keys.Cast<Task>().ToArray())
+            : Task.CompletedTask;
+
+    private static readonly List<Task> Faults = [];
+    private static readonly Dictionary<string, SemaphoreSlim> HeldWriters = [];
+
+    private static SemaphoreSlim Writer(object store) => (SemaphoreSlim)store.GetType().GetField("_writer", Hidden)!.GetValue(store)!;
+
+    private static bool Waiting(SemaphoreSlim semaphore) => typeof(SemaphoreSlim).GetField("m_asyncHead", Hidden)!.GetValue(semaphore) is not null;
+
+    private static async Task Until(Func<bool> condition, string what, CancellationToken cancellationToken)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (!condition())
+        {
+            if (deadline.Elapsed > TimeSpan.FromSeconds(60))
+            {
+                throw new TimeoutException(what);
+            }
+            await Task.Delay(5, cancellationToken);
+        }
+    }
+
+    private static async Task<object> NamedStoreAsync(IStorageEngine engine, string name, CancellationToken cancellationToken) =>
+        name == "journal"
+            ? engine.GetType().GetProperty("IntentStore", Hidden)!.GetValue(engine)!
+            : await engine.OpenSystemDatabaseAsync(cancellationToken);
+
+    private static void ReleaseWriter(string name)
+    {
+        lock (HeldWriters)
+        {
+            if (HeldWriters.Remove(name, out var held))
+            {
+                held.Release();
+            }
+        }
+    }
+
+    private static async Task<Ulid> IncarnationAsync(IStorageEngine engine, TenantContext tenant, CancellationToken cancellationToken) =>
+        (await engine.OpenDatabaseAsync(tenant, cancellationToken))!.Incarnation;
+
+    private static async Task CreateAndReadAsync(IStorageEngine engine, TenantContext tenant, CancellationToken cancellationToken)
+    {
+        _ = await engine.CreateDatabaseAsync(tenant, cancellationToken);
+        var created = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+        await using var read = await created.BeginTransactionAsync(false, cancellationToken);
+        _ = await read.GetOffsetAsync(cancellationToken);
+    }
+
+    private static async Task DeleteWithQueuedFaultAsync(IStorageEngine engine, TenantContext tenant, bool busy, CancellationToken cancellationToken)
+    {
+        var incarnation = await IncarnationAsync(engine, tenant, cancellationToken);
+        var ledger = Ledger(engine);
+        var writer = Writer(await engine.OpenSystemDatabaseAsync(cancellationToken));
+        var directory = Path.Combine(Environment.GetEnvironmentVariable("TERRABASE_DATA_DIRECTORY")!, tenant.OrganizationId, tenant.ProjectId!);
+        await writer.WaitAsync(cancellationToken);
+        var held = true;
+        try
+        {
+            var deletion = engine.DeleteDatabaseAsync(tenant, cancellationToken).AsTask();
+            if (busy)
+            {
+                try
+                {
+                    _ = await deletion;
+                    throw new InvalidOperationException("the deletion forgot its ledger records while the system writer was held");
+                }
+                catch (Exception error) when (error.GetType().Name == "StorageBusyException")
+                {
+                    Console.WriteLine("deletion failed busy while forgetting; marker kept: " + File.Exists(Path.Combine(directory, tenant.DatabaseId + ".db.deleting")));
+                }
+                writer.Release();
+                held = false;
+                await Record(ledger, tenant, incarnation, "damage reported after a deletion that failed busy");
+                return;
+            }
+            var gate = (SemaphoreSlim)ledger.GetType().GetField("_gate", Hidden)!.GetValue(ledger)!;
+            await Until(() => gate.CurrentCount == 0 && Waiting(writer), "the deletion did not hold the ledger gate while forgetting", cancellationToken);
+            var fault = Record(ledger, tenant, incarnation, "damage reported while the deletion forgot its ledger records");
+            await Until(() => Waiting(gate), "the fault record did not queue on the ledger gate", cancellationToken);
+            File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            writer.Release();
+            held = false;
+            try
+            {
+                _ = await deletion;
+                throw new InvalidOperationException("the deletion removed its marker from a read-only directory");
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Console.WriteLine("deletion forgot its ledger records; the marker stays while the queued fault record runs");
+            }
+            await fault;
+        }
+        finally
+        {
+            if (held)
+            {
+                writer.Release();
+            }
+            File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
 
     private static async Task<IDisposable> HoldBarrierAsync(object ledger, TenantContext tenant, CancellationToken cancellationToken)
     {
@@ -297,7 +407,7 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         try
         {
             var ledger = engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
-            await (ValueTask)ledger.GetType().GetMethod("RecordAsync", Hidden)!.Invoke(ledger, [tenant, store.Incarnation, "the checkpoint race recorded proven damage"])!;
+            await Record(ledger, tenant, store.Incarnation, "the checkpoint race recorded proven damage");
         }
         finally
         {
@@ -499,6 +609,96 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                         await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
                         continue;
                     }
+                    if (parts[0] is "delete-queued" or "delete-busy")
+                    {
+                        await DeleteWithQueuedFaultAsync(engine, tenant, parts[0] == "delete-busy", cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "finish-delete")
+                    {
+                        _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken);
+                        await CreateAndReadAsync(engine, tenant, cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "create")
+                    {
+                        await CreateAndReadAsync(engine, tenant, cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "hold-writer")
+                    {
+                        var held = Writer(await NamedStoreAsync(engine, parts[3], cancellationToken));
+                        await held.WaitAsync(cancellationToken);
+                        lock (HeldWriters)
+                        {
+                            HeldWriters.Add(parts[3], held);
+                        }
+                        var name = parts[3];
+                        _ = cancellationToken.Register(() => ReleaseWriter(name));
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "release-writer")
+                    {
+                        ReleaseWriter(parts[3]);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] is "fault-async" or "fault-recorded")
+                    {
+                        var incarnation = await IncarnationAsync(engine, tenant, cancellationToken);
+                        Arm(engine);
+                        Faults.Add(Record(Ledger(engine), tenant, incarnation, "damage reported while the copy was in use"));
+                        if (parts[0] == "fault-recorded")
+                        {
+                            await RecordingSeen.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+                        }
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "published")
+                    {
+                        await Task.WhenAll(Faults).WaitAsync(TimeSpan.FromSeconds(120), cancellationToken);
+                        Faults.Clear();
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "stop-retries")
+                    {
+                        var ledger = Ledger(engine);
+                        ((CancellationTokenSource)ledger.GetType().GetField("_retryStopping", Hidden)!.GetValue(ledger)!).Cancel();
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] is "poison-proof" or "unpoison-proof")
+                    {
+                        var ledger = Ledger(engine);
+                        var pending = (IDictionary)ledger.GetType().GetField("_pending", Hidden)!.GetValue(ledger)!;
+                        var key = Activator.CreateInstance(ledger.GetType().GetNestedType("Key", BindingFlags.NonPublic)!, [parts[1], parts[2], "unusable-database-id"])!;
+                        if (parts[0] == "poison-proof")
+                        {
+                            var incarnation = Ulid.NewUlid();
+                            pending[key] = Activator.CreateInstance(ledger.GetType().GetNestedType("PendingProof", BindingFlags.NonPublic)!,
+                                [long.MaxValue, key, incarnation, incarnation, 0, 0L])!;
+                        }
+                        else
+                        {
+                            pending.Remove(key);
+                        }
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "close-idle")
+                    {
+                        var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+                        var pool = engine.GetType().GetProperty("Pool", Hidden)!.GetValue(engine)!;
+                        pool.GetType().GetMethod("CloseIdleOf", Hidden)!.Invoke(pool, [store]);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
                     if (parts[0] == "delete")
                     {
                         _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken);
@@ -548,7 +748,10 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                         var maintenance = services.GetServices<IHostedService>().First(service => service.GetType().Name == "CdcMaintenance");
                         var passing = (Task)maintenance.GetType().GetMethod("PassAsync", Hidden)!.Invoke(maintenance, [cancellationToken])!;
                         await passing;
-                        await writer.WriteLineAsync(passing.GetType().GetProperty("Result")!.GetValue(passing)!.ToString().AsMemory(), cancellationToken);
+                        var pool = engine.GetType().GetProperty("Pool", Hidden)!.GetValue(engine)!;
+                        var summary = passing.GetType().GetProperty("Result")!.GetValue(passing)!.ToString()
+                            + FormattableString.Invariant($"; open connections {pool.GetType().GetProperty("OpenCount")!.GetValue(pool)}, managed heap {GC.GetTotalMemory(true) >> 20} MiB");
+                        await writer.WriteLineAsync(summary.AsMemory(), cancellationToken);
                         continue;
                     }
                     if (parts[0] == "migration-lease")
@@ -660,8 +863,7 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                         }
                         try
                         {
-                            await (ValueTask)ledger.GetType().GetMethod("RecordAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                                .Invoke(ledger, [tenant, parts[0] == "unopened-fault" ? Ulid.Empty : store.Incarnation, "the crash probe recorded proven damage"])!;
+                            await Record(ledger, tenant, parts[0] == "unopened-fault" ? Ulid.Empty : store.Incarnation, "the crash probe recorded proven damage");
                             if (read is not null && !((CancellationToken)read.GetType().GetProperty("Token", BindingFlags.Instance | BindingFlags.NonPublic)!
                                 .GetValue(read)!).IsCancellationRequested)
                             {

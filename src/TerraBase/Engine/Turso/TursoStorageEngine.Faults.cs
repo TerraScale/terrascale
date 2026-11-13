@@ -20,7 +20,10 @@ internal sealed partial class TursoStorageEngine
 
     internal string CopyPath(TenantContext database) => Locate(database).Path;
 
-    internal bool FileExists(TenantContext database) => HasDatabaseFiles(database, CancellationToken.None);
+    internal bool HasCopyFiles(TenantContext database) => ProofFiles.Any(suffix => File.Exists(CopyPath(database) + suffix));
+
+    internal IEnumerable<StorageFaultLedger.Key> CopyFaulted() =>
+        _stores.Values.Where(store => store.CopyFault is not null && store.Tenant is not null).Select(store => StorageFaultLedger.Key.Of(store.Tenant!));
 
     internal async Task<StorageProof> RecoverCopyAsync(TenantContext database, Ulid incarnation, Ulid replacement, CancellationToken cancellationToken)
     {

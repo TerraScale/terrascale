@@ -100,6 +100,7 @@ jobs:
               - src/TerraBase/Features/Qos/QosContext.cs
               - src/TerraBase/Features/Qos/QosPolicy.cs
               - src/TerraBase/Features/Qos/QosRequestLease.cs
+              - src/TerraBase/Features/Qos/QosMemoryException.cs
               - src/TerraBase/Tenancy/TenantContext.cs
               - src/TerraBase/Tenancy/PlanTierExtensions.cs
               - src/TerraBase/Program.cs
