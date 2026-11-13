@@ -48,6 +48,7 @@ internal sealed partial class TursoChangeTap
 
             _anchor = stored.Position;
             _durableAnchor = stored.Position;
+            Volatile.Write(ref _storedAnchor, stored.Position);
             _schema = stored.Schema.ToDictionary(item => item.RowId, item => (item.Type, item.Name));
             _store.BackupAnchor = _durableAnchor;
             return true;

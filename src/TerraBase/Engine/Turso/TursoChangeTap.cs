@@ -29,6 +29,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     private long _anchor;
     private long _durableAnchor;
+    private long _storedAnchor;
 
     public long Position => Volatile.Read(ref _anchor);
 
@@ -37,7 +38,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
         {
             using var command = _reader.CreateCommand();
             command.CommandText = "SELECT coalesce(sum(coalesce(octet_length(before), 0) + coalesce(octet_length(after), 0) + 32), 0) FROM turso_cdc WHERE change_id > $anchor;";
-            command.Parameters.Add(new TursoParameter("$anchor", Volatile.Read(ref _durableAnchor)));
+            command.Parameters.Add(new TursoParameter("$anchor", Volatile.Read(ref _storedAnchor)));
             return (long)command.ExecuteScalar()!;
         }, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
 
@@ -53,6 +54,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
             }
 
             _durableAnchor = Math.Max(_durableAnchor, position);
+            Volatile.Write(ref _storedAnchor, Math.Max(_storedAnchor, position));
             _store.BackupAnchor = _durableAnchor;
             return Truncate(writer);
         }, "the durable backup CDC acknowledgement", cancellationToken).ConfigureAwait(false);
