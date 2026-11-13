@@ -176,7 +176,8 @@ or a replica and no primary file (`reason="replica_newer"`, `reason="primary_mis
 another region is not served by this region's writer, so it does not block the role. Before comparing, it catches up the
 replicas whose position it cannot read through their followers, together and once per page of homed databases, within
 1 s, so the check ends inside one 2 s activation attempt. A replica whose position still cannot be read (its last pull
-failed, it is still opening, or it was opened from disk and has not pulled yet) proves nothing, so the node refuses
+failed, or it is reopening or was reopened from a file it pulled before and has not pulled since) proves nothing; a
+replica still being created holds no data and is not compared, so the node refuses
 (`reason="position_unknown"`); no earlier position is remembered as proof. A refusal is logged and counted once per
 database and cause. After `position_unknown` the next activation attempt (about every 250 ms) catches that page up again
 and resumes at the same database; after the other reasons the check runs again from the start every 15 s. Either way the

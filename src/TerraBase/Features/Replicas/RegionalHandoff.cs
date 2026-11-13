@@ -225,11 +225,7 @@ internal sealed partial class RegionalHandoff(
         {
             if (owner.Region == options.Region && owner.Node != options.MachineId && owner.Transfer is null)
             {
-                foreach (var database in _promoted.Values)
-                {
-                    services.GetRequiredService<RegionReplication>().Resume(database);
-                }
-                _promoted.Clear();
+                ResumePromoted();
             }
             return;
         }
@@ -249,12 +245,18 @@ internal sealed partial class RegionalHandoff(
         else
         {
             _prepared.Clear();
-            foreach (var database in _promoted.Values)
-            {
-                replication.Resume(database);
-            }
-            _promoted.Clear();
+            ResumePromoted();
         }
+    }
+
+    private void ResumePromoted()
+    {
+        var replication = services.GetRequiredService<RegionReplication>();
+        foreach (var database in _promoted.Values)
+        {
+            replication.Resume(database);
+        }
+        _promoted.Clear();
     }
 
     internal async Task<bool> PrimeAsync(string source, CancellationToken cancellationToken)
@@ -321,6 +323,7 @@ internal sealed partial class RegionalHandoff(
             if (held is not { } current || current.Incarnation != expected.Incarnation
                 || DatabaseRevision.Compare(current, expected) < 0)
             {
+                logger.ZLogInformation($"Regional candidate catches up database {position.Database:@Database} from {held?.ToString() ?? "no position":@Held} to the certified {position.Revision:@SourceRevision}, epoch {request.Epoch:@Epoch}");
                 if (!await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
                 {
                     return Refuse("replica follower unavailable during preparation");
@@ -559,6 +562,7 @@ internal sealed partial class RegionalHandoff(
             progress.Phase = DrainPhase.Quiesce;
             admission = await services.GetRequiredService<RegionalIngress>().HoldAsync(cancellationToken).ConfigureAwait(false);
             owners.Drain();
+            owners.BeginHandoff();
             logger.ZLogInformation($"Regional handoff source fenced: {options.MachineId:@Source} to {target:@Target}, epoch {owner.Epoch:@Epoch}");
             progress.Phase = DrainPhase.Collect;
             var catalog = services.GetRequiredService<IReplicaCatalog>();
@@ -675,6 +679,7 @@ internal sealed partial class RegionalHandoff(
             }
             finally
             {
+                owners.EndHandoff();
                 admission?.Dispose();
                 _changing.Release();
             }

@@ -17,12 +17,15 @@ internal sealed class RegionalOwners(TerraBaseOptions options)
     private readonly ConcurrentDictionary<string, byte> _unconfirmed = new(StringComparer.Ordinal);
     private long _until;
     private int _draining;
+    private int _handingOff;
 
     internal bool Writer => options.NatsUrl is null || options.PeersFile is null
         || (_owners.TryGetValue(options.Region, out var owner) && owner.Node == options.MachineId
             && Volatile.Read(ref _draining) == 0 && TimeProvider.System.GetTimestamp() < Volatile.Read(ref _until));
 
     internal bool Drained => Volatile.Read(ref _draining) == 1;
+
+    internal bool HandingOff => Volatile.Read(ref _handingOff) == 1;
 
     internal RegionalOwner? Find(string region) => _owners.GetValueOrDefault(region);
 
@@ -52,6 +55,10 @@ internal sealed class RegionalOwners(TerraBaseOptions options)
     }
 
     internal void Resume() => Volatile.Write(ref _draining, 0);
+
+    internal void BeginHandoff() => Volatile.Write(ref _handingOff, 1);
+
+    internal void EndHandoff() => Volatile.Write(ref _handingOff, 0);
 
     internal async ValueTask<IReadOnlyList<ServingNode>> NodesAsync(CancellationToken cancellationToken)
     {

@@ -100,6 +100,7 @@ internal sealed partial class RegionalHandoff
                 _protocolPublished = true;
             }
             owners.Resume();
+            ResumePromoted();
             owners.Renew(until);
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
@@ -244,11 +245,7 @@ internal sealed partial class RegionalHandoff
                 }
             }
             Observe(owner);
-            foreach (var database in _promoted.Values)
-            {
-                services.GetRequiredService<RegionReplication>().Resume(database);
-            }
-            _promoted.Clear();
+            ResumePromoted();
         }
         catch (Exception error)
         {
@@ -400,7 +397,7 @@ internal sealed partial class RegionalHandoff
                     _ = Interlocked.Increment(ref late);
                 }
             }).ConfigureAwait(false);
-            if (late > 0)
+            if (late > 0 && _writerRefusal is null)
             {
                 logger.ZLogWarning($"The activation check could not catch up {late:@Late} of {unheld.Count:@Databases} local replicas within {CatchUpBudget.TotalSeconds:@Seconds} s; a replica whose position stays unknown blocks the writer role until a later attempt reads it");
             }

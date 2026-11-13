@@ -176,7 +176,8 @@ internal sealed partial class TursoReplicas(
 
     public ReplicaHolding Holding(TenantContext database) =>
         !_replicas.TryGetValue(Key(database), out var opening) ? new NoReplica()
-        : !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully ? new PositionUnknown()
+        : !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully
+            ? File.Exists(PathOf(Key(database)) + "-info") ? new PositionUnknown() : new NoReplica()
         : opening.Value.Result switch
         {
             { Held: { } held } => new HeldAt(held),
