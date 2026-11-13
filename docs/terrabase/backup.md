@@ -452,10 +452,10 @@ This build cannot prove that these copies or stopped nodes no longer need an old
 
 This build adds and activates keys; it cannot retire them. The authoritative history is
 `v1/master-key-history` in the deployment's platform backup bucket, alongside the backups that
-outlive individual nodes. Every startup reads it before opening encrypted storage. The document
+outlive individual nodes. Every startup reads it before opening encrypted storage. The record
 contains a versioned header and each id with its material fingerprint. Creation uses
 `If-None-Match: *`; extension uses `If-Match` with the ETag just read. A conditional-write
-conflict rereads and validates the complete history before extending it. The existing document stays an exact byte prefix when ids are appended; entries are
+conflict rereads and validates the complete history before extending it. The existing record stays an exact byte prefix when ids are appended; entries are
 never removed or replaced, so concurrent nodes cannot shorten history or change a binding.
 No cleanup path deletes this object.
 
@@ -472,14 +472,14 @@ A malformed or unreadable local cache refuses startup even when the store is rea
 Here “valid configuration” means every id/fingerprint in each available history is configured
 unchanged. New configured ids are appended online and cached offline.
 
-| Object store | Shared document | Local cache | Encrypted data | Startup decision |
+| Object store | Shared record | Local cache | Encrypted data | Startup decision |
 | --- | --- | --- | --- | --- |
 | Reachable | Present and readable | Absent | Absent or present | Validate fleet ids/material; append new ids conditionally; cache and start. Missing/changed ids refuse. |
 | Reachable | Present and readable | Present and readable | Absent or present | Validate both histories; conditionally append the configured superset; cache and start. Missing/changed ids refuse. |
 | Reachable | Absent | Absent | Absent | First installation: conditionally create history from configured keys; cache and start. |
 | Reachable | Absent | Absent | Present | First upgrade from a build without history: conditionally record the configured keys; cache and start. Unknown historical configuration cannot be reconstructed. |
 | Reachable | Absent | Present and readable | Absent or present | Validate cache; conditionally create shared history including every cached/configured key; cache and start. |
-| Reachable | Unreadable, malformed or access denied | Absent or present | Absent or present | Refuse the node; a cache cannot override an unreadable authoritative document. |
+| Reachable | Unreadable, malformed or access denied | Absent or present | Absent or present | Refuse the node; a cache cannot override an unreadable authoritative record. |
 | Reachable | Present or absent | Unreadable or malformed | Absent or present | Refuse the node. |
 | Unreachable or no store configured | Unknown | Present and readable | Absent or present | Validate cache; durably add configured keys locally and start. Shared registration waits for a reachable startup. |
 | Unreachable or no store configured | Unknown | Absent | Absent | Truly new node: record configured keys locally and start. |

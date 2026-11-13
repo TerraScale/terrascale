@@ -281,10 +281,10 @@ try {
   console.log('re-provisioned empty disk plus restored data without cache: shared history refused and named missing k1');
   const historyResponse = await object('GET', 'journey-backups', 'v1/master-key-history');
   assert.equal(historyResponse.status, 200);
-  const historyDocument = await historyResponse.text();
+  const historyRecord = await historyResponse.text();
   for (const [id, material] of [['k0', master], ['k1', next]]) {
     const fingerprint = createHmac('sha256', Buffer.from(material, 'base64')).update('TerraBase/master-key-history/v1').digest('hex').toUpperCase();
-    assert.ok(historyDocument.includes(id + ' ' + fingerprint + '\n'), 'shared history binds ' + id + ' to its material');
+    assert.ok(historyRecord.includes(id + ' ' + fingerprint + '\n'), 'shared history binds ' + id + ' to its material');
   }
   const historyWrites = requests.filter(request => request.method === 'PUT' && request.path.endsWith('/v1/master-key-history'));
   assert.ok(historyWrites.some(request => request.absent === '*'), 'shared history creation is conditional');
@@ -297,7 +297,7 @@ try {
   children.delete(badHistory);
   assert.equal(badHistoryCode, 2, 'unreadable shared history refuses even a complete configured ring');
   assert.ok(readFileSync(join(profile, 'node-' + sequence + '.log'), 'utf8').includes('master key history cannot be read'));
-  const repaired = await object('PUT', 'journey-backups', 'v1/master-key-history', '', Buffer.from(historyDocument), { 'if-match': malformed.headers.get('etag') });
+  const repaired = await object('PUT', 'journey-backups', 'v1/master-key-history', '', Buffer.from(historyRecord), { 'if-match': malformed.headers.get('etag') });
   assert.equal(repaired.status, 200);
   const conflict = await object('PUT', 'journey-backups', 'v1/master-key-history', '', Buffer.from('shorter'), { 'if-match': malformed.headers.get('etag') });
   assert.equal(conflict.status, 412, 'stale conditional writes cannot shorten shared history');

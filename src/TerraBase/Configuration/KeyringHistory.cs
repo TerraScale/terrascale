@@ -84,7 +84,7 @@ internal static class KeyringHistory
             while (true)
             {
                 var shared = await store.ReadKeyHistoryAsync(cancellationToken).ConfigureAwait(false);
-                var recorded = shared is { } document ? Parse(document.Text) : new Dictionary<string, string>(StringComparer.Ordinal);
+                var recorded = shared is { } history ? Parse(history.Text) : new Dictionary<string, string>(StringComparer.Ordinal);
                 Validate(recorded, configured);
                 var merged = new Dictionary<string, string>(recorded, StringComparer.Ordinal);
                 foreach (var pair in configured)
