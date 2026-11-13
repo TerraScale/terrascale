@@ -218,6 +218,7 @@ internal sealed partial class TursoStorageEngine
     private IEnumerable<string> RetainedFiles() => Directory.EnumerateFiles(_dataDirectory, "*", SearchOption.AllDirectories)
         .Where(path => path.Contains(".promote.db", StringComparison.Ordinal)
             || path.Contains(".key.rewrapping", StringComparison.Ordinal) || path.Contains(".creating", StringComparison.Ordinal)
+            || path.EndsWith(".key.tmp", StringComparison.Ordinal)
             || path.EndsWith(".key", StringComparison.Ordinal) && !File.Exists(path[..^4]));
 
 }

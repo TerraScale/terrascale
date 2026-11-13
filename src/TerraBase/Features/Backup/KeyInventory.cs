@@ -19,7 +19,7 @@ internal sealed class KeyInventory(ILogger logger, HashSet<string> logged, KeyRe
         UnreadableCount++;
         if (logged.Count < 65536 && logged.Add(item))
         {
-            logger.ZLogWarning($"Wrapped key inventory cannot read item {item:@Item}; retirement is blocked");
+            logger.ZLogWarning($"Wrapped key maintenance cannot read item {item:@Item}; the item is retained");
         }
     }
 }

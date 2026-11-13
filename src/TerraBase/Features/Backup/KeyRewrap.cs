@@ -20,7 +20,7 @@ internal sealed class KeyRewrap(
 
     protected override async Task ExecuteAsync(CancellationToken cancellationToken)
     {
-        _meter.CreateObservableGauge("terrabase.keys.wrapped", Observe, description: "Wrapped items per key id; unreadable items block retirement.");
+        _meter.CreateObservableGauge("terrabase.keys.wrapped", Observe, description: "Maintenance items per key id; unreadable items are counted separately.");
         _meter.CreateObservableGauge("terrabase.keys.last_complete", () => Interlocked.Read(ref _lastComplete), "s",
             "Unix time of the last complete writer inventory, including unreadable items; zero until the first writer completion.");
         if (keyring.KeyIds.Count == 1)
@@ -85,7 +85,7 @@ internal sealed class KeyRewrap(
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                logger.ZLogError(error, $"Wrapped key inventory and rotation failed; retirement counts are unavailable");
+                logger.ZLogError(error, $"Wrapped key maintenance failed; pass counts are unavailable");
             }
         }
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false));
