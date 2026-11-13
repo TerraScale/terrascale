@@ -29,5 +29,6 @@
     <None Include="../../contracts/terrabase/**/*" Pack="true" PackagePath="contracts/terrabase/%(RecursiveDir)%(Filename)%(Extension)" />
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="NUlid" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
   </ItemGroup>
 </Project>

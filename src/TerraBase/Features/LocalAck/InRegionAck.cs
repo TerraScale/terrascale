@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Channels;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.HomePush;
 using TerraBase.Features.LocalAck;
@@ -26,7 +27,7 @@ internal interface IInRegionAck
 }
 
 internal sealed class InRegionAck(
-    TerraBaseOptions options, IRegionPartners partners, IReplicaPeers homes, HoldStore holds, ITransactionCrypto crypto, InternalCredential credential, IMeterFactory meters,
+    TerraBaseOptions options, IRegionPartners partners, IReplicaPeers homes, IReplicaCatalog catalog, HoldStore holds, ITransactionCrypto crypto, InternalCredential credential, IMeterFactory meters,
     TimeProvider time, ILogger<InRegionAck> logger) : BackgroundService, IInRegionAck
 {
     internal static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
@@ -43,6 +44,8 @@ internal sealed class InRegionAck(
     private volatile RegionPartner? _answeredPartner;
     private long _lastAnswerTicks;
     private Counter<long>? _finished;
+    private Counter<long>? _unreadable;
+    private Counter<long>? _unplaced;
     private bool _durabilityLogged;
 
     public bool PartnerHealthy => _partners is [var partner, ..] && partner == _answeredPartner
@@ -56,6 +59,10 @@ internal sealed class InRegionAck(
     {
         _finished = _meter.CreateCounter<long>("terrabase.localack.finished", "{transaction}",
             "Held transactions this node applied at the home after their origin node was lost.");
+        _unreadable = _meter.CreateCounter<long>("terrabase.localack.unreadable", "{attempt}",
+            "Held transactions retained because their payload could not be decrypted or decoded.");
+        _unplaced = _meter.CreateCounter<long>("terrabase.localack.unplaced", "{attempt}",
+            "Held transactions kept because the catalog does not know their database.");
         _ = _meter.CreateObservableGauge("terrabase.localack.held", () => holds.Count, "{transaction}", "Transactions this node holds for its in-region partner.");
         _ = _meter.CreateObservableGauge("terrabase.localack.partner", () => PartnerHealthy ? 1 : 0, "{node}", "1 while the in-region partner answers.");
         try
@@ -167,13 +174,26 @@ internal sealed class InRegionAck(
             foreach (var held in page)
             {
                 after = held;
+                var database = new TenantContext(held.Organization!, PlanTier.Hobby, held.Project, held.Database);
+                var record = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false);
                 var key = (held.Organization!, held.Project!, held.Database!);
+                if (record is NotFound)
+                {
+                    _unplaced?.Add(1);
+                    if (holds.MarkUnreadable(held))
+                    {
+                        logger.ZLogWarning($"A held transaction has a database unknown to the catalog and is retained: {held.Database:@Database} {held.Sequence:@Sequence}");
+                    }
+                    _ = stalled.Add(key);
+                    continue;
+                }
+
                 if (stalled.Contains(key))
                 {
                     continue;
                 }
 
-                if (peers.FirstOrDefault(peer => peer.Region == held.Home) is not { } home || !await ApplyAsync(home, held, cancellationToken).ConfigureAwait(false))
+                if (record is not TenantDatabaseRecord || peers.FirstOrDefault(peer => peer.Region == held.Home) is not { } home || !await ApplyAsync(home, held, cancellationToken).ConfigureAwait(false))
                 {
                     _ = stalled.Add(key);
                     continue;
@@ -196,10 +216,26 @@ internal sealed class InRegionAck(
         {
             var database = new TenantContext(held.Organization!, PlanTier.Hobby, held.Project, held.Database);
             var plain = await crypto.OpenAsync(database, held.Payload!, cancellationToken).ConfigureAwait(false);
-            if (plain is null || !TryDecode(plain, out var transaction))
+            if (plain is null)
             {
-                return true;
+                _unreadable?.Add(1, new KeyValuePair<string, object?>("reason", "decrypt"));
+                if (holds.MarkUnreadable(held))
+                {
+                    logger.ZLogError($"A held transaction could not be decrypted and is retained: {held.Database:@Database} {held.Sequence:@Sequence}");
+                }
+                return false;
             }
+
+            if (!TryDecode(plain, out var transaction))
+            {
+                _unreadable?.Add(1, new KeyValuePair<string, object?>("reason", "decode"));
+                if (holds.MarkUnreadable(held))
+                {
+                    logger.ZLogError($"A held transaction could not be decoded and is retained: {held.Database:@Database} {held.Sequence:@Sequence}");
+                }
+                return false;
+            }
+
             using var body = Json(JsonSerializer.SerializeToUtf8Bytes(transaction, HomeApplyJsonContext.Default.RegionTransaction));
             using var response = await Http.PostAsync(new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "apply")[1..]), body, cancellationToken)
                 .ConfigureAwait(false);

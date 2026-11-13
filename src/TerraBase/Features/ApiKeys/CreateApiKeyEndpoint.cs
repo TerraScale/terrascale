@@ -1,6 +1,7 @@
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.ApiKeys;
 
@@ -18,6 +19,7 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time) :
 
     public override void Configure()
     {
+        Metadata(new Requires("admin"));
         Post("/admin/api-keys");
         Name("createApiKey");
         Summary("Issues a scoped client API key");

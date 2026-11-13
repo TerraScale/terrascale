@@ -2,6 +2,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Replicas;
 
@@ -11,6 +12,7 @@ internal sealed class RegionalPrepareEndpoint(RegionalHandoff handoff, IMemoryBu
 
     public override void Configure()
     {
+        Metadata(new Requires("rollout"));
         Post("/v1/rollout/prepare");
         Name("RegionalPrepareEndpoint");
         Summary("Coordinates a caught-up regional writer handoff");

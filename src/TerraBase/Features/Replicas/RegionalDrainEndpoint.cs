@@ -1,6 +1,7 @@
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Replicas;
 
@@ -8,6 +9,7 @@ internal sealed class RegionalDrainEndpoint(RegionalHandoff handoff) : EndpointW
 {
     public override void Configure()
     {
+        Metadata(new Requires("rollout"));
         Post("/v1/rollout/drain");
         Name("RegionalDrainEndpoint");
         Summary("Coordinates a caught-up regional writer handoff");

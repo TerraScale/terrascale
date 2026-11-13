@@ -3,6 +3,7 @@ using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Management;
 
@@ -10,6 +11,7 @@ internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog
 {
     public override void Configure()
     {
+        Metadata(new Requires("plans", "admin"));
         Put("/admin/organizations/{organization}/plan");
         Name("setStorageOrganizationPlan");
         Summary("Sets a ts-auth organization's plan");

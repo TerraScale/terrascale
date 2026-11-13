@@ -5,6 +5,11 @@ ts-auth keeps all of its state in relational tables of its TerraBase database (`
 ([`TerraScale.EntityFrameworkCore`](../../sdk/dotnet/docs/entity-framework-core.md)) over TerraBase's internal
 listener, with the peer credential that `TerraBaseTransport` adds to every request on the injected `HttpClient`.
 
+When `TS_AUTH_TERRABASE_KEY_FILE` names a private P-256 JWK containing `kid`, the transport also sends
+`X-TerraScale-Caller` on every TerraBase request. Assertions identify `ts-auth`, expire after five minutes and are
+replaced every minute. Without that file setting, the transport sends the existing headers. Request correlation
+uses `TERRASCALE_REQUEST_PROOF_KEY` or its `_FILE` companion when supplied, otherwise the peer credential.
+
 ## Model
 
 - One `DbContext`, `AuthDbContext` (`src/TerraScale.Authentication/Storage`), registered with

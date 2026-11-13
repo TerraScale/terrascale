@@ -11,6 +11,7 @@ using MagicOnion.Serialization;
 using MagicOnion.Serialization.MessagePack;
 using MessagePack;
 using TerraScale.Dashboard.Platform.Persistence;
+using CallerCredential = TerraScale.DotNet.TerraBase.CallerCredential;
 using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Platform.Rpc
@@ -98,6 +99,10 @@ namespace TerraScale.Dashboard.Platform.Rpc
             {
                 var credentials = await identity.ReadAsync(context.CancellationToken);
                 metadata.Add(TerraBaseRpc.PeerCredentialHeader, credentials.TerraBasePeerSecret);
+                if (credentials.Caller is { } caller)
+                {
+                    metadata.Add(CallerCredential.HeaderName.ToLowerInvariant(), caller.Token);
+                }
             });
             return GrpcChannel.ForAddress(endpoint, new GrpcChannelOptions
             {

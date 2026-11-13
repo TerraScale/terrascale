@@ -9,6 +9,8 @@ export E2E_BUILD=${E2E_BUILD:-$E2E_STATE/build}
 export E2E_SDK_BUILD=${E2E_SDK_BUILD:-$E2E_STATE/sdk}
 export NODE_EXTRA_CA_CERTS=$E2E_STATE/pki/ca.pem E2E_CA_FILE=$E2E_STATE/pki/ca.pem
 case ${E2E_REGIONS:-1} in 1|2) ;; *) echo 'E2E_REGIONS must be 1 or 2' >&2; exit 2 ;; esac
+case ${E2E_NODES_PER_REGION:-1} in 1|2) ;; *) echo 'E2E_NODES_PER_REGION must be 1 or 2' >&2; exit 2 ;; esac
+[ "${E2E_NODES_PER_REGION:-1}" = 1 ] || [ "${E2E_REGIONS:-1}" = 2 ] || { echo 'two nodes per region require two regions' >&2; exit 2; }
 holder=$E2E_STATE/namespace.pid
 init=$E2E_STATE/namespace.init
 orderly_seconds=30
@@ -34,6 +36,7 @@ prepare() {
 }
 start() {
   printf '%s\n' "${E2E_REGIONS:-1}" > "$E2E_STATE/regions"
+  printf '%s\n' "${E2E_NODES_PER_REGION:-1}" > "$E2E_STATE/nodes-per-region"
   rm -rf "$E2E_STATE/namespace"
   unshare --user --map-root-user --net --mount --pid --fork --mount-proc --kill-child bash "$here/namespace.sh" > "$E2E_STATE/namespace.log" 2>&1 &
   echo $! > "$holder"
@@ -45,7 +48,7 @@ start() {
 }
 inside() {
   nsenter --target "$(cat "$init")" --user --net --mount --pid --preserve-credentials --wd="$PWD" \
-    env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt E2E_REGIONS="$(cat "$E2E_STATE/regions")" "$@"
+    env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt E2E_REGIONS="$(cat "$E2E_STATE/regions")" E2E_NODES_PER_REGION="$(cat "$E2E_STATE/nodes-per-region")" "$@"
 }
 ended_within() {
   local deadline=$((SECONDS + $1))

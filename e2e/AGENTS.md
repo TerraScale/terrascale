@@ -95,10 +95,34 @@ both versions, and each answers 409 `platform_project_protected`.
 the files are back once gru is added again. R17 removes a follower, verifies its routing record learns a rename, and adds it again with current data. R18 deletes a database at its home while its follower is removed, then checks the removed follower forgets it. R19 starts a real, unprimed node in the home region with NATS disconnected and verifies direct placement requests return 503 not_writer for both live and absent ids, while the writer returns 200 and 404 respectively.
 
 Other existing projects can run in two-region mode by starting this same stack first and selecting their project
-normally. No two-region CI job is configured; adding one requires its own journey shard with `E2E_REGIONS=2`,
-the placement project and the normal prepare/start/up/stop lifecycle. The pair shares one machine and third-party
-stand-ins, has no network delay and uses catalog-sweep replication without NATS; it does not model geographic
-latency, regional host failure or production's NATS notifications.
+normally. The placement pair shares one machine and third-party stand-ins, has no network delay and uses
+catalog-sweep replication without NATS; it does not model geographic latency or regional host failure.
+
+## Multi-region fault lane
+
+The `multi-region faults` shard of `journey.yml` shares the normal service and SDK build artifacts. It sets
+`E2E_REGIONS=2 E2E_NODES_PER_REGION=2` before prepare/start and selects `--project fault`, with one worker for
+the fault specs. Local runs use the same variables and normal prepare/start/up/stop lifecycle, followed by
+`bash env/local.sh exec npx playwright test --project fault` from `e2e/`.
+
+The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
+8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
+under the run state. Four-node mode starts a checksum-pinned NATS server with JetStream and a generated credential
+registered with the scrubber; all four real nodes use it for replication notices and regional writer coordination.
+The namespace remembers the node count for later exec calls and owns every original and restarted process.
+
+The fault owner upgrades through the existing Stripe stand-in so a restore has room alongside its source. Each
+database has a client JSONL ledger under `$E2E_STATE/logs/ledger-<id>.jsonl`, recording submitted and acknowledged
+rows from both regions. The crash scenario flushes a write to the elected writer's socket, kills that node with
+SIGKILL before awaiting its response, records a reset write as unacknowledged without resending it, and restarts
+the identical command and environment against the same data directory. Both regions must retain every previously
+observed acknowledged row and converge to the same state, including any submitted write whose response was lost.
+Writes after recovery must also converge. A separate scenario takes a backup, writes more source data, restores
+into another database, and checks both restored regions against the earlier snapshot ledger.
+
+This lane exercises process failure and recovery, not a region-wide outage, network partitions, NATS failure,
+geographic latency or mixed service versions. It does not assert continued write availability during the outage.
+The normal Stop and scrub steps cover the extra nodes, NATS, restart logs and ledgers before evidence uploads.
 
 ## The production target
 

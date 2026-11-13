@@ -343,7 +343,7 @@ internal sealed partial class TursoStorageTransaction
         var ended = EndedByFailure(native);
         if (damaged)
         {
-            return new SqlStatementException(new Error(), "the database reported an I/O error or corruption", ended, error);
+            return new SqlStatementException(new StorageFailure(), "the database reported an I/O error or corruption", ended, error);
         }
 
         var (failure, reported) = Classify(native, error);

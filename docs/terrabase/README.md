@@ -13,6 +13,7 @@ The product goal is to write in any region and read in any region, with free rea
 - [Home apply](home-apply.md): conflict resolution and transaction states.
 - [Origin replay across a home move](home-move-origin-replay.md): preserve acknowledged writes during promotion.
 - [Local overlay](local-overlay.md): regional writes and push to home.
+- [Apply failure retention](apply-failure-retention.md): retry ordering and unreadable transaction retention.
 - [Regional sealing preparation](local-sealing-preparation.md): keys and monthly allowances before regional writes become available.
 - [Region replicas](region-replicas.md) and [replica status](replica-status.md).
 - [Placement](placement.md) and [copy placement during recovery](recovery-copy-placement.md).
@@ -25,6 +26,7 @@ The product goal is to write in any region and read in any region, with free rea
 - [HTTP API](api.md) and [interactive reference](api-reference.md).
 - [Management API](management-api.md).
 - [TLS and authentication](transport-security.md).
+- [Service caller authentication](caller-authentication.md).
 - [Listener metadata](security.md): closed fallback when a route has no listener metadata.
 - [API-key ownership](customer-api-key-ownership.md) and [revocation](key-revocation.md).
 - [Cross-project isolation](cross-project-errors.md).

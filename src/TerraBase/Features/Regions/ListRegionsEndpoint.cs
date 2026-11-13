@@ -1,5 +1,6 @@
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Regions;
 
@@ -7,6 +8,7 @@ public sealed class ListRegionsEndpoint(IRegionCatalog catalog) : EndpointWithou
 {
     public override void Configure()
     {
+        Metadata(new Requires("catalog.read"));
         Get("/v1/regions");
         Name("listRegions");
         Summary("Lists the regions TerraBase serves");
