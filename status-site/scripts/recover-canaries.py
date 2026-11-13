@@ -14,10 +14,10 @@ approving admin still signs in once in a browser when the account has no
 password yet.
 """
 import fcntl
+import http.client
 import http.cookiejar
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import subprocess
@@ -26,6 +26,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import UTC
+from pathlib import Path
 
 AUTH = 'https://auth.terrascale.tech'
 API = 'https://api.terrascale.tech'
@@ -53,7 +55,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def private(args, payload=None):
-    result = subprocess.run(args, input=payload, capture_output=True, timeout=90)
+    result = subprocess.run(args, check=False, input=payload, capture_output=True, timeout=90)
     if result.returncode:
         raise RuntimeError('Private command failed: ' + ' '.join(args[:4]))
     return result.stdout
@@ -178,10 +180,11 @@ class Setup:
         status, _ = self.form('/ui/terrascale/reset')
         if status != 200:
             raise RuntimeError('Reset page refused')
+        from datetime import datetime, timedelta
+
         from mailcode import latest_code
-        from datetime import datetime, timedelta, timezone
         for attempt in range(12):
-            started = datetime.now(timezone.utc)
+            started = datetime.now(UTC)
             status, _ = self.form('/ui/terrascale/reset', {'email': address, 'next': '/ui/terrascale/sign-in'})
             if status == 200:
                 break
@@ -318,7 +321,7 @@ class Setup:
         configurations = {}
         for region, database in databases.items():
             reuse = saved.get(region)
-            if reuse and any(k['id'] == reuse[:26] and k['database'] == database['id'] and k['project_id'] == project
+            if reuse and any(k['id'] == reuse.removeprefix('sk_')[:26] and k['database'] == database['id'] and k['project_id'] == project
                              and sorted(k['scopes']) == SCOPES for k in metadata):
                 key = reuse
             else:
@@ -330,8 +333,8 @@ class Setup:
             self.state['canaries'] = saved
             self.state['databases'] = {r: d['id'] for r, d in databases.items()}
             self.save()
-            configurations[region] = dict(origin=API, issuer=AUTH + '/terrascale', project=project,
-                                          database='status-canary-' + region, key=key, region=region)
+            configurations[region] = {'origin': API, 'issuer': AUTH + '/terrascale', 'project': project,
+                                      'database': 'status-canary-' + region, 'key': key, 'region': region}
         for config in configurations.values():
             self.verify(config)
         return configurations
@@ -339,7 +342,7 @@ class Setup:
     def verify(self, config):
         self.stage = config['region'] + ' pinned CRUD'
         token = self.call(config['issuer'] + '/oauth/token', 'POST',
-                         {'grant_type': 'client_credentials', 'client_id': config['key'][:26],
+                         {'grant_type': 'client_credentials', 'client_id': config['key'].removeprefix('sk_')[:26],
                           'client_secret': config['key'], 'project': config['project'], 'scope': ' '.join(SCOPES)}, form=True)['access_token']
         url = API + '/v1/projects/' + config['project'] + '/databases/' + config['database'] + '/sql/execute'
         def sql(text, args):
@@ -365,7 +368,7 @@ class Setup:
         if sql('SELECT id FROM "canary" WHERE id = ?', [row])['rows'] != []:
             raise RuntimeError('Delete not visible')
         print(json.dumps({'region': config['region'], 'project': config['project'], 'database': config['database'],
-                          'key_id': config['key'][:26], 'proof': ['write', 'read', 'query', 'delete', 'read-after-delete']}), flush=True)
+                          'key_id': config['key'].removeprefix('sk_')[:26], 'proof': ['write', 'read', 'query', 'delete', 'read-after-delete']}), flush=True)
 
 
 def secret_payload(configurations, catalog):
@@ -426,7 +429,30 @@ def main():
                           'organization': setup.state['organization'], 'project': setup.state['project'],
                           'databases': setup.state['databases']}))
         return 0
-    except Exception as error:
+    except (
+        ArithmeticError,
+        AssertionError,
+        AttributeError,
+        BufferError,
+        EOFError,
+        ExceptionGroup,
+        ImportError,
+        LookupError,
+        MemoryError,
+        NameError,
+        OSError,
+        ReferenceError,
+        RuntimeError,
+        StopAsyncIteration,
+        StopIteration,
+        SyntaxError,
+        SystemError,
+        TypeError,
+        ValueError,
+        Warning,
+        subprocess.SubprocessError,
+        http.client.HTTPException,
+    ) as error:
         # Exception repr, HTTP bodies and subprocess stderr may contain secrets.
         print(json.dumps({'failed_stage': setup.stage if setup else 'private state', 'error_type': type(error).__name__,
                           'last_http_status': getattr(setup, 'last_status', None),

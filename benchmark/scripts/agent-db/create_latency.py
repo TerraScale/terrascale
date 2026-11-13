@@ -28,7 +28,7 @@ def call(method, url, token=None, body=None, headers=None):
 
 
 def token(key, project):
-    basic = base64.b64encode(f"{key[:26]}:{key}".encode()).decode()
+    basic = base64.b64encode(f"{key.removeprefix('sk_')[:26]}:{key}".encode()).decode()
     form = f"grant_type=client_credentials&project={project}".encode()
     request = urllib.request.Request(AUTH, data=form, method="POST", headers={
         "Authorization": "Basic " + basic, "Content-Type": "application/x-www-form-urlencoded"})
@@ -65,7 +65,8 @@ def main():
     parser.add_argument("--prefix", default="bench")
     parser.add_argument("--no-ttl", action="store_true")
     args = parser.parse_args()
-    key = open(args.key_file).read().strip()
+    with open(args.key_file) as key_file:
+        key = key_file.read().strip()
     rows = []
     for repeat in range(args.repeats + 1):
         times = run(key, args.project, args.count, f"{args.prefix}-r{repeat}", not args.no_ttl)

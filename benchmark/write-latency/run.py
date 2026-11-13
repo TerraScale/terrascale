@@ -8,8 +8,8 @@ import argparse
 import base64
 import contextlib
 import datetime
-import io
 import http.client
+import io
 import json
 import os
 import pathlib
@@ -122,7 +122,7 @@ def main():
             form = urllib.parse.urlencode({"grant_type": "client_credentials", "project": project})
             # Token endpoint takes a form, so keep it outside the timed client helper.
             request = urllib.request.Request("https://auth.terrascale.tech/terrascale/oauth/token", form.encode(), {
-                "Authorization": "Basic " + base64.b64encode((key[:26] + ":" + key).encode()).decode(),
+                "Authorization": "Basic " + base64.b64encode((key.removeprefix("sk_")[:26] + ":" + key).encode()).decode(),
                 "Content-Type": "application/x-www-form-urlencoded"})
             with urllib.request.urlopen(request, timeout=20) as response:
                 token = json.load(response)["access_token"]
@@ -133,14 +133,14 @@ def main():
         if status != expected:
             raise RuntimeError((operation, status, (body or {}).get("error", {}).get("code"), (body or {}).get("error", {}).get("message")))
 
-    report = {"captured_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "client_host": os.uname().nodename, "client_region": args.region,
+    report = {"captured_at": datetime.datetime.now(datetime.UTC).isoformat(), "client_host": os.uname().nodename, "client_region": args.region,
               "writes_per_mode": args.writes, "default_expects_local": args.expect_local, "repeats": []}
     for repeat in range(args.start_repeat, args.start_repeat + args.repeats):
         name = "latency" + args.region + str(repeat)
         databases = f"/v1/projects/{project}/databases"
         path = databases + "/" + name + "/sql/execute"
 
-        def sql(client, text, extra=None):
+        def sql(client, text, extra=None, path=path):
             return client.call(path, "POST", {"statements": [{"sql": text}]}, headers(extra))
 
         status, body, _, _ = control.call(databases, "POST", {"name": name, "homeRegion": "gru", "replicaRegions": [args.region]}, headers({"Host": "gru.api.terrascale.tech"}))
@@ -181,7 +181,7 @@ def main():
                             row = ulid()
                             label = f"{transport}_{mode}" if index >= 5 else "warmup"
                             status, body, answered, elapsed = sql(client, f"INSERT INTO events (id, body) VALUES ('{row}', '{label}')", extra)
-                            completed = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                            completed = datetime.datetime.now(datetime.UTC).isoformat()
                             require(status, body, 200, mode)
                             route = answered.get("terrascale-write-route", "")
                             fields = dict(field.strip().split("=", 1) for field in route.split(";") if "=" in field)
