@@ -77,11 +77,11 @@ return `400 invalid_request` in the existing error envelope. A month becomes com
 instant of the next month (00:00 UTC) on the service clock.
 
 For an explicit month, `operations=null`, `sqlReads=null` and `storageByteHours=null` mean that no
-persisted usage-month record exists for that organization on any answering node. This is unavailable
-history, never zero usage. A persisted record containing zero totals returns numeric zeros. A node
-without records contributes nothing when another node has records for the organization. `logicalBytes`
-remains null. If a node has pending units but no persisted record yet, the scan returns `503`
-instead of omitting those units. Paging, ordering and the JSON fields are unchanged.
+persisted usage-month record and no unflushed unit exists for that organization on any answering
+node. This is unavailable history, never zero usage. A persisted record containing zero totals returns
+numeric zeros. A node without records contributes nothing when another node has records for the
+organization. `logicalBytes` remains null. Units a node has not flushed to its record yet are counted,
+as they are for the current month. Paging, ordering and the JSON fields are unchanged.
 
 Responses expose `Usage-Final: false`. Month completeness is a calendar boundary, not an accounting
 watermark: a buffered or uncertain flush can still persist units attributed to a closed month. There

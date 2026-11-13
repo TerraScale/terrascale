@@ -223,12 +223,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
                     return new Unavailable("usage accounting is unavailable; retry");
                 }
 
-                if (requestedMonth is not null && !units.Persisted && (units.Reads != 0 || units.Writes != 0))
-                {
-                    return new Unavailable("usage for the month has not been persisted; retry");
-                }
-
-                items.Add(requestedMonth is not null && !units.Persisted
+                items.Add(requestedMonth is not null && units is { Persisted: false, Reads: 0, Writes: 0, StorageByteHours: 0 }
                     ? new AllowanceUsage(organizationId, null, null)
                     : new AllowanceUsage(organizationId, units.Writes, null, units.Reads, units.StorageByteHours));
             }
