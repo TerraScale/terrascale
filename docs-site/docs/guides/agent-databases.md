@@ -56,7 +56,7 @@ scoped-key minting requires the parent API key connection above.
 
 Call `tools/list` to discover the current tools, then `get_context` to read the key's project and scopes.
 The following tool calls create a temporary database, fork it, mint a scoped key, query and inspect it,
-restore a backup, and delete the databases. Substitute the IDs returned by earlier calls:
+restore a backup, and request dashboard confirmation for deleting the databases. Substitute the IDs returned by earlier calls:
 
 | Tool | Arguments |
 | --- | --- |
@@ -72,6 +72,11 @@ restore a backup, and delete the databases. Substitute the IDs returned by earli
 | `restore_backup` | `{"databaseId":"<run-id>","backupId":"<backup-id>","name":"agent-restored"}` |
 | `delete_database` | `{"databaseId":"<restored-id>","confirmName":"agent-restored"}` |
 | `delete_database` | `{"databaseId":"<run-id>","confirmName":"agent-run"}` |
+
+Each `delete_database` call returns `code: "step_up_required"`, the database ID
+as `resource`, and a `confirmationUrl`. It leaves the database intact. Open that
+URL, sign in, and confirm deletion in the dashboard. Typing `confirmName` into
+an MCP call does not authorize deletion.
 
 MCP database TTLs use `ttlHours`; scoped keys use `ttlSeconds`.
 Fork and restore each need room for another database under the organization's plan. Free allows one database;

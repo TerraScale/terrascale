@@ -30,7 +30,6 @@ type FunctionTools = {
   list_functions: { functions: { name: string }[] };
   get_function: { function: { source: string }; invokeUrl: string };
   list_function_logs: { logs: { lines: string[] }[] };
-  delete_function: { deleted: boolean };
 };
 
 export async function functionTool<T extends keyof FunctionTools>(request: APIRequestContext, token: string, name: T, args: Record<string, string>): Promise<FunctionTools[T]> {

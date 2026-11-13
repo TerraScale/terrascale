@@ -25,7 +25,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
         {
             "get_context", "list_databases", "get_database", "create_database", "fork_database", "set_database_ttl", "delete_database",
             "execute_sql", "run_sql", "check_sql", "get_database_schema", "create_scoped_key",
-            "create_backup", "restore_backup", "get_restore_status"
+            "create_backup", "restore_backup", "get_restore_status",
+            "delete_project", "delete_saved_query", "delete_function", "delete_file_bucket", "delete_file"
         };
 
         internal async Task<Credential?> AuthenticateAsync(string key, string? project, CancellationToken ct)
@@ -79,6 +80,21 @@ namespace TerraScale.Dashboard.Platform.Mcp
             var databaseId = Text("databaseId");
             if (credential.DatabaseId is { } only && databaseId.Length > 0 && databaseId != only)
                 throw new AccountAccessException("Database was not found in this project.", 404);
+            if (McpDeletion.IsDelete(tool))
+            {
+                var resource = tool switch
+                {
+                    "delete_database" => databaseId,
+                    "delete_project" => scope.ProjectId,
+                    "delete_saved_query" => Text("queryId"),
+                    "delete_function" => Text("name"),
+                    "delete_file_bucket" => Text("bucketId"),
+                    "delete_file" => Text("fileId"),
+                    _ => throw new InvalidOperationException("Unknown deletion tool.")
+                };
+                return Reply(McpDeletion.Required(tool, resource, scope, databaseId, Text("bucketId")),
+                    McpDeletionJson.Default.McpStepUpRequired);
+            }
             if (tool == "get_context") return Reply(new McpKeyContext(scope.OrganizationId, scope.ProjectId, credential.DatabaseId, credential.Scopes), McpAgentJson.Default.McpKeyContext);
             if (tool == "create_scoped_key")
             {
@@ -96,7 +112,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     throw new AccountAccessException("Scoped key minting was refused. The parent key must be active, unscoped and grant the requested database and access.", (int)(error.StatusCode ?? HttpStatusCode.BadGateway));
                 }
             }
-            var write = tool is "create_database" or "fork_database" or "set_database_ttl" or "delete_database" or "create_backup" or "restore_backup";
+            var write = tool is "create_database" or "fork_database" or "set_database_ttl" or "create_backup" or "restore_backup";
             var dataTool = tool is "execute_sql" or "run_sql" or "check_sql" or "get_database_schema";
             var sql = Text("sql").Trim();
             if (tool is "execute_sql" or "run_sql" or "check_sql")
@@ -176,12 +192,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     : await management.ClearDatabaseTtlAsync(scope.ProjectId, databaseId);
                 return Reply(Output(updated), McpAgentJson.Default.McpDatabase);
             }
-            if (tool == "delete_database")
-            {
-                if (Text("confirmName", Text("confirmation")) != database.Name) throw new AccountAccessException("Type the database name to confirm deletion.", 422);
-                await management.DeleteDatabaseAsync(scope.ProjectId, databaseId);
-                return Reply(new McpDeleted(true), McpAgentJson.Default.McpDeleted);
-            }
             if (tool == "create_backup")
             {
                 var backup = await backups.CreateAsync(scope, region, databaseId, ct);
@@ -230,7 +240,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
     [JsonSerializable(typeof(McpKeyContext))]
     [JsonSerializable(typeof(McpDatabase))]
     [JsonSerializable(typeof(McpDatabaseList))]
-    [JsonSerializable(typeof(McpDeleted))]
     [JsonSerializable(typeof(SqlAnalysis))]
     [JsonSerializable(typeof(SqlCatalog))]
     [JsonSerializable(typeof(DatabaseSqlResult))]

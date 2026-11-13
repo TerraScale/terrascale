@@ -1,5 +1,6 @@
 import { test, expect } from '../support/audit';
 import { deployFunction, functionAccess, functionSource, functionTool, functionUrl } from '../support/functions';
+import { deletionHandoff } from '../support/mcp';
 import { confirmWithPassword } from '../support/hosted';
 import { journey, saveSecret } from '../support/state';
 
@@ -50,10 +51,13 @@ test('functions list, detail, invocation logs and deletion work through the page
   const logs = await functionTool(page.request, token, 'list_function_logs', { ...scope, name: mcpName });
   expect(logs.logs).toHaveLength(1);
   expect(logs.logs[0].lines).toContain('functions journey');
-  expect(await functionTool(page.request, token, 'delete_function', { ...scope, name: mcpName, confirmName: mcpName })).toEqual({ deleted: true });
+  for (const credential of [current.apiKey, token]) {
+    const confirmation = await deletionHandoff(page.request, credential, 'delete_function', mcpName, `/databases/${current.databaseId}/functions`, { ...scope, name: mcpName, confirmName: mcpName });
+    expect(confirmation.searchParams.get('function')).toBe(mcpName);
+  }
   const remaining = await functionTool(page.request, token, 'list_functions', scope);
-  expect(remaining.functions.map((item: { name: string }) => item.name)).not.toContain(mcpName);
-  console.log('Functions owner: page list/read/logs/delete OK; MCP list/read/logs/delete OK (real REST deployment and invocation).');
+  expect(remaining.functions.map((item: { name: string }) => item.name)).toContain(mcpName);
+  console.log('Functions owner: page list/read/logs/delete OK; MCP list/read/logs OK; API-key and signed-in deletion require dashboard confirmation (real REST deployment and invocation).');
 });
 
 test('failed function deletion preserves the selection and confirmation dialog with an alert', async ({ page, audit }) => {

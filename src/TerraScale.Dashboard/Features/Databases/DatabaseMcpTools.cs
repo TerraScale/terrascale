@@ -4,7 +4,6 @@ using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Platform.Mcp;
-using static TerraScale.Dashboard.Platform.Mcp.McpScope;
 
 namespace TerraScale.Dashboard.Features.Databases
 {
@@ -91,11 +90,11 @@ namespace TerraScale.Dashboard.Features.Databases
             return await DatabaseOutput(await databases.SetTtlAsync(Scope(organizationId, projectId), databaseId, ttlHours, Cancellation));
         }
 
-        [McpServerTool(Name = "delete_database", Title = "Delete database", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Permanently delete a database and all of its data. Requires confirmName to equal the database name.")]
-        public async Task<McpDeleted> DeleteDatabase(string databaseId, string confirmName = "", string? organizationId = null, string? projectId = null, string? confirmation = null)
+        [McpServerTool(Name = "delete_database", Title = "Delete database", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
+        public McpStepUpRequired DeleteDatabase(string databaseId, string confirmName = "", string? organizationId = null, string? projectId = null, string? confirmation = null)
         {
-            await databases.DeleteAsync(Scope(organizationId, projectId), databaseId, Alias(confirmName, confirmation, "confirmName"), Cancellation);
-            return new(true);
+            var scope = DatabaseService.Scope(Scope(organizationId, projectId));
+            return McpDeletion.Required("delete_database", databaseId, scope);
         }
 
         private AccountContext Scope(string? organizationId, string? projectId)

@@ -24,7 +24,6 @@ using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Features.Support;
 using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Features.AuthenticationManagement;
-using TerraScale.Dashboard.Features.Admin;
 using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Features.Observability;
 using TerraScale.Dashboard.Features.Analytics;
@@ -118,15 +117,6 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<ReadyzEndpoint>(),
                 EndpointRegistration.Create<HealthReadyEndpoint>(),
                 EndpointRegistration.Create<HealthLiveEndpoint>(),
-                EndpointRegistration.Create<AdminPageEndpoint>(),
-                EndpointRegistration.Create<AdminSectionEndpoint>(),
-                EndpointRegistration.Create<AdminUserEndpoint>(),
-                EndpointRegistration.Create<AdminOrganizationEndpoint>(),
-                EndpointRegistration.Create<AdminProjectEndpoint>(),
-                EndpointRegistration.Create<AdminEstateActionEndpoint>(),
-                EndpointRegistration.Create<AdminPlansEndpoint>(),
-                EndpointRegistration.Create<AdminPlanVisibilityEndpoint>(),
-                EndpointRegistration.Create<AdminPlanDeleteEndpoint>(),
                 EndpointRegistration.Create<ApiKeysPageEndpoint>(),
                 EndpointRegistration.Create<ApiKeyDetailsPageEndpoint>(),
                 EndpointRegistration.Create<ListDashboardCredentialsEndpoint>(),

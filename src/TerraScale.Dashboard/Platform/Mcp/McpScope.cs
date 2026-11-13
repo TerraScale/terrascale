@@ -33,5 +33,4 @@ namespace TerraScale.Dashboard.Platform.Mcp
         }
     }
 
-    public sealed record McpDeleted(bool Deleted);
 }
