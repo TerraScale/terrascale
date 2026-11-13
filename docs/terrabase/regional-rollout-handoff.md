@@ -29,7 +29,24 @@ the service shutdown token and finish before their connections are disposed.
 The read-only observer also exits when the peers file no longer admits this node.
 This change removes the dependency of a node's own renewal on other regions'
 records; it does not remove the dependency on the replicated store's quorum
-across regions.
+across regions. This independence covers lease renewal and ordinary reads and
+writes while admission is valid. Handoff still waits for rollout status from
+every observer. One unreachable region delays drain completion until the drain
+deadline, including when the new writer has already activated.
+
+With three voting regions, losing one leaves the other two able to confirm
+authority, provided they can reach each other and retain their healthy regional
+peers. Reads and writes that those regions can serve locally continue; requests,
+replication and operations that need the unreachable region can fail or wait.
+Handoff cannot finish its observer phase while that region remains unreachable.
+Losing two voting regions removes the replicated store's quorum: ownership
+updates, lease renewal and handoff cannot complete. Existing regional admission
+expires no later than five seconds after its last renewal was sent. New ordinary
+client and management requests, including reads, can no longer be admitted for
+local execution by that writer.
+Internal probes and retained replica data do not establish serving authority.
+Recovery waits for quorum; clock trust and local acknowledgement requirements
+remain additional conditions for writes.
 
 Ownership failures identify the own-renewal or remote-observation phase and the
 region. Causes distinguish unavailable storage, timeout, an absent record, an
@@ -53,20 +70,54 @@ its retained owner to authorize forgetting data after a `404`. A changed source
 endpoint can replace a follower only when the old and new source owners are
 confirmed and the new source is activated; otherwise its local replica stays.
 Checksum healing also waits for confirmation that its source is the activated owner.
-Home lookups cache a result for up to 30 seconds. A confirmed change of owner
-invalidates that cached result on its next lookup. Removed-placement refreshes
+Home lookups cache a result for up to 30 seconds. On the next lookup, a confirmed
+owner whose node name differs from the cached owner causes the cached result to
+be rejected. This comparison does not detect an epoch change alone or an owner
+that changed and changed back between lookups. A stale route can cause forwarding,
+refusal or failure; it cannot admit a second writer. Removed-placement refreshes
 can remain cached for up to ten minutes after an observation changes.
 
-Handoff import accepts database-erasure receipts and project-closure receipts,
-preserving their original holder and authority bindings byte for byte. Receipts
-count against the same 10,000-row and 4 MiB snapshot limits. Export does not send
-these receipts: receivers must accept them throughout the fleet before a later
-change enables sending them. A closure that needs the previous writer's receipt
-still waits after a writer change, as before. The fault journey returns ownership
-to the original receipt holder and verifies the recovered stack before closure.
+Handoff import accepts database-erasure receipts and affirmative project-closure
+receipts only when their supported typed formats bind to the key's database or
+project, the key's holder, and the matching authority record in the incoming
+snapshot. Missing or ambiguous authority, malformed records, unsupported receipt
+versions and failed `Binds`/`Confirms` checks reject the whole import.
 
-The crash-recovery journey waits for a read-only authenticated request at the
-restarted writer to stop answering 401 before checking its recovered data. After
+A receipt absent at the receiver is stored byte for byte. An identical receipt
+already there requires no write. Any different bytes at an existing receipt key
+are a conflict, including an older closure receipt or two otherwise legitimate
+observations at different times. Import never replaces or removes retained
+receipt evidence. Conflicting duplicate receipt keys in one snapshot are also
+refused. Validation, comparison and all catalog changes share one durable
+transaction; invalid or conflicting receipts reject it before any snapshot row is
+written and before ownership transfers. The source's existing refusal/recovery
+path retains its role and resumes serving once admission is restored.
+
+The counter `terrabase_regional_catalog_receipt_conflicts_total{kind}` counts
+invalid or conflicting records, with only `database_purge_receipts` and
+`project_closure_receipts` as label values. The warning is
+`Regional catalog import refused: {Kind} has {Count} invalid or conflicting receipt records; catalog unchanged`.
+The import error also names each receipt family and its record count; none of
+these diagnostics include record contents. Operators should retain both copies
+for investigation. The two safe resolutions are to cancel the handoff and keep
+the source serving, or to establish the authoritative deletion evidence and make
+the sender provide valid, byte-identical evidence for each retained receiver key
+before attempting the handoff again. Do not delete receiver evidence to unblock
+a transfer. A future sender that permits superseding receipts needs an explicit
+authority and evidence ordering rule, including how to handle equal authority
+with different outcomes; this importer does not infer that order.
+
+Receipts count against the same 10,000-row and 4 MiB snapshot limits. No shipped
+build exports receipts yet, so a receipt conflict cannot occur in a normal fleet
+today. Receivers must accept them throughout the fleet before a later change
+enables sending. Once sending exists, a conflict means two nodes disagree about
+deletion evidence and requires operator investigation. A closure that needs the
+previous writer's receipt still waits after a writer change, as before. The
+fault journey returns ownership to the original receipt holder and verifies the
+recovered stack before closure.
+
+The crash-recovery journey requires a read-only authenticated request at the
+restarted writer to answer 200 before checking its recovered data. After
 restoring the foreign topology, it makes the same readiness wait at each restarted
 foreign node before checking regional credentials. These waits use the existing
 step timeout; they do not change bearer authentication behavior.

@@ -152,8 +152,14 @@ the fault specs. Local runs use the same variables and normal prepare/start/up/s
 The shard also builds a journey-only receipt driver from the same product sources.
 Its exporter copy includes receipt kinds only inside that driver; the shipped exporter
 is unchanged. The driver uses the real engine, catalog schema, serializers and importer
-to prove receipt bytes and holder/authority bindings, receipt-free import retention,
-and the existing row/byte limits. It adds no runtime product setting.
+to prove receipt bytes and holder/authority bindings through the real importer,
+atomic refusal of invalid or conflicting evidence, and byte-preserving receipt-free
+import retention. Isolated pairs of real driver nodes with their own NATS exercise
+the real drain and preparation endpoints: the receiver retains its entire catalog
+on refusal, and the source resumes management writes and reads after receipt or
+row/byte-limit rejection. Only the journey copy sends receipts; the product
+importer and handoff refusal path are unchanged in the driver. It adds no runtime
+product setting.
 
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
 8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`

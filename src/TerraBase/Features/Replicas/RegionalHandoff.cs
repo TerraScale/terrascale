@@ -257,7 +257,7 @@ internal sealed partial class RegionalHandoff(
         {
             return Refuse("preparation catalog missing");
         }
-        await RegionalCatalog.ImportAsync(services.GetRequiredService<IStorageEngine>(), request.Catalog, cancellationToken).ConfigureAwait(false);
+        await RegionalCatalog.ImportAsync(services.GetRequiredService<IStorageEngine>(), request.Catalog, services.GetRequiredService<RegionalReceiptImports>(), cancellationToken).ConfigureAwait(false);
         await services.GetRequiredService<RegionReplication>().SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
 
         var replicas = services.GetRequiredService<IDatabaseReplicas>();

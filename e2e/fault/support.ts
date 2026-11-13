@@ -21,7 +21,7 @@ type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
 
-export async function nodeRequest(node: Node, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string }> {
+export async function nodeRequest(node: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(`http://${node.address}:8081`);
   const stream = session.request({
@@ -212,7 +212,7 @@ export async function tokenReady(node: Node, cells: Pick<Cells, 'get'>, path: st
     const status = response.status();
     await response.dispose();
     return status;
-  }, { message: `${node.name} must verify the existing token before authenticated recovery checks` }).not.toBe(401);
+  }, { message: `${node.name} must verify the existing token before authenticated recovery checks` }).toBe(200);
 }
 
 export function faultId(): string {

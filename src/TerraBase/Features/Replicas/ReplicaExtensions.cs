@@ -9,6 +9,7 @@ public static class ReplicaExtensions
         services.AddSingleton<RegionalOwners>();
         services.AddSingleton<RegionalIngress>();
         services.AddSingleton<RegionalHandoff>();
+        services.AddSingleton<RegionalReceiptImports>();
         services.AddHostedService(provider => provider.GetRequiredService<RegionalHandoff>());
         services.TryAddSingleton<IReplicaPeers, PeersFileReplicaPeers>();
         services.TryAddSingleton<IReplicaCatalog, TenantReplicaCatalog>();

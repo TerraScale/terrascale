@@ -103,7 +103,7 @@ internal static class RegionalCatalog
         return new RegionalCatalogSnapshot(tables, records);
     }
 
-    internal static async Task ImportAsync(IStorageEngine engine, RegionalCatalogSnapshot snapshot, CancellationToken cancellationToken)
+    internal static async Task ImportAsync(IStorageEngine engine, RegionalCatalogSnapshot snapshot, RegionalReceiptImports receipts, CancellationToken cancellationToken)
     {
         if (snapshot.Tables.Count != Tables.Length || !snapshot.Tables.Select(table => table.Name).SequenceEqual(Tables)
             || snapshot.Records.Any(record => !Received(record.Kind)))
@@ -119,6 +119,7 @@ internal static class RegionalCatalog
         }
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var additions = await receipts.ValidateAsync(transaction, snapshot.Records, cancellationToken).ConfigureAwait(false);
         foreach (var table in snapshot.Tables)
         {
             _ = await transaction.ExecuteStatementAsync(Sql($"DELETE FROM {table.Name}"), cancellationToken).ConfigureAwait(false);
@@ -139,7 +140,7 @@ internal static class RegionalCatalog
             after = page.HasMore && page.Kinds.Count > 0 ? page.Kinds[^1].Name : null;
         }
         while (after is not null);
-        foreach (var record in snapshot.Records)
+        foreach (var record in snapshot.Records.Where(record => Shared(record.Kind)).Concat(additions))
         {
             _ = await transaction.PutAsync(record.Kind, record.Id, record.Json, cancellationToken).ConfigureAwait(false);
         }

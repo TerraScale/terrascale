@@ -7,6 +7,7 @@ import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
 import { auth, dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
+import { receiptHandoff } from './receipt-handoff';
 import { crashWrite, endpoint, faultId, Ledger, nodes, nodeRequest, nodeStatus, regions, restartAfterKill, tokenReady, topology } from './support';
 
 test.beforeEach(async () => {
@@ -106,9 +107,16 @@ test('handoff receives receipts with their original bindings before exporting th
   const result = await promisify(execFile)('dotnet', [join(build, 'receipt-import', 'terrabase.dll'),
     `--data-directory=${join(stateDir, `receipt-import-${faultId()}`)}`,
   ], { env: environment, cwd: e2eRoot, timeout: 20_000 });
-  expect(result.stdout).toContain('RECEIPT_IMPORT accepted=2 bindings=unchanged ordinary_export=0 retained=2 row_limit=rejected byte_limit=rejected');
-  console.log('receipt import: both original bindings preserved; export omits receipts; receipt-free import retains local evidence; snapshot limits enforced');
+  expect(result.stdout).toContain('RECEIPT_IMPORT identical=accepted invalid=16 retained_bytes=2 ordinary_export=0');
+  console.log(result.stdout.split('\n').filter(line => line.startsWith('RECEIPT_')).join('\n'));
 });
+
+for (const scenario of ['purge-holder', 'purge-authority', 'closure-holder', 'closure-authority', 'stale-closure', 'stale-refusal',
+  'absent-holder', 'absent-authority', 'absent-database', 'absent-project', 'conflict-count', 'rows', 'bytes', 'identical']) {
+  test(`receipt handoff ${scenario} preserves evidence and serving authority`, async () => {
+    await receiptHandoff(scenario);
+  });
+}
 
 test('another region outside admitted peers cannot interrupt local writer renewal', async ({ cells, request, playwright }) => {
   const writers = await topology();

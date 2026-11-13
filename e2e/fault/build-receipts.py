@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix='journey-receipts-') as directory:
     call = 'await ApplicationRunCompletion.RunAsync(app);'
     original = program.read_text()
     assert original.count(call) == 1
-    proof = 'await ReceiptImportProof.RunAsync(app.Services, app.Lifetime.ApplicationStopping);'
+    proof = 'await ReceiptImportProof.RunAsync(app, app.Lifetime.ApplicationStopping);'
     program.write_text(original.replace(call, proof))
     catalog = (repo / 'src/TerraBase/Features/Replicas/RegionalCatalog.cs').read_text()
     start = catalog.index('internal static class RegionalCatalog')
@@ -38,6 +38,8 @@ with tempfile.TemporaryDirectory(prefix='journey-receipts-') as directory:
         'private static bool Shared(string kind) =>', export_receipts
     )
     (source / 'src/TerraBase/Features/Replicas/SendingCatalog.cs').write_text(sending)
+    handoff = source / 'src/TerraBase/Features/Replicas/RegionalHandoff.cs'
+    handoff.write_text(handoff.read_text().replace('await RegionalCatalog.ExportAsync(', 'await SendingCatalog.ExportAsync('))
     shutil.copyfile(repo / 'e2e/fault/ReceiptImportProof.cs', source / 'src/TerraBase/ReceiptImportProof.cs')
     subprocess.run(
         ['dotnet', 'build', str(source / 'src/TerraBase/TerraBase.csproj'), '-c', 'Release', '-o', str(output)],
