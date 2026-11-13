@@ -24,11 +24,14 @@ incomplete existing topology fail closed and are never overwritten. Restore inco
 recovery copy; startup is not a privilege-restoration operation.
 
 The auth database is homed in gru with no replicas; the dashboard database keeps the same shape in its own seeding
-region. ts-auth runs in gru, sjc and fra against the one auth database: every storage request carries
-`TerraScale-Write: home`, so TerraBase runs it at the database's home. Security
+region. ts-auth outside gru sets `TS_AUTH_TERRABASE_URL` to gru's internal listener on port 8081 over the private
+network, using gru's TerraBase peer secret (`gru-1-terrabase-peer-secret`); every replica uses the one database in gru.
+The gru edge's port 8081 relay routes to whichever gru node owns TerraBase. The new-fleet deploy specification in
+ts-orchestrator supplies this URL; that specification changes separately from this PR. Every storage request carries
+`TerraScale-Write: home`. Security
 decisions and conditional writes stay on that one home writer, with no failover, to preserve the existing uniqueness,
-revocation and single-use behavior. An unavailable gru home makes sign-in fail closed across all regions. Authority still
-follows the SQL storage and credential-fence contract.
+revocation and single-use behavior. A gru outage stops sign-in everywhere until step 2: a readable copy per region
+with a promotable home. Authority still follows the SQL storage and credential-fence contract.
 
 ## Production proof after deployment
 

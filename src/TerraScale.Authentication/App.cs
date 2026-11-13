@@ -48,6 +48,11 @@ public static class App
         {
             throw new AuthConfigurationException($"TS_REGION must be one of the serving auth regions ({string.Join(", ", AttemptLimiter.Regions)}); the auth database stays homed in gru");
         }
+
+        if (!options.Development && serving != "gru" && TerraBaseOrigin(options).IsLoopback)
+        {
+            throw new AuthConfigurationException("outside gru, TS_AUTH_TERRABASE_URL must be gru's internal listener, not loopback");
+        }
     }
 
     /// <summary>
@@ -70,11 +75,6 @@ public static class App
             && (uri.Host.Equals(rpId, StringComparison.OrdinalIgnoreCase) || uri.Host.EndsWith("." + rpId, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>
-    /// The trusted regional storage endpoint, required outside Development. Reads and writes use this copy without
-    /// remote fallback; replicated winner claims reconcile concurrent conditional credentials.
-    /// Development alone may use the loopback default.
-    /// </summary>
     public static Uri TerraBaseOrigin(AuthOptions options) => options.TerraBaseUrl
         ?? (options.Development ? new("http://127.0.0.1:8081")
             : throw new AuthConfigurationException("TS_AUTH_TERRABASE_URL is required outside Development"));
@@ -106,7 +106,6 @@ public static class App
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
-        // All storage traffic uses the configured regional endpoint without remote fallback.
         builder.Services.AddSingleton(services => new HttpClient(StorageTiming.Wrap(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
             [],
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),

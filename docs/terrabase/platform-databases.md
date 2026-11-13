@@ -10,7 +10,7 @@ TerraScale services store their state in TerraBase SQL databases. TerraBase seed
 | Dashboard project | `00000000000000000000000005` | ts-dashboard |
 | Dashboard database | `00000000000000000000000004` | ts-dashboard |
 
-`Features/Platform/PlatformDatabases.cs` defines these identities. Each region seeds the `ts-dashboard` database itself, homed in that region with no replicas ([placement lock](platform-placement-lock.md)). The `ts-auth` database is seeded only in its home `gru` (`AuthHome`): every region runs ts-auth against that one database, and every ts-auth storage request carries `TerraScale-Write: home`, so TerraBase runs it at the database's home. Seeding storage does not grant customer access or replace ts-auth's independent identity bootstrap. Verify placement and data convergence against the serving revision rather than inferring them from a catalog entry.
+`Features/Platform/PlatformDatabases.cs` defines these identities. Each region seeds the `ts-dashboard` database itself, homed in that region with no replicas ([placement lock](platform-placement-lock.md)). The `ts-auth` database is seeded only in its home `gru` (`AuthHome`): ts-auth outside gru sets `TS_AUTH_TERRABASE_URL` to gru's internal listener on port 8081 over the private network, using gru's TerraBase peer secret; every replica uses the one database in gru. Every ts-auth storage request carries `TerraScale-Write: home`. A gru outage stops sign-in everywhere until step 2: a readable copy per region with a promotable home. Seeding storage does not grant customer access or replace ts-auth's independent identity bootstrap. Verify placement and data convergence against the serving revision rather than inferring them from a catalog entry.
 
 ## Seed and readiness
 

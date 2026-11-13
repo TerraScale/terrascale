@@ -478,11 +478,10 @@ without a signed-in user.
 - **ts-dashboard** owns plans, subscriptions, billing and spending caps, and UI
   preferences such as a user's current organization. It reads identity through
   this API and suspends a project through section 8.1.
-- **ts-auth's own storage.** ts-auth reaches TerraBase at
-  `http://127.0.0.1:8081` (`TS_AUTH_TERRABASE_URL`), the internal listener of the
-  TerraBase on its own host, for every storage read and write
-  ([local host](local-host.md)). Storage requests carry the shared
-  `TERRABASE_PEER_SECRET` supplied through OCI Vault on each app; see
+- **ts-auth's own storage.** ts-auth outside gru sets `TS_AUTH_TERRABASE_URL` to gru's internal listener on port 8081
+  over the private network; every replica uses the one database in gru for every storage read and write
+  ([local host](local-host.md)). In gru, the URL can use `http://127.0.0.1:8081`. Storage requests carry gru's
+  `TERRABASE_PEER_SECRET` (`gru-1-terrabase-peer-secret`) supplied through OCI Vault on each app; see
   [peer authentication](../terrabase/peer-authentication.md) for rollout and enforcement.
   The separate storage-signing-key design is retired. Signing keys live in
   TerraBase, sealed under `TS_AUTH_MASTER_KEY`, also supplied through OCI Vault.

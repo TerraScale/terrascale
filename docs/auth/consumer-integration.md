@@ -3,8 +3,9 @@
 The served OpenAPI specification is the source for current routes and schemas.
 
 All endpoints below are included in `/openapi/v1.json` and `/scalar`.
-ts-auth serves every region; its account storage is one database homed in gru, which every region's storage requests
-reach through its regional TerraBase.
+ts-auth serves every region. ts-auth outside gru sets `TS_AUTH_TERRABASE_URL` to gru's internal listener over the
+private network; every replica uses the one database in gru. A gru outage stops sign-in everywhere until step 2:
+a readable copy per region with a promotable home.
 
 ## Browser client configuration
 
