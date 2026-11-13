@@ -680,6 +680,15 @@ def boundary_cases(selected=None):
         finally:
             key.chmod(0o600)
         before = files(identity)
+        snapshot = state / "unavailable-rollback"
+        shutil.copytree(state / "data", snapshot)
+        try:
+            start(binary=baseline, directory=snapshot)
+            assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+            assert request("GET", "/readyz", actor=False) is not None
+            end()
+        finally:
+            shutil.rmtree(snapshot)
         for _ in range(2):
             start()
             assert hook("ledger", identity) == [0, 1]
@@ -695,7 +704,7 @@ def boundary_cases(selected=None):
         end()
         print(
             "unopened unreadable key: unavailable binding survived two restarts; "
-            "only that copy pending until explicit deletion", flush=True,
+            "rollback startup healthy; only that copy pending until explicit deletion", flush=True,
         )
 
     if selected in (None, "marker"):

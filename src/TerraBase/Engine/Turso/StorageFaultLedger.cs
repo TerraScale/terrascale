@@ -348,7 +348,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
         {
             logger.ZLogWarning($"A faulted copy's creation identity is unavailable; its location remains refused: {error.GetType().Name:@Error}");
-            return new FaultIntent(incarnation, Ulid.Empty);
+            return new FaultIntent(incarnation == Ulid.Empty ? Ulid.Parse(key.Database) : incarnation, Ulid.Empty);
         }
     }
 

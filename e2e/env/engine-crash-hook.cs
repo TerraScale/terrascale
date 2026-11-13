@@ -462,7 +462,7 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                         try
                         {
                             await (ValueTask)ledger.GetType().GetMethod("RecordAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                                .Invoke(ledger, [tenant, store.Incarnation, "the crash probe recorded proven damage"])!;
+                                .Invoke(ledger, [tenant, parts[0] == "unopened-fault" ? Ulid.Empty : store.Incarnation, "the crash probe recorded proven damage"])!;
                             if (read is not null && !((CancellationToken)read.GetType().GetProperty("Token", BindingFlags.Instance | BindingFlags.NonPublic)!
                                 .GetValue(read)!).IsCancellationRequested)
                             {
