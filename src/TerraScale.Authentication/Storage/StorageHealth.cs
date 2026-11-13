@@ -13,9 +13,12 @@ public interface IStorageHealth
 public sealed record StorageProbe(string Id, DateTimeOffset CheckedAt);
 
 public sealed partial class TerraBaseStorageHealth(
-    IDbContextFactory<AuthDbContext> contexts, AuthData data, TimeProvider clock, AuthOptions options, ILogger<TerraBaseStorageHealth> logger)
+    IDbContextFactory<AuthDbContext> contexts, AuthData data, TimeProvider clock, AuthOptions options, IConfiguration configuration, ILogger<TerraBaseStorageHealth> logger)
 {
     private static readonly AsyncLocal<RegionCheck?> Scope = new();
+
+    private readonly string servingRegion = configuration["TS_REGION"]
+        ?? (options.Development ? "gru" : throw new AuthConfigurationException("TS_REGION is required outside Development"));
 
     private readonly string probeId = AuthIds.New();
 
@@ -23,7 +26,7 @@ public sealed partial class TerraBaseStorageHealth(
 
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
-        var region = options.Development ? null : new RegionCheck(logger);
+        var region = options.Development || this.servingRegion == AuthOptions.AuthHome ? null : new RegionCheck(logger);
         Scope.Value = region;
         await using (var db = await contexts.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
         {

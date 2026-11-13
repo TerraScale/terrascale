@@ -27,8 +27,9 @@ The auth database is homed in gru with no replicas; the dashboard database keeps
 region. Outside gru, the deploy specification sets `TS_AUTH_TERRABASE_URL` to an address that reaches gru's TerraBase
 internal listener over the private network, chosen with the new fleet's networking. It uses gru's TerraBase peer
 secret (`gru-1-terrabase-peer-secret`); every replica uses the one database in gru. That deploy specification changes
-separately from this PR. Outside Development, storage readiness requires `X-TerraBase-Region: gru` on the conditional
-probe's storage responses; a missing header or another region refuses readiness. Every storage request carries
+separately from this PR. For replicas outside gru and Development, storage readiness requires `X-TerraBase-Region: gru` on the conditional
+probe's storage responses; a missing header or another region refuses readiness. Replicas in gru use local storage
+and rely on startup checks instead of checking the region header. Every storage request carries
 `TerraScale-Write: home`. Security
 decisions and conditional writes stay on that one home writer, with no failover, to preserve the existing uniqueness,
 revocation and single-use behavior. A gru outage stops sign-in everywhere until step 2: a readable copy per region
