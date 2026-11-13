@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os';
 import type { Browser } from '@playwright/test';
 import { request } from '@playwright/test';
 import { createTsAuthClient } from '../../sdk/js/src/ts-auth.js';
@@ -5,6 +6,8 @@ import { auditedContext, expect } from './audit';
 import { prepareAuthManagement, closeAuthManagement } from './auth-management';
 import { auth, onLocalStack } from './stack';
 import { journey, ownerSession, saveCookies, saveSecret } from './state';
+
+const tenantConcurrency = Math.max(1, Math.min(availableParallelism(), 4) - 1);
 
 const median = (samples: number[]) => [...samples].sort((left, right) => left - right)[Math.floor(samples.length / 2)];
 
@@ -68,10 +71,10 @@ export async function checkPasswordFairness(browser: Browser): Promise<void> {
       for (let sample = 0; sample < 3; sample++) {
         const offset = sample * 4;
         const single = await attempt(offset, 0);
-        const burst = await Promise.all([attempt(offset + 1, 1), attempt(offset + 2, 2), attempt(offset + 3, 3)]);
+        const burst = await Promise.all(Array.from({ length: tenantConcurrency }, (_, index) => attempt(offset + index + 1, index + 1)));
         singles.push(single);
         bursts.push(...burst);
-        console.log(`hasher tenant sample ${sample + 1}: single ${Math.round(single)} ms, three ${burst.map(value => Math.round(value)).join(', ')} ms`);
+        console.log(`hasher tenant sample ${sample + 1}: single ${Math.round(single)} ms, ${tenantConcurrency} concurrent ${burst.map(value => Math.round(value)).join(', ')} ms`);
       }
       expect(median(bursts)).toBeLessThan(median(singles) * 2);
       const loaded: number[] = [];
