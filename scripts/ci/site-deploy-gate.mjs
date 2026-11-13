@@ -76,7 +76,7 @@ async function target() {
     const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=1`);
     const run = runs[0];
     const current = revision === process.env.GITHUB_SHA && run && String(run.id) === process.env.GITHUB_RUN_ID && run.status === 'in_progress';
-    if (!run || (!current && (run.status !== 'completed' || run.conclusion !== 'success'))) continue;
+    if (!run || (!current && run.status !== 'completed')) continue;
     assert.ok(run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository.full_name === repo, 'Unexpected CI identity');
     const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
     assert.ok(count <= 100, 'CI jobs exceed the qualification read bound');
@@ -198,6 +198,8 @@ async function notify(alert, name, revision) {
 if (args[0] === '--prove') {
   sha(process.env.REVISION);
   assert.equal(await serviceLive(), process.env.REVISION, `${thing}: deployed revision mismatch`);
+  const alert = alertFor(await alerts(), thing);
+  if (!healthy(alert, process.env.REVISION)) await writeState(alert, thing, process.env.REVISION, 0, false);
   writeFileSync(`${process.env.RUNNER_TEMP}/deploy-revision`, `${process.env.REVISION}\n`);
   report(`${thing}: deployed ${process.env.REVISION}`);
 } else if (args[0] === '--reset') {
@@ -264,8 +266,9 @@ if (args[0] === '--prove') {
       const head = git('rev-parse', 'origin/main');
       for (const service of ['auth', 'dashboard']) {
         if (!selected.some(([kind]) => kind === service)) continue;
+        const workflow = service === 'auth' ? 'ci.yml' : 'images-ghcr.yml';
+        const releaseJob = service === 'auth' ? 'main-auth' : 'Publish and release';
         if (head === revision) {
-          const workflow = service === 'auth' ? 'ci.yml' : 'images-ghcr.yml';
           const active = [];
           for (const status of ['queued', 'in_progress', 'waiting', 'pending', 'requested']) {
             const { workflow_runs: runs } = await github(`actions/workflows/${workflow}/runs?branch=main&event=workflow_dispatch&status=${status}&per_page=100`);
@@ -279,6 +282,20 @@ if (args[0] === '--prove') {
           const oldest = active.toSorted((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at))[0];
           report(`${service}: waiting for the manual ${workflow} run ${oldest.html_url}, active since ${oldest.created_at}`);
           if (Date.now() - Date.parse(oldest.created_at) > activeLimit) failures.push(`${service}: ${oldest.html_url} has been active for more than two hours`);
+          continue;
+        }
+        const { workflow_runs: dispatched } = await github(`actions/workflows/${workflow}/runs?head_sha=${revision}&branch=main&event=workflow_dispatch&per_page=100`);
+        let prior = null;
+        for (const candidate of dispatched) {
+          const { jobs: dispatchJobs, total_count: dispatchCount } = await github(`actions/runs/${candidate.id}/jobs?filter=latest&per_page=100`);
+          assert.ok(dispatchCount <= 100, 'CI jobs exceed the qualification read bound');
+          if (dispatchJobs.some((entry) => entry.name === releaseJob && entry.conclusion !== 'skipped')) {
+            prior = candidate;
+            break;
+          }
+        }
+        if (prior) {
+          report(`${service}: dispatch ${prior.html_url} already attempted ${revision}; the push job would be superseded and main's head is no longer the target`);
           continue;
         }
         const jobName = service === 'auth' ? 'main-auth' : 'main-dashboard / Publish and release';

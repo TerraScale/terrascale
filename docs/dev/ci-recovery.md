@@ -17,8 +17,9 @@ job only when that service has work. A no-op schedule runs no other runner jobs.
 Each deploy job holds its own lock while it reads live, selects target and
 deploys. The shared script is `scripts/ci/site-deploy-gate.mjs`. It fetches main
 and walks its newest ten commits, newest first. For each commit it reads the
-latest main-push CI run. A completed green run must also have successful
-`all-green` and both journey shards. The first qualified commit is target.
+latest main-push CI run. A completed run qualifies when `all-green` and both
+journey shards succeeded. The run's conclusion does not: a failed or cancelled
+release job still leaves that commit qualified. The first such commit is target.
 If none qualifies within the bound, an on-main live revision stays live and the
 decision says "nothing qualified yet, live is <sha>". An unreadable or off-main
 live revision still fails visibly. A confirmed absent Worker needs a qualified
@@ -44,14 +45,27 @@ job releases only when target is this run's sha. It checks out that commit,
 reuses an image labeled with it, or builds and checks one. Only then does it
 move the mutable main tag and release the pinned arm64 digest. A run whose
 sha is not the target does not release. A retry re-runs that push run's
-release job, which keeps the sha and raises the attempt. Sites dispatches
-`ci.yml` only when main's head is the target, and dispatches `images-ghcr.yml`
-for the dashboard only in that same case. The first release after this change
-comes from a new push run. Never re-run run 43472114785 or any older run.
+release job when no dispatch has already run it, which keeps the sha and raises
+the attempt. Sites dispatches `ci.yml` only when main's head is the target, and
+dispatches `images-ghcr.yml` for the dashboard only in that same case.
+`main-auth` is in concurrency group `production-auth` and the dashboard job is
+in `dashboard-release`. GitHub keeps one running job and one pending job per
+group and cancels older pending ones, so a cancelled release job is expected
+and, after the job check above, does not drop the commit.
+
+ts-orch accepts a release only when its run id is at least the last accepted
+run id for that service. A dispatch run id is always above the push run's id
+for the same commit. If a dispatch's release job has already run for the
+target, Sites dispatches again only while that commit is still main's head. It
+does not re-run the push job: that older run id is superseded. Once head has
+moved on, the next qualified commit is the retry. The first release after this
+change comes from a new push run. Never re-run run 43472114785 or any older run.
 
 Every site deploy records target as the Worker version message. The proof
-requires that version at 100% traffic. Auth and dashboard verify readiness and
-write `deploy-revision`. The production journey reads this receipt, so it uses
+requires that version at 100% traffic. Auth and dashboard verify readiness,
+write `deploy-revision`, and record the healthy state (that target, zero
+attempts, not notified). A later decision then does not start the release job
+only to mark it healthy. The production journey reads this receipt, so it uses
 the signed commit that was released.
 A release job that did not succeed starts no production journey; its own
 state issue and job summary show the failure.
@@ -70,8 +84,9 @@ contains exactly `thing`, `target`, `attempts` (an integer from zero to two), an
 `notified` (a boolean). Attempt run links outside the block are informational.
 
 When healthy, an operator sees no deployment notification. Initial creation
-happens once per thing; subsequent changes edit only the issue body. The first
-reconcile after a successful deployment records zero attempts. Repeated healthy
+happens once per thing; subsequent changes edit only the issue body. Auth and
+dashboard record zero attempts in the release proof. A Worker records them on
+the first reconcile after a successful deployment. Repeated healthy
 ticks do not write anything. Suppression adds at most one comment naming the
 thing, target, both attempt runs when known, and the release instructions. The
 state records `notified: true` before the comment is posted, so a failed post
@@ -163,7 +178,7 @@ Counts below assume the newest main commit qualifies and each issue listing
 fits one page. Let P be the total pages of bot-created issues plus labeled
 issues, including closed history; P is at least two. Issue discovery costs P
 GitHub reads per script invocation, shared by every thing. Qualification costs
-two reads for the newest green commit and at most twenty over the bounded ten
+two reads for the newest qualified commit and at most twenty over the bounded ten
 commits. This adds one minimum read versus the previous label-only lookup to
 also reject person-created state. History pagination adds one read per page;
 it is not bounded by the number of currently open state issues.
@@ -183,8 +198,12 @@ PATCH, with no issue close or comment.
 
 A service releases inside its qualified main-push CI run (`main-auth`, or
 `main-dashboard` calling Images). That run's locked job reads live and writes
-one state-body PATCH. A retry re-runs the target push run's job when main's
-head is newer, which is one POST and one jobs read, or dispatches only when
+one state-body PATCH before release. The proof writes the healthy state after
+the live revision matches, so the next decision does not start another release
+only to record it. A retry when main's head is newer reads dispatch runs for
+that commit and one jobs page per dispatch until the release job has run; that
+prior attempt is not followed by a push-job re-run. With no such dispatch it
+re-runs the push job (one jobs read and one POST). It dispatches only when
 main's head is the target (five active-run checks, then one dispatch). Do not
 re-run run 43472114785 or any older run; the first release after this change
 is a new push. Success starts production journey detection, which reads jobs

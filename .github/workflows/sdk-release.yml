@@ -34,11 +34,12 @@ env:
 
 jobs:
   go-due:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: github.event.workflow_run.event == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     outputs:
       due: ${{ steps.due.outputs.due }}
     steps:
@@ -48,11 +49,28 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           sparse-checkout: .github
+      - name: Qualify the push on all-green and both journey shards
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$REVISION&branch=main&event=push&per_page=100" --jq '.workflow_runs | max_by(.id) // empty')
+          if [ -z "$run" ] || ! jq -e --arg sha "$REVISION" --arg repo "$GITHUB_REPOSITORY" '.head_sha == $sha and .head_branch == "main" and .event == "push" and .head_repository.full_name == $repo and .status == "completed"' <<< "$run" >/dev/null; then
+            echo QUALIFIED=false >> "$GITHUB_ENV"
+            exit 0
+          fi
+          id=$(jq -r .id <<< "$run")
+          jobs=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100")
+          if ! jq -e '[.[].jobs[]] as $jobs | [$jobs[] | select(.name | startswith("journey / journey "))] as $journey | ($journey | length) >= 2 and all($journey[]; .conclusion == "success") and any($jobs[]; .name == "all-green" and .conclusion == "success")' <<< "$jobs" >/dev/null; then
+            echo QUALIFIED=false >> "$GITHUB_ENV"
+          fi
       - &go-release-due
         id: due
         name: Compare the Go release inputs with the newest Go tag
         if: github.event_name == 'workflow_run'
         run: |
+          if [ "${QUALIFIED:-}" = false ]; then exit 0; fi
           latest=$(git for-each-ref --count=1 --sort=-v:refname --format='%(refname:short)' 'refs/tags/sdk/go/v0.0.*')
           if git merge-base --is-ancestor "$latest" HEAD; then
             git diff-tree --quiet -r "$latest" HEAD -- sdk/go scripts/sdk .github/workflows/sdk-release.yml \

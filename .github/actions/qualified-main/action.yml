@@ -1,5 +1,5 @@
 name: Require the journey on the released main commit
-description: Reject a revision without a successful main push CI run and both journey shards.
+description: Reject a revision whose completed main push lacks successful all-green and both journey shards.
 inputs:
   revision:
     description: Exact source revision being published or deployed.
@@ -7,7 +7,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Require successful CI and journey for the exact revision
+    - name: Require all-green and both journey shards for the exact revision
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -19,7 +19,7 @@ runs:
           --jq '.workflow_runs | max_by(.id) // empty')
         jq -e --arg sha "$REVISION" --arg repo "$GITHUB_REPOSITORY" '
           .head_sha == $sha and .head_branch == "main" and .event == "push"
-          and .head_repository.full_name == $repo and .status == "completed" and .conclusion == "success"
+          and .head_repository.full_name == $repo and .status == "completed"
         ' <<< "$run" > /dev/null
         id=$(jq -r .id <<< "$run")
         gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" | \
