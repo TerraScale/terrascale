@@ -50,6 +50,7 @@ public static class EngineExtensions
                 nativeTemporaryStorage: provider.GetRequiredService<INativeTemporaryStorage>(),
                 diskBudget: provider.GetRequiredService<IDiskBudget>());
         });
+        services.AddHostedService<CdcMaintenance>();
         services.AddSingleton<IOrphanDatabaseFiles>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton(provider => provider.GetRequiredService<TursoStorageEngine>().Leases);

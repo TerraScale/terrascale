@@ -7,7 +7,7 @@ import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { expect, request as apiRequest } from '@playwright/test';
 import { database, json, sql, type Cells } from '../placement/support';
-import { stateDir } from '../support/stack';
+import { r2StandIn, stateDir } from '../support/stack';
 
 export const nodes = [
   { name: 'journey-1', region: 'gru', address: '127.0.0.1', port: 8080, service: 'terrabase' },
@@ -20,6 +20,54 @@ type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean;
 type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
+
+export type BackupHole = { incarnation: string; from: number; to: number; fromAt: string | null; toAt: string | null; open: boolean };
+export type BackupContinuity = {
+  incarnation: string; historyStart: number | null; oldestRetained: number | null; storedPosition: number | null; storedIncarnation: string | null;
+  replacing: boolean; holes: BackupHole[];
+};
+
+async function backupFiles(node: Node): Promise<{ file: string; continuity: BackupContinuity | null }[]> {
+  const response = await nodeRequest(node, '/v1/backup');
+  expect(response.status, response.body).toBe(200);
+  return (JSON.parse(response.body) as { files: { file: string; continuity: BackupContinuity | null }[] }).files;
+}
+
+export async function continuity(node: Node, id: string): Promise<BackupContinuity & { file: string }> {
+  const all = await backupFiles(node);
+  const files = all.filter(file => file.file.includes(`/${id}/nodes/`));
+  expect(files, JSON.stringify(all.map(file => file.file))).toHaveLength(1);
+  expect(files[0]!.continuity).not.toBeNull();
+  return { ...files[0]!.continuity!, file: files[0]!.file };
+}
+
+export async function nodeHoles(node: Node): Promise<string[]> {
+  return (await backupFiles(node)).flatMap(file => (file.continuity?.holes ?? []).map(hole => `${file.file} ${hole.incarnation} ${hole.from}`));
+}
+
+export type HoleRecord = { incarnation: string; from: number; to: number; fromAt: number | null; toAt: number | null; open: boolean };
+
+const time = (at: number | null) => at === null ? 'unknown' : String(at).padStart(13, '0');
+
+export const holeKey = (file: string, hole: HoleRecord) =>
+  `${file}/holes/${hole.incarnation}-${String(hole.from).padStart(16, '0')}-${String(hole.to).padStart(16, '0')}-${time(hole.fromAt)}-${time(hole.toAt)}-${hole.open ? 'open' : 'closed'}`;
+
+export async function plantHole(file: string, hole: HoleRecord): Promise<void> {
+  const response = await fetch(`${r2StandIn}/fault/plant?key=${encodeURIComponent(holeKey(file, hole))}`, { method: 'POST' });
+  expect(response.status).toBe(204);
+}
+
+export async function holeRecords(state: 'unlisted' | 'listed'): Promise<void> {
+  const response = await fetch(`${r2StandIn}/fault/holes?state=${state}`, { method: 'POST' });
+  expect(response.status).toBe(204);
+  console.log(`backup hole records ${state}`);
+}
+
+export async function backupPuts(file: string): Promise<string[]> {
+  const response = await fetch(`${r2StandIn}/fault/puts`);
+  expect(response.status).toBe(200);
+  return (await response.json() as string[]).filter(key => key.startsWith(`${file}/`));
+}
 
 export async function nodeRequest(node: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
@@ -158,7 +206,7 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
   return { sent, outcome: outcome.then(() => ({ error: undefined }), (error: Error) => ({ error })) };
 }
 
-export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }): () => Promise<void> {
+export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }, observe?: () => Promise<void>): () => Promise<void> {
   const pidFile = join(stateDir, 'pids', `${node.service}.pid`);
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   const environment = Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
@@ -181,17 +229,27 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
     const log = join(stateDir, 'logs', `${node.service}.log`);
     const offset = readFileSync(log).length;
     const output = openSync(log, 'a', 0o600);
+    let exited = (_code: number | null, _signal: NodeJS.Signals | null) => {};
+    const died = new Promise<never>((_, reject) => {
+      exited = (code, signal) => reject(new Error(`the restarted ${node.name} exited (${code ?? signal}) before it opened its listeners`));
+    });
+    const child = spawn(command[0], command.slice(1), { env: environment, stdio: ['ignore', output, output] });
     try {
-      const child = spawn(command[0], command.slice(1), { env: environment, stdio: ['ignore', output, output] });
-      child.on('error', error => { throw error; });
+      child.once('exit', exited);
+      await once(child, 'spawn');
       writeFileSync(pidFile, `${child.pid}\n`);
       child.unref();
     } finally {
       closeSync(output);
     }
-    await expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
-      message: 'the restarted writer opens its listeners',
-    }).toBe(true);
+    try {
+      await Promise.race([died, expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
+        message: 'the restarted writer opens its listeners',
+      }).toBe(true)]);
+    } finally {
+      child.off('exit', exited);
+    }
+    await observe?.();
     await expect.poll(() => nodeStatus(node), {
       message: 'the restarted node restores its ready regional role',
     }).toMatchObject({ writer, ready: true });
@@ -204,6 +262,30 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
       }
     }
   };
+}
+
+export async function scrape(node: Node): Promise<(metricName: string, label?: string) => number> {
+  const response = await fetch(`http://${node.address}:${node.port + 1011}/metrics`);
+  expect(response.status).toBe(200);
+  const lines = (await response.text()).split('\n');
+  return (metricName, label = '') => {
+    const line = lines.find(text => new RegExp(`^${metricName}(\\{[^}]*\\})? `).test(text) && text.includes(label));
+    return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
+  };
+}
+
+export async function metric(node: Node, metricName: string, label = ''): Promise<number> {
+  return (await scrape(node))(metricName, label);
+}
+
+export async function probe(node: Node, path: '/readyz' | '/backupz'): Promise<number> {
+  return (await fetch(`http://127.0.0.1:${node.port}${path}`)).status;
+}
+
+export async function backupStore(state: 'down' | 'up'): Promise<void> {
+  const response = await fetch(`${r2StandIn}/fault/backups?state=${state}`, { method: 'POST' });
+  expect(response.status).toBe(204);
+  console.log(`backup object store ${state}`);
 }
 
 export async function tokenReady(node: Node, cells: Pick<Cells, 'get'>, path: string): Promise<void> {

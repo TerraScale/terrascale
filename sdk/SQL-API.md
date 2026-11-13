@@ -10,7 +10,7 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 | Concept | .NET | Notes |
 |---|---|---|
 | Client | `new TerraBaseSqlClient(http, options)` | options: `BaseAddress` or `Region` (default origin `https://api.terrascale.tech`), `ApiKey` or `AccessTokenProvider`, and `AuthAddress`, the ts-auth origin that exchanges an `ApiKey` |
-| Client from the environment | `TerraBaseSqlClient.FromEnvironment()` | `TERRASCALE_API_KEY`; optional `TERRASCALE_BASE_URL`, default `https://api.terrascale.tech`, and `TERRASCALE_REGION`, which pins every request to that region |
+| Client from the environment | `TerraBaseSqlClient.FromEnvironment()` | `TERRASCALE_API_KEY`; optional `TERRASCALE_BASE_URL`, default `https://api.terrascale.tech`, and `TERRASCALE_REGION`, which selects the entry region; see [source-only proxy behavior](region-proxy.md) |
 | Database | `client.Database(projectId, database)` | name or ULID; no request |
 
 | .NET | JS/TS | Go | Python | Rust |
@@ -130,9 +130,10 @@ returns `409 move_in_progress`. SDKs preserve these distinct codes and do not au
 The intermediate superset must also fit the nine-member limit before any membership is written; remove other
 non-writers first to make room. Unresolved moves settle through the existing move mechanism.
 
-A direct request through a region no longer selected returns `421 wrong_region`, with routing hints in
-`X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions`; the global API edge replays it.
-Each SDK preserves the code and available diagnostics; callers using a pinned endpoint choose a current region.
+Source-only, unreleased server behavior: a request reaching a region that does not hold the database is served
+through one proxy hop by a region that does. A region pin selects the entry region and has no effect on the
+serving region for these calls; the proxy removes it. Stale forwarded placement or an unreachable destination
+returns `503 unavailable` with `Retry-After: 1`. See [release scope and proxy behavior](region-proxy.md).
 `GET …/databases/{database}/regions` returns `databaseId`, `observedAt` and `regions` entries with `region`,
 nullable `role` (`"writer"` on the writer), `revision`, `lastPulledAt`, `lagMs` and `lastVerified`.
 Pull observations describe completed served pulls, not application or checksum acknowledgements.

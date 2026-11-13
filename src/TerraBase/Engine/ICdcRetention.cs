@@ -1,8 +1,32 @@
 namespace TerraBase.Engine;
 
+internal sealed record CdcSchema(long RowId, string Type, string Name);
+
+internal sealed record CdcCursor(long Position, string Incarnation, IReadOnlyList<CdcSchema> Schema);
+
+internal readonly record struct CdcRetained(string Incarnation, long Anchor, long Start, long? Oldest, DateTimeOffset? AnchorAt, DateTimeOffset? PendingAt);
+
+internal readonly record struct CdcHistory(long Start, long? Oldest);
+
 internal interface ICdcBackupRetention
 {
     long Position { get; }
+
+    CdcCursor Cursor { get; }
+
+    void Rewind(CdcCursor cursor);
+
+    ValueTask<CdcRetained> RetainedAsync(CdcCursor? stored, CancellationToken cancellationToken);
+
+    ValueTask<long> CommittedAsync(CancellationToken cancellationToken);
+
+    ValueTask ResumeAsync(CdcCursor stored, CancellationToken cancellationToken);
+
+    ValueTask<CdcHistory> DiscardAsync(CancellationToken cancellationToken);
+
+    ValueTask SaveAccountingAsync(string id, ReadOnlyMemory<byte> body, CancellationToken cancellationToken);
+
+    ValueTask<long> RetainedBytesAsync(CancellationToken cancellationToken);
 
     ValueTask AcknowledgeAsync(long position, CancellationToken cancellationToken);
 }

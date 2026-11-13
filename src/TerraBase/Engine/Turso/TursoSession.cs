@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Data.Common;
+using Turso;
 using Turso.Data.Sqlite;
 using Turso.Raw.Public.Handles;
 
@@ -31,8 +32,10 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
 
     public SqliteConnection Connection => connection;
 
-    internal TursoDatabaseHandle Native =>
-        NativeHandle?.GetValue(connection) as TursoDatabaseHandle
+    internal TursoDatabaseHandle Native => Handle(connection);
+
+    internal static TursoDatabaseHandle Handle(DbConnection connection) =>
+        (connection is SqliteConnection ? NativeHandle : RawHandle)?.GetValue(connection) as TursoDatabaseHandle
         ?? throw new InvalidOperationException("the Turso driver no longer exposes its native connection handle");
 
     public int Statistics { get; set; }
@@ -104,6 +107,7 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
         var pageCacheBytes = memoryBudget / 4;
         var cacheKib = Math.Max(2048, pageCacheBytes / threads / 1024);
         return string.Create(CultureInfo.InvariantCulture, $"""
+            PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA cache_size = -{cacheKib};
             PRAGMA foreign_keys = ON;
@@ -120,6 +124,7 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
         var opening = false;
         try
         {
+            using var mutation = store is null ? null : await store.EnterMutationAsync(cancellationToken).ConfigureAwait(false);
             await io.RunAsync(() =>
             {
                 opening = true;
@@ -144,6 +149,10 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
             if (TursoStorageTransaction.Damaged(error))
             {
                 store?.NoteCopyFault("the file or its log reported damage while opening a session");
+                if (store is not null)
+                {
+                    await store.Flagged.ConfigureAwait(false);
+                }
             }
             if (Volatile.Read(ref opening))
             {
@@ -160,17 +169,13 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
 
     public static void OpenExisting(DbConnection connection, string path)
     {
-        if (!File.Exists(path))
+        var file = new FileInfo(path);
+        if (!file.Exists || file.Length == 0)
         {
-            throw new SqliteException("unable to open database file: it does not exist", 14);
+            throw new InvalidDataException("the existing database main file is missing or empty");
         }
 
         connection.Open();
-        if (new FileInfo(path).Length == 0)
-        {
-            connection.Dispose();
-            throw new SqliteException("unable to open database file: it does not exist", 14);
-        }
     }
 
     public async Task<T> ExecuteAsync<T>(TursoRunner io, Func<T> execute, CancellationToken cancellationToken)
@@ -278,6 +283,9 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
         command.Parameters.Clear();
         return command;
     }
+
+    private static readonly FieldInfo? RawHandle =
+        typeof(TursoConnection).GetField("_turso", BindingFlags.NonPublic | BindingFlags.Instance);
 
     private static readonly FieldInfo? NativeHandle =
         typeof(SqliteConnection).GetField("_database", BindingFlags.NonPublic | BindingFlags.Instance);

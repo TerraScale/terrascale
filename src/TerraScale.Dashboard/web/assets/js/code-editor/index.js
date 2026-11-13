@@ -144,11 +144,25 @@ class CodeEditor extends HTMLElement {
     const sql = sqlHost && import('./sql.js')
       .then(module => module.attach(api, editor, textarea, sqlHost))
       .catch(error => console.warn('SQL completion unavailable:', error));
+    const js = language === 'javascript' ? import('./function-js.js')
+      .then(module => module.attach(api, editor))
+      .catch(error => console.warn('JavaScript completion unavailable:', error)) : null;
 
     this.editor = editor;
-    this.dataset.ready = '';
+    const extras = [sql, js].filter(Boolean);
+    const markReady = () => {
+      if (this.editor === editor) {
+        this.dataset.ready = '';
+      }
+    };
+    if (extras.length === 0) {
+      markReady();
+    } else {
+      Promise.all(extras).then(markReady);
+    }
     this.cleanup = () => {
       sql?.then(dispose => dispose?.());
+      js?.then(dispose => dispose?.());
       toTextarea.dispose();
       submit?.dispose();
       editor.dispose();

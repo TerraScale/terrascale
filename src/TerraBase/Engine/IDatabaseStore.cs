@@ -9,6 +9,8 @@ public interface IDatabaseStore
 
     bool IsClosed { get; }
 
+    CancellationToken Refused { get; }
+
     Ulid Incarnation { get; }
 
     ValueTask<IStorageTransaction> BeginTransactionAsync(

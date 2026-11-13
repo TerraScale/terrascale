@@ -7,7 +7,8 @@ public sealed partial class TerraBaseProjectClient
     /// for <paramref name="databaseId"/>. After convergence the old name stops resolving unless claimed again, so
     /// update name-based connection strings and obtain a new database handle using the returned name or ULID.
     /// Requires databases:write. Invalid names answer 400; an observed same-region duplicate answers 409. Concurrent cross-region claims converge; the smallest ULID keeps the name.
-    /// Another region surfaces 421 wrong_region with X-TerraBase-Database-Home and X-TerraBase-Database-Regions hint headers.
+    /// In the unreleased server proxy contract, a region without a copy proxies to a region that holds the database.
+    /// An unavailable destination or stale forwarded placement returns 503 unavailable; an uncertain write returns write_outcome_unknown.
     /// Only documented pre-execution 503 refusals may be resent; ambiguous outcomes are not replayed. Existing handles keep their original route.
     /// </summary>
     public async Task<TerraBaseManagedDatabase> RenameDatabaseAsync(string databaseId, string name, CancellationToken cancellationToken = default)

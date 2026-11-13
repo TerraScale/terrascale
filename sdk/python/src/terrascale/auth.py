@@ -1,6 +1,6 @@
 """API key token exchange with ts-auth.
 
-A TerraScale API key (``<ULID>_<52 secret chars>``) is an OAuth client
+A TerraScale API key (``<ULID>_<52 secret chars>``; it may start with ``sk_``) is an OAuth client
 credential. It is exchanged at ``<issuer>/oauth/token`` (client_credentials,
 HTTP Basic) for a short-lived project access token, which TerraBase accepts
 as ``Authorization: Bearer``. Sending the API key itself as a bearer fails.
@@ -30,7 +30,7 @@ __all__ = ["DEFAULT_ISSUER", "SCOPES", "APIKeyTokenSource", "AsyncAPIKeyTokenSou
 DEFAULT_ISSUER = _spec.DEFAULT_ISSUER
 SCOPES = ("databases:read", "databases:write", "sql:read", "sql:write")
 
-_KEY = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$")
+_KEY = re.compile(r"^(?:sk_)?[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$")
 # Token endpoint answers worth another exchange: issuing a token changes no
 # state, so overload and gateway failures are retried with backoff.
 _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
@@ -276,7 +276,7 @@ class _Exchange:
     def __init__(self, api_key: str, project: str | None, scopes: Sequence[str] | None, issuer: str | None):
         if not isinstance(api_key, str) or not _KEY.fullmatch(api_key):
             # Never echo the value: it is a secret.
-            raise ValueError("api_key must be a TerraScale API key: a ULID, '_' and 52 secret characters")
+            raise ValueError("api_key must be a TerraScale API key: optional sk_, a ULID, '_' and 52 secret characters")
         for scope in scopes or ():
             if scope not in SCOPES:
                 raise ValueError(f"scope {scope!r} is not one of {', '.join(SCOPES)}")
@@ -289,7 +289,7 @@ class _Exchange:
             self.form["project"] = project
         if scopes:
             self.form["scope"] = " ".join(scopes)
-        client_id = api_key[:26]
+        client_id = api_key.removeprefix("sk_")[:26]
         pair = f"{quote_plus(client_id)}:{quote_plus(api_key)}".encode()
         self._auth = "Basic " + base64.b64encode(pair).decode()
         self.token: str | None = None

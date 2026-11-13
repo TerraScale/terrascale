@@ -6,6 +6,9 @@ on:
       keyring:
         type: boolean
         required: true
+      engine:
+        type: boolean
+        required: true
 
 permissions: {}
 
@@ -45,6 +48,53 @@ jobs:
           path: ${{ runner.temp }}/services
           retention-days: 30
           if-no-files-found: error
+
+  engine-crash:
+    name: engine crash recovery
+    if: inputs.engine
+    needs: services
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      DOTNET_PROCESSOR_COUNT: 4
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: services-terrabase
+          path: ${{ runner.temp }}/services
+      - name: Check out the rollback baseline
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.before }}
+          path: .engine-crash-main
+          persist-credentials: false
+      - name: Engine crash recovery and rollback
+        env:
+          E2E_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          trap 'rm -rf .engine-crash-main "$RUNNER_TEMP/crash-baseline"' EXIT
+          sudo rm -rf /usr/local/lib/android /usr/share/swift /opt/ghc /usr/local/.ghcup
+          nice -n 19 bash .engine-crash-main/e2e/env/build.sh .engine-crash-main "$RUNNER_TEMP/crash-baseline" terrabase
+          E2E_BUILD="$RUNNER_TEMP/services" nice -n 19 python3 e2e/env/engine-crash.py "$RUNNER_TEMP/crash-baseline/terrabase/terrabase.dll"
+
+  engine-result:
+    name: engine crash selection guard
+    if: always()
+    needs: engine-crash
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: test "${{ !inputs.engine || needs.engine-crash.result == 'success' }}" = true
 
   runners:
     name: runner ${{ matrix.sdk }}
@@ -172,6 +222,11 @@ jobs:
         run: |
           read -ra projects <<< "$PROJECTS"
           bash env/local.sh exec npx playwright test "${projects[@]}"
+      - name: Regional proxy
+        if: matrix.regions == 2
+        timeout-minutes: 4
+        working-directory: e2e
+        run: bash env/local.sh exec npx playwright test placement/regions.spec.ts --project placement --grep 'R3 replace'
       - name: Stop the stack
         if: always() && steps.namespace.outcome == 'success'
         timeout-minutes: 1

@@ -30,6 +30,7 @@ case $service in
   dashboard)
     dotnet restore src/TerraScale.Dashboard/TerraScale.Dashboard.csproj --locked-mode
     dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore --output "$out/dashboard" -p:SourceRevisionId="$revision"
+    dotnet publish e2e/billing/TerraScale.Dashboard.BillingJourney.csproj --configuration Release --output "$out/billing" -p:SourceRevisionId="$revision"
     ;;
   *)
     echo "unknown service $service" >&2

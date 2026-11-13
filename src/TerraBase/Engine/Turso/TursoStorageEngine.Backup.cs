@@ -206,7 +206,7 @@ internal sealed partial class TursoStorageEngine
                     TursoReplicas.SealImport(file, temporary, targetConnection, Encryption.Keyring, _dataDirectory, Disk);
                     return true;
                 }, cancellationToken).ConfigureAwait(false);
-            }).ConfigureAwait(false);
+            }, key).ConfigureAwait(false);
             TursoReplicas.PublishImport(file);
             _checkpoint("create.published", database);
             initialization = file.EndsWith(".promote.db", StringComparison.Ordinal)

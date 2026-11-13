@@ -69,16 +69,20 @@ function ancestor(base, head) {
   return result.status === 0;
 }
 
+async function qualified(revision) {
+  const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=1`);
+  const run = runs[0];
+  if (!run || run.status !== 'completed' || run.conclusion !== 'success') return false;
+  assert.ok(run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository.full_name === repo, 'Unexpected CI identity');
+  const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+  assert.ok(count <= 100, 'CI jobs exceed the qualification read bound');
+  const journey = jobs.filter((job) => job.name.startsWith('journey / journey '));
+  return journey.length >= 2 && journey.every((job) => job.conclusion === 'success') && jobs.some((job) => job.name === 'all-green' && job.conclusion === 'success');
+}
+
 async function target() {
   for (const revision of git('rev-list', '--first-parent', '-10', 'origin/main').split('\n')) {
-    const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=1`);
-    const run = runs[0];
-    if (!run || run.status !== 'completed' || run.conclusion !== 'success') continue;
-    assert.ok(run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository.full_name === repo, 'Unexpected CI identity');
-    const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
-    assert.ok(count <= 100, 'CI jobs exceed the qualification read bound');
-    const journey = jobs.filter((job) => job.name.startsWith('journey / journey '));
-    if (journey.length >= 2 && journey.every((job) => job.conclusion === 'success') && jobs.some((job) => job.name === 'all-green' && job.conclusion === 'success')) return revision;
+    if (await qualified(revision)) return revision;
   }
   return null;
 }
@@ -234,8 +238,9 @@ if (args[0] === '--prove') {
     }
   }
   if (thing !== 'all') assert.ok(failures.length === 0, failures.join('; '));
-  const revision = await target();
   if (thing === 'all') {
+    const revision = await target();
+    const head = git('rev-parse', 'origin/main');
     const selected = [];
     for (const [kind, name, deployed] of live) {
       if (!states.has(name)) continue;
@@ -243,6 +248,10 @@ if (args[0] === '--prove') {
       if (revision === null) {
         if (deployed === null) failures.push(`${name}: nothing qualified and no live revision`);
         report(`${name}: live ${deployed ?? 'absent'}, no qualified target`);
+        continue;
+      }
+      if (services[kind] && revision !== head) {
+        report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: waiting for main ${head} to qualify; a dispatched release signs main's head`);
         continue;
       }
       try {
@@ -283,10 +292,13 @@ if (args[0] === '--prove') {
     assert.ok(live.length === 1, 'A locked deploy job reconciles exactly one thing');
     const [[kind, name, deployed]] = live;
     const alert = states.get(name);
+    const own = process.env.GITHUB_SHA;
+    assert.match(own ?? '', /^[0-9a-f]{40}$/, 'Missing or invalid run commit');
+    const revision = await qualified(own) ? own : null;
     let deploy = false;
     if (revision === null) {
-      assert.ok(deployed !== null, `${name}: nothing qualified and no live revision`);
-      report(`${name}: live ${deployed}, no qualified target`);
+      assert.ok(deployed !== null, `${name}: ${own} is not qualified and there is no live revision`);
+      report(`${name}: live ${deployed}, this run's commit ${own} is not qualified; a release signs only that commit`);
     } else {
       const decision = work(kind, name, deployed, revision);
       if (deployed === revision) {

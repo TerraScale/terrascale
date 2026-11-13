@@ -183,7 +183,16 @@ internal sealed partial class EngineManagementService : IDisposable
                 return new Done();
             }
 
-            return await CatalogTables.DatabaseAsync(transaction, storage.ProjectId!, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null;
+            if (await GetAsync(transaction, DatabasePurge.Kind, storage.DatabaseId!, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } purge)
+            {
+                if (purge.FormatVersion != 1 || !DatabasePurge.SameDatabase(purge.Database, storage))
+                {
+                    throw new InvalidOperationException("a database purge conflicts with its cleanup scope");
+                }
+                return false;
+            }
+            return await transaction.GetAsync(DeletedDatabases.Kind, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null
+                || await CatalogTables.DatabaseAsync(transaction, storage.ProjectId!, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null;
         }, static error => error, cancellationToken).ConfigureAwait(false);
         if (registered is Unavailable refused)
         {

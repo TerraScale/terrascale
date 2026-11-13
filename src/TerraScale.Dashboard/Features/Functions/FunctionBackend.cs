@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Features.Auth;
@@ -12,9 +13,18 @@ namespace TerraScale.Dashboard.Features.Functions
 
     public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc)
     {
+        public const string NameInputPattern = "[a-z][a-z0-9_-]{0,62}";
+
+        public const string StarterSource = "async function handler(event) {\n  const rows = await sql.query(\"SELECT 1 AS ok\");\n  return { rows };\n}\n";
+
         public static bool ValidName(string name)
         {
             return NamePattern().IsMatch(name);
+        }
+
+        public static bool DeployName(string name)
+        {
+            return DeployNamePattern().IsMatch(name) && !ReservedName().IsMatch(name);
         }
 
         public static string InvokeUrl(AccountContext context, DatabaseRecord database, string name)
@@ -71,6 +81,32 @@ namespace TerraScale.Dashboard.Features.Functions
             {
                 return false;
             }
+        }
+
+        public async Task<FunctionRecord> DeployAsync(AccountContext context, DatabaseRecord database, string name, string source, string? cron, CancellationToken ct)
+        {
+            if (!DeployName(name))
+            {
+                throw new AccountAccessException("Function names start with a lowercase letter and use at most 63 lowercase letters, digits, underscores or hyphens.", 400);
+            }
+
+            if (Encoding.UTF8.GetByteCount(source) is 0 or > 256 * 1024)
+            {
+                throw new AccountAccessException("source is required and at most 256 KiB", 400);
+            }
+
+            var target = await ClientAsync(context, database, true, ct);
+            var result = Record(await target.Client.DeployAsync(target.ProjectId, target.Database, name, new TerraBaseFunctionDeploy(source, cron)));
+            Validate(result);
+            return result;
+        }
+
+        public async Task<string> InvokeAsync(AccountContext context, DatabaseRecord database, string name, string body, CancellationToken ct)
+        {
+            CheckName(name);
+            var target = await ClientAsync(context, database, false, ct);
+            var result = await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body);
+            return result.Body;
         }
 
         private async Task<(IFunctionsService Client, string ProjectId, string Database)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, CancellationToken ct)
@@ -132,5 +168,11 @@ namespace TerraScale.Dashboard.Features.Functions
 
         [GeneratedRegex("^[a-z0-9][a-z0-9_-]{0,62}$")]
         private static partial Regex NamePattern();
+
+        [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z")]
+        private static partial Regex DeployNamePattern();
+
+        [GeneratedRegex(@"\A(con|prn|aux|nul|com[0-9]|lpt[0-9])\z")]
+        private static partial Regex ReservedName();
     }
 }

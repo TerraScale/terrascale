@@ -534,11 +534,14 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
             if (updated.PlacementVersion <= added.PlacementVersion) throw new InvalidOperationException("Writer did not raise placement version.");
             var after = await regional.Database(project, created.Id).GetRegionsAsync(cancellationToken);
             Same(string.Join(",", after.Regions.Select(row => $"{row.Region}:{row.Role}")), "fra:writer", "moved status");
-            var refused = await RefusedAsync<TerraBaseWrongRegionException>(() => client.Database(project, created.Id).GetRegionsAsync(cancellationToken));
-            Same(refused.ErrorCode ?? "", "wrong_region", "nonmember endpoint");
-            var rows = await regional.Database(project, created.Id).QueryAsync("SELECT value FROM placement_rows", cancellationToken: cancellationToken);
+            var proxied = await client.Database(project, created.Id).GetRegionsAsync(cancellationToken);
+            Same(string.Join(",", proxied.Regions.Select(row => row.Region)), "fra", "proxied nonmember endpoint");
+            var rows = await client.Database(project, created.Id).QueryAsync("SELECT value FROM placement_rows", cancellationToken: cancellationToken);
             if (rows.Count != 1 || rows[0].GetInt64(0) != 1) throw new InvalidOperationException("Data did not survive placement.");
-            Console.WriteLine("dotnet placement: create [gru,fra], add fra, repeat drop gru -> 200, status fra writer, 421 wrong_region");
+            await client.Database(project, created.Id).ExecuteAsync("INSERT INTO placement_rows VALUES (2)", cancellationToken: cancellationToken);
+            var retained = await regional.Database(project, created.Id).QueryAsync("SELECT value FROM placement_rows ORDER BY value", cancellationToken: cancellationToken);
+            if (retained.Count != 2 || retained[1].GetInt64(0) != 2) throw new InvalidOperationException($"An acknowledged proxied write was lost: [{string.Join(",", retained.Select(row => row.GetInt64(0)))}].");
+            Console.WriteLine("dotnet placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]");
         }
         finally
         {

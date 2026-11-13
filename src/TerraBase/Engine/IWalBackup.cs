@@ -10,6 +10,10 @@ public readonly record struct LogCut(long Bytes, bool Reached, long? Last, strin
 
 public interface IWalTap : IAsyncDisposable
 {
+    CancellationToken Refused { get; }
+
+    void ThrowIfUnavailable();
+
     ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken);
 
     ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken);

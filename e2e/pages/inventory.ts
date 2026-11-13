@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { expect, type Locator, type Page } from '@playwright/test';
 import { regionsSettled } from '../support/overview';
+import { keyId } from '../support/api-key';
 import type { Journey } from '../support/state';
 
 export type PagePattern = { path: RegExp; query?: Record<string, RegExp> };
@@ -106,7 +107,7 @@ const databaseTabs: [string, string, Identity][] = [
 ];
 
 const tabStates: Record<string, PagePattern['query']> = {
-  functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/ },
+  functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/, edit: /^(new|1)?$/ },
   sql: { result: optionalId, savedQueryId: optionalId },
   tables: { table: /^[A-Za-z0-9_]*$/ },
 };
@@ -313,12 +314,12 @@ export const dashboardStates: readonly PageState[] = [
   },
   {
     name: 'api key details',
-    url: (journey) => `/api-keys/${journey.apiKey.split('_')[0]}`,
+    url: (journey) => `/api-keys/${keyId(journey.apiKey)}`,
     covers: { path: new RegExp(`^/api-keys/${ulid}$`) },
     heading: (page, journey) => page.getByRole('heading', { level: 1, name: journey.apiKeyName, exact: true }),
     data: async (page, journey) => {
       const details = page.locator('#key-details');
-      await expect(details.locator('dd.ts-mono')).toHaveText(journey.apiKey.split('_')[0]);
+      await expect(details.locator('dd.ts-mono')).toHaveText(keyId(journey.apiKey));
       await expect(details.locator('.ts-apikeys-scopes .ts-badge')).toHaveText(['Full access']);
       await expect(page.locator('#key-allowed-ips')).toContainText('Any IP');
       expect((await page.content()).includes(journey.apiKey), 'the API key secret is never shown again').toBe(false);
@@ -512,7 +513,7 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Recent activity', 2),
     data: async (page, journey) => {
       await onlyAction(page, 'api_key.created');
-      await expect(auditRows(page).filter({ hasText: 'API key created' }).filter({ hasText: journey.apiKey.split('_')[0] })).toHaveCount(1);
+      await expect(auditRows(page).filter({ hasText: 'API key created' }).filter({ hasText: keyId(journey.apiKey) })).toHaveCount(1);
     },
   },
   {

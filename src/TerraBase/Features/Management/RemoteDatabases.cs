@@ -10,7 +10,7 @@ using ZLogger;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class RemoteDatabases(IHttpClientFactory http, InternalCredential credential, ILogger<RemoteDatabases> logger)
+internal sealed partial class RemoteDatabases(IHttpClientFactory http, InternalCredential credential, ILogger<RemoteDatabases> logger)
 {
     public const string HttpClientName = "terrabase-regions";
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using TerraScale.Dashboard.Platform.Persistence;
 using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Platform.Rpc;
@@ -9,15 +10,14 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseRpcClient rpc, TimeProvider clock) : IAllowanceNotificationBackend
+    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseRpcClient rpc) : IAllowanceNotificationBackend
     {
 
-        public async Task<AllowanceUsagePage> ReadAsync(string? after, bool previous, CancellationToken cancellationToken)
+        public async Task<AllowanceUsagePage> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken)
         {
             try
             {
-                var month = previous ? clock.GetUtcNow().AddMonths(-1).ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture) : null;
-                var answer = await rpc.Platform<IUsageService>().WithCancellationToken(cancellationToken).ListAllowancesAsync(after, month);
+                var answer = await rpc.Platform<IUsageService>().WithCancellationToken(cancellationToken).ListAllowancesAsync(after, month?.ToString("yyyy-MM", CultureInfo.InvariantCulture));
                 return answer.Deserialize(AllowanceBackendJson.Default.AllowanceUsagePage) ?? throw new IOException("Allowance producer response is empty.");
             }
             catch (TerraBaseException) { throw new IOException("Allowance producer is unavailable."); }

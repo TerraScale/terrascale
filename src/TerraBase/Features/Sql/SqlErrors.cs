@@ -31,6 +31,8 @@ internal static partial class SqlErrors
     public const string TransactionState = "transaction_state";
     public const string TenantBusy = "tenant_busy";
     public const string Unavailable = "unavailable";
+    public const string CopyFaulted = "copy_faulted";
+    public const string RecoveryPending = "recovery_pending";
     public const string Unauthorized = "unauthorized";
     public const string WrongRegion = "wrong_region";
     public const string InternalError = "internal_error";
@@ -59,7 +61,7 @@ internal static partial class SqlErrors
         InvalidRequest => "22023",
         TransactionState => "25000",
         TenantBusy => "53300",
-        Unavailable => "57P03",
+        Unavailable or CopyFaulted or RecoveryPending => "57P03",
         Unauthorized => "28000",
         WrongRegion => "08004",
         InternalError => "XX000",
@@ -73,7 +75,7 @@ internal static partial class SqlErrors
         SerializationConflict or RowConflict => StatusCodes.Status409Conflict,
         TooLarge => StatusCodes.Status413PayloadTooLarge,
         QuotaExceeded or TenantBusy => StatusCodes.Status429TooManyRequests,
-        Unavailable or WriteOutcomeUnknown => StatusCodes.Status503ServiceUnavailable,
+        Unavailable or CopyFaulted or RecoveryPending or WriteOutcomeUnknown => StatusCodes.Status503ServiceUnavailable,
         WrongRegion => StatusCodes.Status421MisdirectedRequest,
         InternalError => StatusCodes.Status500InternalServerError,
         _ => StatusCodes.Status400BadRequest,
@@ -93,6 +95,10 @@ internal static partial class SqlErrors
     public static (SqlFailure Failure, string Message) Classify(string message, bool parse, bool interrupted, int sqliteCode = 0)
     {
         var primary = sqliteCode & 0xff;
+        if (primary is 11 or 26)
+        {
+            return (new StorageFailure(), "the database reported corruption");
+        }
         if (primary is SqliteBusy or SqliteLocked or SqliteNoMem or SqliteIoErr or SqliteFull or SqliteCantOpen)
         {
             return (new Busy(), "the database is busy; retry");
@@ -184,9 +190,7 @@ internal static partial class SqlErrors
 
     public static SqlError Busy(string message) => new(SerializationConflict, message);
 
-    public static SqlError Moved(Engine.DatabaseMovedException moved) => moved.Home is { } home
-        ? new(WrongRegion, moved.Message, home)
-        : Busy(moved.Message);
+    public static SqlError Moved(Engine.DatabaseMovedException moved) => new(WrongRegion, moved.Message);
 
     public static SqlError TooBig(string message) => new(TooLarge, message);
 

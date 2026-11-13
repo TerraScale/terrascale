@@ -10,11 +10,11 @@ public interface IUsageMeter
 
     void RecordOperation(TenantContext database, string kind, int count);
 
-    void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent);
+    void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent, string? region = null);
 
     void RecordStatement(TenantContext database, string protocol, bool failed, TimeSpan elapsed);
 
-    void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null);
+    void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null, string? region = null);
 
     IDisposable TrackActive(Action report);
 

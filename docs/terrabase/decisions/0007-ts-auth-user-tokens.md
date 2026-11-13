@@ -32,7 +32,7 @@ unchanged.
   `nbf` allow 30 seconds of clock skew. `sub` must be 1 to 256 characters without control characters.
   A guest token (`is_anonymous` `true`, which ts-auth issues without sign-up) is refused: guests must
   not own organizations.
-  Any failure answers `401` with no body, and the recorded reason is a failure type, never the token.
+  A verified invalid token answers `401`; unavailable verification keys answer `503 auth_unavailable` with `Retry-After: 1`. The recorded reason is a failure type, never the token.
 - **No organization claim.** The organization comes from the route, and TerraBase membership
   ([0005](0005-multi-tenancy.md)) decides access as before: a non-member gets `404`, a role too low
   gets `403`. ts-auth issues no organization claim TerraBase could use: its organizations are
@@ -63,25 +63,75 @@ unchanged.
   is the access token's `email` claim, used only when `email_verified` is `true`. No verified email
   answers `403`; an email that differs from the invitation answers `403`. The body is never trusted
   for the email, because the caller may be the user itself.
-- **Keys.** TerraBase reads `{auth-issuer without a trailing /}/.well-known/openid-configuration`,
-  then its `jwks_uri`; both must be `https`, redirects are not followed, and each must answer `2xx`. A discovery metadata whose `issuer` is not exactly
-  `auth-issuer` is not used (OIDC Discovery 1.0 §4.3), and its `jwks_uri` is never requested. Only RSA and EC keys are kept; symmetric
-  (`oct`) keys are ignored. A record over 1 MiB fails. One 10-second deadline covers discovery and JWKS
-  together, and shutdown cancels a fetch in progress.
-- **Cache, refresh and readiness.** Keys are cached in memory.
-  - Startup waits up to 10 seconds for the first fetch.
-  - Until a fetch succeeds, every token gets `401`. A background loop retries every 2 seconds.
-    `/readyz` does not wait for the keys (decision 2026-10-10, TS-677): a database is ready when it
-    can serve, and ts-auth, which stores its data here, could otherwise never become ready after a
-    fresh start.
-  - After the first success, the loop refreshes every 10 minutes. A failed refresh keeps the cached
-    keys, so ts-auth being down after startup does not stop validation.
-  - Requests never fetch keys, except that a token whose `kid` is not cached triggers one refresh.
-    Concurrent requests share it, it runs at most once per 30 seconds, and the token is validated
-    once more if the keys changed.
-- **Observability.** Counter `terrabase.auth.key_fetches`, label `outcome` (`success` or
-  `failure`). TerraBase's own log messages never contain tokens, the issuer URL or the audiences;
-  fetch failures name the setting (`auth-issuer`) and the failure type only.
+- **Keys.** TerraBase reads `{auth-issuer without a trailing /}/.well-known/openid-configuration`, then its
+  `jwks_uri`. Both must use HTTPS, return 2xx without redirects, and fit within 1 MiB. Discovery must name the
+  configured issuer exactly; JWKS must share its origin. One ten-second deadline covers both requests.
+  Entries marked for another use, of a key type other than RSA or EC, declaring an algorithm outside the
+  allow-list, or declaring `key_ops` without `verify` are skipped, so a key the node does not understand never
+  stops a refresh. Every remaining signing entry must convert to a usable public RSA or EC key; a malformed one,
+  a symmetric key, private key material, or an empty signing set fails the entire fetch. Existing keys
+  remain available after a failed fetch. A declared `alg` restricts that key to that algorithm, within the existing
+  asymmetric algorithm allow-list; declared `key_ops` must include `verify`. The platform issuer publishes EC
+  P-256 keys declaring `alg: ES256` and `use: sig`, without `key_ops`.
+- **Cache, refresh and readiness.** Every successful nonempty set replaces the entire snapshot, including when
+  it is smaller: that is how key removal propagates. Only public material is written to
+  `<data-directory>/auth-signing-keys.json`. Version 2 records issuer, fetch time and a last-known-time high-water
+  mark. A flushed sibling `.new` file is renamed over the snapshot, then its containing directory is fsynced.
+  - Stored keys wait for the node's existing peer/kernel clock-trust gate before loading; readiness and fresh
+    issuer fetches do not wait for stored trust. Disk and issuer keys share validation. A stored file is ignored
+    as a whole if unreadable, larger than 2 MiB, truncated, malformed, another version or issuer, empty, or
+    containing a malformed RSA or EC signing entry or secret key material. The load boundary catches content failures, logs one bounded reason
+    without contents, and counts rejection; the node continues without stored keys.
+  - Within a process, the **24-hour** allowance uses monotonic elapsed time from fetch or load. At load, UTC
+    before either fetch time or high-water mark rejects the file as `clock_backwards`. The remaining allowance
+    is 24 hours minus (high-water mark minus fetch time), further reduced by any wall time since that mark.
+    Loading never resets the fetch time. A successful fetch writes a new checkpoint; while running, checkpoints
+    advance at least with monotonic elapsed time and are attempted every **60 seconds**. Write failures are
+    logged and do not stop the node. The high-water mark never decreases within a process.
+  - Across restarts this relies on the clock-trust gate providing accurate UTC and on durable, unreverted local
+    state. A high-water mark detects rollback below the recorded time; it cannot measure downtime during which
+    all clocks are wrong but agree, detect restoration of an older data-directory copy, or recover an unwritten
+    checkpoint after a failed write or crash. With timely successful writes and scheduling, up to one checkpoint
+    period may be unrecorded after a crash; failed or stalled writes and scheduling delays can lose more. The monotonic in-process cap is unconditional; a universal 24-hour real-time
+    guarantee across arbitrary clock/state rollback is not claimed. If clock trust cannot be established, stored
+    keys are never loaded. The data directory must be as trusted as the process itself.
+  - To drop stored trust, stop the node, delete `auth-signing-keys.json`, then start it. Deleting the file while
+    the node runs does not clear its in-memory snapshot and a checkpoint may recreate the file.
+  - Without usable keys, a token that could be valid answers `503 auth_unavailable` with `Retry-After: 1`.
+    Unparseable tokens and readable invalid structure, algorithm, type, issuer, audience or lifetime answer 401
+    first. Unverified claims can only reject; signature verification still precedes acceptance. Exchange validation
+    uses the same precheck. A bad signature under a held key answers 401.
+  - Background fetches use a **two-second start interval** without keys (or after the preceding attempt finishes,
+    whichever is later), otherwise ten minutes. One fetch is ever in flight. After recovery, the remainder of an
+    in-flight ten-second attempt, the next interval and a healthy fetch take at most **22 seconds**.
+  - With usable keys, unknown IDs share in-flight work. Each **30-second** request-refresh cycle permits its first fetch plus
+    exactly one follow-up for an ID first seen after the last refresh began. The follow-up starts no earlier than
+    **15 seconds** after that refresh began. This bounds request-triggered fetches to two per cycle, coalesces
+    requests, and bounds acceptance of an ID first seen after the latest refresh began to **25 seconds** under
+    continuing random-ID traffic, assuming responsive scheduling and issuer responses within the fetch deadline.
+    Tracking is bounded to 1024 IDs per cycle; saturation conservatively requests the same single follow-up,
+    never additional fetches. An ID first seen after the follow-up began can queue the next cycle's first fetch at
+    its boundary; no extra fetch is admitted in the current cycle. Previously observed IDs retain the **40-second**
+    bound (30-second interval plus deadline). A failed or rate-limited refresh answers 503; an authoritative
+    successful refresh that still lacks the ID answers 401. Expiry brings queued work forward to the no-key schedule. Smaller successful sets replace larger sets without a size heuristic.
+  - Established SQL WebSocket sessions keep retryable unavailable requests open; their remembered token expiry
+    closes even an idle socket. PostgreSQL renewal and pending Execute preserve `57P03` when authentication is
+    unavailable; an actually refused credential answers `28P01`. Sessions with a known token expiry end at that
+    expiry independently of key availability. Existing key-status admission and revocation checks still apply.
+  - `/readyz` stays independent of issuer availability: ts-auth needs TerraBase to serve its database.
+  - Project mapping misses are not cached. Key-status refusal caching requires authoritative `key_revoked` or
+    `key_expired` responses; unavailable, malformed and generic invalid-token responses do not populate it.
+- **Revocation delay.** Keys removed at the issuer continue verifying here until the next successful refresh,
+  normally within ten minutes plus its fetch deadline. An issuer outage can extend that window to the remaining
+  snapshot allowance described above. Token expiration and API-key revocation admission
+  still apply independently. An expired snapshot is rejected on restart.
+- **Observability.** Counter `terrabase.auth.stored_keys_rejected`, bounded `reason` values `invalid`,
+  `clock_backwards` and `expired`, counts ignored stored files. Counter `terrabase.auth.key_fetches`, label `outcome` (`success` or `failure`), gauge
+  `terrabase.auth.signing_keys_loaded` (usable snapshot: 1; unavailable: 0), and gauge
+  `terrabase.auth.signing_keys_age` in seconds (-1 before any snapshot loads). Prometheus exports the latter
+  as `terrabase_auth_signing_keys_age_seconds`. Alert when age exceeds **1200 seconds for five minutes**, or
+  loaded stays zero for **one minute**; see [signing-key operations](../signing-key-operations.md).
+  Logs never contain tokens, issuer URLs or audiences; failures name the setting and failure type only.
 
 ## Requirements on ts-auth
 
@@ -102,12 +152,10 @@ it must:
 - Renaming `dashboard-credential-file` to `management-credential-file`, admin listener only, is breaking for
   any deployment that sets the old name: it now stops the process with exit code `2`. No deployment set it.
 - The `accept` body loses `email`. Callers must send a token whose `email` is verified.
-- With `auth-issuer` set, a node whose first key fetch has not succeeded is still ready: a load
-  balancer sends it traffic, and its user tokens get `401` until the keys load. Until 2026-10-10 such a
-  node answered `503`. On fresh storage that never ended: the load balancer reaches ts-auth's keys only
-  while ts-auth is ready, and ts-auth is ready only once its own data in TerraBase works.
-- A key removed from ts-auth's JWKS stays trusted until the next successful refresh, at most about
-  10 minutes later while ts-auth is reachable, and longer while it is not.
+- A node can become ready during an issuer outage. Known tokens validate from a nonexpired stored snapshot;
+  unavailable verification answers retryable 503. Readiness never waits on ts-auth.
+- A key removed from ts-auth’s JWKS remains trusted until the next successful refresh, subject to the 24-hour
+  snapshot maximum described above. Operators must account for this delay during emergency revocation.
 - Tokens are not checked for revocation: one stays valid until its `exp`, so signing a user out of
   ts-auth everywhere ends Management access only when the token expires (ts-auth's removed Rust
   provider issued one-hour access tokens). Checking ts-auth's `auth_epoch` or introspection is a

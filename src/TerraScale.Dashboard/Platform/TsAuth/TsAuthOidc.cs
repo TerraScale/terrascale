@@ -62,7 +62,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         {
             var form = new List<KeyValuePair<string, string>> { new("grant_type", "client_credentials") };
             if (!string.IsNullOrEmpty(project)) form.Add(new("project", project));
-            return client.SendOAuthFormAsync(TokenRoute(), form, TsAuthCredentials.Basic(apiKey[..26], apiKey),
+            var body = apiKey.StartsWith("sk_", StringComparison.Ordinal) ? apiKey[3..] : apiKey;
+            return client.SendOAuthFormAsync(TokenRoute(), form, TsAuthCredentials.Basic(body[..26], apiKey),
                 TsAuthIntegrationJsonContext.Default.TsAuthTokenResponse, cancellationToken);
         }
 

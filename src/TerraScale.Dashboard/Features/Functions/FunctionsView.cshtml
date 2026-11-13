@@ -1,22 +1,42 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Functions.FunctionsPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using System.Globalization
-@{ var list = DatabaseService.Path(Model.Database.Id, "functions"); }
+@inject AssetUrls Assets
+@{
+    var list = DatabaseService.Path(Model.Database.Id, "functions");
+    var canWrite = Model.Shell.Context.CanWriteProjectData;
+    var writeReason = "Write access is required to deploy functions.";
+}
 <main class="ts-page" data-database-id="@Model.Database.Id">
 @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "functions")))
+@if(Model.Notice.Length > 0){<div class="ts-alert ts-alert-success" role="status"><p class="ts-alert-body" id="function-notice">@Model.Notice</p></div>}
 @if(Model.Error.Length > 0 && Model.DeleteName.Length == 0 && !Model.NoAccess){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><a class="ts-link" href="@list">Reload functions</a></div>}
-<section class="ts-card ts-card-flush" aria-labelledby="functions-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="functions-title">Functions</h2></div></header><div class="ts-card-body">
-@if(Model.NoAccess){<div class="ts-empty" role="status"><p class="ts-empty-title">Functions require read and write access to this project.</p><a class="ts-btn ts-btn-secondary" href="/organization?tab=members">View organization members</a></div>}else if(Model.Functions.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No functions yet.</p><a class="ts-btn ts-btn-primary" href="https://docs.terrascale.tech/guides/functions" @(ExternalLink.Attributes)>Deploy a function@(ExternalLink.Hint)</a></div>}else{
+<section class="ts-card ts-card-flush" aria-labelledby="functions-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="functions-title">Functions</h2></div><div class="ts-card-actions">@if(canWrite){<a class="ts-btn ts-btn-primary ts-btn-sm" href="@(list + "?edit=new")">New function</a>}else{<button class="ts-btn ts-btn-primary ts-btn-sm" type="button" disabled title="@writeReason">New function</button>}</div></header><div class="ts-card-body">
+@if(Model.NoAccess){<div class="ts-empty" role="status"><p class="ts-empty-title">Functions require read and write access to this project.</p><a class="ts-btn ts-btn-secondary" href="/organization?tab=members">View organization members</a></div>}else if(Model.Functions.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No functions yet.</p><a class="ts-link" href="https://docs.terrascale.tech/guides/functions" @(ExternalLink.Attributes)>Deploy a function@(ExternalLink.Hint)</a></div>}else{
 <div class="ts-table-wrap"><table class="ts-table" id="functions"><thead><tr><th scope="col">Name</th><th scope="col">Runs on</th><th scope="col">Updated (UTC)</th><th scope="col">Actions</th></tr></thead><tbody>
 @foreach(var function in Model.Functions){<tr><td class="ts-mono">@function.Name</td><td>@Runs(function)</td><td>@ValueFormat.UtcDate(function.UpdatedAt)</td><td><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(list + "?function=" + Uri.EscapeDataString(function.Name))" aria-current="@(Model.Selected?.Name == function.Name ? "true" : null)">Details</a></td></tr>}
 </tbody></table></div>}
 </div></section>
-@if(Model.Selected is { } selected){
-<section class="ts-card" aria-labelledby="function-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title ts-mono" id="function-title">@selected.Name</h2></div>
-@if(Model.Shell.Context.CanWriteProjectData){<button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="delete-function">Delete function</button>}</header><div class="ts-card-body ts-stack">
+@if(Model.Form is { } form){
+<section class="ts-card" aria-labelledby="function-editor-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-editor-title">@(form.Editing ? "Edit function" : "New function")</h2></div></header><div class="ts-card-body">
+<form method="post" action="/api/v1/dashboard/functions/deploy" class="ts-form ts-stack" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><input type="hidden" name="editing" value="@(form.Editing ? "1" : "0")" />
+<div class="ts-field"><label class="ts-label" for="function-name">Name</label><input class="ts-input ts-mono" id="function-name" name="name" value="@form.Name" required maxlength="63" pattern="@TerraScale.Dashboard.Features.Functions.FunctionBackend.NameInputPattern" title="Start with a lowercase letter and use up to 63 lowercase letters, digits, underscores or hyphens." autocomplete="off" spellcheck="false" readonly="@(form.Editing ? "readonly" : null)" /></div>
+<div class="ts-field"><label class="ts-label" for="function-cron">Cron</label><input class="ts-input ts-mono" id="function-cron" name="cron" value="@form.Cron" maxlength="128" autocomplete="off" spellcheck="false" aria-describedby="function-cron-hint" /><p class="ts-meta" id="function-cron-hint">Optional five-field UTC cron, for example */5 * * * *. Leave empty to run only on HTTPS calls.</p></div>
+<div class="ts-field"><label class="ts-label" for="function-editor">Source</label><ts-code-editor class="ts-code-editor" data-language="javascript"><textarea class="ts-input ts-mono" id="function-editor" name="source" rows="16" required spellcheck="false" autocapitalize="off" autocomplete="off">@form.Source</textarea></ts-code-editor>@if(form.Error.Length > 0){<p class="ts-field-error" id="function-deploy-error" role="alert">@form.Error</p>}</div>
+<div class="ts-form-actions"><a class="ts-btn ts-btn-secondary" href="@(form.Editing ? list + "?function=" + Uri.EscapeDataString(form.Name) : list)">Cancel</a><button class="ts-btn ts-btn-primary" type="submit">Deploy function</button></div>
+</form>
+</div></section>
+}
+@if(Model.Selected is { } selected && Model.Form is not { Editing: true }){
+<section class="ts-card" aria-labelledby="function-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title ts-mono" id="function-title">@selected.Name</h2></div><div class="ts-card-actions">@if(canWrite){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(list + "?function=" + Uri.EscapeDataString(selected.Name) + "&edit=1")">Edit</a>}else{<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" disabled title="@writeReason">Edit</button>}@if(canWrite){<button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="delete-function">Delete function</button>}</div></header><div class="ts-card-body ts-stack">
 <dl class="ts-kv"><div><dt>Runs on</dt><dd>@Runs(selected)</dd></div><div><dt>Created (UTC)</dt><dd>@ValueFormat.UtcDate(selected.CreatedAt)</dd></div></dl>
 <div class="ts-field"><span class="ts-label">Invoke URL</span><pre class="ts-code ts-break" id="function-invoke">POST @Model.InvokeUrl</pre><a class="ts-link" href="https://docs.terrascale.tech/guides/authentication" @(ExternalLink.Attributes)>Authentication guide@(ExternalLink.Hint)</a></div>
-<div class="ts-field"><span class="ts-label">Source</span><pre class="ts-code" id="function-source">@selected.Source</pre></div>
+<div class="ts-field"><label class="ts-label" for="function-source">Source</label><ts-code-editor class="ts-code-editor" data-language="javascript"><textarea class="ts-input ts-mono" id="function-source" rows="14" readonly spellcheck="false">@selected.Source</textarea></ts-code-editor></div>
+<form method="post" action="/api/v1/dashboard/functions/invoke" class="ts-form ts-stack" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><input type="hidden" name="name" value="@selected.Name" />
+<div class="ts-field"><label class="ts-label" for="function-event">Event JSON</label><textarea class="ts-input ts-mono" id="function-event" name="event" rows="4" spellcheck="false" autocapitalize="off" autocomplete="off">@(Model.RunEvent.Length > 0 ? Model.RunEvent : "{}")</textarea>@if(Model.RunError.Length > 0){<p class="ts-field-error" id="function-event-error" role="alert">@Model.RunError</p>}</div>
+<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Test run</button></div>
+</form>
+@if(Model.RunResult.Length > 0){<div class="ts-field"><span class="ts-label">Result</span><pre class="ts-code" id="function-result">@Model.RunResult</pre></div>}
 </div></section>
 
 <section class="ts-card ts-card-flush" aria-labelledby="function-logs-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-logs-title">Latest invocations</h2></div><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(list + "?function=" + Uri.EscapeDataString(selected.Name))">Refresh</a></header><div class="ts-card-body">
@@ -28,6 +48,7 @@
 }
 @{ var deleteName = Model.DeleteName.Length > 0 ? Model.DeleteName : Model.Selected?.Name; }
 @if(deleteName is not null && (Model.Shell.Context.CanWriteProjectData || Model.DeleteName.Length > 0)){<dialog class="ts-dialog" id="delete-function" data-init="@(Model.DeleteName.Length > 0 ? "el.showModal()" : "void 0")" closedby="any" aria-labelledby="delete-function-title"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="delete-function-title">Delete @deleteName?</h2><p class="ts-dialog-description">This deletes the function with its schedule and logs. Calls to its invoke URL fail from then on.</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="delete-function">@Icons.Render("X", 18)</button></header><form method="post" action="/api/v1/dashboard/functions/delete" class="ts-form" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><input type="hidden" name="name" value="@deleteName" />@if(Model.DeleteName.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div>}<div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="delete-function">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Delete function</button></div></form></div></dialog>}
+@if(Model.Form is not null || Model.Selected is not null){<script type="module" src="@Assets.Url("js/code-editor.js")" nonce="@Model.Shell.Nonce"></script>}
 </main>
 @functions {
     public ShellModel LayoutModel => Model.Shell;

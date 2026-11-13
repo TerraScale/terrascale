@@ -202,7 +202,7 @@ type APIKey struct {
 	PreviousSecretExpiresAt *time.Time `json:"previous_secret_expires_at"`
 }
 
-// CreatedAPIKey is a key with its whole <ULID>_<52> secret, returned once.
+// CreatedAPIKey is a key with its whole <ULID>_<52> secret, returned once. The secret may start with sk_.
 type CreatedAPIKey struct {
 	APIKey APIKey `json:"api_key"`
 	Key    string `json:"key"`

@@ -133,7 +133,7 @@ internal sealed partial class RegionReplication
                 var key = (Organization: database.OrganizationId, Project: database.ProjectId!, Database: database.DatabaseId!);
                 var held = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
                     && placement.Home == home.Region ? placement : null;
-                var replicated = held is not null && (home.Region == options.Region || held.Includes(options.Region));
+                var replicated = held is not null && (home.Region == options.Region || held.PlacedIn(options.Region));
                 try
                 {
                     if (replicated && (listed is null || listed.ContainsKey(key)))
@@ -282,7 +282,7 @@ internal sealed partial class RegionReplication
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await StopFollowingAsync(key).ConfigureAwait(false);
+            await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
             _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -347,10 +347,10 @@ internal sealed partial class RegionReplication
         try
         {
             if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var held }
-                && held.Version < entry.PlacementVersion && !held.Includes(options.Region)
+                && held.Version < entry.PlacementVersion && !held.PlacedIn(options.Region)
                 && (entry.AllRegions || entry.HomeRegion == options.Region || entry.ReplicaRegions.Contains(options.Region)))
             {
-                await StopFollowingAsync(Key(database)).ConfigureAwait(false);
+                await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
             }
 
             if (!await catalog.RecordAsync(entry, cancellationToken, listed, lookups).ConfigureAwait(false))
@@ -374,7 +374,15 @@ internal sealed partial class RegionReplication
                 await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    await StopFollowingAsync(Key(database)).ConfigureAwait(false);
+                    if (home.Region == options.Region
+                        && await remote.RetentionAsync(home.Internal, database, cancellationToken).ConfigureAwait(false) is not false)
+                    {
+                        await StopFollowerAsync(Key(database)).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
+                    }
                     if (await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false) is Unavailable error)
                     {
                         faults.Failed(database, home.Region, new InvalidOperationException(error.Message));
@@ -405,7 +413,13 @@ internal sealed partial class RegionReplication
         }
     }
 
-    private async Task StopFollowingAsync((string, string, string) key)
+    private async Task StopFollowingAsync((string, string, string) key, TenantContext database, CancellationToken cancellationToken)
+    {
+        await StopFollowerAsync(key).ConfigureAwait(false);
+        _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task StopFollowerAsync((string, string, string) key)
     {
         Follower? follower;
         lock (_gate)
@@ -417,7 +431,6 @@ internal sealed partial class RegionReplication
         {
             await follower.StopAsync().ConfigureAwait(false);
         }
-
     }
 
 }

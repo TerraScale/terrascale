@@ -17,7 +17,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: true,
   retries: 0,
-  workers: 6,
+  workers: faultRequested ? 1 : 6,
   timeout: 60_000 + mailWait,
   globalTimeout: production ? 25 * 60_000 : 0,
   expect: { timeout: 20_000 },
@@ -44,7 +44,7 @@ export default defineConfig({
       use: secretFree,
     }, {
       name: 'fault',
-      testMatch: 'fault/fault.spec.ts',
+      testMatch: 'fault/{fault,signing-keys}.spec.ts',
       dependencies: ['fault-setup'],
       fullyParallel: false,
       metadata: { setup: 'fault-setup' },
@@ -63,6 +63,7 @@ export default defineConfig({
       use: secretFree,
     }, {
       name: 'placement',
+      workers: 1,
       testMatch: 'placement/*.spec.ts',
       testIgnore: 'placement/close.spec.ts',
       dependencies: process.env.E2E_REGIONS === '2' ? ['placement-setup'] : [],

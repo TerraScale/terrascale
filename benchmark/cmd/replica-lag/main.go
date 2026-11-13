@@ -454,7 +454,11 @@ func (c *client) accessToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	basic := base64.StdEncoding.EncodeToString([]byte(c.creds.APIKey[:26] + ":" + c.creds.APIKey))
+	id := c.creds.APIKey
+	if strings.HasPrefix(id, "sk_") {
+		id = id[3:]
+	}
+	basic := base64.StdEncoding.EncodeToString([]byte(id[:26] + ":" + c.creds.APIKey))
 	req.Header.Set("Authorization", "Basic "+basic)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.write.Do(req)

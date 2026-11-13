@@ -1,4 +1,5 @@
 using TerraBase.Engine.Revisions;
+using Turso.Raw.Public;
 using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
@@ -12,14 +13,18 @@ internal sealed partial class TursoDatabaseStore
             await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
         }
 
-        ThrowIfRefused(maintenance: false);
+        ThrowIfUnavailable();
+        using var refused = ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         var reader = await RentAsync(cancellationToken).ConfigureAwait(false);
+        using var interrupted = Refused.Register(() => TursoBindings.Interrupt(reader.Native));
+        using var failed = Ledger?.Refused.Register(() => TursoBindings.Interrupt(reader.Native));
         RevisionChecksums result;
         try
         {
             var revision = await WithWriterAsync(writer =>
             {
-                RefuseFaultedCopy();
+                ThrowIfUnavailable();
                 Revisions.Catch(writer.Connection);
                 TursoRevisionLedger.BeginSnapshot(reader.Connection);
                 try
@@ -45,11 +50,16 @@ internal sealed partial class TursoDatabaseStore
         }
         catch
         {
+            interrupted.Dispose();
+            failed?.Dispose();
             await io.RunAsync(() => pool.Discard(reader), CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
+        interrupted.Dispose();
+        failed?.Dispose();
         await ReturnAsync(reader).ConfigureAwait(false);
+        ThrowIfUnavailable();
         return result;
     }
 
