@@ -255,14 +255,14 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     return { sql, applyPath, rows };
   };
   const finish = async (info: TestInfo) => {
-    await Promise.all([...running.keys()].map(stop));
     for (const node of started) {
       await info.attach(`${node.name}-readiness`, { body: readiness.get(node) ?? 'not requested', contentType: 'text/plain' });
       await info.attach(`${node.name}-log`, { body: log(node), contentType: 'text/plain' });
     }
+    await info.attach(`clock-trust-${label}`, { body: observations.join('\n'), contentType: 'text/plain' });
+    await Promise.all([...running.keys()].map(stop));
     for (const stand of [...standIns]) await stand.close();
     for (const output of logs) closeSync(output);
-    await info.attach(`clock-trust-${label}`, { body: observations.join('\n'), contentType: 'text/plain' });
     rmSync(account);
     rmSync(root, { recursive: true, force: true });
   };
@@ -272,10 +272,10 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
   };
 }
 
-test('a node stamps writes only while its peers and kernel agree with its clock', async ({ request }, info) => {
+test('a lone node opens on agreeing peers and a clock step requires two new rounds', async ({ request }, info) => {
   const { a, b, c } = nodes;
-  const { set, metric, allowed, mode, proxy, standIn, holds, start, stop, opens, internal, json, refused, prepare, finish, observations, opened } =
-    await cluster(request, [a, b, c], 'main');
+  const { set, metric, allowed, mode, proxy, standIn, holds, start, stop, opens, prepare, finish, observations } =
+    await cluster(request, [a, b, c], 'opening');
   try {
     await prepare();
 
@@ -292,6 +292,42 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     await opens(b, 'second node');
     await expect.poll(() => allowed(a), { message: 'the first node opens once a second node answers' }).toBe(1);
     await opens(c, 'third node');
+
+    await stop(c);
+    await opens(c, 'healthy third-node restart');
+
+    const stepsBefore = await metric(a, 'terrabase_clock_steps_total');
+    set(a, 600_000);
+    await expect.poll(() => allowed(a), { message: 'a step closes the node at once', intervals: [100] }).toBe(0);
+    set(a, 0);
+    await expect.poll(() => metric(a, 'terrabase_clock_steps_total'), { message: 'the step is counted' }).toBeGreaterThan(stepsBefore);
+    const readings: string[] = [];
+    await expect.poll(async () => {
+      const open = await allowed(a);
+      const rounds = await metric(a, 'terrabase_clock_agreeing_rounds');
+      readings.push(`${open}@${rounds}`);
+      if (open === 1) expect(rounds).toBeGreaterThanOrEqual(2);
+      return open;
+    }, { message: 'a step reopens only after two agreeing rounds begun after it', intervals: [100] }).toBe(1);
+    expect(readings[0]).toMatch(/^0@[01]$/);
+    observations.push(`step while open: closed at once, readings (allowed@rounds) ${readings.join(' ')}`);
+    expect(await allowed(b)).toBe(1);
+    expect(await allowed(c)).toBe(1);
+    observations.push('one wrong clock among three closed alone: b and c stayed open');
+
+    console.log(observations.join('\n'));
+  } finally {
+    await finish(info);
+  }
+});
+
+test('a home and replica started ahead never stamp, and healthy restarts recover', async ({ request }, info) => {
+  const { a, b, c } = nodes;
+  const { set, metric, allowed, start, stop, opens, internal, json, refused, prepare, finish, observations, opened } =
+    await cluster(request, [a, b, c], 'writes');
+  try {
+    await prepare();
+    await Promise.all([opens(a, 'first node'), opens(b, 'second node'), opens(c, 'third node')]);
 
     const user = id();
     const organization = await json(a, 'POST', '/v1/management/organizations', { name: `Clock ${id()}` }, user, 201);
@@ -329,29 +365,7 @@ test('a node stamps writes only while its peers and kernel agree with its clock'
     await stop(b);
     set(b, 0);
     await opens(b, 'healthy restart 2');
-    await stop(c);
-    await opens(c, 'healthy restart 3');
-
-    const stepsBefore = await metric(a, 'terrabase_clock_steps_total');
-    set(a, 600_000);
-    await expect.poll(() => allowed(a), { message: 'a step closes the node at once', intervals: [100] }).toBe(0);
-    set(a, 0);
-    await expect.poll(() => metric(a, 'terrabase_clock_steps_total'), { message: 'the step is counted' }).toBeGreaterThan(stepsBefore);
-    const readings: string[] = [];
-    await expect.poll(async () => {
-      const open = await allowed(a);
-      const rounds = await metric(a, 'terrabase_clock_agreeing_rounds');
-      readings.push(`${open}@${rounds}`);
-      if (open === 1) expect(rounds).toBeGreaterThanOrEqual(2);
-      return open;
-    }, { message: 'a step reopens only after two agreeing rounds begun after it', intervals: [100] }).toBe(1);
-    expect(readings[0]).toMatch(/^0@[01]$/);
-    observations.push(`step while open: closed at once, readings (allowed@rounds) ${readings.join(' ')}`);
-    expect(await allowed(b)).toBe(1);
-    expect(await allowed(c)).toBe(1);
-    observations.push('one wrong clock among three closed alone: b and c stayed open');
-
-    observations.push(`open times after /readyz in ms (second and third node, then restarts 1-3): ${opened.map(Math.round).join(', ')}`);
+    observations.push(`open times after /readyz in ms (initial nodes and healthy restarts): ${opened.map(Math.round).join(', ')}`);
     console.log(observations.join('\n'));
   } finally {
     await finish(info);
