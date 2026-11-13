@@ -21,7 +21,8 @@ internal static class RegionalCatalog
     private static readonly Dictionary<string, object?> NoNamed = [];
 
     private static bool Shared(string kind) => kind is "catalog" or "api_keys" or "api_key_hashes"
-        or "project_closures" or "database_expiry" or "retired_databases" or "database_purges" or "home_moves" or FileErasure.Purges or FileErasure.ProjectPurges
+        or "project_closures" or "deleted_databases" or "database_expiry" or "retired_databases" or "database_purges" or "home_moves" or FileErasure.Purges or FileErasure.ProjectPurges
+        || kind.StartsWith("deleted_databases/", StringComparison.Ordinal)
         || kind.StartsWith("file-storage/", StringComparison.Ordinal)
         || kind.StartsWith("backup_destination_history/", StringComparison.Ordinal)
         || kind.StartsWith("project_closure_purges/", StringComparison.Ordinal)
