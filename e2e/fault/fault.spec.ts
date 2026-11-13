@@ -107,8 +107,7 @@ async function homeLease(kv: Kv, id: string) {
   return stored!;
 }
 
-async function holdOutage(cells: Cells, kv: Kv, ledgers: Ledger[], killedAt: number, token: string): Promise<void> {
-  const retained = new Map(ledgers.map(ledger => [ledger.id, [...ledger.acknowledged]]));
+async function holdOutage(cells: Cells, kv: Kv, ledgers: Ledger[], pulled: Map<string, Row[]>, killedAt: number, token: string): Promise<void> {
   const fra = node('journey-2');
   let localWrites = 0;
   await expect.poll(async () => {
@@ -116,7 +115,7 @@ async function holdOutage(cells: Cells, kv: Kv, ledgers: Ledger[], killedAt: num
       const lease = (await homeLease(kv, ledger.id)).value;
       expect(lease, 'a lapsed home lease is not moved to another node').toMatchObject({ home: 'gru', node: 'journey-1' });
       const rows = await ledger.served(cells, 'fra');
-      for (const row of retained.get(ledger.id)!) expect(rows, 'fra keeps serving every row it had pulled').toContainEqual(row);
+      for (const row of pulled.get(ledger.id)!) expect(rows, 'fra keeps serving every row it had pulled').toContainEqual(row);
     }
     if (Date.now() - killedAt > outageHold / 2 && localWrites < ledgers.length) {
       const ledger = ledgers[localWrites++];
@@ -166,10 +165,11 @@ test('a region writer that stays down keeps its homes, and every acknowledged ro
     for (const round of [1, 2]) {
       const ledgers = await createLedgers(cells, 3, `home-outage-${round}`);
       const before = await Promise.all(ledgers.map(ledger => homeLease(kv, ledger.id)));
+      const pulled = new Map(ledgers.map(ledger => [ledger.id, [...ledger.acknowledged]]));
       const { killedAt, restart } = await killDuringBurst(ledgers, token);
       console.log(`round ${round}: journey-1 killed after ${ledgers.reduce((sum, ledger) => sum + ledger.acknowledged.length, 0)} acknowledged rows`);
       try {
-        await holdOutage(cells, kv, ledgers, killedAt, token);
+        await holdOutage(cells, kv, ledgers, pulled, killedAt, token);
       } finally {
         await restart();
       }
@@ -194,10 +194,11 @@ test('a writer killed right after an acknowledgement that fra pulled keeps the h
       await ledger.write(cells, 'gru', [[500, 'last-before-kill']]);
       await ledger.compare(cells);
     }
+    const pulled = new Map(ledgers.map(ledger => [ledger.id, [...ledger.acknowledged]]));
     const killedAt = Date.now();
     const restart = restartAfterKill(node('journey-1'));
     try {
-      await holdOutage(cells, kv, ledgers, killedAt, token);
+      await holdOutage(cells, kv, ledgers, pulled, killedAt, token);
     } finally {
       await restart();
     }
