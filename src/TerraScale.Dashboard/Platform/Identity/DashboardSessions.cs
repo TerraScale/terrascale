@@ -590,7 +590,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 
 public sealed record SessionRecord(string UserId, string Name, string Email, string AccessToken, string? RefreshToken, DateTimeOffset ExpiresAt,
     DateTimeOffset? SessionExpiresAt = null, string RefreshLease = "", DateTimeOffset? RefreshLeaseUntil = null, string? IdToken = null,
-    string? Device = null)
+    string? Device = null, bool OrganizationPicker = false)
 {
     public override string ToString()
     {

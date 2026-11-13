@@ -3,6 +3,7 @@ using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.NotFound;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Common.Databases;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement
@@ -24,10 +25,10 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public static async Task<IResult> PostAsync(HttpContext http, string path, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects)
         {
             var parts = path.Split('/');
-            var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
+            var key = parts[0] switch { "settings" => "sign-in", "organization-picker" => "settings", "providers" => "social", var first => first };
             var known = parts switch
             {
-                ["settings" or "branding" or "configuration" or "mfa-sessions" or "attack-protection" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
+                ["settings" or "organization-picker" or "branding" or "configuration" or "mfa-sessions" or "attack-protection" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
                 ["users", _, "disable" or "enable" or "delete" or "sign-out"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
@@ -50,7 +51,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return RequestError.FormExpired(http, "/auth/" + key, Results.StatusCode(403));
             }
 
-            if (!context.CanManageProject || context.Project is null)
+            if (!(parts is ["organization-picker"] ? context.CanSetOrganizationPicker : context.CanManageProject) || context.Project is null)
             {
                 return Results.StatusCode(403);
             }
@@ -60,6 +61,9 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             {
                 switch (parts)
                 {
+                    case ["organization-picker"]:
+                        await projects.UpdateSettingsAsync(session, project, new(OrganizationPicker: form.ContainsKey("organization_picker")), cancel);
+                        break;
                     case ["settings"]:
                         await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up"] == "on")), cancel);
                         break;
@@ -339,6 +343,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return HttpRedirects.SeeOther("/");
             }
 
+            if (key == "settings" && context.Project.Id != PlatformDatabases.AuthProjectId)
+            {
+                return await NotFoundEndpoints.PageAsync(http, sessions, accounts);
+            }
+
             return await PageAsync(http, context, projects, key);
         }
 
@@ -438,6 +447,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             new("sign-in", "Sign-in methods", "LockKeyhole", "Sign-in"),
             new("social", "Social sign-in", "Fingerprint", "Sign-in"),
             new("configuration", "Configuration", "Settings", "Sign-in"),
+            new("settings", "Settings", "Settings", "Sign-in"),
             new("mfa-sessions", "MFA and sessions", "Shield", "Security"),
             new("attack-protection", "Attack protection", "Shield", "Security"),
             new("clients", "OAuth applications", "Boxes", "Developers"),

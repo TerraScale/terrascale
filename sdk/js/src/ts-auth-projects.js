@@ -79,6 +79,7 @@ import { requireId } from "./ids.js";
  *   readonly counts: TsAuthProjectCounts;
  *   readonly providers: readonly TsAuthProjectProvider[];
  *   readonly configuration?: TsAuthProjectConfiguration | null | undefined;
+ *   readonly organization_picker: boolean;
  * }} TsAuthProjectSettings
  */
 
@@ -87,6 +88,7 @@ import { requireId } from "./ids.js";
  *   readonly methods?: TsAuthProjectMethods | undefined;
  *   readonly branding?: TsAuthProjectBranding | undefined;
  *   readonly configuration?: TsAuthProjectConfiguration | undefined;
+ *   readonly organization_picker?: boolean | undefined;
  * }} TsAuthProjectSettingsUpdate
  */
 

@@ -45,7 +45,8 @@ namespace TerraScale.Dashboard.Features.Auth
                     name = email;
                 }
 
-                return new(subject, email, name);
+                return new(subject, email, name, claims.TryGetProperty(AuthJwtClaims.OrganizationPickerClaim, out var picker)
+                    && picker.ValueKind == JsonValueKind.String && picker.GetString() == "true");
             }
             catch (Exception error) when (error is JsonException or KeyNotFoundException or FormatException or CryptographicException or InvalidOperationException or ArgumentException)
             { throw new SignInRejectedException(); }
@@ -58,5 +59,5 @@ namespace TerraScale.Dashboard.Features.Auth
         }
     }
 
-    public sealed record AuthIdentity(string Subject, string Email, string Name);
+    public sealed record AuthIdentity(string Subject, string Email, string Name, bool OrganizationPicker = false);
 }

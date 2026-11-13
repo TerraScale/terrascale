@@ -11,15 +11,16 @@ import (
 // ProjectAuthSettings describes the project's hosted sign-in tenant. Provider
 // secrets are never returned. Counts retain the producer's signed 64-bit range.
 type ProjectAuthSettings struct {
-	ProjectID     string                    `json:"project_id" ulid:"required"`
-	Issuer        string                    `json:"issuer"`
-	DiscoveryURL  string                    `json:"discovery_url"`
-	SignInURL     string                    `json:"sign_in_url"`
-	Methods       ProjectAuthMethods        `json:"methods"`
-	Branding      *ProjectAuthBranding      `json:"branding"`
-	Counts        ProjectAuthCounts         `json:"counts"`
-	Providers     []ProjectAuthProvider     `json:"providers"`
-	Configuration *ProjectAuthConfiguration `json:"configuration"`
+	ProjectID          string                    `json:"project_id" ulid:"required"`
+	Issuer             string                    `json:"issuer"`
+	DiscoveryURL       string                    `json:"discovery_url"`
+	SignInURL          string                    `json:"sign_in_url"`
+	Methods            ProjectAuthMethods        `json:"methods"`
+	Branding           *ProjectAuthBranding      `json:"branding"`
+	Counts             ProjectAuthCounts         `json:"counts"`
+	Providers          []ProjectAuthProvider     `json:"providers"`
+	Configuration      *ProjectAuthConfiguration `json:"configuration"`
+	OrganizationPicker bool                      `json:"organization_picker"`
 }
 
 // ProjectAuthMethods contains required response booleans, including false.
@@ -92,9 +93,10 @@ type ProjectAuthProvider struct {
 // ProjectAuthSettingsPatch leaves nil sections unchanged. Sent branding and
 // configuration replace their sections; individual nil branding values clear.
 type ProjectAuthSettingsPatch struct {
-	Methods       *ProjectAuthMethodsPatch  `json:"methods,omitempty"`
-	Branding      *ProjectAuthBranding      `json:"branding,omitempty"`
-	Configuration *ProjectAuthConfiguration `json:"configuration,omitempty"`
+	Methods            *ProjectAuthMethodsPatch  `json:"methods,omitempty"`
+	Branding           *ProjectAuthBranding      `json:"branding,omitempty"`
+	Configuration      *ProjectAuthConfiguration `json:"configuration,omitempty"`
+	OrganizationPicker *bool                     `json:"organization_picker,omitempty"`
 }
 
 // UnmarshalJSON rejects missing required results instead of inventing false
