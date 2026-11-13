@@ -31,7 +31,20 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
     private long _durableAnchor;
     private long _storedAnchor;
 
-    public long Position => Volatile.Read(ref _anchor);
+    private readonly Lazy<CancellationTokenSource> _refused;
+
+    public CancellationToken Refused => _refused.Value.Token;
+
+    public void ThrowIfUnavailable() => _store.ThrowIfUnavailable();
+
+    public long Position
+    {
+        get
+        {
+            ThrowIfUnavailable();
+            return Volatile.Read(ref _anchor);
+        }
+    }
 
     public async ValueTask<long> RetainedBytesAsync(CancellationToken cancellationToken) =>
         await AdmittedAsync(async () => await _io.RunAsync(() =>
@@ -44,9 +57,13 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     public async ValueTask AcknowledgeAsync(long position, CancellationToken cancellationToken)
     {
+        ThrowIfUnavailable();
+        using var refused = _store.ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         ArgumentOutOfRangeException.ThrowIfNegative(position);
         await _store.WithWriterAsync(writer =>
         {
+            ThrowIfUnavailable();
             ObjectDisposedException.ThrowIf(_lineage != _store.Lineage, _store);
             if (position > _anchor)
             {
@@ -58,6 +75,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
             _store.BackupAnchor = _durableAnchor;
             return Truncate(writer);
         }, "the durable backup CDC acknowledgement", cancellationToken).ConfigureAwait(false);
+        ThrowIfUnavailable();
     }
 
     private Dictionary<long, (string Type, string Name)> _schema = [];
@@ -69,6 +87,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
     private TursoChangeTap(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, TursoConnection reader, int lineage)
     {
         _store = store;
+        _refused = new(() => store.ReadCancellation(CancellationToken.None));
         _io = io;
         _time = time;
         _reader = reader;
@@ -77,7 +96,9 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     public static async Task<TursoChangeTap> OpenAsync(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, CancellationToken cancellationToken)
     {
-        await using var operation = await store.BeginOperationAsync(cancellationToken).ConfigureAwait(false);
+        await using var operation = await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
+        using var refused = store.ReadCancellation(cancellationToken);
+        cancellationToken = refused.Token;
         var connectionString = await store.ConnectionStringAsync(io, cancellationToken).ConfigureAwait(false);
         TursoChangeTap? tap = null;
         try
@@ -85,6 +106,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
             await store.WithWriterAsync(writer =>
             {
+                store.ThrowIfUnavailable();
                 var lineage = store.Lineage;
                 if (store.Quiescing)
                 {
@@ -99,6 +121,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
                 TursoSession.OpenExisting(reader, store.FilePath);
                 return StartHistory(writer) && tap.Reset(writer);
             }, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
+            store.ThrowIfUnavailable();
             operation?.Complete();
             return tap!;
         }
@@ -107,6 +130,10 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
             if (tap is not null)
             {
                 await io.RunAsync(tap._reader.Dispose, CancellationToken.None).ConfigureAwait(false);
+                if (tap._refused.IsValueCreated)
+                {
+                    tap._refused.Value.Dispose();
+                }
                 store.CloseBackupReader();
                 Interlocked.Decrement(ref store.BackupTaps);
             }
@@ -117,22 +144,29 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
         }
     }
 
-    public bool Ended => _store.IsClosed || Volatile.Read(ref _disposed) != 0 || _lineage != _store.Lineage;
+    public bool Ended
+    {
+        get
+        {
+            ThrowIfUnavailable();
+            return _store.IsClosed || Volatile.Read(ref _disposed) != 0 || _lineage != _store.Lineage;
+        }
+    }
 
     public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        return await AdmittedAsync(async () =>
+        return await AdmittedAsync(async cancellationToken =>
         {
             var read = await ReadCoreAsync(destination, ReadBudget, cancellationToken).ConfigureAwait(false);
             return read;
-        }).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
     }
     public async ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentException.ThrowIfNullOrEmpty(snapshotPath);
-        return await AdmittedAsync(async () =>
+        return await AdmittedAsync(async cancellationToken =>
         {
 
             var lane = _store.WriteLane;
@@ -183,7 +217,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
             }
 
             return snapshot;
-        }).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task EndSnapshotAsync()
@@ -201,6 +235,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     private async Task ReplaceReaderAsync()
     {
+        ThrowIfUnavailable();
         var stale = _reader;
 
         await _io.RunAsync(stale.Dispose, CancellationToken.None).ConfigureAwait(false);
@@ -220,29 +255,39 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
         _store.BackupAnchor = null;
         await _io.RunAsync(_reader.Dispose, CancellationToken.None).ConfigureAwait(false);
         _store.CloseBackupReader();
+        if (_refused.IsValueCreated)
+        {
+            _refused.Value.Dispose();
+        }
         Interlocked.Decrement(ref _store.BackupTaps);
     }
 
-    private async Task<T> AdmittedAsync<T>(Func<Task<T>> call)
+    private async Task<T> AdmittedAsync<T>(Func<CancellationToken, Task<T>> call, CancellationToken cancellationToken)
     {
 
-        ObjectDisposedException.ThrowIf(_lineage != _store.Lineage, _store);
+        ThrowIfUnavailable();
+        ObjectDisposedException.ThrowIf(Ended, this);
         _io.Admit();
         try
         {
             return await _io.WithAdmissionAsync(async () =>
             {
-                await using var operation = await _store.BeginOperationAsync(CancellationToken.None).ConfigureAwait(false);
+                await using var operation = await _store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
+                using var refused = _store.ReadCancellation(cancellationToken);
+                using var interrupted = Refused.Register(() => TursoBindings.Interrupt(TursoSession.Handle(_reader)));
                 try
                 {
-                    var result = await call().ConfigureAwait(false);
+                    ThrowIfUnavailable();
+                    var result = await call(refused.Token).ConfigureAwait(false);
+                    ThrowIfUnavailable();
                     operation?.Complete();
                     return result;
                 }
                 catch (Exception error)
                 {
+                    interrupted.Dispose();
                     await _store.RecordOperationDamageAsync(error).ConfigureAwait(false);
-                    if (_store.CopyFault is null)
+                    if (_store.CloseRefusal is null)
                     {
                         await ReplaceReaderAsync().ConfigureAwait(false);
                     }
@@ -294,6 +339,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
                 return new(0, false, false, null);
             }
 
+            ThrowIfUnavailable();
             await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
             bytes += buffer.WrittenCount;
             buffer.ResetWrittenCount();
@@ -305,11 +351,13 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
         {
 
             ChangeLog.WriteReadMark(buffer, started);
+            ThrowIfUnavailable();
             await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
             bytes += buffer.WrittenCount;
             mark = started;
         }
 
+        ThrowIfUnavailable();
         (_anchor, _schema) = (after, schema);
         return new(bytes, true, after < end, mark);
     }
@@ -425,6 +473,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     private bool Reset(DbConnection connection, bool publish = true)
     {
+        ThrowIfUnavailable();
         using (var newest = connection.CreateCommand())
         {
             newest.CommandText = TursoStatements.Incarnation;
@@ -446,6 +495,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
             schema[rows.GetInt64(0)] = (rows.GetString(1), rows.GetString(2));
         }
 
+        ThrowIfUnavailable();
         _schema = schema;
         return true;
     }
@@ -462,6 +512,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     internal long ReplayRewrite(TursoConnection source, TursoConnection target, bool final, CancellationToken token)
     {
+        ThrowIfUnavailable();
         _reader = source;
         if (_anchor > 0 && Scalar("SELECT 1 FROM turso_cdc WHERE change_id = $anchor;", _anchor) is null)
         {
@@ -534,6 +585,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
         replay.Resume();
         _store.RewriteAnchor = _anchor;
+        ThrowIfUnavailable();
         return _anchor - first;
     }
 

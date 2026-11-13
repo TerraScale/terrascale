@@ -305,7 +305,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     continue;
                 }
 
-                var job = new ShippingJob(next, CustomerWork(next), CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token), cancellationToken);
+                var job = new ShippingJob(next, CustomerWork(next), CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token, next.Tap.Refused), cancellationToken);
                 next.Job = job;
                 _jobs.Add(job);
                 job.Completion = Task.Run(() => ShipAsync(job.File, job.Cancellation.Token), CancellationToken.None);

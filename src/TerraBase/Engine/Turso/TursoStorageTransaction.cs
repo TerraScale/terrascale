@@ -288,15 +288,7 @@ internal sealed partial class TursoStorageTransaction(
 
     private void RefuseKnownFault()
     {
-        if (write && store.Ledger?.FailedClosed is { } failed)
-        {
-            throw new StorageCopyFaultedException($"storage failed closed: {failed}");
-        }
-
-        if (write && store.CopyFault is { } copyFault)
-        {
-            throw new StorageCopyFaultedException($"this copy is faulted: {copyFault}");
-        }
+        store.ThrowIfUnavailable();
     }
 
     private Exception? _followFailure;
@@ -394,15 +386,31 @@ internal sealed partial class TursoStorageTransaction(
             throw new InvalidOperationException("a failed statement rolled this transaction back, so it can only be disposed");
         }
 
+        RefuseKnownFault();
+        var native = session.Native;
+        OpenInterruptWindow(native);
+        using var refused = store.Refused.Register(InterruptCustomerStatement);
+        using var failed = store.Ledger?.Refused.Register(InterruptCustomerStatement);
         try
         {
-            return call();
+            RefuseKnownFault();
+            var result = call();
+            RefuseKnownFault();
+            return result;
         }
-
+        catch (Exception) when (store.CloseRefusal is not null)
+        {
+            RefuseKnownFault();
+            throw;
+        }
         catch (Exception error) when (NoteDamage(error) || Ended())
         {
             Aborted = _faulted = true;
             throw;
+        }
+        finally
+        {
+            CloseInterruptWindow(native);
         }
     }
 
@@ -480,6 +488,13 @@ internal sealed partial class TursoStorageTransaction(
         {
             await runner.RunAsync(() =>
             {
+                using var mutation = write && !store.IsSystem && store.Tenant is { } database
+                    ? store.Ledger?.Mutations(database).Enter() : null;
+                if (write && store.CloseRefusal is not null)
+                {
+                    store.Discard(session);
+                    return;
+                }
                 try
                 {
                     try
@@ -639,6 +654,7 @@ internal sealed partial class TursoStorageTransaction(
             {
                 return await session.ExecuteAsync(runner, () =>
                 {
+                    using var modifying = write ? store.EnterMutation() : null;
                     RunPendingSavepoint();
                     return Guarded(call);
                 }, cancellationToken).ConfigureAwait(false);
@@ -647,6 +663,7 @@ internal sealed partial class TursoStorageTransaction(
             return await runner.RunAsync(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                using var modifying = write ? store.EnterMutation() : null;
                 RunPendingSavepoint();
 
                 var result = Guarded(call);

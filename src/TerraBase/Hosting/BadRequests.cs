@@ -47,6 +47,12 @@ public static class BadRequests
                 Replace(context.Response);
                 await WriteAsync(context, error.StatusCode, CodeFor(error.StatusCode), error.Message, op: null).ConfigureAwait(false);
             }
+            catch (StorageProofPendingException) when (!context.Response.HasStarted)
+            {
+                Replace(context.Response);
+                context.Response.Headers.RetryAfter = "1";
+                await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "recovery_pending", "Storage recovery proof is pending; retry.", op: null).ConfigureAwait(false);
+            }
             catch (StorageCopyFaultedException) when (!context.Response.HasStarted)
             {
                 Replace(context.Response);

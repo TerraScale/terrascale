@@ -18,6 +18,7 @@ internal sealed partial class ContinuousBackup
     {
         try
         {
+            file.Tap.ThrowIfUnavailable();
             if (file.Database is { } database)
             {
                 var registered = await _fileCatalog.RegisteredFileAsync(database, cancellationToken).ConfigureAwait(false);
@@ -339,6 +340,8 @@ internal sealed partial class ContinuousBackup
 
     private async Task PutAsync(ShippedFile file, string key, FileStream sealedObject, string kind, CancellationToken cancellationToken)
     {
+        file.Tap.ThrowIfUnavailable();
+        cancellationToken.ThrowIfCancellationRequested();
         if (Unrecorded(file))
         {
             throw new InvalidOperationException("history lost before it was stored is not recorded with the backup yet; nothing after it is uploaded first");
@@ -346,6 +349,7 @@ internal sealed partial class ContinuousBackup
 
         sealedObject.Position = 0;
         await file.Target.Store.PutAsync(key, sealedObject, cancellationToken).ConfigureAwait(false);
+        file.Tap.ThrowIfUnavailable();
         _uploaded.Add(sealedObject.Length, new KeyValuePair<string, object?>("kind", kind));
     }
 

@@ -99,17 +99,17 @@ internal sealed partial class TursoStorageTransaction
             (List<SqlStatementColumn> Columns, List<object?[]> Rows, long Affected, bool Truncated) stepped;
             TursoBindings.SetQueryTimeout(native, statement.Timeout);
             TursoBindings.SetMaxValueLength(native, statement.MaxBytes);
-            OpenInterruptWindow(native);
             try
             {
                 using (cancellationToken.Register(static state => ((TursoStorageTransaction)state!).InterruptCustomerStatement(), this))
                 {
+                    store.ThrowIfUnavailable();
                     stepped = Step(prepared, statement, cancellationToken);
+                    store.ThrowIfUnavailable();
                 }
             }
             finally
             {
-                CloseInterruptWindow(native);
                 TursoBindings.SetQueryTimeout(native, TimeSpan.Zero);
                 TursoBindings.SetMaxValueLength(native, long.MaxValue);
             }
