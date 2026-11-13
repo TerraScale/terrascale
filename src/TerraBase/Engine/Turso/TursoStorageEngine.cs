@@ -330,6 +330,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         meter.CreateObservableGauge("terrabase.cdc.retained.rows", () => _stores.Values.Sum(store => store.RetainedCdcRows),
             description: "Retained CDC row span across open tenant databases, sampled by retention maintenance.");
         meter.CreateObservableGauge("terrabase.storage.open_writers", () => Pool.OpenWriters, description: "Client databases holding an open writer connection.");
+        meter.CreateObservableGauge("terrabase.storage.retained_keys", () => _retainedKeys,
+            description: "Database key files set aside at the last start because their main file and write-ahead log were absent.");
         _ownership = Own(configured.DataDirectory);
         try
         {
@@ -1322,7 +1324,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         var temporary = Path.Combine(Path.GetDirectoryName(path)!, $".{name}.{EntityIds.New()}.creating");
         var database = key is { } location ? new TenantContext(location.Organization, PlanTier.Hobby, location.Project, location.Database) : null;
         var published = false;
-        var keyPublished = false;
+        var keyAlone = false;
         try
         {
             RejectDatabaseLinks(temporary);
@@ -1344,9 +1346,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 }
 
                 File.Move(temporary + DatabaseKeys.Suffix, path + DatabaseKeys.Suffix, overwrite: false);
-                keyPublished = true;
+                keyAlone = true;
                 SyncPublicationDirectory(Path.GetDirectoryName(path)!);
                 File.Move(temporary, path, overwrite: false);
+                keyAlone = false;
                 DirectorySync(Path.GetDirectoryName(path)!);
             }, CancellationToken.None).ConfigureAwait(false);
             published = true;
@@ -1363,8 +1366,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 DeleteFiles(temporary);
                 DirectorySync(Path.GetDirectoryName(path)!);
             }, CancellationToken.None).ConfigureAwait(false);
-            using var mutation = !published && keyPublished && database is not null ? Ledger.Mutations(database).TryEnter() : null;
-            if (!published && keyPublished && (database is null || mutation is not null && Ledger.MemoryRefusal(database) is null))
+            using var mutation = keyAlone && database is not null ? Ledger.Mutations(database).TryEnter() : null;
+            if (keyAlone && (database is null || mutation is not null && Ledger.MemoryRefusal(database) is null))
             {
                 await Io.RunAsync(() =>
                 {

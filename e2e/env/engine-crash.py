@@ -624,13 +624,22 @@ def boundary_cases(selected=None):
         (directory / (orphan + ".db.key")).write_bytes(kept)
         start()
         assert not (directory / (orphan + ".db.key")).exists()
+        retained = list(directory.glob("." + orphan + ".*.retained-key"))
+        assert len(retained) == 1 and retained[0].read_bytes() == kept
+        assert gauge("terrabase_storage_retained_keys") == len(list((state / "data").rglob(".*.retained-key")))
         assert (directory / (existing + ".db.key")).read_bytes() == kept
         hook("create", orphan)
         assert (directory / (orphan + ".db")).exists()
+        assert (directory / (orphan + ".db.key")).read_bytes() != kept
         assert sql(project, existing, ["SELECT id FROM kept;"])["results"][0]["rows"] == [[1]]
         end()
+        start()
+        assert list(directory.glob("." + orphan + ".*.retained-key")) == retained and retained[0].read_bytes() == kept
+        assert (directory / (orphan + ".db")).exists()
+        end()
         print(
-            "orphan key without main, log or creation removed at start; same-id creation succeeded; existing key kept",
+            "orphan key without main, log or creation retained at start as " + retained[0].name
+            + " with identical bytes and kept across restart; same-id creation succeeded; existing key kept",
             flush=True,
         )
 
@@ -1267,15 +1276,21 @@ try:
     assert hook("ledger", database) == [0, 0]
     print("delete restart: no database or sidecars remain", flush=True)
     end()
+    retained_before = len(list((state / "data" / organization / project).glob(".*.retained-key")))
     crash_request("publish", "POST", f"/v1/projects/{project}/databases", {"name": "half"})
     start()
     records = request("GET", f"/v1/projects/{project}/databases")
     assert not list((state / "data").glob("*/*/.*.creating*"))
+    assert len(list((state / "data" / organization / project).glob(".*.retained-key"))) == retained_before + 1
     for file in (state / "data" / organization / project).glob("*.db.key"):
         assert pathlib.Path(str(file)[:-4]).exists()
     for file in (state / "data" / organization / project).glob("*.db"):
         assert pathlib.Path(str(file) + ".key").exists()
-    print("publish restart: no half pairs or creation scratch remain; catalog=" + json.dumps(records), flush=True)
+    print(
+        "publish restart: no half pairs or creation scratch remain; the unpublished key is retained; catalog="
+        + json.dumps(records),
+        flush=True,
+    )
     end()
     start()
     request_database = request("POST", f"/v1/projects/{project}/databases", {"name": "healthy"})["id"]
