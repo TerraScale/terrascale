@@ -91,6 +91,22 @@ export async function cluster(request: APIRequestContext, members: Node[], label
     const line = (await response.text()).split('\n').find((candidate) => candidate.startsWith('terrabase_clock_mode{') && candidate.endsWith(' 1'));
     return `${line?.match(/mode="([a-z_]+)"/)?.[1]}/${line?.match(/reason="([a-z_]+)"/)?.[1]}`;
   };
+  const clockState = async (node: Node) => {
+    const at = new Date().toISOString();
+    const response = await request.get(`http://127.0.0.1:${node.metrics}/metrics`);
+    expect(response.ok()).toBe(true);
+    const lines = (await response.text()).split('\n');
+    const value = (name: string) => {
+      const line = lines.find((candidate) => candidate.startsWith(`${name}{`) || candidate.startsWith(`${name} `));
+      return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
+    };
+    const mode = lines.find((line) => line.startsWith('terrabase_clock_mode{') && line.endsWith(' 1'));
+    return {
+      at, allowed: value('terrabase_clock_local_writes_allowed'), rounds: value('terrabase_clock_agreeing_rounds'),
+      mode: `${mode?.match(/mode="([a-z_]+)"/)?.[1]}/${mode?.match(/reason="([a-z_]+)"/)?.[1]}`,
+      steps: value('terrabase_clock_steps_total'), answering: value('terrabase_clock_peers_answering'), agreeing: value('terrabase_clock_peers_agreeing'),
+    };
+  };
   const transitions = (node: Node) => log(node).split('\n').filter((line) => line.includes('Clock trust mode')).slice(-2)
     .map((line) => JSON.parse(line.slice(line.indexOf('{')))).map((entry: { Mode: string; Reason: string }) => `${entry.Mode}/${entry.Reason}`);
   const previousBuild = (headers: IncomingHttpHeaders) => headers['x-terrabase-peer-credential'] === peerSecret
@@ -306,6 +322,6 @@ export async function cluster(request: APIRequestContext, members: Node[], label
   };
   return {
     set, stepAfterKernel, setPeers, log, metric, allowed, mode, transitions, previousBuild, proxy, standIn, holds, start, stop, opens, ready, internal, json, clockPeer, refused, prepare,
-    database, finish, observations, opened,
+    database, finish, observations, opened, clockState,
   };
 }
