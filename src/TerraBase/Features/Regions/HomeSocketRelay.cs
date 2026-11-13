@@ -232,20 +232,25 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
 
     private static async Task RefuseAsync(WebSocket client, string code, string message, CancellationToken cancellationToken, long? id = null)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(Shutdown.DrainBudget);
-        var error = new SqlError(code, message);
-        var reply = new SqlSocketError(id, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), "").Error, false);
         try
         {
-            await client.SendAsync(JsonSerializer.SerializeToUtf8Bytes(reply, SqlJsonContext.Default.SqlSocketError), WebSocketMessageType.Text, true, deadline.Token)
-                .ConfigureAwait(false);
-            await client.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, code, deadline.Token).ConfigureAwait(false);
+            await ReportAsync(client, code, message, id, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             client.Abort();
         }
+    }
+
+    private static async Task ReportAsync(WebSocket client, string code, string message, long? id, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(Shutdown.DrainBudget);
+        var error = new SqlError(code, message);
+        var reply = new SqlSocketError(id, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), "").Error, false);
+        await client.SendAsync(JsonSerializer.SerializeToUtf8Bytes(reply, SqlJsonContext.Default.SqlSocketError), WebSocketMessageType.Text, true, deadline.Token)
+            .ConfigureAwait(false);
+        await client.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, code, deadline.Token).ConfigureAwait(false);
     }
 
     private static async Task PumpAsync(WebSocket from, WebSocket to, Action beginClose, SessionRelay state, SqlSocketInput? input, SqlSocketInput? answers, TimeProvider time, IMemoryBudget memory, TenantContext tenant, string home, CancellationToken cancellationToken)
@@ -340,7 +345,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                 }
                 catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    break;
+                    return;
                 }
                 catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException or InvalidDataException or JsonException)
                 {
@@ -380,7 +385,8 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                             var pending = state.Pending;
                             if (pending.Commits)
                             {
-                                await RefuseAsync(from, SqlErrors.WriteOutcomeUnknown, SqlErrors.OutcomeUnknown(home).Message, cancellationToken, pending.Id).ConfigureAwait(false);
+                                to.Abort();
+                                await state.EndAsync(() => ReportAsync(from, SqlErrors.WriteOutcomeUnknown, SqlErrors.OutcomeUnknown(home).Message, pending.Id, cancellationToken)).ConfigureAwait(false);
                             }
 
                             to.Abort();
@@ -391,8 +397,8 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                     {
                         var pending = state.Pending;
                         var error = pending.Commits ? SqlErrors.OutcomeUnknown(home) : HomeSessions.Unreachable(home);
-                        await RefuseAsync(to, error.Code, error.Message, cancellationToken, pending.Id).ConfigureAwait(false);
                         from.Abort();
+                        await state.EndAsync(() => ReportAsync(to, error.Code, error.Message, pending.Id, cancellationToken)).ConfigureAwait(false);
                         return;
                     }
 
@@ -429,7 +435,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             if (input is null && state.Pending.Commits && !cancellationToken.IsCancellationRequested)
             {
                 var pending = state.Pending;
-                await RefuseAsync(to, SqlErrors.WriteOutcomeUnknown, SqlErrors.OutcomeUnknown(home).Message, cancellationToken, pending.Id).ConfigureAwait(false);
+                await state.EndAsync(() => ReportAsync(to, SqlErrors.WriteOutcomeUnknown, SqlErrors.OutcomeUnknown(home).Message, pending.Id, cancellationToken)).ConfigureAwait(false);
             }
             else
             {

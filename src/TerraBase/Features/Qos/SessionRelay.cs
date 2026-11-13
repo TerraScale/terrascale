@@ -10,6 +10,7 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
     private readonly SqlTransactionClock _transaction = new(time);
     private SessionMessageDeadline? _waiting;
     private TaskCompletionSource? _settled;
+    private Task? _ending;
     private bool _inTransaction;
     private bool _failed;
     private readonly SessionMessageDeadline _answer = new(time, null, executing: true);
@@ -99,6 +100,14 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
             {
                 completed?.Invoke(false);
             }
+        }
+    }
+
+    public Task EndAsync(Func<Task> end)
+    {
+        lock (_gate)
+        {
+            return _ending ??= end();
         }
     }
 

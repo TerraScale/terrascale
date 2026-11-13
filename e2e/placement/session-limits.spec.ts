@@ -707,6 +707,7 @@ test('a WebSocket relay close drains a stalled answer within its closing budget'
     const began = performance.now();
     expect((await reply)[0]).toMatchObject({ id: 9, type: 'error', error: { code: 'write_outcome_unknown', sqlstate: '08007' } });
     expect((await ws.closing).reason).toBe('write_outcome_unknown');
+    await ws.closed;
     expect(performance.now() - began).toBeLessThan(33_000);
     expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows')).results[0].rows).toEqual([[7]]);
     const metrics = await request.get('http://127.0.0.1:9191/metrics');
