@@ -94,7 +94,8 @@ gh workflow run ci.yml --repo TerraScale/terrascale --ref main -f reconcile_auth
 
 These requests still require journey-qualified main and changed inputs.
 An equal live revision does not deploy again. An open issue with two failures for
-that target still blocks these requests until the issue closes or target changes. Inspect the reconcile decision,
+that target still blocks these requests until the issue closes or target changes.
+Inspect the reconcile decision,
 release proof and production journey before reporting recovery.
 
 ## Read and runner budget
@@ -103,7 +104,10 @@ With the newest main commit qualified and nothing changed, a schedule uses one
 runner job, three GitHub API reads (one candidate CI run, one CI jobs page and
 one open deployment-alert issue page), ten Cloudflare reads for five existing
 Workers, and two readiness requests. Qualification is shared across all things.
-It installs nothing, builds nothing and dispatches nothing. Extra open-alert
+It installs nothing, builds nothing and dispatches nothing. CI time excludes
+scheduled Sites runs, so measurement does not add a second no-op runner.
+Event-driven Sites runs and service releases retain their CI time job.
+Extra open-alert
 pages add one read per 100 issues. Checking the newest ten commits takes at most
 twenty qualification reads. Git supplies history and input comparisons.
 
