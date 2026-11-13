@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { once } from 'node:events';
 import type { BrowserContext, Page } from '@playwright/test';
 import { Audit, auditedContext, test, expect } from '../support/audit';
+import { budgetWindow, waitForBudgetWindow } from '../support/budget-window';
 import { confirmWithPassword, hostedReady, onboard, signUp, verify } from '../support/hosted';
 import { newAddress, nextMail, withInboxBudget } from '../support/inbox';
 import { enterSecret } from '../support/secret';
@@ -357,7 +358,10 @@ test.describe('project MFA and session policy', () => {
     await onLocalStack(async () => {
       const probe = await auditedContext(browser, { storageState: { cookies: [], origins: [] } });
       const statuses: number[] = [];
+      const window = 15 * 60_000;
+      let firstWindow: number | undefined;
       try {
+        await waitForBudgetWindow(probe.request, window);
         for (let index = 0; index < 11; index++) {
           const primary = await probe.request.post(`${auth}/ui/${project}/sign-in/password`, {
             headers: { Origin: auth }, form: { email: endUser, password },
@@ -372,6 +376,8 @@ test.describe('project MFA and session policy', () => {
           const wrong = await probe.request.post(`${auth}/ui/${project}/sign-in/mfa`, {
             headers: { Origin: auth }, form: { challenge: challenge!, code: 'invalid-recovery-code' },
           });
+          firstWindow ??= budgetWindow(wrong, window);
+          expect(budgetWindow(wrong, window)).toBe(firstWindow);
           statuses.push(wrong.status());
           expect([401, 429], `MFA proof attempt ${index + 1}`).toContain(wrong.status());
           if (wrong.status() === 401) expect(await wrong.text()).toContain('That code is wrong or already used');

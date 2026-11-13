@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 
 const platformBuckets = new Set(['journey-backups', 'ts-terrabase-shapes-prod']);
@@ -16,9 +16,13 @@ const sha256 = (data, encoding) => createHash('sha256').update(data).digest(enco
 const hmac = (key, data) => createHmac('sha256', key).update(data).digest();
 const encode = (value) => encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
 const decode = (value) => decodeURIComponent(value.replace(/\+/g, '%20'));
-const credentials = () => {
+const credentials = (requested) => {
   const [id, secret] = readFileSync(`${process.env.E2E_STATE}/r2`, 'utf8').split('\n');
-  return { id, secret };
+  if (requested === id) return { id, secret };
+  const path = `${process.env.E2E_STATE}/r2-accounts/${sha256(requested, 'hex')}`;
+  if (!existsSync(path)) return null;
+  const [account, key] = readFileSync(path, 'utf8').split('\n');
+  return requested === account ? { id: account, secret: key } : null;
 };
 
 function amzTime(value) {
@@ -37,8 +41,8 @@ function signed(request, path, query) {
   if (!credential || !signedHeaders || !signature || !date || !payload) return 'unsigned request';
   if (presigned && query.get('X-Amz-Algorithm') !== 'AWS4-HMAC-SHA256') return 'unknown algorithm';
   const [id, day, region, service, terminal] = credential.split('/');
-  const keys = credentials();
-  if (id !== keys.id || region !== 'auto' || service !== 's3' || terminal !== 'aws4_request' || day !== date.slice(0, 8)) return 'unknown credential';
+  const keys = credentials(id);
+  if (!keys || id !== keys.id || region !== 'auto' || service !== 's3' || terminal !== 'aws4_request' || day !== date.slice(0, 8)) return 'unknown credential';
   const at = amzTime(date);
   const lifetime = presigned ? Number(query.get('X-Amz-Expires')) * 1000 : 15 * 60_000;
   if (!Number.isFinite(at) || !(lifetime > 0) || Date.now() > at + lifetime || at > Date.now() + 15 * 60_000) return 'expired signature';
@@ -55,7 +59,7 @@ function signed(request, path, query) {
   const scope = `${day}/${region}/${service}/${terminal}`;
   const key = hmac(hmac(hmac(hmac(`AWS4${keys.secret}`, day), region), service), terminal);
   const expected = createHmac('sha256', key).update(['AWS4-HMAC-SHA256', date, scope, sha256(canonical, 'hex')].join('\n')).digest();
-  return timingSafeEqual(expected, Buffer.from(signature, 'hex')) ? null : 'signature mismatch';
+  return timingSafeEqual(expected, Buffer.from(signature, 'hex')) ? { account: id } : 'signature mismatch';
 }
 
 function cors(response) {
@@ -74,7 +78,8 @@ function unexpected(request, response, status, code, detail) {
   fail(response, status, code, detail);
 }
 
-function list(request, response, name, query) {
+function list(request, response, account, name, query) {
+  const accountPrefix = `${account}/${name}/`;
   const prefix = query.get('prefix') ?? '';
   const limit = Number(query.get('max-keys') ?? 1000);
   const platform = platformBuckets.has(name);
@@ -83,13 +88,13 @@ function list(request, response, name, query) {
     || !Number.isInteger(limit) || limit < 1 || limit > 1000 || (encoded && query.get('encoding-type') !== 'url'))
     return unexpected(request, response, 400, 'InvalidArgument', 'a listing that is not ListObjectsV2 of one project prefix');
   const text = (value) => (encoded ? value.split('/').map(encode).join('/') : value);
-  const keys = [...objects.keys()].filter((key) => key.startsWith(`${name}/${prefix}`) && (!query.has('start-after') || key.slice(name.length + 1) > query.get('start-after'))).sort();
+  const keys = [...objects.keys()].filter((key) => key.startsWith(`${accountPrefix}${prefix}`) && (!query.has('start-after') || key.slice(accountPrefix.length) > query.get('start-after'))).sort();
   const contents = keys.slice(0, limit).map((key) => {
     const stored = objects.get(key);
-    return `<Contents><Key>${text(key.slice(name.length + 1))}</Key><LastModified>${new Date(stored.modified).toISOString()}</LastModified>`
+    return `<Contents><Key>${text(key.slice(accountPrefix.length))}</Key><LastModified>${new Date(stored.modified).toISOString()}</LastModified>`
       + `<ETag>${stored.etag.replaceAll('"', '&quot;')}</ETag><Size>${stored.body.length}</Size><StorageClass>STANDARD</StorageClass></Contents>`;
   });
-  const more = keys.length > limit ? `<NextContinuationToken>${Buffer.from(keys[limit - 1]).toString('base64')}</NextContinuationToken>` : '';
+  const more = keys.length > limit ? `<NextContinuationToken>${Buffer.from(keys[limit - 1].slice(account.length + 1)).toString('base64')}</NextContinuationToken>` : '';
   const body = `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>${name}</Name>`
     + `<Prefix>${text(prefix)}</Prefix><KeyCount>${contents.length}</KeyCount><MaxKeys>${limit}</MaxKeys>${encoded ? '<EncodingType>url</EncodingType>' : ''}`
     + `<IsTruncated>${keys.length > limit}</IsTruncated>${more}${contents.join('')}</ListBucketResult>`;
@@ -122,14 +127,15 @@ createServer((request, response) => {
   }
   const platformBucket = /^\/(journey-backups|ts-terrabase-shapes-prod)\/?$/.exec(rawPath);
   if (!target && !listed && !platformBucket) return unexpected(request, response, 404, 'NoSuchBucket', 'path outside the files bucket');
-  const key = target ? `${target[1]}/${target[2]}` : null;
   const chunks = [];
   request.on('data', (chunk) => chunks.push(chunk));
   request.on('end', () => {
     const body = Buffer.concat(chunks);
     if (request.headers.origin === origin) cors(response);
-    const denied = signed(request, rawPath, query);
-    if (denied) return unexpected(request, response, 403, 'SignatureDoesNotMatch', denied);
+    const authenticated = signed(request, rawPath, query);
+    if (typeof authenticated === 'string') return unexpected(request, response, 403, 'SignatureDoesNotMatch', authenticated);
+    const { account } = authenticated;
+    const key = target ? `${account}/${target[1]}/${target[2]}` : null;
     if (platform && query.has('uploadId')) return unexpected(request, response, 400, 'InvalidRequest', 'multipart uploads are not implemented');
     if (platform && /^[0-9a-f]{64}$/.test(request.headers['x-amz-content-sha256'] ?? '')
       && request.headers['x-amz-content-sha256'] !== sha256(body, 'hex'))
@@ -140,19 +146,20 @@ createServer((request, response) => {
     }
     if (platformBucket && (query.has('uploads') || query.has('versions'))) {
       const name = platformBucket[1];
+      const accountPrefix = `${account}/${name}/`;
       const prefix = query.get('prefix') ?? '';
       const versions = query.has('versions');
       const root = versions ? 'ListVersionsResult' : 'ListMultipartUploadsResult';
-      const entries = versions ? [...objects.keys()].filter((key) => key.startsWith(`${name}/${prefix}`)).map((key) => {
+      const entries = versions ? [...objects.keys()].filter((key) => key.startsWith(`${accountPrefix}${prefix}`)).map((key) => {
         const stored = objects.get(key);
-        return `<Version><Key>${key.slice(name.length + 1)}</Key><VersionId>null</VersionId><IsLatest>true</IsLatest><LastModified>${new Date(stored.modified).toISOString()}</LastModified><ETag>${stored.etag.replaceAll('"', '&quot;')}</ETag><Size>${stored.body.length}</Size><StorageClass>STANDARD</StorageClass></Version>`;
+        return `<Version><Key>${key.slice(accountPrefix.length)}</Key><VersionId>null</VersionId><IsLatest>true</IsLatest><LastModified>${new Date(stored.modified).toISOString()}</LastModified><ETag>${stored.etag.replaceAll('"', '&quot;')}</ETag><Size>${stored.body.length}</Size><StorageClass>STANDARD</StorageClass></Version>`;
       }).join('') : '';
       const text = `<?xml version="1.0" encoding="UTF-8"?><${root} xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>${name}</Name><Bucket>${name}</Bucket><Prefix>${prefix}</Prefix><IsTruncated>false</IsTruncated>${entries}</${root}>`;
       response.writeHead(200, { 'content-type': 'application/xml', 'content-length': Buffer.byteLength(text) });
       return response.end(text);
     }
-    if (platformBucket && query.has('list-type')) return list(request, response, platformBucket[1], query);
-    if (listed) return list(request, response, listed[1], query);
+    if (platformBucket && query.has('list-type')) return list(request, response, account, platformBucket[1], query);
+    if (listed) return list(request, response, account, listed[1], query);
     if (request.method === 'PUT') {
       if (Number(request.headers['content-length']) !== body.length) return unexpected(request, response, 400, 'IncompleteBody', 'content-length differs from the body');
       if ((!platform || request.headers['x-amz-checksum-sha256']) && request.headers['x-amz-checksum-sha256'] !== sha256(body, 'base64')) return fail(response, 400, 'BadDigest', 'The SHA256 you specified did not match the calculated checksum.');
