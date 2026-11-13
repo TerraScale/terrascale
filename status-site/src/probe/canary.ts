@@ -44,6 +44,15 @@ const REGION_CODE = /^[a-z]{3}$/;
 /** A three-letter deployment region code, e.g. gru or sjc. */
 export const isRegionCode = (value: unknown): value is string => typeof value === "string" && REGION_CODE.test(value);
 
+const projectKeyBody = (key: string): string => (key.startsWith("sk_") ? key.slice(3) : key);
+
+export const projectKeyId = (key: string): string => projectKeyBody(key).slice(0, 26);
+
+const isProjectKey = (key: string): boolean => {
+  const body = projectKeyBody(key);
+  return body.length === 79 && isId(body.slice(0, 26)) && /^_[0-9a-hjkmnp-tv-z]{52}$/.test(body.slice(26));
+};
+
 /** The canary table, quoted, and its fixture row's id (scripts/recover-canaries.py). */
 export const CANARY_TABLE = '"canary"';
 export const CANARY_ROW = "00000000000000000000000007";
@@ -65,9 +74,7 @@ export function isCanaryConfig(value: unknown): value is CanaryConfig {
       typeof entry.database === "string" &&
       NAME.test(entry.database) &&
       typeof entry.key === "string" &&
-      entry.key.length === 79 &&
-      isId(entry.key.slice(0, 26)) &&
-      /^_[0-9a-hjkmnp-tv-z]{52}$/.test(entry.key.slice(26))
+      isProjectKey(entry.key)
     );
   } catch {
     return false;
@@ -373,7 +380,7 @@ async function exchangeToken(
       headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": USER_AGENT },
       body: new URLSearchParams({
         grant_type: "client_credentials",
-        client_id: config.key.slice(0, 26),
+        client_id: projectKeyId(config.key),
         client_secret: config.key,
         project: config.project,
         scope,
@@ -419,7 +426,7 @@ export async function runTokenProbe(config: CanaryConfig, fetcher: typeof fetch 
         headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": USER_AGENT },
         body: new URLSearchParams({
           grant_type: "client_credentials",
-          client_id: config.key.slice(0, 26),
+          client_id: projectKeyId(config.key),
           client_secret: config.key,
           project: config.project,
           scope: "sql:read",

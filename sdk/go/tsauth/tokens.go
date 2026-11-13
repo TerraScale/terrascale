@@ -45,8 +45,8 @@ const (
 type APIKeyConfig struct {
 	// Issuer is the tenant issuer; empty means DefaultIssuer.
 	Issuer string
-	// Key is the whole API key, <ULID>_<52>. It is the client secret; its
-	// leading 26-character ULID is the client id.
+	// Key is the whole API key, sk_<ULID>_<52>, or <ULID>_<52> for a key
+	// issued earlier. It is the client secret; the ULID is the client id.
 	Key string
 	// Project is the project an organization key's token acts in; empty
 	// yields an organization token. A project key may name its own project.
@@ -82,7 +82,18 @@ type ExchangeConfig struct {
 	HTTPClient *http.Client
 }
 
-var keyPattern = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$`)
+var keyPattern = regexp.MustCompile(`^(?:sk_)?[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$`)
+
+// APIKeyID returns the ULID client id of a project API key.
+func APIKeyID(key string) (string, error) {
+	if !keyPattern.MatchString(key) {
+		return "", errors.New("tsauth: Key must be an API key: optional sk_, a canonical ULID, an underscore and 52 base32 secret characters")
+	}
+	if strings.HasPrefix(key, "sk_") {
+		return key[3:29], nil
+	}
+	return key[:26], nil
+}
 
 // checkScopes accepts only the four TerraBase scopes: ts-auth issues no other.
 func checkScopes(scopes []string) error {
@@ -96,8 +107,9 @@ func checkScopes(scopes []string) error {
 
 // NewAPIKeySource returns a source of tokens for an API key.
 func NewAPIKeySource(cfg APIKeyConfig) (*TokenSource, error) {
-	if !keyPattern.MatchString(cfg.Key) {
-		return nil, errors.New("tsauth: Key must be an API key, a canonical ULID, an underscore and 52 base32 secret characters")
+	client, err := APIKeyID(cfg.Key)
+	if err != nil {
+		return nil, err
 	}
 	if err := checkScopes(cfg.Scopes); err != nil {
 		return nil, err
@@ -118,7 +130,6 @@ func NewAPIKeySource(cfg APIKeyConfig) (*TokenSource, error) {
 	if len(cfg.Scopes) > 0 {
 		form.Set("scope", strings.Join(cfg.Scopes, " "))
 	}
-	client := cfg.Key[:26]
 	return newSource(cfg.HTTPClient, func(ctx context.Context, hc *http.Client) (*tokenResponse, error) {
 		return requestToken(ctx, hc, endpoint, form, client, cfg.Key)
 	}), nil

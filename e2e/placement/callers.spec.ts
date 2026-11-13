@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { expect } from '@playwright/test';
 import { auth, e2eRoot, production, stateDir } from '../support/stack';
+import { keyId } from '../support/api-key';
 import { journey, saveSecret } from '../support/state';
 import { test, replica, project, name, json, sql, removeDatabase, type Database } from './support';
 
@@ -17,7 +18,7 @@ test('bearer RPC calls preserve regional forwarding and usage with caller assert
     await sql(cells, replica, created.id, 'INSERT INTO caller_bridge_rows VALUES (291)');
     const response = await request.post(auth + '/terrascale/oauth/token', {
       form: {
-        grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey,
+        grant_type: 'client_credentials', client_id: keyId(current.apiKey), client_secret: current.apiKey,
         project: current.projectId, scope: 'sql:read sql:write databases:read databases:write',
       },
     });

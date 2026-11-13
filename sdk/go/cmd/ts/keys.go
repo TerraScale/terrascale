@@ -89,7 +89,7 @@ func rotateKey(ctx context.Context, s *session, signIn func(context.Context) (*t
 	// A mismatched or malformed success can contain sensitive remote content.
 	if key == nil || key.APIKey.ID != id || key.APIKey.OrganizationID != s.org || key.APIKey.ProjectID != s.project ||
 		(grace > 0) != (key.APIKey.PreviousSecretExpiresAt != nil) ||
-		len(key.Key) != 79 || !strings.HasPrefix(key.Key, id+"_") || strings.Trim(key.Key[27:], "0123456789abcdefghjkmnpqrstvwxyz") != "" {
+		!strings.HasPrefix(key.Key, "sk_"+id+"_") || strings.Trim(key.Key[len("sk_")+27:], "0123456789abcdefghjkmnpqrstvwxyz") != "" || len(key.Key) != len("sk_")+79 {
 		return errors.New("Rotation response did not match the key contract; inspect key state before retrying.")
 	}
 	if jsonMode(out) {

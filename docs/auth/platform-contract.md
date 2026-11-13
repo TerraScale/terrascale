@@ -202,10 +202,11 @@ An API key is an OAuth 2.0 client credential owned by an organization or a
 project. It is not a bearer token: code exchanges it at the token endpoint
 (section 6) for a short-lived token.
 
-- **Format.** `<ULID>_<52 chars>`, 79 characters. The first 26 characters
-  are the canonical uppercase ULID client id; the secret uses lowercase Crockford
+- **Format.** `sk_<ULID>_<52 chars>`, 82 characters. The key id is the
+  canonical uppercase ULID after `sk_`; the secret uses lowercase Crockford
   base32 (`0-9a-z` without `i`, `l`, `o`, `u`) and holds 260 random bits.
-  The client secret is the **whole** key string.
+  The client id is that ULID. The client secret is the **whole** key string.
+  Keys issued earlier as `<ULID>_<52 chars>` (79 characters) still authenticate.
 - **Shown once.** Creation and rotation answer the key string once (`key`).
   ts-auth stores only its SHA-256 and compares in constant time.
 - **Scope.** A project key reaches only its project, and only one database if it

@@ -40,7 +40,8 @@ namespace TerraScale.Dashboard.Features.Databases
 
                     const apiKey = process.env.TERRASCALE_API_KEY;
                     const auth = createTsAuthClient({ apiBaseUrl: "https://auth.terrascale.tech", instanceSlug: "terrascale" });
-                    const keyId = apiKey.slice(0, apiKey.indexOf("_"));
+                    const keyBody = apiKey.startsWith("sk_") ? apiKey.slice(3) : apiKey;
+                    const keyId = keyBody.slice(0, keyBody.indexOf("_"));
                     async function getAccessToken() {
                       const result = await auth.oidc.token(keyId, apiKey, { grant_type: "client_credentials", project: "{{projectId}}", scope: "sql:read sql:write" });
                       if (!result.ok) throw new Error("Token exchange failed");

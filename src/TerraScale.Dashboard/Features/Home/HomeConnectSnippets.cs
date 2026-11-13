@@ -14,7 +14,8 @@ namespace TerraScale.Dashboard.Features.Home
         set -o pipefail
         read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter
         ts_token() {
-          printf 'user = "%s:%s"\n' "${TERRASCALE_API_KEY%%_*}" "$TERRASCALE_API_KEY" |
+          key="${TERRASCALE_API_KEY#sk_}"
+          printf 'user = "%s:%s"\n' "${key%%_*}" "$TERRASCALE_API_KEY" |
             curl -sS --fail-with-body --config - -d grant_type=client_credentials \
               https://auth.terrascale.tech/terrascale/oauth/token |
             jq -er '.access_token | select(type == "string" and length > 0)'

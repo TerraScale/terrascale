@@ -8,6 +8,7 @@ import { expect } from '@playwright/test';
 import { request } from './client-address';
 import { newAddress, nextMail } from './inbox';
 import { auth, dash, onLocalStack, stateDir } from './stack';
+import { keyId } from './api-key';
 import { journey, saveCookies, saveSecret } from './state';
 
 export type AuthOwner = { runId: string; password: string; organizationId: string; projectId: string };
@@ -83,12 +84,12 @@ async function checkMemberAuthority(page: Page, adminKey: string, ownerToken: st
     });
     expect(accepted.status()).toBe(200);
     const proof = await stepUp(member, memberToken, 'rotate_api_key');
-    const rotated = await member.post(platformProject + '/api-keys/' + adminKey.slice(0, 26) + '/rotate', {
+    const rotated = await member.post(platformProject + '/api-keys/' + keyId(adminKey) + '/rotate', {
       headers: { ...memberHeaders, 'X-TerraScale-Step-Up-Proof': proof }, data: { previous_secret_ttl: 0 },
     });
     expect(rotated.status()).toBe(403);
     expect((await rotated.json()).error.code).toBe('forbidden_role');
-    const cleared = await member.put(platformProject + '/api-keys/' + adminKey.slice(0, 26) + '/allowed-cidrs', {
+    const cleared = await member.put(platformProject + '/api-keys/' + keyId(adminKey) + '/allowed-cidrs', {
       headers: memberHeaders, data: { allowed_cidrs: [] },
     });
     expect(cleared.status()).toBe(403);
@@ -105,7 +106,7 @@ async function checkMemberAuthority(page: Page, adminKey: string, ownerToken: st
       expect(refused.status()).toBe(403);
       expect((await refused.json()).error.code).toBe('insufficient_scope');
     }
-    const revoked = await member.delete(platformProject + '/api-keys/' + key.slice(0, 26), { headers: memberHeaders });
+    const revoked = await member.delete(platformProject + '/api-keys/' + keyId(key), { headers: memberHeaders });
     expect(revoked.status()).toBe(204);
     const deletionProof = await stepUp(member, memberToken, 'delete_account');
     const deleted = await member.delete(auth + '/v1/terrascale/account', {
@@ -176,9 +177,9 @@ async function checkSignupManagement(page: Page, management: AuthManagement): Pr
     const events = (await audit.json()).items as { actor: string; action: string; detail: string }[];
     for (const operation of ['create_project_invitation', 'revoke_project_invitation', 'approve_project_waitlist',
       'reject_project_waitlist', 'update_project_settings']) {
-      expect(events.some(event => event.actor === management.writeKey.slice(0, 26)
+      expect(events.some(event => event.actor === keyId(management.writeKey)
         && event.action === operation + '.succeeded')).toBe(true);
-      expect(events.some(event => event.actor === management.readKey.slice(0, 26)
+      expect(events.some(event => event.actor === keyId(management.readKey)
         && event.action === operation + '.failed' && event.detail.includes('status=403'))).toBe(true);
     }
   } finally {
@@ -324,7 +325,7 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
     });
     expect(crossVerify.status()).toBe(200);
     expect((await crossVerify.json()).valid).toBe(false);
-    const otherRevoked = await page.request.delete(otherKeys + '/' + otherKey.slice(0, 26), {
+    const otherRevoked = await page.request.delete(otherKeys + '/' + keyId(otherKey), {
       headers: { Authorization: 'Bearer ' + ownerToken },
     });
     expect(otherRevoked.status()).toBe(204);
@@ -364,7 +365,7 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
     const audit = await page.request.get('/api/v1/dashboard/audit-events', { params: { action, range: '7d' } });
     expect(audit.status()).toBe(200);
     const events = (await audit.json()).events as { actor: string; action: string; source: string }[];
-    expect(events.some(event => event.actor === management.writeKey.slice(0, 26)
+    expect(events.some(event => event.actor === keyId(management.writeKey)
       && event.action === action && event.source === 'ts-auth')).toBe(true);
   }
   const events: { actor: string; action: string; detail: string }[] = [];
@@ -405,7 +406,7 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
     ['update_project_settings.failed', management.writeKey, 400],
     ['set_project_provider.failed', management.writeKey, 403],
   ] as const) {
-    expect(events.some(event => event.actor === key.slice(0, 26) && event.action === action
+    expect(events.some(event => event.actor === keyId(key) && event.action === action
       && event.detail.includes('status=' + status))).toBe(true);
   }
   const deleted = await page.request.delete(`${root}/users/${management.user}`, {
@@ -415,7 +416,7 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
   for (const key of [management.readKey, management.writeKey]) {
     const revoked = await page.request.post('/api/v1/dashboard/credentials/revoke', {
       headers: { Accept: 'application/json' },
-      form: { _csrf: management.csrf, keyId: key.slice(0, 26) },
+      form: { _csrf: management.csrf, keyId: keyId(key) },
     });
     expect(revoked.status()).toBe(204);
     const users = await page.request.get(root + '/users', { headers: { Authorization: `Bearer ${key}` } });

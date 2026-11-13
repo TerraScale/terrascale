@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
 import { auth, dash, e2eRoot, stateDir } from '../support/stack';
+import { keyId } from '../support/api-key';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { receiptHandoff } from './receipt-handoff';
 import { crashWrite, endpoint, faultId, Ledger, nodes, nodeRequest, nodeStatus, regions, restartAfterKill, tokenReady, topology } from './support';
@@ -31,7 +32,7 @@ test('a writer killed during a write restarts without losing acknowledged rows i
     const retained = [...ledger.acknowledged];
     const current = journey();
     const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
-      form: { grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey, project: current.projectId, scope: 'sql:read sql:write databases:read databases:write' },
+      form: { grant_type: 'client_credentials', client_id: keyId(current.apiKey), client_secret: current.apiKey, project: current.projectId, scope: 'sql:read sql:write databases:read databases:write' },
     }));
     saveSecret('fault-token', grant.access_token);
     const writer = (await topology()).find(node => node.region === 'gru')!;

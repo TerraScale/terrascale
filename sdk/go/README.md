@@ -674,9 +674,9 @@ consumer floor. See [release toolchain checks](contracts/release-toolchain.md)
 for advisory scanning, artifact qualification and consumer compilation.
 
 PostgreSQL passwords and API key token sources use
-`<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`:
-the ULID alone is the OAuth client ID. Credential prefixes identify secret
-formats and are never part of an entity ID.
+`sk_<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`
+(keys issued earlier omit `sk_`): the ULID alone is the OAuth client ID.
+Credential prefixes identify secret formats and are never part of an entity ID.
 
 ### Permanent API key refusals
 
