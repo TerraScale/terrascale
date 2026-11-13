@@ -168,6 +168,7 @@ button.ts-region-node {
 
 .ts-region-callout-body {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--ts-s2);
   min-width: 0;
@@ -249,6 +250,71 @@ label.ts-region-callout-body {
   font-size: var(--ts-fs-xs);
   font-weight: 400;
   white-space: nowrap;
+}
+
+.ts-region-ping {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ts-region-ping::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ts-ink-3);
+}
+
+.ts-region-ping[data-state="good"]::before { background: var(--ts-success); }
+.ts-region-ping[data-state="fair"]::before { background: var(--ts-warning); }
+.ts-region-ping[data-state="slow"]::before { background: var(--ts-severe); }
+.ts-region-ping[data-state="down"]::before { background: var(--ts-danger); }
+
+.ts-region-ping-best {
+  display: none;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.ts-region-callout[data-fastest] .ts-region-ping-best {
+  display: inline;
+}
+
+.ts-region-map-ping-actions {
+  padding: var(--ts-s2);
+}
+
+.ts-region-map-ping-refresh {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-md);
+  background: var(--ts-surface);
+  color: var(--ts-ink-2);
+  cursor: pointer;
+  transition: color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-region-map-ping-refresh:hover {
+  color: var(--ts-ink);
+  border-color: var(--ts-line-strong);
+}
+
+.ts-region-map-ping-refresh:focus-visible {
+  outline: 2px solid var(--ts-focus);
+  outline-offset: 2px;
 }
 
 .ts-region-map-status {
@@ -336,6 +402,12 @@ label.ts-region-callout-body {
 }
 
 @media (max-width: 560px) {
+  .ts-region-map-ping-refresh::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+  }
+
   .ts-region-map {
     --ts-region-map-tall: 360px;
   }

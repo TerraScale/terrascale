@@ -66,6 +66,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private readonly Histogram<double> _rewriteSteps;
     private readonly Counter<long> _rewriteRefused;
     private readonly Counter<long> _writersEvicted;
+    private readonly Counter<long> _unshippedDiscarded;
     private readonly ILogger<TursoStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
@@ -308,6 +309,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
         _transactions = meter.CreateCounter<long>("terrabase.storage.transactions",
             description: "Storage transactions begun, by kind (read, write) and call site (a bounded set of file:line): which code keeps the I/O threads and writers busy.");
+        _unshippedDiscarded = meter.CreateCounter<long>("terrabase.cdc.unshipped_discarded",
+            description: "Change logs discarded before their backup stored them because they outgrew the cap while no backup tap was open; the backup records each as a hole when its tap opens.");
         _writersEvicted = meter.CreateCounter<long>("terrabase.storage.writers_evicted", description: "Database writers closed because the engine-wide bound on open writers was reached.");
         _rewriteRefused = meter.CreateCounter<long>("terrabase.storage.rewrite_refused", description: "Healthy rewrite refusals by bounded reason.");
         _rewriteSteps = meter.CreateHistogram<double>("terrabase.storage.rewrite_step", "s",
@@ -1603,6 +1606,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             WriterHeld = _writerHeld,
             Transactions = _transactions,
             RewriteSteps = _rewriteSteps,
+            UnshippedDiscarded = _unshippedDiscarded,
         };
 
     internal bool IdleSettled(TenantContext database) =>
@@ -1627,6 +1631,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             WriterHeld = _writerHeld,
             Transactions = _transactions,
             RewriteSteps = _rewriteSteps,
+            UnshippedDiscarded = _unshippedDiscarded,
             WritersEvicted = _writersEvicted,
             Revised = RaiseRevised,
             Leases = Leases,

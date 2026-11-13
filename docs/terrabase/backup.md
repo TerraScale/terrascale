@@ -162,6 +162,8 @@ rollout is performed by this repository change.
 Each node ships the files it holds. `Engine/IShipperLeases` is `LocalShipperLeases`: `ShipperEpochAsync(database)` always
 returns epoch 1, so the local node ships every local file and a generation changes only with a new snapshot. There is no
 member ring, NATS membership or lease takeover. Every node taps every file and trims its change log as it ships it.
+A node that never acknowledged a file's backup holds no [backup floor](#change-log-before-the-tap-opens) in it and trims
+that file's log freely, so only the member that ships a file keeps its unshipped history.
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## How shipping works
@@ -307,6 +309,25 @@ No event records a hole. Shutdown, a cancelled or failed capture or read, a leas
 acknowledgement and buffered log waiting in scratch stop the pass or retry it, nothing more. Whatever they cost shows up
 in the two positions, and the next pass finds it. A SIGKILL with the engine's history intact finds the anchor at or
 before the cursor and resumes; a restart after history was trimmed finds the anchor beyond it and records one hole.
+
+### Change log before the tap opens
+
+A restarted node writes before its backup taps open: the system database at once (its lease session, keys and
+platform seed), a tenant database whenever it is written before discovery opens its tap. Those changes, and every
+change the previous process committed but did not store, stay in the log until the tap ships them. Each
+acknowledgement writes the file's **backup floor**, the stored position, into the log's version table in the same
+transaction as its trim, keyed by the file's incarnation (`backup_floor:<incarnation>`), and it never decreases. While
+no tap is open, the commit, revision and idle trims cut the log only below the floor of the current incarnation, so the
+tap that opens next resumes from its stored cursor with nothing missing. A file with no floor for its incarnation (one
+this node never backed up, or one restored or rewritten into another incarnation, which starts a new generation
+anyway) is trimmed whole as before.
+
+The kept log is bounded. While no tap is open, the engine counts the bytes it keeps above the floor (the same measure as
+the tap's cap: before and after images plus 32 bytes a row). Past 256 MiB it deletes the floor and trims the whole log in
+one transaction, logs a warning with the floor and the size, and counts it in
+`terrabase_cdc_unshipped_discarded_total`. When the tap opens, the stored cursor is behind the history start, and the
+backup records that loss as one hole (above). A file this node stops shipping (its registration is gone) keeps its log
+only up to that bound.
 
 A destination change, a restore or a fork gives the file a new lineage (another incarnation or destination than the
 account's). It starts a new generation with a base snapshot and is not a hole, because nothing of the file's history
@@ -792,6 +813,7 @@ After a rollout, also check:
   `terrabase_backup_files`. Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`,
   `terrabase_backup_holes` (durable hole total of the loaded accounts), `terrabase_backup_holes_recorded_total`,
   `terrabase_backup_generation_restarts_total{reason}` (lineage, key_lost, log_unplaceable),
+  `terrabase_cdc_unshipped_discarded_total` (change logs discarded unstored past the cap while no tap was open),
   `terrabase_backup_snapshots_deferred_total{reason}` (passes that put off a due daily snapshot),
   `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
   and `terrabase_backup_stored_bytes` (bucket bytes of the files this member ships).
