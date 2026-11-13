@@ -109,7 +109,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
     children.push(target);
     await target.command('ping');
     await expect.poll(() => status(targetAddress)).toMatchObject({ writer: false, owner: sourceAddress.name, ready: true });
-    let retained: { scope: string } | undefined;
+    let retained: { organization: string; project: string; user: string } | undefined;
     if (scenario === 'retained') {
       const user = faultId();
       const create = async (path: string, body: unknown) => {
@@ -119,20 +119,24 @@ export async function receiptHandoff(scenario: string): Promise<void> {
       };
       const organization = await create('/v1/management/organizations', { name: 'retained-receiver' });
       const project = await create(`/v1/management/organizations/${organization}/projects`, { name: 'retained-receiver' });
-      const id = await create(`/v1/projects/${project}/databases`, { name: 'retained-receiver', regions: ['fra'] });
-      retained = { scope: `${organization} ${project} ${id}` };
-      await source.command(`write ${retained.scope} 73`);
+      retained = { organization, project, user };
     }
     const primed = await nodeRequest(targetAddress, '/v1/rollout/prime?source=' + sourceName, 'POST');
     expect(primed.status, primed.body).toBe(204);
     if (retained) {
-      await target.command(`check ${retained.scope} 73`);
-      await source.command(`retain ${retained.scope}`);
-      await target.command(`check ${retained.scope} 73`);
-      await target.command(`check ${retained.scope} 73`);
-      await source.command(`restore ${retained.scope}`);
-      await source.command(`write ${retained.scope} 74`);
-      await target.command(`check ${retained.scope} 147`);
+      const created = await nodeRequest(sourceAddress, `/v1/projects/${retained.project}/databases`, 'POST',
+        { name: 'retained-receiver', regions: ['fra'] }, retained.user);
+      expect(created.status, created.body).toBe(201);
+      const id = (JSON.parse(created.body) as { id: string }).id;
+      const scope = `${retained.organization} ${retained.project} ${id}`;
+      await source.command(`write ${scope} 73`);
+      await target.command(`check ${scope} 73`);
+      await source.command(`retain ${scope}`);
+      await target.command(`check ${scope} 73`);
+      await target.command(`check ${scope} 73`);
+      await source.command(`restore ${scope}`);
+      await source.command(`write ${scope} 74`);
+      await target.command(`check ${scope} 147`);
       console.log('RETAINED_RECEIVER: missing registration preserves row 73 across repeated sweeps; restoration resumes replication with rows 73 and 74');
       return;
     }
