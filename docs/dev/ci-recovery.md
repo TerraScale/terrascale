@@ -62,9 +62,11 @@ contains exactly `thing`, `target`, `attempts` (an integer from zero to two), an
 When healthy, an operator sees no deployment notification. Initial creation
 happens once per thing; subsequent changes edit only the issue body. The first
 reconcile after a successful deployment records zero attempts. Repeated healthy
-ticks do not write anything. Suppression adds one comment naming the thing,
-target, both attempt runs when known, and the release instructions. Later
-suppressed ticks are quiet.
+ticks do not write anything. Suppression adds at most one comment naming the
+thing, target, both attempt runs when known, and the release instructions. The
+state records `notified: true` before the comment is posted, so a failed post
+is not repeated and that one notification can be missed; the state issue and
+the run summary still show the suppression. Later suppressed ticks are quiet.
 
 Only a locked job writes state. The decision job reads and validates all things
 before taking any target-dependent branch, including when no commit qualifies.
@@ -74,8 +76,8 @@ live read and target selection:
 1. If live equals target, write `(target, 0, false)` if needed and stop.
 2. If there is no state, record `(target, 1, false)` before deploying.
 3. For the same target with fewer than two attempts, increment attempts before
-   deploying. With two attempts, deploy nothing; if `notified` is false, add
-   the suppression comment and write `notified: true`.
+   deploying. With two attempts, deploy nothing; if `notified` is false, write
+   `notified: true` and then add the suppression comment.
 4. For a strict descendant of the recorded target, record `(target, 1, false)`
    before deploying.
 5. For an older or unrelated target, change nothing and report waiting.
@@ -105,6 +107,9 @@ qualifies or run the manual reset for that thing:
 ```sh
 gh workflow run sites.yml --repo TerraScale/terrascale --ref main -f reset_thing=ts-docs
 ```
+
+A first job accepts only an exact, case-sensitive known name and supplies the
+lock; any other value fails there, before a deployment lock is taken.
 
 Accepted names are `ts-docs`, `ts-landing`, `ts-status-vantage-sfo`,
 `ts-status-vantage-gru`, `ts-status`, `auth` and `dashboard`. The reset job takes

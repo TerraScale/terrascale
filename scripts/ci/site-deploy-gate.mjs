@@ -186,10 +186,10 @@ async function writeState(alert, name, revision, attempts, notified, started = f
 
 async function notify(alert, name, revision) {
   const runs = alert.body.split('\n').filter((line) => line.startsWith('Attempt '));
+  await writeState(alert, name, revision, 2, true);
   await github(`issues/${alert.issue.number}/comments`, 'POST', {
     body: `${name}: deployment of ${revision} is suppressed after two attempts.\n\n${runs.join('\n') || 'Attempt run links are unavailable.'}\n\nLand a newer commit that passes main CI, or run Sites manually on main with reset_thing=${name} after fixing the failure. Keep this issue open.`,
   });
-  await writeState(alert, name, revision, 2, true);
 }
 
 if (args[0] === '--prove') {
