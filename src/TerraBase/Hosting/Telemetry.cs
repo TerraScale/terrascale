@@ -89,7 +89,7 @@ public static class Telemetry
                         or "terrabase.object_store.bucket_missing"
                         or "terrabase.storage.admitted" or "terrabase.storage.running"
                         or "terrabase.storage.rejected" or "terrabase.storage.unknown_files"
-                        or "terrabase.backup.failures" or "terrabase.backup.holes" or "terrabase.backup.generations"
+                        or "terrabase.backup.failures" or "terrabase.backup.holes" or "terrabase.backup.holes_recorded" or "terrabase.backup.generations"
                         or "terrabase.backup.stored" or "terrabase.backup.files" or "terrabase.backup.lag"
                         or "terrabase.backup.last_success" or "terrabase.backup.bucket_snapshot"
                         or "terrabase.shape.reads" or "terrabase.shape.requests.waiting" or "terrabase.shape.flights.active"
@@ -99,10 +99,10 @@ public static class Telemetry
                     "terrabase.auth.key_fetches" or "terrabase.stats.operations" or "terrabase.clock.stamps" => new MetricStreamConfiguration { CardinalityLimit = 2 },
                     "terrabase_pressure_listener_request_rate" or "terrabase_pressure_listener_p95_latency_ms"
                         or "terrabase_pressure_listener_requests" or "terrabase.stats.dropped"
-                        or "terrabase.stats.rollups"
+                        or "terrabase.stats.rollups" or "terrabase.backup.generation_restarts"
                         => new MetricStreamConfiguration { CardinalityLimit = 3 },
                     "terrabase.storage.reads" => new MetricStreamConfiguration { CardinalityLimit = 6 },
-                    "terrabase.query_shapes.dropped" => new MetricStreamConfiguration { CardinalityLimit = 7 },
+                    "terrabase.query_shapes.dropped" or "terrabase.catalog.closed" => new MetricStreamConfiguration { CardinalityLimit = 7 },
                     "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
                         or "terrabase.stats.top.operations"
                         => new MetricStreamConfiguration { CardinalityLimit = 10 },

@@ -172,11 +172,15 @@ sweeps must preserve the receiver's original row; restoring the source registrat
 writing another row must resume normal replication. The receiver build can be replaced
 with a previous-head driver through `E2E_RETAINED_RECEIVER_BUILD` for regression proof.
 
-Alongside the journey shards, the separately selected `engine crash recovery` job runs `env/engine-crash.py` against the shared PR service artifact
-and a separate build of the PR base revision. It checks rollback startup on each crash directory, stale rewrite
+Alongside the journey shards, the separately selected `engine crash recovery (<shard>)` jobs run `env/engine-crash.py` against the shared PR service artifact
+and one shared artifact built from the PR base revision. They check rollback startup on each crash directory, stale rewrite
 intents at both rename boundaries, idle retained-history draining, missing root stores and three large-file
-recovery samples. It requires 24 GB of disk headroom below 80% use and removes its data and baseline source.
-Local runs pass the rollback DLL as the script's only argument, with DOTNET_ROOT and DOTNET_PROCESSOR_COUNT=4.
+recovery samples. Each shard requires 24 GB of disk headroom below 80% use and removes its data; the baseline job removes its source checkout after packaging.
+Local runs pass the rollback DLL, with DOTNET_ROOT and DOTNET_PROCESSOR_COUNT=4. An optional second argument is
+a comma-separated case list; omitting it runs every case. `python3 e2e/env/engine-crash-shards.py` checks that every
+registered case appears exactly once in `engine-crash-shards.json` and emits the CI matrix. Each case prints its
+elapsed time; the dependent nine-snapshot recovery sequence stays together in the recovery shard and runs first
+when selected with other cases.
 
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
 8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`

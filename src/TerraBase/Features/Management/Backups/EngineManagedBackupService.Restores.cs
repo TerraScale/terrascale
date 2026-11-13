@@ -130,6 +130,11 @@ internal sealed partial class EngineManagedBackupService
             return outside;
         }
 
+        if (planned is Conflict { Gap: not null } lost)
+        {
+            return lost;
+        }
+
         var leased = planned is PointInTimePlan { Generation: { } generation } ? generation : (Ulid?)null;
 
         return await StartOperationAsync(

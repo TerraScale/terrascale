@@ -10,7 +10,7 @@ using Turso.Raw.Public;
 namespace TerraBase.Engine.Turso;
 
 
-internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
+internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 {
 
     private const int PageRows = 1024;
@@ -29,6 +29,7 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     private long _anchor;
     private long _durableAnchor;
+    private long _storedAnchor;
 
     private readonly Lazy<CancellationTokenSource> _refused;
 
@@ -45,6 +46,15 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
         }
     }
 
+    public async ValueTask<long> RetainedBytesAsync(CancellationToken cancellationToken) =>
+        await AdmittedAsync(async cancellationToken => await _io.RunAsync(() =>
+        {
+            using var command = _reader.CreateCommand();
+            command.CommandText = "SELECT coalesce(sum(coalesce(octet_length(before), 0) + coalesce(octet_length(after), 0) + 32), 0) FROM turso_cdc WHERE change_id > $anchor;";
+            command.Parameters.Add(new TursoParameter("$anchor", Volatile.Read(ref _storedAnchor)));
+            return (long)command.ExecuteScalar()!;
+        }, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
+
     public async ValueTask AcknowledgeAsync(long position, CancellationToken cancellationToken)
     {
         ThrowIfUnavailable();
@@ -54,12 +64,14 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
         await _store.WithWriterAsync(writer =>
         {
             ThrowIfUnavailable();
+            ObjectDisposedException.ThrowIf(_lineage != _store.Lineage, _store);
             if (position > _anchor)
             {
                 throw new InvalidOperationException("the backup cannot acknowledge unread CDC");
             }
 
             _durableAnchor = Math.Max(_durableAnchor, position);
+            Volatile.Write(ref _storedAnchor, Math.Max(_storedAnchor, position));
             _store.BackupAnchor = _durableAnchor;
             return Truncate(writer);
         }, "the durable backup CDC acknowledgement", cancellationToken).ConfigureAwait(false);
@@ -67,6 +79,8 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     }
 
     private Dictionary<long, (string Type, string Name)> _schema = [];
+
+    private string? _incarnation;
 
     private (long First, long Latest, bool Ordered)? _open;
 
@@ -105,7 +119,7 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
                 var reader = new TursoConnection(connectionString) { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
                 tap = new TursoChangeTap(store, io, time, reader, lineage);
                 TursoSession.OpenExisting(reader, store.FilePath);
-                return tap.Reset(writer);
+                return StartHistory(writer) && tap.Reset(writer);
             }, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
             store.ThrowIfUnavailable();
             operation?.Complete();
@@ -145,11 +159,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
         return await AdmittedAsync(async cancellationToken =>
         {
             var read = await ReadCoreAsync(destination, ReadBudget, cancellationToken).ConfigureAwait(false);
-            if (!read.Continuous)
-            {
-                await _store.WithWriterAsync(Reset, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
-            }
-
             return read;
         }, cancellationToken).ConfigureAwait(false);
     }
@@ -467,6 +476,8 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
         ThrowIfUnavailable();
         using (var newest = connection.CreateCommand())
         {
+            newest.CommandText = TursoStatements.Incarnation;
+            _incarnation = newest.ExecuteScalar() as string;
             newest.CommandText = TursoStatements.NewestChange;
             _anchor = (long)newest.ExecuteScalar()!;
             if (publish)
@@ -601,7 +612,10 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     {
         using var command = _reader.CreateCommand();
         command.CommandText = sql;
-        command.Parameters.Add(new TursoParameter("$anchor", anchor));
+        if (sql.Contains("$anchor", StringComparison.Ordinal))
+        {
+            command.Parameters.Add(new TursoParameter("$anchor", anchor));
+        }
         return command.ExecuteScalar();
     }
 }
