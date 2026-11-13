@@ -33,7 +33,10 @@ Status Workers are compared separately and only the selected Workers deploy.
 
 Auth and dashboard read their readiness revision. Their release jobs run in
 `ci.yml` and `images-ghcr.yml`, as required by the release service's existing
-OIDC policy. When work is due, Sites requests a main dispatch. That job reads
+OIDC policy. Dashboard provenance, the SBOM and `gh attestation verify` name
+the package `scripts/ci/reconcile-image.sh` publishes,
+`ghcr.io/terrascale/terrascale-dashboard`. When work is due, Sites requests a
+main dispatch. That job reads
 live and chooses target again inside its release lock. It checks out target,
 reuses an image labeled with that exact commit, or builds and checks one.
 Only then does it move the mutable main tag and release the pinned arm64 digest.
