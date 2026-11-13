@@ -139,9 +139,11 @@ async function killDuringBurst(ledgers: Ledger[], token: string): Promise<{ kill
   return killed!;
 }
 
-async function recovered(cells: Cells, ledgers: Ledger[]): Promise<void> {
+const writers = () => [node('journey-1'), node('journey-2')];
+
+async function recovered(ledgers: Ledger[], token: string): Promise<void> {
   for (const ledger of ledgers) {
-    await ledger.compare(cells, [...ledger.acknowledged]);
+    await ledger.converge(token, writers(), [...ledger.acknowledged]);
     for (const row of ledger.failed) {
       if (ledger.acknowledged.some(acknowledged => acknowledged[0] === row[0])) continue;
       expect(ledger.submitted).toContainEqual(row);
@@ -164,19 +166,20 @@ test('a region writer that stays down keeps its homes, and every acknowledged ro
       } finally {
         await restart();
       }
-      await recovered(cells, ledgers);
+      await recovered(ledgers, token);
       for (const [index, ledger] of ledgers.entries()) {
         expect((await homeLease(kv, ledger.id)).value, 'the returning writer resumes as home at the same epoch').toMatchObject({ home: 'gru', node: 'journey-1', epoch: before[index].value.epoch });
       }
-      for (const ledger of ledgers) await removeDatabase(cells, ledger.id);
+      for (const ledger of ledgers) await ledger.drop(token, node('journey-1'));
     }
   } finally {
     kv.close();
   }
 });
 
-test('a writer killed right after an acknowledgement that fra pulled keeps the home and the row', async ({ cells }) => {
+test('a writer killed right after an acknowledgement that fra pulled keeps the home and the row', async ({ cells, request }) => {
   test.setTimeout(outageHold + 180_000);
+  const token = await writerToken(request);
   const kv = await Kv.open();
   try {
     const ledgers = await createLedgers(cells, 2, 'home-pulled');
@@ -191,16 +194,17 @@ test('a writer killed right after an acknowledgement that fra pulled keeps the h
     } finally {
       await restart();
     }
-    await recovered(cells, ledgers);
-    for (const ledger of ledgers) expect(await ledger.served(cells, 'gru')).toContainEqual([500, 'last-before-kill']);
-    for (const ledger of ledgers) await removeDatabase(cells, ledger.id);
+    await recovered(ledgers, token);
+    for (const ledger of ledgers) expect(await ledger.readNode(node('journey-1'), token)).toContainEqual([500, 'last-before-kill']);
+    for (const ledger of ledgers) await ledger.drop(token, node('journey-1'));
   } finally {
     kv.close();
   }
 });
 
-test('an old home returning to a non-writer lease left by a failed takeover keeps its file and takes the home back', async ({ cells }) => {
+test('an old home returning to a non-writer lease left by a failed takeover keeps its file and takes the home back', async ({ cells, request }) => {
   test.setTimeout(240_000);
+  const token = await writerToken(request);
   const kv = await Kv.open();
   try {
     const [ledger] = await createLedgers(cells, 1, 'home-reclaim');
@@ -221,11 +225,11 @@ test('an old home returning to a non-writer lease left by a failed takeover keep
       .toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch + 2 });
     expect(logged(node('journey-1'), 'This node took a database back as home')).toBeGreaterThanOrEqual(1);
     expect(await metric(node('journey-1'), 'terrabase_home_reclaims_total')).toBeGreaterThanOrEqual(1);
-    await ledger.compare(cells, [...ledger.acknowledged]);
-    await ledger.write(cells, 'gru', [[600, 'after-reclaim-gru']]);
-    await ledger.write(cells, 'fra', [[601, 'after-reclaim-fra']]);
-    await ledger.compare(cells);
-    await removeDatabase(cells, ledger.id);
+    await ledger.converge(token, writers(), [...ledger.acknowledged]);
+    expect(await ledger.direct(node('journey-1'), token, [[600, 'after-reclaim-gru']])).toBe(true);
+    expect(await ledger.direct(node('journey-2'), token, [[601, 'after-reclaim-fra']])).toBe(true);
+    await ledger.converge(token, writers(), [...ledger.acknowledged]);
+    await ledger.drop(token, node('journey-1'));
   } finally {
     kv.close();
   }
@@ -242,7 +246,7 @@ test('a planned move to a node that is not its region writer is refused and chan
     });
     expect(answer.status, answer.body).toBe(409);
     expect(JSON.parse(answer.body).error.code).toBe('move_aborted');
-    expect(await metric(node('journey-4'), 'terrabase_home_refusals_total', { reason: 'not_writer' })).toBe(refusals + 1);
+    await expect.poll(() => metric(node('journey-4'), 'terrabase_home_refusals_total', { reason: 'not_writer' }), { message: 'journey-4 counts the refusal' }).toBe(refusals + 1);
     expect(await homeLease(kv, ledger.id)).toEqual(before);
     await ledger.write(cells, 'gru', [[700, 'after-refused-move']]);
     await ledger.write(cells, 'fra', [[701, 'after-refused-move-fra']]);

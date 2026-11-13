@@ -44,7 +44,8 @@ internal interface IHomeWriteLease
 
 internal sealed partial class HomeLeases(
     TerraBaseOptions options, IReplicaCatalog catalog, DatabaseFences fences, HomeLeaseGate leaseGate, RegionReplication replication, IStorageEngine engine,
-    IDatabaseRevisions revisions, IHomeMoveCatalog moves, IMeterFactory meters, ILogger<HomeLeases> logger, RegionalOwners owners) : BackgroundService, IHomeWriteLease
+    IDatabaseRevisions revisions, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger, RegionalOwners owners)
+    : BackgroundService, IHomeWriteLease
 {
     internal const string Bucket = "terrabase-homes";
     internal static readonly TimeSpan Ttl = TimeSpan.FromSeconds(10);
@@ -53,15 +54,16 @@ internal sealed partial class HomeLeases(
     private static readonly TimeSpan ScanEvery = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan Backoff = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan StartScan = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan AskTimeout = TimeSpan.FromSeconds(2);
     private const int WrongLastSequence = 10071;
 
     private readonly ConcurrentDictionary<string, (HomeLease Lease, ulong Revision)> _homes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ulong> _isolated = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, NodeLease> _nodes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _lapsed = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, HomeLease> _kept = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _confirming = new(1, 1);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
+    private readonly HttpClient _http = PeerHttp.Create(credential);
     private NatsConnection? _nats;
     private NatsJSContext? _js;
     private INatsKVStore? _kv;
@@ -140,6 +142,7 @@ internal sealed partial class HomeLeases(
     public override void Dispose()
     {
         _confirming.Dispose();
+        _http.Dispose();
         _meter.Dispose();
         base.Dispose();
     }
@@ -693,30 +696,16 @@ internal sealed partial class HomeLeases(
         }
 
         var mine = placement.Home == options.Region ? await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false) : null;
-        if (mine is not null && !Proves(home, mine))
+        var proven = mine is null || Proves(home, mine);
+        if (!proven && placement.Version <= home.Epoch && owners.Find(home.Home) is { } owner && owner.Node != home.Node
+            && await MostCompleteAsync(database, mine!.Value, cancellationToken).ConfigureAwait(false)
+            && await ReclaimAsync(database, placement, home, cancellationToken).ConfigureAwait(false))
         {
-            if (placement.Version <= home.Epoch && owners.Find(home.Home) is { } owner && owner.Node != home.Node
-                && await ReclaimAsync(database, placement, home, cancellationToken).ConfigureAwait(false))
-            {
-                return;
-            }
-
-            fences.Moved(id, home.Home);
-            leaseGate.Lease(id, held: false);
-            if (_kept.TryGetValue(id, out var known) && known == home)
-            {
-                return;
-            }
-
-            _kept[id] = home;
-            _keptCopies?.Add(1);
-            logger.ZLogWarning($"Old home kept its copy: database {id:@Database} is recorded on {home.Node:@Node} in {home.Home:@Home} at epoch {home.Epoch:@Epoch}, which has not proven it holds {mine.Value.ToString():@Revision}; nothing is deleted and this node does not serve it as home");
             return;
         }
 
         fences.Moved(id, home.Home);
         leaseGate.Unlease(id);
-        _kept.TryRemove(id, out _);
         if (placement.Version <= home.Epoch)
         {
             if (placement.Home == options.Region)
@@ -734,7 +723,7 @@ internal sealed partial class HomeLeases(
             }
         }
 
-        if (mine is not null)
+        if (mine is { } final && proven)
         {
             try
             {
@@ -747,10 +736,42 @@ internal sealed partial class HomeLeases(
             }
 
             _demotions?.Add(1);
-            logger.ZLogWarning($"This node no longer homes a database: {home.Node:@Node} in {home.Home:@Home} proved it holds {mine.Value.ToString():@Revision} at epoch {home.Epoch:@Epoch}; it follows as a replica");
+            logger.ZLogWarning($"This node no longer homes a database: {home.Node:@Node} in {home.Home:@Home} proved it holds {final.ToString():@Revision} at epoch {home.Epoch:@Epoch}; it follows as a replica");
+        }
+        else if (mine is { } kept)
+        {
+            fences.Release(id);
+            _keptCopies?.Add(1);
+            logger.ZLogWarning($"Old home kept its copy: database {id:@Database} is recorded on {home.Node:@Node} in {home.Home:@Home} at epoch {home.Epoch:@Epoch}, which has not proven it holds {kept.ToString():@Revision}; the file is not deleted and this node follows as a replica");
         }
 
         replication.WakeCatalog(home.Home);
+    }
+
+    private async Task<bool> MostCompleteAsync(TenantContext database, DatabaseRevision mine, CancellationToken cancellationToken)
+    {
+        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
+        var answers = await Task.WhenAll(nodes.Where(node => node.Name != options.MachineId)
+            .Select(node => HeldAsync(node.InternalListener(options.InternalPort), database, cancellationToken))).ConfigureAwait(false);
+        var same = answers.Where(answer => answer is { Incarnation: var incarnation } && incarnation == mine.Incarnation).Select(answer => answer!.Value).ToList();
+        return same.Count > 0 && same.All(held => DatabaseRevision.Compare(held, mine) <= 0);
+    }
+
+    private async Task<DatabaseRevision?> HeldAsync(Uri peer, TenantContext database, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(AskTimeout);
+        try
+        {
+            using var response = await _http.GetAsync(new Uri(peer, ReplicaRoutes.DatabasePath(database, "held")), timeout.Token).ConfigureAwait(false);
+            return response.IsSuccessStatusCode
+                && await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.HeldRevisionAnswer, timeout.Token).ConfigureAwait(false) is { Revision: var text }
+                && DatabaseRevision.TryParse(text, out var held) ? held : null;
+        }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or JsonException && !cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
     private async Task<bool> ReclaimAsync(TenantContext database, DatabasePlacement placement, HomeLease recorded, CancellationToken cancellationToken)
@@ -775,11 +796,10 @@ internal sealed partial class HomeLeases(
 
         _homes[id] = (lease, revision);
         _ = await moves.FollowHomeLeaseAsync(database, Moved(placement, lease), cancellationToken).ConfigureAwait(false);
-        _kept.TryRemove(id, out _);
         fences.Lift(id);
         leaseGate.Lease(id, held: true);
         _reclaims?.Add(1);
-        logger.ZLogWarning($"This node took a database back as home: {recorded.Node:@Node} held its lease at epoch {recorded.Epoch:@Epoch} but is not the writer of {recorded.Home:@Region}, so it served nothing; this node's copy is kept and served at epoch {lease.Epoch:@Epoch}");
+        logger.ZLogWarning($"This node took a database back as home: {recorded.Node:@Node} held its lease at epoch {recorded.Epoch:@Epoch} but is not the writer of {recorded.Home:@Region}, so it served nothing, and no replica is ahead of this node's copy; it is served again at epoch {lease.Epoch:@Epoch}");
         replication.WakeCatalog(recorded.Home);
         Reclaimed?.Invoke(database, lease.Epoch);
 

@@ -196,19 +196,36 @@ export class Ledger {
     return false;
   }
 
-  async served(cells: Cells, region: string): Promise<Row[]> {
-    const response = await cells.post(`${endpoint(region)}${database(this.id)}/sql/execute`, {
-      data: { statements: [{ sql: 'SELECT id, value FROM fault_rows ORDER BY id' }] },
+  async readNode(node: Node, token: string): Promise<Row[]> {
+    const response = await fetch(`http://127.0.0.1:${node.port}${database(this.id)}/sql/execute`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ statements: [{ sql: 'SELECT id, value FROM fault_rows ORDER BY id' }] }), signal: AbortSignal.timeout(15_000),
     });
-    expect(response.status(), `${region} serves the database: ${await response.text()}`).toBe(200);
-    expect(response.headers()['x-terrabase-region']).toBe(region);
-    const rows = (await response.json() as { results: { rows: Row[] }[] }).results[0].rows;
-    for (const row of rows) expect(this.submitted, 'no invented or changed write').toContainEqual(row);
-    return rows;
+    if (response.status === 404 || response.status === 421) return [];
+    const body = await response.json() as { results?: { rows: Row[] }[]; error?: { code: string } };
+    if (response.status === 400 && body.error?.code === 'undefined_table') return [];
+    expect(response.status, `${node.name} answers the read: ${JSON.stringify(body)}`).toBe(200);
+    if (response.headers.get('x-terrabase-region') !== node.region) return [];
+    return body.results![0].rows;
   }
 
-  statement(rows: Row[]): string {
-    return `INSERT INTO fault_rows (id, value) VALUES ${rows.map(([id, value]) => `(${id}, '${value}')`).join(',')}`;
+  async converge(token: string, writers: Node[], retained: Row[] = []): Promise<void> {
+    await expect.poll(async () => {
+      const seen = await Promise.all(writers.map(writer => this.readNode(writer, token)));
+      for (const rows of seen) {
+        for (const row of retained) expect(rows, 'a previously observed acknowledged write is never lost').toContainEqual(row);
+        for (const row of rows) expect(this.submitted, 'no invented or changed write').toContainEqual(row);
+      }
+      return seen.every(rows => this.acknowledged.every(row => rows.some(actual => JSON.stringify(actual) === JSON.stringify(row))))
+        && seen.every(rows => JSON.stringify(rows) === JSON.stringify(seen[0]));
+    }, { message: 'every region writer serves the client write ledger', timeout: 60_000, intervals: [250, 500, 1000] }).toBe(true);
+    console.log(`ledger ${this.id}: ${this.acknowledged.length} acknowledged rows retained on ${writers.map(writer => writer.name).join(' and ')}`);
+  }
+
+  async drop(token: string, writer: Node): Promise<void> {
+    await expect.poll(async () => (await fetch(`http://127.0.0.1:${writer.port}${database(this.id)}`, {
+      method: 'DELETE', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000),
+    })).status, { message: `database ${this.id} is deleted`, timeout: 60_000 }).toBe(204);
   }
 
   async write(cells: Cells, region: string, rows: Row[]): Promise<void> {
