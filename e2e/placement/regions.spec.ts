@@ -121,9 +121,9 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     await expect.poll(async () => {
       const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] } });
       await answer(response, 200, '200 proxied through a non-member listener');
-      expect((await response.json()).results[0].rows).toEqual([[1], [2], [3], [4]]);
-      return response.headers()['x-terrabase-region'];
-    }, { message: 'the non-member listener proxies to fra', timeout: 45_000, intervals: [250, 500, 1000] }).toBe('fra');
+      return { region: response.headers()['x-terrabase-region'], rows: (await response.json()).results[0].rows };
+    }, { message: 'the non-member listener proxies to fra', timeout: 45_000, intervals: [250, 500, 1000] })
+      .toEqual({ region: 'fra', rows: [[1], [2], [3], [4]] });
     const current = journey();
     const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
       form: {
