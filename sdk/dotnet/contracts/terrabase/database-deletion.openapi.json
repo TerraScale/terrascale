@@ -1518,7 +1518,6 @@
     "securitySchemes": {
       "TsAuth": {
         "type": "http",
-        "description": "Authorization: Bearer <ts-auth project access token> issued by https://127.0.0.1:17684. project_id must name the route's project; scope must grant the operation.",
         "scheme": "bearer",
         "bearerFormat": "JWT"
       }

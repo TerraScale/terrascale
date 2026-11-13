@@ -49,7 +49,10 @@ result = {
     "paths": paths,
     "components": {
         "schemas": dict(sorted(schemas.items())),
-        "securitySchemes": source["components"]["securitySchemes"],
+        "securitySchemes": {
+            name: {key: value for key, value in scheme.items() if key != "description"}
+            for name, scheme in source["components"]["securitySchemes"].items()
+        },
     },
 }
 Path(sys.argv[2]).write_text(json.dumps(result, indent=2) + "\n")
