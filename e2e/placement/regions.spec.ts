@@ -1515,3 +1515,40 @@ test('R3 replace: source-owned observations survive a restart in a region that n
     }
   }
 });
+
+test('R20 the create-database picker shows a measured ping for every region', async ({ browser }, info) => {
+  const context = await auditedContext(browser, {});
+  try {
+    const page = await context.newPage();
+    const audit = new Audit(page, info);
+    const email = await newAddress(name('ping'));
+    const password = randomBytes(24).toString('base64url');
+    saveSecret('ping-owner-password', password);
+    await signUp(page, audit, email, password, 'region ping owner');
+    await verify(page, email);
+    await onboard(page, audit, 'Region ping owner', name('ping-project'), 'region ping owner');
+    await page.goto(`${dash}/databases`);
+    await page.getByRole('button', { name: 'New database', exact: true }).first().click();
+    await expect(page.locator('#create-database[open]')).toBeVisible();
+    const callouts = page.locator('#create-database-regions .ts-region-callout[data-region]');
+    await expect(callouts).not.toHaveCount(0);
+    const settled = callouts.locator('[data-region-ping]');
+    await expect(settled).toHaveCount(await callouts.count());
+    for (const badge of await settled.all()) {
+      await expect(badge).toHaveText(/\d+ ms|Unreachable/, { timeout: 15_000 });
+    }
+    const measured = await settled.filter({ hasText: /\d+ ms/ }).count();
+    expect(measured, 'at least one reachable region shows a number in ms').toBeGreaterThan(0);
+    await audit.check('database create picker ping badges');
+    await page.locator('#create-database .ts-dialog-head button[type="button"]').click();
+    await page.goto(`${dash}/profile?tab=danger`);
+    await page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
+    const dialog = page.locator('#delete-account');
+    await dialog.locator('#delete-account-email').fill(email);
+    await dialog.getByRole('button', { name: 'Delete account', exact: true }).click();
+    await confirmWithPassword(page, audit, password, 'region ping owner deletion');
+    await page.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
+  } finally {
+    await context.close();
+  }
+});

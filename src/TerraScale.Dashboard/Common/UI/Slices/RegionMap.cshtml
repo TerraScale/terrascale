@@ -2,6 +2,7 @@
 @inject AssetUrls Assets
 @{
     var regions = Model.Shown;
+    var pings = Model.Pings;
 }
 <div class="ts-region-map" id="@Model.Id" role="group" aria-labelledby="@(Model.LabelledBy.Length > 0 ? Model.LabelledBy : Model.Id + "-label")" data-region-map data-mode="@(Model.Selects ? "select" : "read-only")" data-bleed="@(Model.Bleed ? "true" : "false")">
     @if (Model.LabelledBy.Length == 0) { <span class="ts-sr-only" id="@(Model.Id)-label">@Model.Label</span> }
@@ -16,7 +17,7 @@
         @foreach (var region in regions)
         {
             var selected = Model.IsSelected(region);
-            <li class="ts-region-callout" data-region="@region.Key" data-selected="@(selected ? "true" : "false")">
+            <li class="ts-region-callout" data-region="@region.Key" data-selected="@(selected ? "true" : "false")" data-ping-url="@(pings ? region.PingUrl : "")">
                 @if (Model.Selects)
                 {
                     <label class="ts-region-callout-body">
@@ -24,6 +25,7 @@
                         @if (region.Flag.Length > 0) { <img class="ts-region-flag" src="@Assets.Url($"flags/{region.Flag}.svg")" alt="" width="20" height="15" /> } else { <span class="ts-region-flag ts-region-flag-none">@Icons.Render("Globe", 14)</span> }
                         <span class="ts-region-name">@region.Title</span>
                         @if (region.Title != region.Key) { <span class="ts-region-code ts-mono">@region.Key</span> }
+                        @if (pings && region.PingUrl.Length > 0) { <span class="ts-region-ping" data-region-ping data-state="pending" title="Round trip from your browser to @region.Title">Measuring…</span>@if (Model.Selects) { <span class="ts-region-ping-best">Lowest ping</span> } }
                         @if (region.Detail.Length > 0) { <span class="ts-region-detail">@region.Detail</span> }
                     </label>
                 }
@@ -33,6 +35,7 @@
                         @if (region.Flag.Length > 0) { <img class="ts-region-flag" src="@Assets.Url($"flags/{region.Flag}.svg")" alt="" width="20" height="15" /> } else { <span class="ts-region-flag ts-region-flag-none">@Icons.Render("Globe", 14)</span> }
                         <span class="ts-region-name">@region.Title</span>
                         @if (region.Title != region.Key) { <span class="ts-region-code ts-mono">@region.Key</span> }
+                        @if (pings && region.PingUrl.Length > 0) { <span class="ts-region-ping" data-region-ping data-state="pending" title="Round trip from your browser to @region.Title">Measuring…</span><span class="ts-region-ping-best">Lowest ping</span> }
                         @if (region.Detail.Length > 0) { <span class="ts-region-detail">@region.Detail</span> }
                     </span>
                 }
@@ -41,5 +44,6 @@
     </ul>
     @if (Model.Selects && Model.OrderField.Length > 0) { <input type="hidden" name="@Model.OrderField" value="@Model.Order" data-region-order /> }
     @if (Model.Selects && !Model.Exclusive && Model.Minimum.Length > 0) { <p class="ts-region-map-status" role="status" data-region-status data-message="@Model.Minimum"></p> }
+    @if (pings && regions.Any(region => region.PingUrl.Length > 0)) { <button class="ts-region-map-ping-refresh" type="button" data-ping-refresh aria-label="Measure ping again">@Icons.Render("RefreshCw", 14)</button> }
 </div>
 <script type="module" src="@Assets.Url("js/region-map.js")"></script>
