@@ -118,7 +118,7 @@ Internal listener only, behind the peer credential; 404 on the public listener.
 }
 ```
 
-- `state`: `confirmed` or `reverted` (or `provisional` from the state read).
+- `state`: `confirmed` or `reverted` (or `provisional` when the historical result is unknown).
 - `conflicts`: what `terrascale.conflicts` recorded for this transaction.
 - `rows`: for `reverted` only, the home's current image of every row the transaction touched (`values: null` when the
   row does not exist at the home), so the origin region and its shape overlay can revert to it (D9 step 3).
@@ -178,9 +178,84 @@ was written.
 Per database, internal and invisible to customers, created when the database is created with replica regions, gains
 them, or first applies a transaction: `_ts_rows` (per column and per tombstone: the write's HLC, region and transaction id), `_ts_applied` (each applied or
 reverted transaction with its result, kept 7 days, so a transaction is exactly once within that window) and
-`_ts_conflicts`. A database without them stamps nothing and reads an empty `terrascale.conflicts`. Rows written at the
+_ts_conflicts. Stream delivery also maintains the internal _ts_frontier table, keyed by the JetStream stream
+name and creation time. Its sequence advances with the effects and result in the same engine transaction.
+A position below the frontier returns its recorded result when present. Without a result, transactions whose ULID
+is at or above the ULID floor for the receiving node's current UTC time minus seven days still apply through
+the normal merge path. Older transactions return provisional: their historical outcome is unknown.
+JetStream sequence numbers cover all databases in a stream, so positions need not be consecutive.
+
+A database without them stamps nothing and reads an empty `terrascale.conflicts`. Rows written at the
 home before the database had replica regions carry no stamp and lose to any region write, which can only be newer.
 The tables are created in place with no format change: older files gain them on first use.
+
+## Stream delivery and held databases
+
+The home reads each origin region's push stream through one durable consumer, named after the writer epoch that
+created it (`home-<region>-epoch-<n>`). The origin tells its client a write
+succeeded before the home applies it, so every pushed message that may carry a write is owed to a customer: it is
+never dropped, parked or skipped.
+
+Messages are queued per origin database (one queue per stream subject: origin, home and database), in stream order,
+and only a queue's head applies. A head that cannot apply is retried with backoff from 100 ms, doubling up to a
+60 second ceiling, with no attempt limit. Its database is held: later messages of that database wait behind it, and
+every other database keeps applying. A held database writes nothing to `terrascale.conflicts`, because nothing was
+decided against the customer. The consumer releases its shared apply slot during backoff.
+
+A queue keeps at most 32 messages in flight. A later delivery for that database is acknowledged to the consumer
+without being applied, and the queue records the lowest such sequence. The message stays in the origin stream, which
+drops a database's messages only after the origin hears they were applied, or when the database is deleted. Once the
+queue is empty it reads the stream again from that sequence, filtered to its subject and in order, and applies what it
+reads. While a read-back is pending every new delivery for that database is handed back the same way, so nothing
+overtakes an earlier message. A held database therefore occupies at most 32 of the consumer's 4,096 in-flight
+messages however long it is held. A read-back or progress acknowledgement that fails is retried with the same backoff
+and the database stays held; the queue keeps its place.
+
+Each origin is consumed in runs. A run starts only while this node holds the writer lease: it deletes every consumer
+of its own or an older writer epoch on that origin stream and creates a fresh one for its epoch, which delivers from
+stream sequence 1. A node never deletes or reads a consumer of a newer epoch; it waits until that consumer is gone or
+it learns the newer owner. Deleting a consumer ends the pull requests still waiting on it, and its unacknowledged
+deliveries cannot be acknowledged or redelivered into the fresh consumer. A run ends at once when the writer lease is
+lost or lapses (also when the same node renews it), when the consumer fails, or when a queue must end while it still
+holds messages. Ending a run stops every queue of that origin and waits for them before the next run opens, so the
+next writer receives handed-back messages again; the frontier and recorded results turn the replayed, already applied
+ones into no-ops, and a replay that does not move the frontier commits nothing.
+
+Invariant: a queue leaves the consumer's table only when it holds no message and no pending read-back; otherwise it
+ends its whole run first, so no later message of its database is dispatched before the next run redelivers from
+sequence 1.
+
+| Kind (retry `reason`) | What happens | What the stream sees |
+| --- | --- | --- |
+| Applies (confirmed or reverted by the merge) | Effects, result and frontier commit in one engine transaction, then the applied notice is published | Acknowledged after the commit |
+| Applied before (a replay) | The recorded result is published again; no effects | Acknowledged |
+| The catalog names another home (home moved away) | Not applied here | Acknowledged |
+| Catalog unreadable (`catalog`) | Retried; database held | Progress on every retry |
+| No catalog record and no deletion record (`unknown_database`) | Retried; database held | Progress on every retry |
+| Payload cannot be opened or decoded (`undecodable`), data key or object-store read fails (`object_store`), cryptographic failure (`crypto`) | Retried; database held | Progress on every retry |
+| SQL engine failure, including read-only, busy and schema changes in flight (`engine`); cancellation or timeout (`cancelled`, `io`); disposal during shutdown (`disposed`); broker failure (`broker`); database file not on this node (`not_stored`); anything else (`other`) | Retried; database held | Progress on every retry |
+| Subject names no database (`malformed`) | Parked | Acknowledged after the park is stored |
+| Empty payload (`empty`) | Parked | Acknowledged after the park is stored |
+| The catalog holds a deletion record for the database (`deleted_database`) | Parked | Acknowledged after the park is stored |
+| More than 32 messages of one database in flight | Read back from the stream later, in order | Acknowledged when handed back |
+| Read-back or progress acknowledgement fails (`broker`, `io`, `cancelled`) | Retried; database held | Progress on every retry |
+| Writer lease lost or lapsed, also when the same node renews it | The consumer run ends at once; every queue of that origin stops and nothing more is dispatched or negatively acknowledged | The next run deletes the consumer and starts a fresh one at sequence 1; deliveries outstanding on the old consumer die with it |
+
+Only messages that cannot carry a write still owed to anyone are parked. A park stores the received payload, origin,
+stream identity, sequence, database, reason and UTC time before the message is acknowledged. Because nothing parked
+is owed to a customer, the parking stream's bounds are safe: at most 10,000 messages and 1 GiB for seven days,
+oldest evicted first, with the same single-replica storage policy as the origin stream.
+
+What an operator sees:
+
+- `terrabase.push.held`: origin databases whose head has not applied yet.
+- `terrabase.push.held_age` (seconds): time since the oldest held head first failed.
+- `terrabase.push.apply_retries` by `reason`: each failed head or read-back attempt by the kinds above.
+- `terrabase.push.parked` and `terrabase.push.parked_records` by reason: newly parked and retained parked records.
+- One warning log line when a database becomes held and one when it is released, each with the database id, the
+  origin, the stream sequence and the kind, never payload content. Each newly parked message emits one log line.
+
+No metric carries a per-database label. The alert rules for these metrics live with the monitoring configuration.
 
 ## Known gaps
 

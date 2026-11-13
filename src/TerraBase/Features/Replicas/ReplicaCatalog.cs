@@ -9,6 +9,8 @@ internal interface IReplicaCatalog
 {
     ValueTask<DatabaseRecordResult> FindAsync(TenantContext database, CancellationToken cancellationToken);
 
+    ValueTask<DeletedDatabaseResult> DeletedAsync(TenantContext database, CancellationToken cancellationToken);
+
     ValueTask<ReadDatabaseRecordsResult> ListHomedAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken);
 
     ValueTask<bool> RecordAsync(ReplicaCatalogEntry entry, CancellationToken cancellationToken,
@@ -25,6 +27,9 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
 
     public ValueTask<DatabaseRecordResult> FindAsync(TenantContext database, CancellationToken cancellationToken) =>
         tenants.DatabaseRecordAsync(database, cancellationToken);
+
+    public ValueTask<DeletedDatabaseResult> DeletedAsync(TenantContext database, CancellationToken cancellationToken) =>
+        tenants.DeletedAsync(database, cancellationToken);
 
     public ValueTask<ReadDatabaseRecordsResult> ListHomedAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
         tenants.ReadDatabaseRecordsAsync(homeRegion, after, cancellationToken);

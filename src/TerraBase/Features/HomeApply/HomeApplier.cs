@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Features.Sync;
 using TerraBase.Features.Clock;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.Replicas;
@@ -32,10 +33,11 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         ConflictTable.Ddl,
     ];
 
-    public async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken)
+    public async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(transaction);
+        transaction = transaction with { Position = position };
         var id = transaction.Id!;
         var region = transaction.Region!;
         var stamp = transaction.Hlc!.Value;
@@ -62,7 +64,21 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             await EnsureTablesAsync(applying, cancellationToken).ConfigureAwait(false);
             if (await RecordedAsync(applying, id, cancellationToken).ConfigureAwait(false) is { } recorded)
             {
+                if (position is not null && await Frontier.BehindAsync(applying, position, cancellationToken).ConfigureAwait(false))
+                {
+                    await Frontier.AdvanceAsync(applying, position, cancellationToken).ConfigureAwait(false);
+                    _ = await applying.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+
                 return recorded;
+            }
+
+            if (position is not null
+                && (await Frontier.ReadAsync(applying, cancellationToken).ConfigureAwait(false)).TryGetValue(position.Source, out var sequence)
+                && sequence >= position.Sequence
+                && string.CompareOrdinal(id, FloorId(time.GetUtcNow() - KeptApplied)) < 0)
+            {
+                return new HomeApplyResult(id, WriteStates.Provisional, [], []);
             }
 
             var before = await applying.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false);
@@ -373,6 +389,11 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
     private async ValueTask RecordAsync(
         IStorageTransaction transaction, RegionTransaction region, HomeApplyResult result, List<ConflictRecord> conflicts, CancellationToken cancellationToken)
     {
+        if (region.Position is { } position)
+        {
+            await Frontier.AdvanceAsync(transaction, position, cancellationToken).ConfigureAwait(false);
+        }
+
         var now = time.GetUtcNow();
         _ = await transaction.RunAsync("INSERT INTO _ts_applied (id, region, state, result, applied_at) VALUES (?, ?, ?, ?, ?)", [region.Id, region.Region, result.State, JsonSerializer.Serialize(result, HomeApplyJsonContext.Default.HomeApplyResult), now.ToUnixTimeMilliseconds()], cancellationToken)
             .ConfigureAwait(false);

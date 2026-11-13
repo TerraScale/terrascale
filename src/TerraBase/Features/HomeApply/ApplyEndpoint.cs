@@ -85,7 +85,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         {
             using (QosContext.Enter(database, memory))
             {
-                return await apply.ApplyAsync(database, transaction!, cancellationToken).ConfigureAwait(false) is { } result
+                return await apply.ApplyAsync(database, transaction!, null, cancellationToken).ConfigureAwait(false) is { } result
                     ? TypedResults.Json(result, HomeApplyJsonContext.Default.HomeApplyResult)
                     : ErrorResponse.From(new NotFound("the database is not stored on this node"));
             }
