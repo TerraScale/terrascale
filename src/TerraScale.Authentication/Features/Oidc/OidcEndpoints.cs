@@ -65,7 +65,7 @@ public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
         Get("/{slug}/.well-known/openid-configuration");
         Name("oidc_discovery");
         Summary("OpenID Provider metadata");
-        Description("OpenID Connect Discovery 1.0 metadata for the issuer {public origin}/{slug}: terrascale, or an existing project's id. Other slugs answer 404. A project tenant serves the authorization code flow for its own clients and end users, without device, client-credentials or token-exchange grants.");
+        Description("OpenID Connect Discovery 1.0 metadata for the issuer {public origin}/{slug}: terrascale, or an existing project's id. Other slugs answer 404. A project tenant serves authorization-code and refresh flows for its interactive clients and end users, and client-credentials grants for its machine apps. Device and token-exchange grants are platform-only.");
         Tags("OAuth");
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status404NotFound);
