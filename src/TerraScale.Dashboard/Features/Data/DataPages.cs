@@ -4,7 +4,8 @@ namespace TerraScale.Dashboard.Features.Data
 {
     public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string Error = "", string FormError = "", string Dialog = "",
         string Sql = "", DatabaseSqlResult? SqlResult = null, IReadOnlyList<SavedQuery>? SavedQueries = null, string QueryName = "",
-        SqlCatalog? Catalog = null, IReadOnlyList<string>? History = null, bool SqlChecked = false, string CatalogError = "", string SqlNotice = "")
+        SqlCatalog? Catalog = null, IReadOnlyList<string>? History = null, bool SqlChecked = false, string CatalogError = "", string SqlNotice = "",
+        string CreatedTable = "", CreateTableDraft? TableDraft = null)
     {
         public AccountContext Context => Shell.Context;
         public SqlAnalysis Analysis => SqlValidation.Analyze(Sql);

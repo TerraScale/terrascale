@@ -119,7 +119,8 @@ namespace TerraScale.Dashboard.Features.Data
         }
 
         internal static async Task<IResult> PageAsync(HttpContext http, AccountContext context, string id, DataService data, SavedQueryService saved,
-            string formError = "", string dialog = "", string sql = "", DatabaseSqlResult? sqlResult = null, string queryName = "", int status = 200, bool sqlChecked = false, string sqlNotice = "")
+            string formError = "", string dialog = "", string sql = "", DatabaseSqlResult? sqlResult = null, string queryName = "", int status = 200, bool sqlChecked = false, string sqlNotice = "",
+            string createdTable = "", CreateTableDraft? tableDraft = null)
         {
             DatabaseRecord database;
             try { database = DatabaseService.Database(context, id); }
@@ -202,8 +203,17 @@ namespace TerraScale.Dashboard.Features.Data
                     return DatabaseResults.PageFailure(http, context, error);
                 }
             }
+            if (createdTable.Length == 0)
+            {
+                var requested = http.Request.Query["created"].ToString();
+                if (requested.Length is > 0 and <= 128 && !requested.Any(char.IsControl))
+                {
+                    createdTable = requested;
+                }
+            }
+
             var result = DataView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title("sql")), database, errorMessage, formError, dialog,
-                sql, sqlResult, queries, queryName, catalog, history, sqlChecked, catalogError, sqlNotice));
+                sql, sqlResult, queries, queryName, catalog, history, sqlChecked, catalogError, sqlNotice, createdTable, tableDraft));
             result.StatusCode = status;
             return result;
         }
