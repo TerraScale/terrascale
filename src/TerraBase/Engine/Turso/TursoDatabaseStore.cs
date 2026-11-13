@@ -2,8 +2,6 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
-using System.Security.Cryptography;
-using System.Text;
 using Turso.Data.Sqlite;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
@@ -37,9 +35,7 @@ internal sealed partial class TursoDatabaseStore(
         Volatile.Write(ref _retainedCdcRows, (long)command.ExecuteScalar()!);
     }
 
-    private const int SchemaVersion = 1;
-
-    internal static readonly byte[] FormatDigest = SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql));
+    internal int Format { get; private set; }
 
     private const string OffsetSchemaSql = """
         CREATE TABLE commit_offset (
@@ -1177,7 +1173,7 @@ internal sealed partial class TursoDatabaseStore(
                 connection.Open();
 
                 Scalar(connection, null, pragmas + "PRAGMA synchronous = OFF;");
-                Bootstrap(name, connection, cancellationToken);
+                _ = Bootstrap(name, connection, cancellationToken);
 
                 using var transaction = connection.BeginTransaction(deferred: false);
                 incarnation = RenewIncarnation(connection, transaction);
@@ -1202,7 +1198,7 @@ internal sealed partial class TursoDatabaseStore(
 
                 session.Settings(queryOnly: false, full: false);
 
-                Bootstrap(name, session.Connection, cancellationToken);
+                Format = Bootstrap(name, session.Connection, cancellationToken);
                 _incarnation = new(Ulid.Parse(
                     (string)(Scalar(session.Connection, null, TursoStatements.Incarnation)
                         ?? throw new InvalidOperationException("database incarnation is missing"))));
@@ -1218,44 +1214,26 @@ internal sealed partial class TursoDatabaseStore(
         await ReturnAsync(session).ConfigureAwait(false);
     }
 
-    private static void Bootstrap(string name, SqliteConnection connection, CancellationToken cancellationToken)
+    private static int Bootstrap(string name, SqliteConnection connection, CancellationToken cancellationToken)
     {
-        var version = Version(name, connection, transaction: null);
-        if (version == SchemaVersion)
+        if (Convert.ToInt32(Scalar(connection, null, "PRAGMA user_version;"), CultureInfo.InvariantCulture) != 0)
         {
-            return;
+            return StorageMigrations.Apply(name, connection, cancellationToken);
         }
 
         using var transaction = connection.BeginTransaction(deferred: false);
-
-        version = Version(name, connection, transaction);
-        if (version == SchemaVersion)
+        if (Scalar(connection, transaction, "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1;") is not null)
         {
-            return;
-        }
-
-        if (version != 0 || Scalar(connection, transaction, "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1;") is not null)
-        {
-            throw new InvalidOperationException("data-directory contains an old database format; discard the affected data before starting");
+            throw new InvalidOperationException($"database '{name}' has tables but no storage format; this build supports storage formats {StorageFormat.SupportedFrom} to {StorageFormat.SupportedTo}");
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         var schema = name == TursoStorageEngine.SystemName ? SystemSchemaSql : ClientSchemaSql;
-        Scalar(connection, transaction, schema + $"PRAGMA user_version = {SchemaVersion};");
+        Scalar(connection, transaction, schema + $"PRAGMA user_version = {StorageFormat.FileVersion(StorageFormat.Target)};");
         RenewIncarnation(connection, transaction);
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();
-    }
-
-    private static int Version(string name, SqliteConnection connection, SqliteTransaction? transaction)
-    {
-        var version = Convert.ToInt32(
-            Scalar(connection, transaction, "PRAGMA user_version;"),
-            CultureInfo.InvariantCulture);
-        return version is 0 or SchemaVersion
-            ? version
-            : throw new InvalidOperationException(
-                $"database '{name}' has schema version {version}, an old database format; discard the affected data before starting");
+        return StorageFormat.Target;
     }
 
     private static Ulid RenewIncarnation(SqliteConnection connection, SqliteTransaction? transaction)

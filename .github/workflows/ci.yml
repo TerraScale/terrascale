@@ -255,11 +255,11 @@ jobs:
       - name: Workflows name no retired hosting provider
         if: github.event_name != 'push'
         run: '! grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
-      - name: Storage train
+      - name: Storage format migrations
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/terrabase/storage-format-check.sh "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
+        run: bash scripts/check-storage-format.sh HEAD^1 "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
       - name: Scan for legacy terms (fail)
         if: ${{ !cancelled() }}
         run: |

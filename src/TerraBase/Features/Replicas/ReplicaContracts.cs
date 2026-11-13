@@ -1,3 +1,4 @@
+using TerraBase.Engine;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replicas;
@@ -15,7 +16,8 @@ internal sealed record ReplicaRevisionNotice(string OrganizationId, string Proje
 
 internal static class ReplicaSubjects
 {
-    public static string Revision(string replica, string home, string database) => $"terrabase.revision.{replica}.{home}.{database}";
+    public static string Revision(string replica, string home, string database, int format) =>
+        StorageFormat.Marker(format) is { } marker ? $"terrabase.revision.{replica}.{home}.{database}.{marker}" : $"terrabase.revision.{replica}.{home}.{database}";
 
     public static string Revisions(string replica) => $"terrabase.revision.{replica}.>";
 
