@@ -109,6 +109,24 @@ jobs:
               - src/TerraBase/Features/Sql/SqlScript.cs
               - src/TerraBase/Features/Sql/SqlSocket.cs
               - src/TerraBase/Features/Postgres/PostgresConnectionHandler.cs
+              - src/TerraBase/Features/Management/CreateDatabaseEndpoint.cs
+              - src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs
+              - src/TerraBase/Features/Management/EngineManagementService.AddPipeline.cs
+              - src/TerraBase/Features/Management/EngineManagementService.DeletePipeline.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Databases.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Recovery.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Orphans.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Tenants.cs
+              - src/TerraBase/Features/Management/Backups/StorageSweep.cs
+              - src/TerraBase/Features/Management/Backups/EngineManagedBackupService.Restores.cs
+              - src/TerraBase/Features/Replicas/HomeMoves.cs
+              - src/TerraBase/Features/Replicas/HomeLeases.cs
+              - src/TerraBase/Features/Replicas/RegionalHandoff.cs
+              - src/TerraBase/Features/Memory/MemoryBudgetExtensions.cs
+              - src/TerraBase/Primitives/DirectorySync.cs
+              - src/TerraBase/Primitives/EntityIds.cs
+              - src/TerraBase/Primitives/StrictJson.cs
+              - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
               - e2e/env/engine-crash*
               - e2e/env/build.sh
               - scripts/terrabase/**

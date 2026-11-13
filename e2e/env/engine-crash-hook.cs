@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections;
 using System.Linq;
@@ -14,6 +15,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
+using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 using Turso.Data.Sqlite;
 
@@ -21,6 +23,116 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
 {
     private static readonly List<IStorageTransaction> Held = [];
     private static readonly List<SqliteConnection> Replay = [];
+    private static readonly ConcurrentQueue<string> Events = new();
+    private static readonly List<IDisposable> Kept = [];
+    private static readonly List<Task> Running = [];
+    private static TaskCompletionSource RecordingSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private static void Observe(string step, TenantContext database)
+    {
+        if (step is "storage.fault.recording" or "storage.fault.recorded")
+        {
+            Events.Enqueue(step["storage.fault.".Length..]);
+            if (step == "storage.fault.recording")
+            {
+                RecordingSeen.TrySetResult();
+            }
+        }
+    }
+
+    private static object Ledger(IStorageEngine engine) => engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
+
+    private static void Arm(IStorageEngine engine)
+    {
+        Events.Clear();
+        RecordingSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var field = engine.GetType().GetField("_checkpoint", Hidden)!;
+        field.SetValue(engine, Delegate.CreateDelegate(field.FieldType,
+            typeof(StartupHook).GetMethod(nameof(Observe), BindingFlags.Static | BindingFlags.NonPublic)!));
+    }
+
+    private static Task Record(object ledger, TenantContext tenant, Ulid incarnation, string reason) =>
+        ((ValueTask)ledger.GetType().GetMethod("RecordAsync", Hidden)!.Invoke(ledger, [tenant, incarnation, reason])!).AsTask();
+
+    private static async Task<IDisposable> HoldBarrierAsync(object ledger, TenantContext tenant, CancellationToken cancellationToken)
+    {
+        var barrier = ledger.GetType().GetMethod("Mutations", Hidden)!.Invoke(ledger, [tenant])!;
+        var entering = (Task)barrier.GetType().GetMethod("EnterAsync", Hidden)!.Invoke(barrier, [cancellationToken])!;
+        await entering;
+        return (IDisposable)entering.GetType().GetProperty("Result")!.GetValue(entering)!;
+    }
+
+    private static async Task<Task> FaultBehindBarrierAsync(IStorageEngine engine, TenantContext tenant, Ulid incarnation, string reason, CancellationToken cancellationToken)
+    {
+        var ledger = Ledger(engine);
+        Arm(engine);
+        Kept.Add(await HoldBarrierAsync(ledger, tenant, cancellationToken));
+        var fault = Record(ledger, tenant, incarnation, reason);
+        await RecordingSeen.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        if (fault.IsCompleted)
+        {
+            throw new InvalidOperationException("fault publication did not wait for the copy barrier");
+        }
+        return fault;
+    }
+
+    private static async Task DeleteRaceAsync(IStorageEngine engine, TenantContext tenant, CancellationToken cancellationToken)
+    {
+        var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+        var incarnation = store.Incarnation;
+        ((IDisposable)store).Dispose();
+        ((IDictionary)engine.GetType().GetField("_stores", Hidden)!.GetValue(engine)!).Remove((tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!));
+        var fault = await FaultBehindBarrierAsync(engine, tenant, incarnation, "damage seen before an explicit deletion", cancellationToken);
+        try
+        {
+            if (!await engine.DeleteDatabaseAsync(tenant, cancellationToken))
+            {
+                throw new InvalidOperationException("the faulting copy was not explicitly deleted");
+            }
+        }
+        finally
+        {
+            foreach (var lease in Kept)
+            {
+                lease.Dispose();
+            }
+            Kept.Clear();
+        }
+        await fault;
+        if (Events.Contains("recorded"))
+        {
+            throw new InvalidOperationException("a fault row was published for a deleted database");
+        }
+        _ = await engine.CreateDatabaseAsync(tenant, cancellationToken);
+        var recreated = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+        await using var read = await recreated.BeginTransactionAsync(false, cancellationToken);
+        _ = await read.GetOffsetAsync(cancellationToken);
+        Console.WriteLine("deletion during a waiting fault publication: no fault row; same-key creation healthy");
+    }
+
+    private static readonly List<IMemoryReservation> Saturation = [];
+
+    private static void Saturate(IMemoryBudget budget, string project)
+    {
+        for (var index = 0; index < 4000; index++)
+        {
+            var tenant = new TenantContext(Ulid.NewUlid().ToString(), PlanTier.Enterprise, project, Ulid.NewUlid().ToString());
+            for (var bytes = 1L << 40; bytes >= 1; bytes /= 2)
+            {
+                while (budget.TryReserve(bytes, tenant) is { } reservation)
+                {
+                    Saturation.Add(reservation);
+                }
+            }
+            if (budget.TryReserve(1, tenant: null) is not { } spare)
+            {
+                Console.WriteLine(FormattableString.Invariant($"memory budget saturated by {index + 1} tenants with {Saturation.Count} reservations"));
+                return;
+            }
+            spare.Dispose();
+        }
+        throw new InvalidOperationException("the memory budget could not be saturated");
+    }
 
     public static void Initialize()
     {
@@ -259,14 +371,19 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         File.WriteAllText(control, "checkpoint");
         var checkpoint = (Task)store.GetType().GetMethod("CheckpointOnCloseAsync", Hidden)!.Invoke(store, null)!;
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-        var ledger = engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
-        var fault = ((ValueTask)ledger.GetType().GetMethod("RecordAsync", Hidden)!.Invoke(ledger,
-            [tenant, store.Incarnation, "another reader detected damage during checkpoint backfill"])!).AsTask();
+        Arm(engine);
+        var fault = Record(Ledger(engine), tenant, store.Incarnation, "another reader detected damage during checkpoint backfill");
+        await RecordingSeen.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
         if (timeout)
         {
-            Console.WriteLine("native checkpoint held past the fault publication bound");
-            await checkpoint;
-            throw new InvalidOperationException("the stalled checkpoint escaped the fault publication bound");
+            if (fault.IsCompleted)
+            {
+                throw new InvalidOperationException("fault publication did not wait for the held checkpoint");
+            }
+            Running.Add(fault);
+            Running.Add(checkpoint);
+            Console.WriteLine("native checkpoint held with the durable fault intent written");
+            return;
         }
         try
         {
@@ -283,6 +400,7 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         }
         finally
         {
+            Events.Enqueue("released");
             using var release = new FileStream(control + ".release", FileMode.Open, FileAccess.Write);
             release.WriteByte(1);
         }
@@ -303,6 +421,10 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         if (!main.AsSpan().SequenceEqual(File.ReadAllBytes(path)) || !log.AsSpan().SequenceEqual(File.ReadAllBytes(path + "-wal")))
         {
             throw new InvalidOperationException("a later checkpoint modified the recorded fault");
+        }
+        if (string.Join(",", Events) != "recording,released,recorded")
+        {
+            throw new InvalidOperationException("fault publication order: " + string.Join(",", Events));
         }
         Console.WriteLine("native checkpoint finished before fault publication; later checkpoint never started");
     }
@@ -362,6 +484,71 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                     {
                         await NativeCheckpointRaceAsync(engine, tenant, parts.Length > 4 && parts[4] == "timeout", cancellationToken);
                         await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "hold-fault")
+                    {
+                        var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+                        Running.Add(await FaultBehindBarrierAsync(engine, tenant, store.Incarnation, "damage seen while a reader session opened", cancellationToken));
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "delete-race")
+                    {
+                        await DeleteRaceAsync(engine, tenant, cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "delete")
+                    {
+                        _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "saturate")
+                    {
+                        Saturate(services.GetRequiredService<IMemoryBudget>(), parts[2]);
+                        if (services.GetRequiredService<IMemoryBudget>().TryReserve(4096, tenant: null) is not null)
+                        {
+                            throw new InvalidOperationException("the ledger's bookkeeping share was still available");
+                        }
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "unsaturate")
+                    {
+                        foreach (var reservation in Saturation)
+                        {
+                            reservation.Dispose();
+                        }
+                        Saturation.Clear();
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "refused")
+                    {
+                        var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+                        var ledger = Ledger(engine);
+                        var refused = await ledger.GetType().GetMethod("RefusedAsync")!
+                            .CreateDelegate<Func<TenantContext, Ulid, CancellationToken, ValueTask<bool>>>(ledger)(tenant, store.Incarnation, cancellationToken);
+                        await writer.WriteLineAsync((refused ? "1" : "0").AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "many")
+                    {
+                        for (var index = 0; index < int.Parse(parts[4], CultureInfo.InvariantCulture); index++)
+                        {
+                            _ = await engine.CreateDatabaseAsync(new TenantContext(parts[1], PlanTier.Hobby, parts[2], Ulid.NewUlid().ToString()), cancellationToken);
+                        }
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "idle-pass")
+                    {
+                        var maintenance = services.GetServices<IHostedService>().First(service => service.GetType().Name == "CdcMaintenance");
+                        var passing = (Task)maintenance.GetType().GetMethod("PassAsync", Hidden)!.Invoke(maintenance, [cancellationToken])!;
+                        await passing;
+                        await writer.WriteLineAsync(passing.GetType().GetProperty("Result")!.GetValue(passing)!.ToString().AsMemory(), cancellationToken);
                         continue;
                     }
                     if (parts[0] == "migration-lease")

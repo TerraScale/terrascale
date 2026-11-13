@@ -17,14 +17,7 @@ internal sealed class CopyMutationBarrier : IDisposable
         return new Lease(this);
     }
 
-    internal IDisposable TryPublish()
-    {
-        if (!_gate.Wait(0))
-        {
-            throw new StorageBusyException();
-        }
-        return new Lease(this);
-    }
+    internal IDisposable? TryEnter() => _gate.Wait(0) ? new Lease(this) : null;
 
     internal async Task<IDisposable> EnterAsync(CancellationToken cancellationToken)
     {
@@ -32,18 +25,23 @@ internal sealed class CopyMutationBarrier : IDisposable
         return new Lease(this);
     }
 
-    internal async Task<IDisposable> PublishFaultAsync(TimeSpan queryBudget)
+    internal async Task<IDisposable> PublishFaultAsync(TimeSpan queryBudget, Action late)
     {
-        var bound = queryBudget + CheckpointAllowance;
-        if (!await _gate.WaitAsync(bound).ConfigureAwait(false))
+        if (!await _gate.WaitAsync(queryBudget + CheckpointAllowance).ConfigureAwait(false))
         {
-            Environment.FailFast(
-                $"A copy modification outlived the {bound.TotalSeconds:0} second fault publication bound; files and intents are retained for recovery.");
+            late();
+            await _gate.WaitAsync().ConfigureAwait(false);
         }
         return new Lease(this);
     }
 
-    public void Dispose() => _gate.Dispose();
+    public void Dispose()
+    {
+        if (_gate.Wait(0))
+        {
+            _gate.Dispose();
+        }
+    }
 
     private sealed class Nested : IDisposable
     {

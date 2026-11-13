@@ -13,7 +13,7 @@ static void stopped(const char *operation, const char *path, int result) {
     if (result || !point || strcmp(point, operation)) return;
     const char *name = strrchr(path, '/');
     if (!name || name[1] == '_' || name[1] == '.') return;
-    const char *suffix = !strcmp(operation, "publish") ? ".db.key" : ".db";
+    const char *suffix = !strcmp(operation, "publish") ? ".db.key" : !strcmp(operation, "deleting") ? ".db.deleting" : ".db";
     size_t n = strlen(path), s = strlen(suffix);
     if (n >= s && !strcmp(path + n - s, suffix)) raise(SIGSTOP);
 }
@@ -35,6 +35,7 @@ int unlink(const char *path) {
     int (*real)(const char *) = dlsym(RTLD_NEXT, "unlink");
     int result = real(path);
     stopped("delete", path, result);
+    stopped("deleting", path, result);
     return result;
 }
 static int proof_failure(const char *path) {

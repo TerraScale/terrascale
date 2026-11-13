@@ -68,6 +68,7 @@ proof_events = 0
 rollback_count = 0
 proof_held = threading.Event()
 proof_reads = 0
+publication_late = threading.Event()
 
 
 def request(method, path, body=None, actor=True):
@@ -162,6 +163,8 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
                     print(line.decode().strip(), flush=True)
                 if b"proof tenant file read" in line:
                     proof_reads += 1
+                if b"still waiting for a modification in flight" in line:
+                    publication_late.set()
                 if b"proof file claim held" in line:
                     proof_held.set()
                 if b"engine crash hook ready" in line:
@@ -267,8 +270,10 @@ def hook(operation, database_id, count=None):
         result = client.recv(65536).decode().strip()
         if not result:
             raise RuntimeError("hook interrupted by process exit")
-        if operation in ("ledger", "pending"):
+        if operation in ("ledger", "pending", "refused"):
             return [int(value) for value in result.split()]
+        if operation == "idle-pass":
+            return result
         assert result == "ok", result
 
 
@@ -369,24 +374,28 @@ def recovered(identities):
 
 def crash_recording(identity, operation="fault"):
     hook("arm-recording", identity)
+    crash_hook(operation, identity)
+
+
+def crash_hook(operation, identity):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         pending = executor.submit(hook, operation, identity)
 
         def expired(signum, frame):
-            raise TimeoutError("fault recording did not reach the flushed marker")
+            raise TimeoutError(operation + " did not reach its stop boundary")
 
         previous = signal.signal(signal.SIGALRM, expired)
         signal.alarm(40)
         try:
             _, status = os.waitpid(node.pid, os.WUNTRACED)
-            assert os.WIFSTOPPED(status), "node exited before the fault marker boundary"
+            assert os.WIFSTOPPED(status), "node exited before the " + operation + " stop boundary"
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
             end(hard=True, rollback=False)
         try:
             pending.result(timeout=5)
-            raise AssertionError("fault recording returned before its killed commit")
+            raise AssertionError(operation + " returned before its killed boundary")
         except RuntimeError as error:
             assert str(error).startswith("hook interrupted"), str(error)
 
@@ -395,8 +404,8 @@ def boundary_cases(selected=None):
     global proof_reads
     if selected == "isolation":
         for case in (
-            "latency", "native", "native-timeout", "recreate", "opened-key", "key-retry",
-            "unknown-key", "creation", "checkpoints",
+            "latency", "native", "native-timeout", "reader-kill", "delete-race", "delete-forget", "memory",
+            "recreate", "opened-key", "key-retry", "unknown-key", "creation", "checkpoints",
         ):
             boundary_cases(case)
         return
@@ -427,32 +436,135 @@ def boundary_cases(selected=None):
     if selected in (None, "native-timeout"):
         start()
         identity = request("POST", f"/v1/projects/{project}/databases", {"name": "native-deadline"})["id"]
+        healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "native-healthy"})["id"]
         end()
         release = state / "checkpoint-control.release"
         os.mkfifo(release)
+        publication_late.clear()
         start(checkpoint_target=identity + ".db")
         sql(project, identity, [
             "CREATE TABLE native_deadline(id INTEGER PRIMARY KEY);", "INSERT INTO native_deadline VALUES (1);",
         ])
         began = time.perf_counter()
-        try:
-            hook("native-race", identity, "timeout")
-            raise AssertionError("a stalled checkpoint returned successfully")
-        except RuntimeError as error:
-            assert "process exit" in str(error), error
-        assert node.wait(timeout=5) != 0
+        hook("native-race", identity, "timeout")
+        assert hook("ledger", identity) == [0, 1]
+        unavailable(identity, "copy_faulted")
+        assert publication_late.wait(60)
         elapsed = time.perf_counter() - began
         assert 34 <= elapsed < 45, elapsed
-        log = state / ("node-" + str(generation) + ".log")
-        reader.join(timeout=5)
-        assert "outlived the 35 second fault publication bound" in log.read_text()
-        end()
+        assert node.poll() is None
+        assert gauge("terrabase_storage_fault_publication_late_total") == 1
+        request("GET", "/readyz", actor=False)
+        assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+        with Postgres(healthy) as client:
+            assert client.query("SELECT 1;") == {}
+        assert hook("ledger", identity) == [0, 1]
+        unavailable(identity, "copy_faulted")
+        end(hard=True, rollback=False)
         release.unlink()
-        assert (state / "data" / organization / project / (identity + ".db")).is_file()
         start()
-        hook("check", identity)
+        wait_for_proofs()
+        assert hook("ledger", identity) == [1, 0]
+        unavailable(identity, "copy_faulted")
+        assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
         end()
-        print(f"stalled native checkpoint: fail-stop in {elapsed:.3f}s; files retained and restart proof completed", flush=True)
+        print(
+            f"stalled native checkpoint: node kept serving past the bound ({elapsed:.3f}s); intent durable during the wait; "
+            "killed during the wait, the restart refused the copy with a permanent fault", flush=True,
+        )
+
+    if selected in (None, "reader-kill"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "reader-open"})["id"]
+        hook("check", identity)
+        hook("hold-fault", identity)
+        assert hook("ledger", identity) == [0, 1]
+        unavailable(identity, "copy_faulted")
+        end(hard=True, rollback=False)
+        start()
+        wait_for_proofs()
+        assert hook("ledger", identity) == [1, 0]
+        unavailable(identity, "copy_faulted")
+        end()
+        print("barrier held without a write intent at detection, then kill: restart refused the copy", flush=True)
+
+    if selected in (None, "delete-race"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "delete-race"})["id"]
+        hook("delete-race", identity)
+        assert hook("ledger", identity) == [0, 0]
+        assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+        with Postgres(identity) as client:
+            assert client.query("SELECT 1;") == {}
+        end()
+        print("deletion while fault publication waited: no fault row; same-key creation healthy", flush=True)
+
+    if selected in (None, "delete-forget"):
+        for point in ("delete", "deleting"):
+            start()
+            identity = request("POST", f"/v1/projects/{project}/databases", {"name": "forget-" + point})["id"]
+            hook("fault", identity)
+            assert hook("ledger", identity) == [1, 0]
+            end()
+            start(point)
+            crash_hook("delete", identity)
+            start()
+            wait_for_proofs()
+            assert not list((state / "data" / organization / project).glob(identity + ".db*"))
+            assert hook("ledger", identity) == [0, 0]
+            assert gauge("terrabase_storage_faulted_databases") == hook("ledger", "*")[0]
+            end()
+            print(f"kill at the {point} boundary of a deletion: next start ended deleted and forgotten", flush=True)
+
+    if selected in (None, "memory"):
+        start()
+        waiting = request("POST", f"/v1/projects/{project}/databases", {"name": "memory-pending"})["id"]
+        faulted = request("POST", f"/v1/projects/{project}/databases", {"name": "memory-fault"})["id"]
+        healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "memory-healthy"})["id"]
+        hook("intent", waiting)
+        end(hard=True, rollback=False)
+        key = state / "data" / organization / project / (waiting + ".db.key")
+        key.chmod(0)
+        try:
+            start()
+            assert gauge("terrabase_storage_proof_pending") == 1
+            hook("check", healthy)
+            hook("check", faulted)
+            hook("saturate", "*")
+            with proof_finished:
+                before = proof_events
+            hook("fault", faulted)
+            with proof_finished:
+                assert proof_finished.wait_for(lambda: proof_events > before, 40)
+            request("GET", "/readyz", actor=False)
+            assert hook("refused", healthy) == [0]
+            assert hook("ledger", faulted) == [1, 0]
+            assert hook("ledger", waiting) == [0, 1]
+            assert gauge("terrabase_storage_proof_pending") == 1
+            hook("unsaturate", "*")
+            assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+            with Postgres(healthy) as client:
+                assert client.query("SELECT 1;") == {}
+            unavailable(faulted, "copy_faulted")
+            unavailable(waiting, "recovery_pending")
+        finally:
+            key.chmod(0o600)
+        wait_for_proofs()
+        hook("check", waiting)
+        end()
+        print(
+            "memory budget saturated by tenants: fault recorded and pending proof retried; node ready, "
+            "healthy copy admitted, affected copies refused", flush=True,
+        )
+
+    if selected == "idle-cost":
+        start()
+        hook("many", "*", 1000)
+        end()
+        start()
+        for label in ("first pass after restart", "steady pass"):
+            print(f"idle pass with 1000 idle databases, {label}: {hook('idle-pass', '*')}", flush=True)
+        end()
 
     if selected in (None, "recreate"):
         start()
@@ -995,6 +1107,7 @@ try:
     crash_request("delete", "DELETE", f"/v1/projects/{project}/databases/{database}")
     start()
     assert not list((state / "data" / organization / project).glob("*.db*"))
+    assert hook("ledger", database) == [0, 0]
     print("delete restart: no database or sidecars remain", flush=True)
     end()
     crash_request("publish", "POST", f"/v1/projects/{project}/databases", {"name": "half"})

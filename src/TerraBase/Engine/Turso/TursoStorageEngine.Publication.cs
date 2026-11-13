@@ -48,6 +48,19 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
+    private readonly List<(StorageFaultLedger.Key Key, string Path)> _deletions = [];
+
+    private bool CompleteDeletions()
+    {
+        foreach (var (_, path) in _deletions)
+        {
+            DeleteFileIfPresent(path + DeletionMarker);
+            SyncExistingDirectory(Path.GetDirectoryName(path)!);
+        }
+        _deletions.Clear();
+        return true;
+    }
+
     private void RecoverDirectory(string directory)
     {
         RejectLink(directory);
@@ -80,9 +93,15 @@ internal sealed partial class TursoStorageEngine
             {
                 var path = Path.Combine(directory, name);
                 RejectDatabaseLinks(path);
-                if (!File.Exists(path) && File.Exists(path + ".deleting"))
+                if (!File.Exists(path) && File.Exists(path + DeletionMarker))
                 {
-                    DeleteSidecars(path);
+                    var tenant = IsId(name[..^FileExtension.Length]);
+                    DeleteSidecars(path, keepMarker: tenant);
+                    if (tenant && _deletions.All(deletion => deletion.Path != path))
+                    {
+                        _deletions.Add((new StorageFaultLedger.Key(
+                            Path.GetFileName(Path.GetDirectoryName(directory)!), Path.GetFileName(directory), name[..^FileExtension.Length]), path));
+                    }
                     changed = true;
                 }
             }

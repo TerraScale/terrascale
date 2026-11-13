@@ -28,12 +28,17 @@ internal sealed partial class TursoDatabaseStore(
 
     internal long RetainedCdcRows => Volatile.Read(ref _retainedCdcRows);
 
+    private bool _cdcObserved;
+
+    internal bool IdleClean => Volatile.Read(ref _cdcObserved) && RetainedCdcRows == 0;
+
     internal void ObserveCdcSize(SqliteConnection connection, SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "SELECT coalesce((SELECT max(change_id) FROM turso_cdc) - (SELECT min(change_id) FROM turso_cdc) + 1, 0);";
         Volatile.Write(ref _retainedCdcRows, (long)command.ExecuteScalar()!);
+        Volatile.Write(ref _cdcObserved, true);
     }
 
     internal int Format { get; private set; }
@@ -785,25 +790,32 @@ internal sealed partial class TursoDatabaseStore(
 
             var sourceConnection = await ConnectionStringAsync(io, cancellationToken).ConfigureAwait(false);
             var targetConnection = await Encryption.CreateAsync(path, io, cancellationToken).ConfigureAwait(false);
-            await io.RunAsync(() =>
+            var source = new FaultAwareCopySource(sourceConnection, error =>
             {
-                using var source = new FaultAwareCopySource(sourceConnection, error =>
-                {
-                    NoteCopyFault(reason);
-                    sourceError ??= ExceptionDispatchInfo.Capture(error);
-                })
-                {
-                    CloseRefusal = () => CloseRefusal ?? "terminal copy source close",
-                };
+                NoteCopyFault(reason);
+                sourceError ??= ExceptionDispatchInfo.Capture(error);
+            })
+            {
+                CloseRefusal = () => CloseRefusal ?? "terminal copy source close",
+            };
+            try
+            {
                 if (Tenant is { } tenant)
                 {
                     Checkpoint?.Invoke("copy.source.opening", tenant);
                 }
                 ThrowIfUnavailable();
-                using (EnterMutation())
-                {
-                    TursoSession.OpenExisting(source, FilePath);
-                }
+                using var mutation = await EnterMutationAsync(cancellationToken).ConfigureAwait(false);
+                await io.RunAsync(() => TursoSession.OpenExisting(source, FilePath), cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await io.RunAsync(source.Dispose, CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
+            await io.RunAsync(() =>
+            {
+                using var opened = source;
                 using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(TursoSession.Handle(source)));
                 using var begin = source.CreateCommand();
                 begin.CommandText = "BEGIN;";
@@ -1289,6 +1301,7 @@ internal sealed partial class TursoDatabaseStore(
         using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(session.Native));
         try
         {
+            using var mutation = await EnterMutationAsync(cancellationToken).ConfigureAwait(false);
             await session.ExecuteAsync(io, () =>
             {
 
@@ -1296,7 +1309,6 @@ internal sealed partial class TursoDatabaseStore(
                 cancellationToken.ThrowIfCancellationRequested();
                 session.Settings(queryOnly: false, full: false);
 
-                using var mutation = EnterMutation();
                 Format = Bootstrap(name, session.Connection, cancellationToken);
                 _incarnation = new(Ulid.Parse(
                     (string)(Scalar(session.Connection, null, TursoStatements.Incarnation)

@@ -31,7 +31,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         $"data directory uses the pre-tenancy layout, older than storage format {StorageFormat.SupportedFrom}; this build supports storage formats {StorageFormat.SupportedFrom} to {StorageFormat.SupportedTo} and cannot open it";
 
     internal const string LockFileName = ".terrabase.lock";
-    private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix, RevisionManifestFile.Suffix, RevisionManifestFile.StagedSuffix, ".deleting"];
+    private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix, RevisionManifestFile.Suffix, RevisionManifestFile.StagedSuffix, DeletionMarker];
+    private const string DeletionMarker = ".deleting";
 
     private static readonly string[] ReservedRootNames =
         [LockFileName, .. new[] { SystemName, IntentName }.SelectMany(database => Sidecars.Prepend(string.Empty).Select(suffix => database + FileExtension + suffix))];
@@ -336,10 +337,12 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RecoverPublications();
             CheckIntentJournal();
             DeleteRewriteScratch();
-            Ledger = new StorageFaultLedger(this, logger, schemaMemory);
+            Ledger = new StorageFaultLedger(this, logger);
             meter.CreateObservableGauge("terrabase.storage.faulted.databases", () => Ledger.FaultCount);
             meter.CreateObservableGauge("terrabase.storage.proof.pending", () => Ledger.PendingCount);
             Ledger.IncompleteProofs = meter.CreateCounter<long>("terrabase.storage.proof.incomplete");
+            Ledger.PublicationWaits = meter.CreateCounter<long>("terrabase.storage.fault.publication.late",
+                description: "Fault publications still waiting for a modification in flight on their copy after the publication bound.");
             Leases = new HomeLeaseGate(HostTime);
 
             Io = new(configured.Threads, configured.Queue, meter);
@@ -620,14 +623,14 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         RejectLink(path);
                         if (Directory.Exists(Path.GetDirectoryName(path)!))
                         {
-                            using var deleting = new FileStream(path + ".deleting", FileMode.Create, FileAccess.Write, FileShare.None);
+                            using var deleting = new FileStream(path + DeletionMarker, FileMode.Create, FileAccess.Write, FileShare.None);
                             deleting.Flush(flushToDisk: true);
                         }
                         SyncExistingDirectory(Path.GetDirectoryName(path)!);
                         DeleteFileIfPresent(path);
                         SyncExistingDirectory(Path.GetDirectoryName(path)!);
                         _checkpoint("delete.main_file", database);
-                        DeleteSidecars(path);
+                        DeleteSidecars(path, keepMarker: true);
                         var directory = Path.GetDirectoryName(path)!;
                         if (Directory.Exists(directory))
                         {
@@ -657,6 +660,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     }).ConfigureAwait(false);
                     await Io.RunAsync(() =>
                     {
+                        DeleteFileIfPresent(path + DeletionMarker);
+                        SyncExistingDirectory(Path.GetDirectoryName(path)!);
                         DeleteIfEmpty(Path.GetDirectoryName(path)!);
                         SyncExistingDirectory(Path.Combine(_dataDirectory, key.Organization));
                         DeleteIfEmpty(Path.Combine(_dataDirectory, key.Organization));
@@ -824,9 +829,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
                     _ = await Io.WithAdmissionAsync(async () =>
                     {
-                        await Ledger.RecoverAsync(openingSystem, openingToken).ConfigureAwait(false);
+                        await Ledger.RecoverAsync(openingSystem, [.. _deletions.Select(deletion => deletion.Key)], openingToken).ConfigureAwait(false);
                         return true;
                     }).ConfigureAwait(false);
+                    await Io.RunAsync(CompleteDeletions, CancellationToken.None).ConfigureAwait(false);
                     Volatile.Write(ref _system, openingSystem);
                     Ledger.StartRetries();
 
@@ -1302,7 +1308,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RejectDatabaseLinks(temporary);
             RejectDatabaseLinks(path);
             await ThrowIfPurgeFencedAsync(name, CancellationToken.None).ConfigureAwait(false);
-            using var mutation = database is null ? null : Ledger.Mutations(database).TryPublish();
+            using var mutation = database is null ? null : Ledger.Mutations(database).TryEnter() ?? throw new StorageBusyException();
             if (database is not null)
             {
                 await Ledger.ThrowIfUnavailableAsync(database, CancellationToken.None).ConfigureAwait(false);
@@ -1335,13 +1341,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 DeleteFiles(temporary);
                 DirectorySync(Path.GetDirectoryName(path)!);
             }, CancellationToken.None).ConfigureAwait(false);
-            if (!published && keyPublished)
+            using var mutation = !published && keyPublished && database is not null ? Ledger.Mutations(database).TryEnter() : null;
+            if (!published && keyPublished && (database is null || mutation is not null && Ledger.MemoryRefusal(database) is null))
             {
-                using var mutation = database is null ? null : Ledger.Mutations(database).TryPublish();
-                if (database is not null)
-                {
-                    await Ledger.ThrowIfUnavailableAsync(database, CancellationToken.None).ConfigureAwait(false);
-                }
                 await Io.RunAsync(() =>
                 {
                     if (!File.Exists(path) && !File.Exists(path + "-wal"))
@@ -1361,10 +1363,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         DeleteSidecars(path);
     }
 
-    private void DeleteSidecars(string path, bool keepKey = false)
+    private void DeleteSidecars(string path, bool keepKey = false, bool keepMarker = false)
     {
         RejectDatabaseLinks(path);
-        foreach (var sidecar in Sidecars.Where(sidecar => !keepKey || sidecar != DatabaseKeys.Suffix))
+        foreach (var sidecar in Sidecars.Where(sidecar => (!keepKey || sidecar != DatabaseKeys.Suffix) && (!keepMarker || sidecar != DeletionMarker)))
         {
             RejectLink(path + sidecar);
             DeleteFileIfPresent(path + sidecar);
@@ -1519,8 +1521,18 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RewriteSteps = _rewriteSteps,
         };
 
-    private TursoDatabaseStore CreateTenantStore((string Organization, string Project, string Database) key, string path) =>
-        new(key.Database, path, Pool, Io, _pragmas, new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database), Time,
+    internal bool IdleSettled(TenantContext database) =>
+        _stores.TryGetValue((database.OrganizationId, database.ProjectId!, database.DatabaseId!), out var store)
+            ? store.IdleClean : _idleClean.ContainsKey((database.OrganizationId, database.ProjectId!, database.DatabaseId!));
+
+    internal void NoteIdleClean(TenantContext database) => _ = _idleClean.TryAdd((database.OrganizationId, database.ProjectId!, database.DatabaseId!), 0);
+
+    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), byte> _idleClean = new();
+
+    private TursoDatabaseStore CreateTenantStore((string Organization, string Project, string Database) key, string path)
+    {
+        _ = _idleClean.TryRemove(key, out _);
+        return new(key.Database, path, Pool, Io, _pragmas, new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database), Time,
             RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
         {
             HostTime = HostTime,
@@ -1535,6 +1547,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             Revised = RaiseRevised,
             Leases = Leases,
         };
+    }
 
     private async ValueTask<TursoDatabaseStore> InitializeStoreAsync(
         (string Organization, string Project, string Database) key, string path, Task migration, CancellationToken cancellationToken)
