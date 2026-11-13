@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import type { BrowserContext, Page } from '@playwright/test';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { confirmWithPassword, hostedReady, onboard, signUp, verify } from '../support/hosted';
-import { newAddress, nextMail } from '../support/inbox';
+import { newAddress, nextMail, withInboxBudget } from '../support/inbox';
 import { enterSecret } from '../support/secret';
 import { auth, dash, desktop, onLocalStack, stateDir } from '../support/stack';
 import { journey, saveCookies, saveSecret } from '../support/state';
@@ -37,7 +37,7 @@ test.describe('project MFA and session policy', () => {
   let cookie: string;
   let client: string;
 
-  test.beforeAll(async ({ browser }, info) => {
+  test.beforeAll(async ({ browser }, info) => withInboxBudget(async () => {
     runId = journey().runId + '-' + randomBytes(4).toString('hex');
     const email = await newAddress('mfa-owner-' + runId);
     endUser = await newAddress('mfa-end-user-' + runId);
@@ -79,10 +79,11 @@ test.describe('project MFA and session policy', () => {
     await admin.getByRole('button', { name: 'Save attack protection', exact: true }).click();
     await expect(admin.locator('input[name=account_lockout]')).not.toBeChecked();
     await adminAudit.check('MFA password handoffs use the per-email budget');
-  });
+  }));
 
   test.afterAll(async () => {
     for (const context of [owner, first, second]) {
+      if (!context) continue;
       await saveCookies(context);
       await context.close();
     }
@@ -404,7 +405,7 @@ test.describe('password-only MFA enrollment', () => {
   let project: string;
   let cookie: string;
 
-  test.beforeAll(async ({ browser }, info) => {
+  test.beforeAll(async ({ browser }, info) => withInboxBudget(async () => {
     const runId = journey().runId + '-' + randomBytes(4).toString('hex');
     const email = await newAddress('password-mfa-owner-' + runId);
     endUser = await newAddress('password-mfa-user-' + runId);
@@ -431,13 +432,14 @@ test.describe('password-only MFA enrollment', () => {
     await admin.locator('input[name=require_mfa]').check();
     await admin.getByRole('button', { name: 'Save MFA and sessions', exact: true }).click();
     await expect(admin.locator('input[name=require_mfa]')).toBeChecked();
-  });
+  }));
 
   test.afterAll(async () => {
-    await saveCookies(owner);
-    await saveCookies(user);
-    await owner.close();
-    await user.close();
+    for (const context of [owner, user]) {
+      if (!context) continue;
+      await saveCookies(context);
+      await context.close();
+    }
   });
 
   test('an existing password user proves the inbox and enrolls TOTP with passcode sign-in off', async ({}, info) => {
