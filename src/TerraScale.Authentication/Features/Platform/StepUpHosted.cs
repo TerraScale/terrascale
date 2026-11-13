@@ -126,7 +126,7 @@ internal static class StepUpHosted
             ReturnUri = record.Approved ? record.ReturnUri : null,
         });
         page.StatusCode = context.Response.StatusCode;
-        if (record.Approved && passwordReservation is not null)
+        if (record.PrimaryVerified && passwordReservation is not null)
         {
             await passwordReservation.ReturnAsync(cancellationToken);
         }

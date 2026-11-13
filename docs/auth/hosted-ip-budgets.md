@@ -33,8 +33,9 @@ The burst covers an office behind one NAT. Sustained rates match or exceed the o
 The per-email budgets stay fixed windows. They send one lockout notice per stored deadline: 10 charged primary password attempts
 per 15 minutes, 5 code redemptions per 30 minutes, and 5 code issues and a 60-second cooldown per address. Password
 verification reserves one slot before checking the credential and returns only that request's reservation after the
-session is issued and accepted, an eligible account receives its second-factor challenge, or its password step-up is
-accepted; every other outcome retains the charge until the window expires. The return uses a conditional write against
+session is issued and accepted, an eligible account receives its second-factor challenge, or its password step-up has
+persisted the verified password (approved at once, or handed to the second factor); every other outcome retains the
+charge until the window expires. The return uses a conditional write against
 the same store, key and window that admitted it, skips a changed window, and subtracts only one charge. Concurrent
 verifications count while in flight; a successful sign-in never clears other failures, and an exhausted budget still
 refuses correct passwords. Projects using account-lockout protection do not use this password budget.
@@ -48,8 +49,9 @@ refuses correct passwords. Projects using account-lockout protection do not use 
 | Cancelled, timed out or failed before primary success | Charged | Charged if a second factor was attempted |
 | Return store unavailable | Charged; one warning, successful sign-in continues | Unchanged by the return |
 
-An inbox-verification prerequisite or a platform step-up still awaiting its second factor retains the password charge;
-neither has accepted the guarded step yet. Previously, successful sign-ins and confirmations also consumed the ten
+An inbox-verification prerequisite retains the password charge; it has not accepted the guarded step yet. A platform
+step-up that verified the password and now waits for the second factor has returned its password slot, exactly as a
+sign-in does at that handoff; the second factor is charged by `mfa-proof`. Previously, successful sign-ins and confirmations also consumed the ten
 slots, locking out ordinary account use. The shared IP
 budgets above still charge every attempt. A refusal's
 `Retry-After` is the remaining part of that window in seconds, and the page speaks it in whole minutes above two
