@@ -51,5 +51,9 @@ int adjtimex(struct timex *value)
     value->status = status;
     value->maxerror = 16000000;
     value->esterror = error;
+    const char *path = getenv("E2E_CLOCK_REPLAY");
+    char step[4096];
+    if (snprintf(step, sizeof(step), "%s.step", path) >= (int)sizeof(step)) abort();
+    if (rename(step, path) != 0 && errno != ENOENT) abort();
     return (status & STA_UNSYNC) ? TIME_ERROR : TIME_OK;
 }

@@ -140,7 +140,8 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
         var agreeing = answered.Count(answer => answer.Agrees);
         Volatile.Write(ref _answering, answered.Count);
         Volatile.Write(ref _agreeing, agreeing);
-        var peers = configured == 0 ? Mode.NoPeers
+        var peers = options.PeersFile is null ? Mode.NoPeers
+            : configured == 0 ? Mode.NoContact
             : answered.Count > 0 ? 2 * (agreeing + 1) > answered.Count + 1 ? Mode.PeersAgree : Mode.PeersDisagree
             : _answers.Count > 0 ? Mode.FirstOfBuild
             : _agreeingRounds >= RoundsToOpen ? Mode.PeersLost

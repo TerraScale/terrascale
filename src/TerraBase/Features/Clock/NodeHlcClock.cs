@@ -52,18 +52,16 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await InitializeAsync(cancellationToken).ConfigureAwait(false);
-            if (_previous.PhysicalMilliseconds > time.GetUtcNow().ToUnixTimeMilliseconds() + ClockTrust.BudgetMilliseconds)
+            var previous = await ReadPreviousAsync(cancellationToken).ConfigureAwait(false);
+            var utc = time.GetUtcNow().ToUnixTimeMilliseconds();
+            var stamp = Timestamp(Tick(previous, utc));
+            if (!trust.Trusted || stamp.PhysicalMilliseconds > checked(utc + ClockTrust.BudgetMilliseconds))
             {
                 return Refused();
             }
 
-            var stamp = await AdvanceLockedAsync(null, cancellationToken).ConfigureAwait(false);
-            if (!trust.Trusted || stamp.PhysicalMilliseconds > time.GetUtcNow().ToUnixTimeMilliseconds() + ClockTrust.BudgetMilliseconds)
-            {
-                return Refused();
-            }
-
+            Initialize(previous);
+            await AdvanceLockedAsync(stamp, cancellationToken).ConfigureAwait(false);
             _stamps.Add(1, new KeyValuePair<string, object?>("outcome", "issued"));
             return stamp;
         }
@@ -89,8 +87,8 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await InitializeAsync(cancellationToken).ConfigureAwait(false);
-            return await AdvanceLockedAsync(remote, cancellationToken).ConfigureAwait(false);
+            Initialize(await ReadPreviousAsync(cancellationToken).ConfigureAwait(false));
+            return await AdvanceLockedAsync(Timestamp(Merge(_previous, Capped(remote))), cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -98,36 +96,49 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
         }
     }
 
-    private async ValueTask InitializeAsync(CancellationToken cancellationToken)
+    private async ValueTask<HlcTimestamp> ReadPreviousAsync(CancellationToken cancellationToken)
+    {
+        if (_initialized)
+        {
+            return _previous;
+        }
+
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        var record = await transaction.GetAsync("node_clocks", options.MachineId, cancellationToken).ConfigureAwait(false);
+        return ReadState(record?.Json);
+    }
+
+    private void Initialize(HlcTimestamp previous)
     {
         if (_initialized)
         {
             return;
         }
 
-        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        var record = await transaction.GetAsync("node_clocks", options.MachineId, cancellationToken).ConfigureAwait(false);
-        _previous = _reserved = ReadState(record?.Json);
+        _previous = _reserved = previous;
         Remember(_previous.PhysicalMilliseconds);
         _ = _meter.CreateObservableGauge("terrabase.clock.hlc_ahead", () => Math.Max(0, HighWater - time.GetUtcNow().ToUnixTimeMilliseconds()), "ms");
         _initialized = true;
     }
 
-    private async ValueTask<HlcTimestamp> AdvanceLockedAsync(HlcTimestamp? remote, CancellationToken cancellationToken)
+    private HlcTimestamp Timestamp((long Physical, long Logical) candidate)
     {
-        var previous = _previous;
-        var (physical, logical) = remote is { } received ? Merge(previous, Capped(received)) : Tick(previous, time.GetUtcNow().ToUnixTimeMilliseconds());
+        var (physical, logical) = candidate;
         if (logical > uint.MaxValue)
         {
             physical = checked(physical + 1);
             logical = 0;
         }
 
-        var timestamp = new HlcTimestamp(physical, (uint)logical, options.MachineId);
+        return new HlcTimestamp(physical, (uint)logical, options.MachineId);
+    }
+
+    private async ValueTask<HlcTimestamp> AdvanceLockedAsync(HlcTimestamp timestamp, CancellationToken cancellationToken)
+    {
         if (timestamp > _reserved)
         {
-            var reserved = new HlcTimestamp(checked(physical + ReservationMilliseconds), uint.MaxValue, options.MachineId);
+            var reserved = new HlcTimestamp(checked(timestamp.PhysicalMilliseconds + ReservationMilliseconds), uint.MaxValue, options.MachineId);
             await SaveAsync(reserved, cancellationToken).ConfigureAwait(false);
             _reserved = reserved;
         }

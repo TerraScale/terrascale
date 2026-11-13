@@ -35,6 +35,11 @@ using a durable system-database transaction. A failed reservation throws and iss
 stamp. All returned stamps are covered by an already durable upper bound;
 concurrent issuers preserve HLC ordering.
 
+Issuance computes its candidate from the previous HLC and a UTC read, then checks trust and the UTC plus 50 ms
+bound before saving a reservation or advancing the HLC. A refused candidate changes neither the previous stamp,
+reservation, high-water mark nor durable `node_clocks` record, so a forward step during issuance does not delay
+recovery after correction, including across a restart.
+
 Observing a received stamp takes the larger of the previous HLC and the received stamp capped at local UTC plus 50 ms.
 Local UTC itself is never a candidate when observing: only `IssueAsync`, which runs only while the clock is trusted,
 brings the node's own wall clock into the HLC. A node whose clock is wrong (closed, ahead) that keeps applying received
@@ -177,12 +182,12 @@ others, with no per-peer label. One log line, `Clock trust mode {Mode}, reason {
 | `peers_agree` | `none` | issued: a strict majority of the answering peers plus this node agree |
 | `peers_lost` | `none` | issued: the node was open, no peer answered for 15 s; kernel and step checks hold |
 | `first_of_build` | `none` | issued: no peer answers the route, at least one peer of the previous build is in contact |
-| `no_peers` | `none` | issued: no peers file |
+| `no_peers` | `none` | issued: no peers file is configured |
 | `closed` | `opening` | refused: the checks hold, fewer than two rounds since the last close |
 | `closed` | `kernel` | refused: kernel unsynchronised or its estimated error over 50 ms (for 60 s when the node was open) |
 | `closed` | `step` | refused: a local step, no round begun after it has finished |
 | `closed` | `peers_disagree` | refused: peers answered and the majority disagrees |
-| `closed` | `no_contact` | refused: the node was not open and no peer answered or answered `404 unknown_route` in the last 15 s |
+| `closed` | `no_contact` | refused: the configured peers file lists no other nodes, or the node was not open and no peer answered or answered `404 unknown_route` in the last 15 s |
 | `closed` | `stalled` | refused: no round finished for 15 s |
 
 `terrabase_clock_local_writes_allowed` is one while the clock is trusted. `terrabase_clock_agreeing_rounds` counts the
@@ -196,6 +201,11 @@ stores the reports in `tb-clock-skew` with three replicas and a 15-second TTL, a
 when the last report was stored. Trust never depends on that report.
 
 The runtime does not change the clock or require clock-setting privileges, and it needs no time-daemon socket.
+
+Known limits: a kernel-synchronisation flag that alternates faster than the 60 s grace never closes the node on its
+own; the peer check still runs every round.
+A refused stamp answers with the retryable conflict code today, so a clock outage appears in
+`terrabase_clock_stamps_total{outcome="refused"}` and the mode metric rather than a dedicated error code.
 
 What to watch during a rollout:
 

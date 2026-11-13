@@ -61,6 +61,8 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     writeFileSync(join(root, `${node.name}.next`), `${offset} ${status} ${error}\n`);
     renameSync(join(root, `${node.name}.next`), join(root, node.name));
   };
+  const stepAfterKernel = (node: Node, offset: number) => writeFileSync(join(root, `${node.name}.step`), `${offset} 0 1000\n`);
+  const setPeers = (configured: Node[]) => writeFileSync(peers, configured.map((node) => `${node.name} ${node.region} ${node.address}\n`).join(''));
   const log = (node: Node) => readFileSync(join(root, `${node.name}.log`), 'utf8');
   const metric = async (node: Node, name: string, label = '') => {
     expect(running.get(node)?.exitCode, log(node)).toBeNull();
@@ -203,7 +205,7 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     compiler.stderr.on('data', (chunk: Buffer) => { compileErrors += chunk.toString(); });
     expect((await once(compiler, 'exit'))[0], compileErrors).toBe(0);
     symlinkSync(library, join(root, 'libc.so'));
-    writeFileSync(peers, members.map((node) => `${node.name} ${node.region} ${node.address}\n`).join(''));
+    setPeers(members);
     for (const node of members) {
       set(node, 0);
       mkdirSync(join(root, `${node.name}-data`));
@@ -230,7 +232,7 @@ async function cluster(request: APIRequestContext, members: Node[], label: strin
     rmSync(root, { recursive: true, force: true });
   };
   return {
-    set, log, metric, allowed, mode, transitions, previousBuild, proxy, standIn, holds, start, stop, opens, internal, json, clockPeer, refused, prepare,
+    set, stepAfterKernel, setPeers, log, metric, allowed, mode, transitions, previousBuild, proxy, standIn, holds, start, stop, opens, internal, json, clockPeer, refused, prepare,
     database, finish, observations, opened,
   };
 }
@@ -434,6 +436,64 @@ test('a received write never carries a wrong local clock into the HLC, and a cle
     expect(await metric(h, 'terrabase_clock_stamps_total', 'outcome="refused"')).toBe(0);
     expect(await rows(h)).toEqual([[1], [10], [11], [13], [14], [15], [16], [17]]);
     observations.push(`clean restart: last stamp saved at shutdown; the first write after reopening committed ${after - before} ms after the write before the stop, refused=0`);
+    console.log(observations.join('\n'));
+  } finally {
+    await finish(info);
+  }
+});
+
+test('home writes recover in two agreeing rounds after a step during issuance, including across restart', async ({ request }, info) => {
+  const { node: h, first, second } = lone('w', 61, 18340, 'near');
+  const { set, stepAfterKernel, setPeers, metric, mode, standIn, start, stop, opens, clockPeer, refused, prepare, database, finish, observations } =
+    await cluster(request, [h, first, second], 'issuing');
+  const peer = { offset: 0 };
+  try {
+    await prepare();
+    const peers = [await standIn(first, clockPeer(peer)), await standIn(second, clockPeer(peer))];
+    await opens(h, 'writing home with agreeing peers');
+    const { sql, rows } = await database(h);
+    const committed: number[][] = [];
+    for (const restart of [false, true]) {
+      const base = restart ? 100 : 0;
+      const warm = await sql(h, `INSERT INTO clock_rows VALUES (${base + 1}, 'before step')`);
+      expect(warm.status, warm.body).toBe(200);
+      committed.push([base + 1]);
+      stepAfterKernel(h, 600_000);
+      const answers = await Promise.all(Array.from({ length: 2 }, (_, index) =>
+        sql(h, `INSERT INTO clock_rows VALUES (${base + 2 + index}, 'writing through step')`)));
+      expect(answers.some((answer) => answer.status === 409)).toBe(true);
+      for (const [index, answer] of answers.entries()) {
+        if (answer.status === 200) committed.push([base + 2 + index]);
+        else refused(answer, 'a write crossing the forward step');
+      }
+      refused(await sql(h, `INSERT INTO clock_rows VALUES (${base + 20}, 'during step')`), 'writes stay refused while ahead');
+      set(h, 0);
+      if (restart) {
+        await stop(h);
+        await start(h);
+      }
+      const from = peers.map((stand) => stand.asked());
+      await expect.poll(async () => {
+        const current = await mode(h);
+        if (current !== 'peers_agree/none') expect(Math.min(...peers.map((stand, index) => stand.asked() - from[index])))
+          .toBeLessThanOrEqual(2);
+        return current;
+      }, { message: 'the corrected home opens by the second agreeing round', intervals: [100] }).toBe('peers_agree/none');
+      expect(await metric(h, 'terrabase_clock_agreeing_rounds')).toBeGreaterThanOrEqual(2);
+      const recovered = await sql(h, `INSERT INTO clock_rows VALUES (${base + 21}, 'after correction')`);
+      expect(recovered.status, recovered.body).toBe(200);
+      committed.push([base + 21]);
+      expect(await metric(h, 'terrabase_clock_hlc_ahead_milliseconds')).toBeLessThanOrEqual(50);
+      expect(await rows(h)).toEqual(committed.sort((left, right) => left[0] - right[0]));
+      observations.push(`home writes across a 600 s step: refused while ahead, first write after two agreeing rounds committed${restart ? ' after restarting between correction and the write' : ' without restarting'}`);
+    }
+    setPeers([]);
+    await expect.poll(() => mode(h), { message: 'a configured but empty peers file closes as no_contact' }).toBe('closed/no_contact');
+    refused(await sql(h, "INSERT INTO clock_rows VALUES (200, 'empty peers file')"), 'a configured empty peers file refuses writes');
+    setPeers([h, first, second]);
+    await expect.poll(() => mode(h), { message: 'restoring agreeing peers reopens the home' }).toBe('peers_agree/none');
+    expect(await rows(h)).toEqual(committed);
+    observations.push('configured peers file rewritten empty: closed/no_contact and home write refused; restored peers reopen it');
     console.log(observations.join('\n'));
   } finally {
     await finish(info);
