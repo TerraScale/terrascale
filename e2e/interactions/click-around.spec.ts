@@ -85,8 +85,8 @@ test('an API key is shown once and rotates twice during grace without another cl
   await page.locator('#key-name').fill(name);
   await page.locator('#create-key form').getByRole('button', { name: 'Create key', exact: true }).click();
   const secret = page.locator('#key-secret #api-key-secret');
-  await expect(secret).toBeVisible();
-  const key = (await secret.innerText()).trim();
+  await expect(page.locator('#key-secret')).toBeVisible();
+  const key = (await secret.textContent() ?? '').trim();
   saveSecret('second-api-key', key);
   expect(apiKeyFormat.test(key), 'the second API key has the canonical format').toBe(true);
   await audit.check('second API key created');
@@ -121,9 +121,9 @@ test('an API key is shown once and rotates twice during grace without another cl
     expect(confirmation.headers()['content-security-policy']).toContain("style-src 'self' 'nonce-");
     expect(fallback).toContain(`href="${dash}/auth/step-up/callback"`);
     expect(fallback).toContain('class="btn delayed-continue"');
-    await expect(secret).toBeVisible();
+    await expect(page.locator('#key-secret')).toBeVisible();
     expect(new URL(page.url()).origin).toBe(dash);
-    const rotated = (await secret.innerText()).trim();
+    const rotated = (await secret.textContent() ?? '').trim();
     saveSecret(`rotated-api-key-${generation}`, rotated);
     expect(apiKeyFormat.test(rotated), 'rotation reveals a canonical API key').toBe(true);
     expect(rotated === secrets.at(-1), 'rotation changes the secret').toBe(false);

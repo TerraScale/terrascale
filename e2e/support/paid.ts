@@ -54,9 +54,9 @@ export async function createApiKey(page: Page, audit: Audit, name: string, label
   await dialog.getByRole('radio', { name: 'Full access', exact: true }).check();
   await audit.check(`${label} dialog`);
   await dialog.getByRole('button', { name: 'Create key', exact: true }).click();
-  const secret = page.locator('.ts-apikeys-secret-value');
-  await expect(secret).toBeVisible();
-  const apiKey = (await secret.innerText()).trim();
+  const secret = page.locator('#api-key-secret');
+  await expect(page.locator('#key-secret')).toBeVisible();
+  const apiKey = (await secret.textContent() ?? '').trim();
   saveSecret('paid-api-key', apiKey);
   expect(apiKeyFormat.test(apiKey), 'the API key secret has the canonical format').toBe(true);
   await audit.check(label);
