@@ -9,7 +9,7 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode = true, bool Password = true, string SignUpMode = "public", string? Name = null, string? LogoUrl = null, string? ThemeColor = null,
     IReadOnlyList<SocialProviderRecord>? Providers = null, int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null,
     string? BackgroundColor = null, string? TextColor = null, ConfigurationBody? Configuration = null, string? EmailMessage = null,
-    IReadOnlyList<string>? SubscribedWebhookEvents = null, RestrictionsBody? Restrictions = null, bool MagicLink = false, bool Username = false)
+    IReadOnlyList<string>? SubscribedWebhookEvents = null, RestrictionsBody? Restrictions = null, bool MagicLink = false, bool Username = false, bool OrganizationPicker = false)
 {
     public AttackProtectionSettings AttackProtection { get; init; } = new();
 

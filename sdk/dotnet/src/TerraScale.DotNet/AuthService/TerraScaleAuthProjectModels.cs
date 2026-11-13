@@ -64,7 +64,8 @@ public sealed record TerraScaleAuthProjectSettings(
     [property: JsonPropertyName("counts")] TerraScaleAuthProjectCounts Counts,
     [property: JsonPropertyName("providers")] IReadOnlyList<TerraScaleAuthProjectProvider> Providers,
     [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectConfiguration? Configuration = null,
-        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthRestrictions? Restrictions = null);
+        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthRestrictions? Restrictions = null,
+[property: JsonPropertyName("organization_picker")] bool OrganizationPicker = false);
 
 /// <summary>A social sign-in provider of a project tenant.
 /// Unconfigured providers have null ClientId, Issuer, TeamId and KeyId. CallbackUrl is the redirect URL to register at
@@ -100,7 +101,8 @@ public sealed record TerraScaleAuthProjectSettingsUpdate(
     [property: JsonPropertyName("methods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectMethods? Methods = null,
     [property: JsonPropertyName("branding"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectBranding? Branding = null,
     [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectConfiguration? Configuration = null,
-        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthRestrictions? Restrictions = null);
+        [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthRestrictions? Restrictions = null,
+[property: JsonPropertyName("organization_picker"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? OrganizationPicker = null);
 
 /// <summary>A project tenant end user. A disabled user cannot sign in.</summary>
 public sealed record TerraScaleAuthProjectUser(

@@ -37,7 +37,7 @@ public sealed record ProviderBody(string Provider, bool Configured, string? Clie
 
 /// <summary>A project tenant's settings.</summary>
 public sealed record SettingsBody(string ProjectId, string Issuer, string DiscoveryUrl, string SignInUrl, MethodsBody Methods, BrandingBody Branding, CountsBody Counts,
-    IReadOnlyList<ProviderBody> Providers, ConfigurationBody? Configuration = null, AttackProtectionStatus? AttackProtection = null, RestrictionsBody? Restrictions = null);
+    IReadOnlyList<ProviderBody> Providers, ConfigurationBody? Configuration = null, AttackProtectionStatus? AttackProtection = null, RestrictionsBody? Restrictions = null, bool OrganizationPicker = false);
 
 /// <summary><c>PUT /v1/{project}/providers/{provider}</c>: an omitted client_secret keeps the stored one.</summary>
 public sealed record SetProviderRequest(string? ClientId, string? ClientSecret, string? Issuer = null, string? TeamId = null, string? KeyId = null, string? Tenant = null, [property: JsonPropertyName("oauth2")] OAuth2Configuration? OAuth2 = null);
@@ -46,7 +46,7 @@ public sealed record SetProviderRequest(string? ClientId, string? ClientSecret, 
 public sealed record MethodsPatch(bool? Passcode, bool? Password, string? SignUpMode, bool? MagicLink = null, bool? Username = null);
 
 /// <summary><c>PUT /v1/{project}/settings</c>: an omitted part is unchanged; a sent branding replaces the branding.</summary>
-public sealed record UpdateSettingsRequest(MethodsPatch? Methods, BrandingBody? Branding, ConfigurationBody? Configuration = null, AttackProtectionSettings? AttackProtection = null, RestrictionsBody? Restrictions = null);
+public sealed record UpdateSettingsRequest(MethodsPatch? Methods, BrandingBody? Branding, ConfigurationBody? Configuration = null, AttackProtectionSettings? AttackProtection = null, RestrictionsBody? Restrictions = null, bool? OrganizationPicker = null);
 
 public sealed record ProjectUserBody(string Id, string Email, DateTimeOffset CreatedAt, bool Disabled, string? FirstName, string? LastName,
     string? ImageUrl, string? ExternalId, bool EmailVerified, JsonElement PublicMetadata, JsonElement PrivateMetadata, JsonElement UnsafeMetadata)
@@ -177,7 +177,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
                 ? new ProviderBody(name, true, record.ClientId, record.Issuer, record.TeamId, record.KeyId, SocialProviders.Callback(options, projectId, name).AbsoluteUri, record.Tenant, record.OAuth2)
                 : new ProviderBody(name, false, null, null, null, null, SocialProviders.Callback(options, projectId, name).AbsoluteUri))], settings.Configuration ?? ConfigurationBody.Default,
             new(settings.AttackProtection.BotChallenge, settings.AttackProtection.BreachedPasswords, settings.AttackProtection.AccountLockout, settings.AttackProtection.NewDeviceEmail,
-                services.GetRequiredService<TurnstileKeys>().Configured), settings.Restrictions ?? RestrictionsBody.Default);
+                services.GetRequiredService<TurnstileKeys>().Configured), settings.Restrictions ?? RestrictionsBody.Default, settings.OrganizationPicker);
     }
 
     protected static ProjectUserBody Map(UserRecord user) => ProjectUserBody.From(user);

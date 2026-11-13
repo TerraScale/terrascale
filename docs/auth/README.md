@@ -14,6 +14,7 @@ The served `/openapi/v1.json` and `/scalar` describe current HTTP operations. Pu
 - [Hosted continuations](hosted-continuations.md).
 - [User profiles and imports](user-profiles.md).
 - [Project tenant management](project-tenant-management.md).
+- [Organization picker at dashboard sign-in](organization-picker.md).
 - [Project MFA and session policies](mfa-sessions.md).
 - [Project sign-in attack protection](attack-protection.md).
 - [Machine tokens and user-owned API keys](machine-tokens-and-user-api-keys.md).

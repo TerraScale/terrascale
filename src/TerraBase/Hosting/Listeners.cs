@@ -196,7 +196,15 @@ public static class Listeners
                     listen.UseConnectionHandler<PostgresConnectionHandler>();
                 }
             }
-            if (local)
+            if (listener == TerraBaseListener.Metrics)
+            {
+                kestrel.Listen(internalAddress, port, Configure);
+                if (!internalAddress.Equals(IPAddress.Loopback))
+                {
+                    kestrel.Listen(IPAddress.Loopback, port, Configure);
+                }
+            }
+            else if (local)
             {
                 kestrel.Listen(IPAddress.Loopback, port, Configure);
             }

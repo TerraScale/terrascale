@@ -114,9 +114,8 @@ namespace TerraScale.Dashboard.Features.Auth
                 // API/CLI/MCP continuations retain their exact redirects. Organization choice is dashboard navigation.
                 var offersChoice = !target.StartsWith("/api/", StringComparison.Ordinal) && !target.StartsWith("/onboarding", StringComparison.Ordinal) &&
                     !target.StartsWith("/organizations/choose", StringComparison.Ordinal);
-                // The audit write and the organization count are independent; the callback waits for the slower one only.
                 var recorded = RecordSignInAsync(context, session, account);
-                var workspaces = offersChoice ? context.RequestServices.GetRequiredService<AccountService>().GetContextAsync(session, context.RequestAborted) : null;
+                var workspaces = offersChoice && session.OrganizationPicker ? context.RequestServices.GetRequiredService<AccountService>().GetContextAsync(session, context.RequestAborted) : null;
                 await recorded;
                 if (workspaces is not null && (await workspaces).Organizations.Count > 1)
                 {

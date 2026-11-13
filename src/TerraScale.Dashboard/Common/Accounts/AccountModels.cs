@@ -265,15 +265,15 @@ namespace TerraScale.Dashboard.Common.Accounts
         public string Role => Organization?.RoleFor(UserId) ?? "";
         public bool CanManage => Organization?.CanManage(UserId) ?? false;
         public bool CanWrite => Organization?.CanWrite(UserId) ?? false;
-        // Only the exact live project projection carries data authority; it grants no organization privileges.
-        public bool CanWriteProjectData => UserId == Session.UserId && !string.IsNullOrWhiteSpace(UserId) &&
+        private bool HasProjectAuthority => UserId == Session.UserId && !string.IsNullOrWhiteSpace(UserId) &&
             !string.IsNullOrWhiteSpace(Session.AccessToken) && Session.ExpiresAt > DateTimeOffset.UtcNow &&
             Organization is { Status: "active", Archived: false, DeletionRequested: false, MfaRequired: false } organization &&
-            !PlatformDatabases.IsPlatform(organization.Id) && Organizations.Any(item => ReferenceEquals(item, organization)) &&
+            Organizations.Any(item => ReferenceEquals(item, organization)) &&
             TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(organization.Id) &&
             Project is { Status: "active", Role: "member" or "admin" } project && TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(project.Id) &&
             project.OrganizationId == organization.Id && ReferenceEquals(organization.Projects.GetValueOrDefault(project.Id), project);
-        // ts-auth's admin project role on the live project, from organization ownership/admin or an explicit grant.
+        public bool CanWriteProjectData => HasProjectAuthority && Organization is { } organization && !PlatformDatabases.IsPlatform(organization.Id);
+        public bool CanSetOrganizationPicker => Project?.Role == "admin" && HasProjectAuthority && Project.Id == PlatformDatabases.AuthProjectId;
         public bool CanManageProject => Project?.Role == "admin" && CanWriteProjectData;
         // ts-auth's key rule (ApiKeys.AuthorizeAsync): an organization owner/admin reaches every project; otherwise the
         // live project's member role carries list/create/rotate/revoke and each key's own allowlist, this project only.

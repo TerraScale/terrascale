@@ -92,6 +92,7 @@ import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
  *   readonly providers: readonly TsAuthProjectProvider[];
  *   readonly restrictions?: TsAuthRestrictions | undefined;
  *   readonly configuration?: TsAuthProjectConfiguration | null | undefined;
+ *   readonly organization_picker: boolean;
  * }} TsAuthProjectSettings
  */
 
@@ -101,6 +102,7 @@ import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
  *   readonly branding?: TsAuthProjectBranding | undefined;
  *   readonly restrictions?: TsAuthRestrictions | undefined;
  *   readonly configuration?: TsAuthProjectConfiguration | undefined;
+ *   readonly organization_picker?: boolean | undefined;
  * }} TsAuthProjectSettingsUpdate
  */
 

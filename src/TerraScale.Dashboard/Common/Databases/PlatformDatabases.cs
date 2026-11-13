@@ -12,11 +12,12 @@ namespace TerraScale.Dashboard.Common.Databases
     public static class PlatformDatabases
     {
         public const string OrganizationId = "00000000000000000000000001";
+        public const string AuthProjectId = "00000000000000000000000002";
 
         // Fixed database id to its name and owning project.
         public static readonly IReadOnlyDictionary<string, (string Name, string ProjectId)> Databases = new Dictionary<string, (string, string)>(StringComparer.Ordinal)
         {
-            ["00000000000000000000000003"] = ("ts-auth", "00000000000000000000000002"),
+            ["00000000000000000000000003"] = ("ts-auth", AuthProjectId),
             ["00000000000000000000000004"] = ("ts-dashboard", "00000000000000000000000005"),
         };
 

@@ -309,7 +309,8 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
             }
         }
 
-        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId), organization: organization);
+        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId), organization: organization,
+            organizationPicker: await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
     }
 }
 
@@ -458,7 +459,8 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         }
 
         return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, authenticationTime, principal.GetScopes(),
-            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt, acting?.Record, organization);
+            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt, acting?.Record, organization,
+            organizationPicker: await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
     }
 }
 
@@ -706,6 +708,10 @@ public abstract class LogoutEndpoint(Impersonations impersonations, Sessions ses
 /// <summary>Sign-in and error results for the OpenIddict passthrough endpoints.</summary>
 internal static class OidcResults
 {
+    public static async Task<bool> OrganizationPickerAsync(ProjectAuthSettings settings, string tenant, string? clientId, CancellationToken cancellationToken) =>
+        tenant == OidcIssuer.InstanceId && clientId == OidcIssuer.DashboardClientId
+            && (await settings.GetAsync(PlatformBootstrap.AuthProjectId, cancellationToken)).OrganizationPicker;
+
     public static IResult DisallowedRedirect() => Results.Json(new OAuthErrorBody(Errors.InvalidRequest,
         "The project does not permit this redirect URI."), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status400BadRequest);
 
@@ -758,7 +764,7 @@ internal static class OidcResults
     /// platform owner (<see cref="PlatformBootstrap.OwnerEmail"/>) always carries it.
     /// </summary>
     public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
-        DateTimeOffset? refreshExpiresAt = null, ImpersonationRecord? impersonation = null, OrganizationClaims? organization = null)
+        DateTimeOffset? refreshExpiresAt = null, ImpersonationRecord? impersonation = null, OrganizationClaims? organization = null, bool organizationPicker = false)
     {
         // TerraBase and platform scopes come only from the role-checked token exchange (TS-598), never with a sign-in,
         // although ts-dashboard holds their permissions for the exchange.
@@ -782,6 +788,7 @@ internal static class OidcResults
             .SetClaim("ts_auth_session", user.SessionId)
             .SetClaim(OidcIssuer.MfaClaim, user.MultiFactor ? user.MfaMethod ?? "totp" : null)
             .SetClaim(FixedRefreshTokens.Claim, refreshExpiresAt?.ToUnixTimeSeconds())
+            .SetClaim(OidcIssuer.OrganizationPickerClaim, organizationPicker ? "true" : null)
             .SetScopes(scopes)
             .SetResources(audiences);
         // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
@@ -812,6 +819,7 @@ internal static class OidcResults
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" => [Destinations.AccessToken, Destinations.IdentityToken],
             "ts_auth_session" or "token_use" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
+            OidcIssuer.OrganizationPickerClaim => [Destinations.IdentityToken],
             _ => [],
         });
         var principal = new ClaimsPrincipal(identity);

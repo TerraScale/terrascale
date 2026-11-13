@@ -176,6 +176,8 @@ pub struct ProjectProvider {
 /// A project's settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectSettings {
+    #[serde(default)]
+    pub organization_picker: bool,
     /// Project id.
     pub project_id: String,
     /// The project's token issuer.
@@ -202,6 +204,8 @@ pub struct ProjectSettings {
 /// Settings changes; an omitted part stays unchanged.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProjectSettingsUpdate {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization_picker: Option<bool>,
     /// Sign-in method changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub methods: Option<ProjectMethods>,

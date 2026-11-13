@@ -535,6 +535,7 @@ class ProjectSettings:
     providers: list[ProjectSettingsProvider]
     configuration: ProjectSettingsConfiguration | None = None
     restrictions: ProjectRestrictions | None = None
+    organization_picker: bool = False
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectSettings:
@@ -544,6 +545,7 @@ class ProjectSettings:
         configuration = body.get("configuration")
         return cls(
             restrictions=ProjectRestrictions.from_json(body["restrictions"]) if body.get("restrictions") is not None else None,
+            organization_picker=body.get("organization_picker", False),
             project_id=validate_id(body["project_id"]),
             issuer=body["issuer"],
             discovery_url=body["discovery_url"],
@@ -566,10 +568,14 @@ class ProjectSettingsUpdate:
     configuration: ProjectSettingsConfiguration | None = None
     restrictions: ProjectRestrictions | None = None
 
+    organization_picker: bool | None = None
+
     def to_body(self) -> dict[str, Any]:
         body: dict[str, Any] = {}
         if self.restrictions is not None:
             body["restrictions"] = self.restrictions.to_body()
+        if self.organization_picker is not None:
+            body["organization_picker"] = self.organization_picker
         if self.methods is not None:
             body["methods"] = {"passcode": self.methods.passcode, "password": self.methods.password,
                                "sign_up_mode": self.methods.sign_up_mode,

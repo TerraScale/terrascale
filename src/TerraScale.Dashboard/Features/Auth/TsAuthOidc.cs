@@ -161,7 +161,7 @@ namespace TerraScale.Dashboard.Features.Auth
             var keys = await client.Oidc.GetJwksAsync(cancellationToken);
             var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, nonce, keys, time.GetUtcNow());
             var session = new SessionRecord(claims.Subject, claims.Name, claims.Email, tokens.AccessToken, tokens.RefreshToken, AccessTokenExpiry(tokens.AccessToken, issuer, keys))
-            { IdToken = tokens.IdToken };
+            { IdToken = tokens.IdToken, OrganizationPicker = claims.OrganizationPicker };
             // The session's own userinfo read, so the activity check below reuses this answer instead of a second
             // sequential ts-auth round trip on every sign-in.
             var user = await SessionUserInfoAsync(client, session, cancellationToken);

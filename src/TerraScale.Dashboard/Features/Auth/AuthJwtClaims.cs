@@ -8,6 +8,8 @@ namespace TerraScale.Dashboard.Features.Auth
     // One signature and lifetime boundary for the issuer's ES256/P-256 tokens.
     internal static class AuthJwtClaims
     {
+        internal const string OrganizationPickerClaim = "ts_org_picker";
+
         public static JsonElement Read(string? token, string issuer, string audience, TsAuthJwkSet keys, DateTimeOffset now,
             string? requiredType = null, int maxLength = 65536)
         {
