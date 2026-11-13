@@ -7,6 +7,8 @@ import zlib
 from pathlib import Path
 from urllib.parse import quote
 
+from redact import redact
+
 state = Path(sys.argv[1])
 roots = [Path(root) for root in sys.argv[2:]]
 redacted = b"[redacted]"
@@ -49,7 +51,7 @@ def clean(data: bytes) -> bytes:
             for entry, body in cleaned:
                 target.writestr(entry, body)
         return output.getvalue()
-    data = embedded.sub(reencoded, data)
+    data = redact(embedded.sub(reencoded, data))
     for needle in needles:
         found = data.count(needle)
         if found:
