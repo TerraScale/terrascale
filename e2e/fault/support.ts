@@ -77,7 +77,7 @@ export async function nodeRequest(node: { name: string; address: string }, path:
     ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
     ...(user ? { 'x-terrabase-user-id': user } : {}),
   });
-  stream.setTimeout(15_000, () => stream.destroy(new Error(`status request timed out for ${node.name}`)));
+  stream.setTimeout(15_000, () => stream.destroy(new Error(`node request timed out for ${node.name}: ${method} ${path.split('?')[0]}`)));
   session.on('error', error => stream.destroy(error));
   try {
     const response = once(stream, 'response');

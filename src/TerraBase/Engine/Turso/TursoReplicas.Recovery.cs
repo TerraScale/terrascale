@@ -49,7 +49,7 @@ internal sealed partial class TursoReplicas
         {
             yield return detached;
         }
-        foreach (var child in children)
+        foreach (var child in children.Where(child => Path.GetFileName(child) != ".retained"))
         {
             foreach (var detached in DetachedPaths(child))
             {

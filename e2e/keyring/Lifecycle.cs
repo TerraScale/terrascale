@@ -178,6 +178,8 @@ internal static class Lifecycle
             if (root.TryGetProperty("mode", out var mode) && mode.GetString() == "published")
             {
                 await ReadPublishedAsync(app.Services, database, cancellationToken);
+                await Console.Out.WriteLineAsync("keyring-driver:audit-ready");
+                Require(await Console.In.ReadLineAsync(cancellationToken) == "audit", "audit command missing");
                 await PreserveUnregisteredAsync(app.Services, database, cancellationToken);
                 await ReadPublishedAsync(app.Services, database, cancellationToken);
                 await Console.Out.WriteLineAsync("keyring-driver:unregistered-survived row=42");
@@ -319,7 +321,10 @@ internal static class Lifecycle
                 return;
             }
             await ReadPublishedAsync(app.Services, database, cancellationToken);
-            Require(File.Exists(detached) && File.Exists(detached + ".key"), "completed promotion lost retained detached files");
+            var retained = File.Exists(detached) ? detached
+                : Directory.EnumerateFiles(Path.Combine(Path.GetDirectoryName(detached)!, ".retained"),
+                    Path.GetFileName(detached), SearchOption.AllDirectories).Single();
+            Require(File.Exists(retained + ".key"), "completed promotion lost retained detached files");
             await Console.Out.WriteLineAsync("keyring-driver:imported row=42");
         }
         finally

@@ -502,6 +502,9 @@ test('another region outside admitted peers cannot interrupt local writer renewa
       await restartAfterKill(target, false)();
       const caughtUp = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
       expect(caughtUp.status, caughtUp.body).toBe(204);
+      await restartAfterKill(target, false)();
+      const primedAgain = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
+      expect(primedAgain.status, primedAgain.body).toBe(204);
     }
     await expect.poll(() => nodeStatus(local), { message: 'local authority is restored before cleanup' })
       .toMatchObject({ writer: true, ready: true });

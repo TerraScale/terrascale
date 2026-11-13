@@ -153,6 +153,14 @@ const test = base.extend<{}, { promotion: Promotion }>({
       await ready(18490);
       const replicaKey = (id: unknown) => join(directory, 'fra', '.replicas', String(organization.id), String(project.id), String(id) + '.db.key');
       const promotedKey = (id: unknown) => join(directory, 'fra', String(organization.id), String(project.id), String(id) + '.db.key');
+      const retainedSource = (id: unknown) => {
+        const path = replicaKey(id).replace('.db.key', '.promote.db');
+        if (existsSync(path)) return path;
+        const archive = join(path, '..', '.retained');
+        const copies = readdirSync(archive).map(name => join(archive, name, String(id) + '.promote.db')).filter(existsSync);
+        expect(copies).toHaveLength(1);
+        return copies[0];
+      };
       for (const database of [one, two, active, crash, published, failed]) {
         await request(home, 'POST', projectPath + '/databases/' + String(database.id) + '/sql/execute', {
           statements: [{ sql: 'CREATE TABLE keyring_rows(value INTEGER)' }, { sql: 'INSERT INTO keyring_rows VALUES(' + ([one, two].includes(database) ? '42' : '0') + ')' }],
@@ -198,7 +206,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
       expect(readFileSync(firstObserved, 'ascii').split('\n')[1] === original).toBe(true);
       rmSync(firstObserved);
       expect(existsSync(replicaKey(one.id))).toBe(true);
-      expect(existsSync(replicaKey(one.id).replace(".db.key", ".promote.db"))).toBe(true);
+      expect(existsSync(retainedSource(one.id))).toBe(true);
       expect((await request(replica, 'POST', projectPath + '/databases/' + String(one.id) + '/sql/execute', sql, false)).results).toMatchObject([{ rows: [[42]] }]);
       console.log('one key promotion: promoted wrapper byte-identical; source retained after durable destination; SQL opens');
       await stop(second);
@@ -276,10 +284,11 @@ const test = base.extend<{}, { promotion: Promotion }>({
         await checkpoint('keyring-driver:detached');
         expect(existsSync(detached(active.id))).toBe(true);
         expect(existsSync(detached(active.id) + '.key')).toBe(true);
+        const activeSource = readFileSync(detached(active.id));
         second.stdin!.write('pass\n');
         await checkpoint('keyring-driver:survived');
-        expect(existsSync(detached(active.id))).toBe(true);
-        expect(existsSync(detached(active.id) + '.key')).toBe(true);
+        expect(readFileSync(retainedSource(active.id)).equals(activeSource)).toBe(true);
+        expect(existsSync(retainedSource(active.id) + '.key')).toBe(true);
         second.stdin!.write('import\n');
         await checkpoint('keyring-driver:imported row=42');
         await stop(second);
@@ -326,7 +335,9 @@ const test = base.extend<{}, { promotion: Promotion }>({
           const path = detached(crash.id);
           const replicaPath = replicaKey(crash.id).slice(0, -4);
           const sidecars = [...saved.keys()].filter(name => name.startsWith(path + '-'));
+          const archive = join(path, '..', '.retained');
           for (const step of ['intent', 'key', 'database', ...sidecars.map((_, index) => 'sidecar-' + index)]) {
+            const previous = new Set(existsSync(archive) ? readdirSync(archive) : []);
             restore(crash.id, saved);
             if (step === 'intent' || step === 'key') {
               renameSync(path, replicaPath);
@@ -340,8 +351,11 @@ const test = base.extend<{}, { promotion: Promotion }>({
             }
             await runRecovery(crash, 'recovered');
             expect(existsSync(path)).toBe(false);
-            expect(existsSync(path + '.importing')).toBe(true);
-            expect(JSON.parse(readFileSync(path + '.importing', 'utf8')).restored).toBe(true);
+            const intents = existsSync(path + '.importing') ? [path + '.importing']
+              : readdirSync(archive).filter(name => !previous.has(name))
+                .map(name => join(archive, name, String(crash.id) + '.promote.db.importing')).filter(existsSync);
+            expect(intents).toHaveLength(1);
+            expect(JSON.parse(readFileSync(intents[0]!, 'utf8')).restored).toBe(true);
           }
           restore(crash.id, saved);
           const originalIntent = readFileSync(path + '.importing');
@@ -406,10 +420,15 @@ const test = base.extend<{}, { promotion: Promotion }>({
           writeFileSync(destination + '.key', keyBytes);
           writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: published.id, mode: 'published' }), { mode: 0o600 });
           second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER!, driverRequest);
+          await checkpoint('keyring-driver:audit-ready');
+          await expect.poll(async () => (await (await fetch('http://127.0.0.1:18493/metrics')).text())
+            .match(/terrabase_keys_last_complete[^\n]* (\d+)/)?.[1] ?? '0').not.toBe('0');
+          second.stdin!.write('audit\n');
           await checkpoint('keyring-driver:unregistered-survived row=42');
-          expect(existsSync(detached(published.id))).toBe(true);
-          expect(existsSync(detached(published.id) + '.key')).toBe(true);
-          expect(JSON.parse(readFileSync(detached(published.id) + '.importing', 'utf8')).published).toBe(true);
+          const retained = retainedSource(published.id);
+          expect(readFileSync(retained).equals(saved.get(detached(published.id))!)).toBe(true);
+          expect(existsSync(retained + '.key')).toBe(true);
+          expect(JSON.parse(readFileSync(retained + '.importing', 'utf8')).published).toBe(true);
           await stop(second);
           console.log('crash after publication: home stopped; destination opened once with row=42; restart retained the detached source; missing catalog registration preserved the destination after its grace period');
 

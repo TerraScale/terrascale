@@ -121,6 +121,10 @@ internal sealed partial class TursoReplicas(
                 {
                     return false;
                 }
+                if (erased)
+                {
+                    DeleteArchivedDetached(path);
+                }
                 return DeleteFiles(path, keepDetached: !erased);
             }
         }, cancellationToken).ConfigureAwait(false);
@@ -226,6 +230,51 @@ internal sealed partial class TursoReplicas(
         {
             ActiveDetached.Remove(detached);
             TryRecoverDetached(detached, rethrow: true, finalizing: true);
+        }
+    }
+
+    private static void ArchiveCompletedDetached(string detached)
+    {
+        var intentPath = detached + ".importing";
+        if (!File.Exists(intentPath))
+        {
+            return;
+        }
+        var intent = DetachedImport.Read(intentPath, Path.GetFileName(detached)[..^".promote.db".Length]);
+        if (!intent.Published && !intent.Restored)
+        {
+            return;
+        }
+        var directory = Path.GetDirectoryName(detached)!;
+        var root = Path.Combine(directory, ".retained");
+        DatabaseKeys.RejectLink(root);
+        Directory.CreateDirectory(root);
+        DirectorySync.Sync(directory);
+        var archive = Path.Combine(root, EntityIds.New().ToString());
+        Directory.CreateDirectory(archive);
+        DirectorySync.Sync(root);
+        foreach (var file in Directory.GetFiles(directory, Path.GetFileName(detached) + "*")
+            .OrderBy(file => file == intentPath))
+        {
+            DatabaseKeys.RejectLink(file);
+            File.Move(file, Path.Combine(archive, Path.GetFileName(file)), overwrite: false);
+            DirectorySync.Sync(archive);
+            DirectorySync.Sync(directory);
+        }
+    }
+
+    private static void DeleteArchivedDetached(string replica)
+    {
+        var root = Path.Combine(Path.GetDirectoryName(replica)!, ".retained");
+        DatabaseKeys.RejectLink(root);
+        if (!Directory.Exists(root))
+        {
+            return;
+        }
+        foreach (var archive in Directory.GetDirectories(root))
+        {
+            DatabaseKeys.RejectLink(archive);
+            DeleteDetachedFiles(Path.Combine(archive, Path.GetFileName(replica)[..^3] + ".promote.db"));
         }
     }
 
@@ -351,7 +400,9 @@ internal sealed partial class TursoReplicas(
         }
         lock (KeyRecords)
         {
-            TryRecoverDetached(path[..^3] + ".promote.db", rethrow: true);
+            var detached = path[..^3] + ".promote.db";
+            TryRecoverDetached(detached, rethrow: true);
+            ArchiveCompletedDetached(detached);
         }
         var hexKey = await Task.Run(() => DataKeyRecord(path)).ConfigureAwait(false) switch
         {
@@ -395,15 +446,11 @@ internal sealed partial class TursoReplicas(
             }
             catch (TursoException error)
             {
-                logger.ZLogWarning($"A replica could not be reopened; its files are preserved: {error.GetType().Name:@Error}");
-                throw;
+                logger.ZLogWarning($"A replica could not be reopened; its files are retained before it starts again: {error.GetType().Name:@Error}");
             }
         }
 
-        if (File.Exists(path) || hexKey is not null)
-        {
-            throw new InvalidDataException("an existing replica cannot be replaced without a published copy");
-        }
+        await Task.Run(() => RetainReplicaFiles(path)).ConfigureAwait(false);
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
         var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: false);
         try
@@ -415,6 +462,27 @@ internal sealed partial class TursoReplicas(
         {
             await replica.DisposeAsync().ConfigureAwait(false);
             throw;
+        }
+    }
+
+    private static void RetainReplicaFiles(string path)
+    {
+        lock (KeyRecords)
+        {
+            var directory = Path.GetDirectoryName(path)!;
+            if (!Directory.Exists(directory))
+            {
+                return;
+            }
+            DatabaseKeys.RejectLink(directory);
+            var retained = path + ".retained." + EntityIds.New();
+            foreach (var file in Directory.GetFiles(directory, Path.GetFileName(path) + "*")
+                .Where(file => !file.StartsWith(path + ".retained.", StringComparison.Ordinal)))
+            {
+                DatabaseKeys.RejectLink(file);
+                File.Move(file, retained + file[path.Length..], overwrite: false);
+            }
+            DirectorySync.Sync(directory);
         }
     }
 

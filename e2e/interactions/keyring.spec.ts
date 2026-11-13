@@ -340,7 +340,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
   }
 });
 
-for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'number', 'empty', 'base64', 'version', 'authority-parent', 'artifact-decoy', 'retained-key', 'retained-key-missing', 'orphan-key', 'scratch', 'cost-1', 'cost-2', 'cost-3']) {
+for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'number', 'empty', 'base64', 'version', 'authority-parent', 'artifact-decoy', 'retained-key', 'retained-key-missing', 'orphan-key', 'replica-cache', 'scratch', 'cost-1', 'cost-2', 'cost-3']) {
   test('inventory contains persisted ' + mode, async () => {
     mkdirSync(stateDir, { recursive: true });
     const directory = mkdtempSync(join(stateDir, 'inventory-' + mode + '-'));
@@ -353,6 +353,7 @@ for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'numb
     let child: ChildProcess | undefined;
     let log = '';
     let sequence = 0;
+    const retainedCache = new Map<string, Buffer>();
     const candidate = join(process.env.E2E_BUILD!, 'terrabase/terrabase.dll');
     const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
       !name.startsWith('TERRABASE_') && !name.startsWith('TS_') && !name.startsWith('AWS_') && name !== 'BUCKET_NAME'));
@@ -399,7 +400,16 @@ for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'numb
         expect(references === -1 || references >= 20_000).toBe(true);
         return;
       }
-      if (mode === 'scratch') {
+      if (mode === 'replica-cache') {
+        const parent = join(data, '.replicas', '01J00000000000000000000071', '01J00000000000000000000072');
+        mkdirSync(parent, { recursive: true });
+        const target = join(parent, '01J00000000000000000000077.db.retained.01J00000000000000000000078');
+        for (const suffix of ['', '.key']) {
+          const content = readFileSync(join(data, '_system.db' + suffix));
+          writeFileSync(target + suffix, content);
+          retainedCache.set(target + suffix, content);
+        }
+      } else if (mode === 'scratch') {
         mkdirSync(join(data, '.tmp/inspection/abandoned'), { recursive: true });
         writeFileSync(join(data, '.tmp/inspection/abandoned/copy.db'), 'private scratch');
         writeFileSync(join(data, 'outside-inspection'), 'keep');
@@ -435,6 +445,13 @@ for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'numb
           start(undefined, true);
           await ready();
           expect(existsSync(join(parent, retained[0]))).toBe(true);
+        } else if (mode === 'replica-cache') {
+          expect(metrics).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} -1(?:\n|$)/);
+          for (const [path, content] of retainedCache) expect(readFileSync(path).equals(content)).toBe(true);
+          await stop();
+          start();
+          await ready();
+          for (const [path, content] of retainedCache) expect(readFileSync(path).equals(content)).toBe(true);
         } else if (mode === 'scratch') {
           expect(existsSync(join(data, '.tmp/inspection/abandoned'))).toBe(false);
           expect(readFileSync(join(data, 'outside-inspection'), 'utf8')).toBe('keep');

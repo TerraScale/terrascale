@@ -497,6 +497,8 @@ including `unattributed` when an id cannot be recovered. Unknown means **do not 
 | Current project backup destinations and `backup_destination_history/*` in `_tb_records` | Read sealed credential wrappers from a read transaction, without a reference cache. |
 | Both `before` and `after` images for `_tb_records` in each record store's retained change-capture table | Decode the complete row image and count credential wrappers, including deleted and superseded values. Undecodable images make all ids unknown. The catalog and intent journal are both scanned. |
 | Orphan keys retained as `.<id>.<nonce>.retained-key`, including interrupted rewrap files | Count and authenticate their wrappers, refuse startup when their key id is unconfigured, and rewrap them without deleting the retained file. Database and replica cleanup retains key files. |
+| Completed detached imports moved under `.replicas/<organization>/<project>/.retained/<nonce>` before opening a new live replica | Preserve the source, key and publication intent; inventory and rewrap both intent wrappers and the source key. Nonempty archived payloads make counts unknown. Archived imports are not replayed as active recovery intents; permanent erasure removes their data and retains their keys. |
+| Incomplete replica caches retained as `.db.retained.*` with adjacent key and sidecar files | Authenticate and rewrap their key records; nonempty cache payloads make counts unknown. Cache rebuild preserves these files before creating its new key. |
 | Local backup snapshots, frame buffers and sealed upload buffers in `.backup`; import/restore staging in `.import`; exports in `.exports`; native copies in `.tmp/native` and inspection copies in `.tmp/inspection` | Any nonempty payload makes all counts unknown. A native temporary database is excluded only when its physical header proves a single empty schema page with no free pages and its log has no frames (at most the 32-byte header). These copies can embed historical credentials or wrappers; their removal, completion or separate inspection is required before retirement. |
 | Replication/handoff catalog data | Received credentials persist as the above catalog records and retained images. Outbound catalog snapshots are memory-only; there is no separate persisted catalog outbox. |
 | Superseded local databases retained during planned regional handoff in `.handoff` | Sidecar wrappers are counted; any nonempty payload makes counts unknown. Planned handoff closes the old store, releases the creation gate while its native handles drain, then durably moves its files here without overwriting them before importing the certified replica. The closed store stays registered and lifecycle operations stay fenced during drainage. Detached recovery never performs this supersession. Permanent database erasure removes matching retained copies only after validating the catalog's erasure record. |
@@ -609,7 +611,7 @@ storage creation gate, before renaming it to the destination. It records durable
 before releasing that gate. Finalizing this verified import authenticates its wrapper without
 copying its pages again; backup discovery and foreground writers can then open it safely.
 A home move finalizes before publishing placement. Detached import delays its own writable
-initialization as well. Startup recovery always performs full inspection before writers open,
+initialization as well. Startup recovery performs full inspection of active detached intents before writers open,
 including destinations with durable publication evidence. A truly damaged destination is
 still refused.
 Inspection reserves `8 × copy bytes + 64 MiB` through the node disk budget, preserving its
@@ -630,8 +632,10 @@ remain. Unexpected or malformed states also refuse the database and retain every
 
 If the destination was not published, recovery moves the detached database and sidecars back
 without overwriting anything, verifies the restored database opens under its key, and records
-the restoration in the retained intent. Destination and detached key files stay where they are.
-Cancelled copies and their temporary files are retained. A normal open or a second import may
+the restoration in the retained intent. Before opening a new live replica, completed published
+or restored intents and their remaining detached files move into a unique `.retained` directory.
+Those archived copies and keys remain inventoried and rewrappable without replaying completed
+recovery against a later replica. Cancelled copies and their temporary files are retained. A normal open or a second import may
 be refused while retained state conflicts with it; recovery never resolves that conflict by deletion.
 Runtime and startup recovery use the same refusal log and
 `terrabase.storage.detached_recovery_failures` counter; runtime recovery still throws.

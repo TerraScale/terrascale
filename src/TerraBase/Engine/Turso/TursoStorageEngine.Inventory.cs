@@ -149,12 +149,15 @@ internal sealed partial class TursoStorageEngine
             var authoritativeIntent = intent && name.EndsWith(".promote.db.importing", StringComparison.Ordinal)
                 && Ulid.TryParse(name[..intentAt], out _);
             var relative = Path.GetRelativePath(_dataDirectory, path);
-            var area = relative.Split(Path.DirectorySeparatorChar)[0];
+            var parts = relative.Split(Path.DirectorySeparatorChar);
+            var area = parts[0];
+            var archived = parts.Contains(".retained");
             var payloadArtifact = !wrapper && (name.Contains(".creating", StringComparison.Ordinal)
-                || name.Contains(".rewriting", StringComparison.Ordinal) || name.Contains(".migrating", StringComparison.Ordinal));
+                || name.Contains(".rewriting", StringComparison.Ordinal) || name.Contains(".migrating", StringComparison.Ordinal)
+                || name.Contains(".retained.", StringComparison.Ordinal) || archived);
             try
             {
-                if (name.Contains(".retained-key", StringComparison.Ordinal) || area == ".handoff" || name.Contains(".promote.db", StringComparison.Ordinal)
+                if (name.Contains(".retained-key", StringComparison.Ordinal) || name.Contains(".retained.", StringComparison.Ordinal) || area == ".handoff" || name.Contains(".promote.db", StringComparison.Ordinal)
                     || name.Contains(".key.rewrapping", StringComparison.Ordinal) || name.Contains(".creating", StringComparison.Ordinal)
                     || name.Contains(".key.tmp", StringComparison.Ordinal)
                     || name.EndsWith(".key", StringComparison.Ordinal) && !File.Exists(path[..^4]))
@@ -179,7 +182,7 @@ internal sealed partial class TursoStorageEngine
             }
             wrappers++;
             var stem = name.EndsWith(".db.key", StringComparison.Ordinal) ? name[..^".db.key".Length] : null;
-            var authoritative = name.Contains(".retained-key", StringComparison.Ordinal)
+            var authoritative = name.Contains(".retained-key", StringComparison.Ordinal) || name.Contains(".retained.", StringComparison.Ordinal)
                 || stem is SystemName or IntentName || stem is not null && Ulid.TryParse(stem, out _);
             try
             {
@@ -307,10 +310,6 @@ internal sealed partial class TursoStorageEngine
         RequireConfigured(missing);
         try
         {
-            if (SystemDatabaseExists)
-            {
-                _ = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-            }
             await Io.RunAsync(() => InventoryCatalog(true, counts, missing, cancellationToken), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (error is IOException or InvalidDataException or SqliteException or UnauthorizedAccessException)

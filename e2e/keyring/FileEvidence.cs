@@ -70,6 +70,22 @@ internal sealed class FileEvidence(Dictionary<string, byte[]> files)
             var moved = !files.ContainsKey(canonical)
                 && (original.EndsWith(".promote.db", StringComparison.Ordinal) || original.Contains(".promote.db-", StringComparison.Ordinal));
             var path = !File.Exists(original) && moved ? canonical : original;
+            if (!File.Exists(original) && Path.GetFileName(original).Contains(".promote.db", StringComparison.Ordinal))
+            {
+                var root = Path.Combine(Path.GetDirectoryName(original)!, ".retained");
+                if (Directory.Exists(root))
+                {
+                    var retained = Directory.EnumerateDirectories(root)
+                        .Select(directory => Path.Combine(directory, Path.GetFileName(original)))
+                        .Where(file => File.Exists(file) && !files.ContainsKey(file) && !relocated.Contains(file))
+                        .SingleOrDefault(file => SHA256.HashData(File.ReadAllBytes(file)).SequenceEqual(digest));
+                    if (retained is not null)
+                    {
+                        path = retained;
+                        relocated.Add(path);
+                    }
+                }
+            }
             if (!File.Exists(path) && original.EndsWith(".db.key", StringComparison.Ordinal)
                 && !File.Exists(original[..^4]) && !File.Exists(original[..^4] + "-wal"))
             {
