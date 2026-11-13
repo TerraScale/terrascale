@@ -146,6 +146,7 @@ test('history lost while the backup store is unreachable is one hole each time, 
     await backupStore('down');
     outage = true;
     const inside = await churn(75);
+    console.log('backup holes: first discard completed');
     const duringSent = Date.now();
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
     const duringAcked = Date.now();
@@ -203,15 +204,18 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(kept, 'the restart keeps the last stored position until a replacement is stored').toMatchObject({ replacing: true, storedIncarnation: kept.incarnation });
     expect(kept.storedPosition).toBeGreaterThanOrEqual(closed.storedPosition!);
     const insideSecond = await churn(75);
+    console.log('backup holes: second discard completed');
     await expect.poll(counted, { message: 'history discarded while the replacement cannot be stored is one more hole, counted once' }).toEqual({ holes: holes + 2, recorded: recordedHoles + 2 });
     const twoHoles = (await continuity(writer, created.id)).holes;
     expect(twoHoles).toHaveLength(2);
     expect(twoHoles[1]).toMatchObject({ incarnation: kept.incarnation, from: kept.storedPosition, open: true });
     await churn(65);
+    console.log('backup holes: later discard completed');
     await expect.poll(async () => (await continuity(writer, created.id)).holes[1]!.to,
       { message: 'a later discard moves the open hole to the new start of the change log' }).toBeGreaterThan(twoHoles[1]!.to);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 2);
 
+    console.log('backup holes: restarting writer');
     const beforeRestart = await nodeHoles(writer);
     const restart = restartAfterKill(writer, true, undefined, async () => {
       expect(await probe(writer, '/readyz')).toBe(503);
@@ -220,6 +224,7 @@ test('history lost while the backup store is unreachable is one hole each time, 
       outage = false;
     });
     await restart();
+    console.log('backup holes: writer restarted');
     await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
     await tokenReady(writer, cells, database(created.id));
     expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(0);
