@@ -202,16 +202,28 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     const partialTenant = tenant + '.key.rewrapping.interrupted';
     writeFileSync(partialCatalog, 'TERRABASE-DB-KEY-2\nv2.k1.partial');
     writeFileSync(partialTenant, 'TERRABASE-DB-KEY-2\nv2.k1.partial');
-    writeFileSync(requestFile, JSON.stringify({ organization, project, database, mode: 'temporary', files: baselineRetained.length + 2,
-      bytes: baselineBytes + readFileSync(partialCatalog).length + readFileSync(partialTenant).length }), { mode: 0o600 });
+    const detachedProof = join(parent, '01J00000000000000000000015.promote.db');
+    const retainedProof = new Map([
+      [detachedProof, readFileSync(tenant)],
+      [detachedProof + '.key', readFileSync(tenant + '.key')],
+      [detachedProof + '-wal', Buffer.from('retained log evidence')],
+    ]);
+    for (const [path, content] of retainedProof) writeFileSync(path, content, { mode: 0o600 });
+    const retainedBytes = [...retainedProof.values()].reduce((sum, content) => sum + content.length, 0);
+    writeFileSync(requestFile, JSON.stringify({ organization, project, database, mode: 'temporary', files: baselineRetained.length + retainedProof.size + 2,
+      bytes: baselineBytes + retainedBytes + readFileSync(partialCatalog).length + readFileSync(partialTenant).length }), { mode: 0o600 });
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, requestFile);
     await expect.poll(() => child?.exitCode).toBe(0);
-    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:partial-temporaries catalog-started tenant=42 unknown=k1 retained=' + (baselineRetained.length + 2));
+    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:partial-temporaries catalog-started tenant=42 unknown=k1 retained=' + (baselineRetained.length + retainedProof.size + 2));
     await stop();
     expect(existsSync(partialCatalog)).toBe(true);
     expect(existsSync(partialTenant)).toBe(true);
     rmSync(partialCatalog);
     rmSync(partialTenant);
+    for (const [path, content] of retainedProof) {
+      expect(readFileSync(path).equals(content)).toBe(true);
+      rmSync(path);
+    }
     const unauthentic = tenant + '.key.rewrapping.unauthentic';
     const wrapper = readFileSync(tenant + '.key', 'ascii').trim().split('\n')[1].split('.');
     const badTag = Buffer.from(wrapper[2], 'base64');
@@ -230,7 +242,8 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     const intentBytes = readFileSync(intent);
     chmodSync(intent, 0);
     try {
-      writeFileSync(requestFile, JSON.stringify({ organization, project, database, healthy, mode: 'key-refused', unreadable: intent }), { mode: 0o600 });
+      writeFileSync(requestFile, JSON.stringify({ organization, project, database, healthy, mode: 'key-refused', unreadable: intent,
+        files: baselineRetained.length + 1, bytes: baselineBytes + intentBytes.length }), { mode: 0o600 });
       await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, requestFile);
       await expect.poll(() => child?.exitCode).toBe(0);
       expect(readFileSync(log, 'utf8')).toContain('keyring-driver:key-refused counted=1 healthy=42');

@@ -40,24 +40,19 @@ internal sealed class FileEvidence(Dictionary<string, byte[]> files)
             .ToDictionary(path => path, path => SHA256.HashData(File.ReadAllBytes(path)), StringComparer.Ordinal));
     }
 
-    internal static async Task VerifyMetricsAsync(CancellationToken cancellationToken)
+    internal static async Task VerifyMetricsAsync(long expectedFiles, long expectedBytes, CancellationToken cancellationToken)
     {
         using var client = new HttpClient();
         var options = TerraBaseOptions.FromProcess([]);
         var text = await client.GetStringAsync("http://127.0.0.1:" + options.MetricsPort.ToString(CultureInfo.InvariantCulture) + "/metrics", cancellationToken);
-        var retained = Directory.GetFiles(TerraBaseOptions.FromProcess([]).DataDirectory, "*", SearchOption.AllDirectories)
-            .Where(path => path.Contains(".promote.db", StringComparison.Ordinal)
-                || path.Contains(".key.rewrapping", StringComparison.Ordinal) || path.Contains(".creating", StringComparison.Ordinal)
-                || path.Contains(".key.tmp", StringComparison.Ordinal)
-                || path.EndsWith(".key", StringComparison.Ordinal) && !File.Exists(path[..^4])).ToArray();
         var count = ReadGauge(text, "terrabase_storage_retained_files");
         var bytes = ReadGauge(text, "terrabase_storage_retained_bytes");
-        if (count != retained.Length || bytes != retained.Sum(path => new FileInfo(path).Length))
+        if (count != expectedFiles || bytes != expectedBytes)
         {
             throw new InvalidDataException(string.Create(CultureInfo.InvariantCulture,
-                $"retained files or bytes were not counted: files={count}/{retained.Length}, bytes={bytes}/{retained.Sum(path => new FileInfo(path).Length)}"));
+                $"retained files or bytes were not counted: files={count}/{expectedFiles}, bytes={bytes}/{expectedBytes}"));
         }
-        Console.WriteLine("keyring-driver:retained-gauges-exact-files=" + retained.Length);
+        Console.WriteLine("keyring-driver:retained-gauges-exact-files=" + expectedFiles);
     }
 
     private static double ReadGauge(string metrics, string name)
