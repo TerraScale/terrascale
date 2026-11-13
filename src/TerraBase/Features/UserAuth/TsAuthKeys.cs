@@ -147,7 +147,14 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         {
             if (!_stopping.IsCancellationRequested)
             {
-                _logger.ZLogWarning($"Could not fetch ts-auth signing keys from auth-issuer ({error.GetType().Name:@Error}); keeping {Keys?.Count ?? 0:@Count} cached keys");
+                if (Keys is null)
+                {
+                    _logger.ZLogWarning($"Could not fetch ts-auth signing keys from auth-issuer ({error.GetType().Name:@Error}); this node is not ready until they load");
+                }
+                else
+                {
+                    _logger.ZLogWarning($"Could not fetch ts-auth signing keys from auth-issuer ({error.GetType().Name:@Error}); keeping {Keys.Count:@Count} cached keys");
+                }
             }
 
             return Fail();

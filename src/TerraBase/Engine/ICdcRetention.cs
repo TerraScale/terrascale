@@ -4,7 +4,9 @@ internal sealed record CdcSchema(long RowId, string Type, string Name);
 
 internal sealed record CdcCursor(long Position, string Incarnation, IReadOnlyList<CdcSchema> Schema);
 
-internal readonly record struct CdcRetained(string Incarnation, long Anchor, DateTimeOffset? AnchorAt, DateTimeOffset? PendingAt);
+internal readonly record struct CdcRetained(string Incarnation, long Anchor, long Start, long? Oldest, DateTimeOffset? AnchorAt, DateTimeOffset? PendingAt);
+
+internal readonly record struct CdcHistory(long Start, long? Oldest);
 
 internal interface ICdcBackupRetention
 {
@@ -18,7 +20,7 @@ internal interface ICdcBackupRetention
 
     ValueTask ResumeAsync(CdcCursor stored, CancellationToken cancellationToken);
 
-    ValueTask DiscardAsync(CancellationToken cancellationToken);
+    ValueTask<CdcHistory> DiscardAsync(CancellationToken cancellationToken);
 
     ValueTask SaveAccountingAsync(string id, ReadOnlyMemory<byte> body, CancellationToken cancellationToken);
 

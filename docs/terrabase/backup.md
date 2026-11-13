@@ -257,6 +257,16 @@ two durable positions, read at any time: the **retained anchor**, the oldest cap
 still read the file's log forward, and the account's stored cursor. When the retained anchor is beyond the stored
 cursor, the changes in between are gone.
 
+The retained anchor is not derived from the rows that are left. Each file's log records where its history starts, in a
+keyed row of the log's own version table in the same file. The one trim function writes it in the same transaction that
+deletes the rows below it, so a trim that removes everything before position P records P, and the value never
+decreases; a trim held back by another reader removes less and records the lower start. A file that existed before the
+start was recorded gets it once, when its backup tap first opens: its oldest retained change, or the log's first
+position when the log is empty. A log emptied outside the trim would restart its numbering at 1, so a stored cursor
+beyond the newest retained change is also a hole: that reading can only report a loss that did not happen, never hide
+one. When rows remain, their oldest position must equal the recorded start; a difference is logged as an error, and the
+later of the two decides.
+
 That comparison is made in one place: at the start of every shipping pass of a file, before anything is read (the
 recovery after a start runs the same code). When the anchor is beyond the cursor, one account write records the hole
 (the count plus one, the range from the cursor to the anchor) and replaces the stored generation with an empty one; the
@@ -287,9 +297,10 @@ Every pass, before the hole decision and also while the file backs off, the ship
 overhead the engine still holds after the backup's stored position. When it exceeds 256 MiB, or the shared disk admission refuses that many bytes with its
 protected headroom, the shipper discards: it moves the engine's durable anchor to the committed end, and the engine
 trims older rows as far as its other readers allow (a replica region that has not pulled them yet, a shape still reading
-them). That is the whole discard; it records nothing. While those readers hold the rows, the next pass is still over the
-cap and discards again, so the trim continues batch by batch. Once the trim passes the stored cursor, the next pass
-finds the anchor beyond it and records the hole. A later discard during the same outage finds no stored cursor (the
+them). The trim records where the history now starts, and the discard logs that start beside the oldest change still
+retained. While those readers hold the rows, the next pass is still over the cap and discards again, so the trim
+continues batch by batch. Once the trim passes the stored cursor, the next pass finds the anchor beyond it and records
+the hole, whose range ends at the recorded start. A later discard during the same outage finds no stored cursor (the
 generation waits for its base snapshot) and adds no hole, so an outage of any length is exactly one hole.
 
 ### Lag and health

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using TerraBase.Engine;
@@ -72,6 +73,11 @@ internal sealed partial class ContinuousBackup
         var account = file.Account;
         var retained = await retention.RetainedAsync(account?.Stored?.Cursor.Position ?? 0, cancellationToken).ConfigureAwait(false);
         file.BacklogCommittedAt = retained.PendingAt;
+        if (retained.Oldest is { } oldest && oldest != retained.Start)
+        {
+            _logger.ZLogError($"Continuous backup of {file.Prefix:@File} found its change log's recorded start {retained.Start} differs from its oldest retained change {oldest}; the later of the two decides holes");
+        }
+
         if (account is null)
         {
             await RestartAsync(file, new BackupAccount(retained.Incarnation, file.Target.Revision, null, null, 0, null), null, cancellationToken).ConfigureAwait(false);
@@ -174,8 +180,8 @@ internal sealed partial class ContinuousBackup
 
         if (bytes > limit)
         {
-            await retention.DiscardAsync(cancellationToken).ConfigureAwait(false);
-            _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} discarded {bytes} bytes of change log not yet stored; the next pass compares positions");
+            var history = await retention.DiscardAsync(cancellationToken).ConfigureAwait(false);
+            _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} discarded change log not yet stored ({bytes} bytes over the cap); its history now starts at position {history.Start}, oldest retained change {history.Oldest?.ToString(CultureInfo.InvariantCulture) ?? "none":@Oldest}");
         }
     }
 

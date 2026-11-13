@@ -196,3 +196,11 @@ export async function backupStore(state: 'down' | 'up'): Promise<void> {
   expect(response.status).toBe(204);
   console.log(`backup object store ${state}`);
 }
+
+export function logLength(node: Node): number {
+  return readFileSync(join(stateDir, 'logs', `${node.service}.log`)).length;
+}
+
+export function logLines(node: Node, from: number, text: string): string[] {
+  return readFileSync(join(stateDir, 'logs', `${node.service}.log`)).subarray(from).toString().split('\n').filter(line => line.includes(text));
+}

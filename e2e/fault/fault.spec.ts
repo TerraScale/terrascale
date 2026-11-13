@@ -2,7 +2,7 @@ import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
 import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
-import { backupStore, crashWrite, endpoint, Ledger, metric, probe, regions, restartAfterKill, topology } from './support';
+import { backupStore, crashWrite, endpoint, Ledger, logLength, logLines, metric, probe, regions, restartAfterKill, topology } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -104,6 +104,8 @@ test('history lost while the backup store is unreachable is one hole, survives a
     await sql(cells, endpoint('gru'), created.id, 'INSERT INTO fault_blob (id, body) VALUES (1, zeroblob(1))');
     await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships every file before the outage' }).toBe(200);
     const holes = await metric(writer, 'terrabase_backup_holes');
+    const generations = await metric(writer, 'terrabase_backup_generations_total');
+    const logStart = logLength(writer);
 
     await backupStore('down');
     outage = true;
@@ -118,21 +120,38 @@ test('history lost while the backup store is unreachable is one hole, survives a
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
     await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the discarded history becomes exactly one hole' }).toBe(holes + 1);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(1);
+    const events = logLines(writer, logStart, `/${created.id}/nodes/`);
+    const recorded = events.flatMap(line => /lost its history from position (\d+) to (\d+) before it was stored/.exec(line) ?? []);
+    expect(recorded, events.join('\n')).toHaveLength(3);
+    const [cursor, start] = [Number(recorded[1]), Number(recorded[2])];
+    const discards = events.slice(0, events.findIndex(line => line.includes('lost its history')))
+      .map(line => /its history now starts at position (\d+), oldest retained change (\d+)/.exec(line)).filter(match => match !== null);
+    expect(discards.length, events.join('\n')).toBeGreaterThan(0);
+    const discarded = discards[discards.length - 1]!;
+    expect(Number(discarded[1])).toBe(Number(discarded[2]));
+    expect(start).toBe(Number(discarded[1]));
+    expect(cursor).toBeLessThan(start);
+    expect(events.filter(line => line.includes('differs from its oldest retained change'))).toEqual([]);
     expect(await probe(writer, '/backupz')).toBe(503);
     expect(await probe(writer, '/readyz')).toBe(200);
 
     await backupStore('up');
     outage = false;
     await expect.poll(() => probe(writer, '/backupz'), { message: 'a replacement snapshot makes the writer healthy again' }).toBe(200);
+    expect(await metric(writer, 'terrabase_backup_generations_total')).toBeGreaterThan(generations);
     expect(await probe(writer, '/readyz')).toBe(200);
     expect(await metric(writer, 'terrabase_backup_holes')).toBe(holes + 1);
+    const uploaded = await metric(writer, 'terrabase_backup_uploaded_bytes_total');
+    await ledger.write(cells, 'gru', [[3, 'after-outage']]);
+    await expect.poll(() => metric(writer, 'terrabase_backup_uploaded_bytes_total'), { message: 'later passes store the writes after the outage' }).toBeGreaterThan(uploaded);
+    expect(await probe(writer, '/backupz')).toBe(200);
+    expect(await metric(writer, 'terrabase_backup_holes')).toBe(holes + 1);
+    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(1);
 
     const restart = restartAfterKill(writer);
     await restart();
     await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
-    await expect.poll(async () => (await cells.get(`${endpoint('gru')}${database(created.id)}`)).status(), {
-      message: 'the restarted writer authenticates requests again',
-    }).toBe(200);
+    expect((await cells.get(`${endpoint('gru')}${database(created.id)}`)).status(), 'the first request after readiness is authenticated').toBe(200);
     await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the restarted writer publishes the durable hole total' }).toBe(holes + 1);
     await expect.poll(() => probe(writer, '/backupz'), { message: 'the restarted writer resumes its generation' }).toBe(200);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(0);

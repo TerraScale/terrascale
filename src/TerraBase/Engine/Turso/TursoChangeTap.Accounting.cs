@@ -15,8 +15,13 @@ internal sealed partial class TursoChangeTap
             Execute("BEGIN;");
             try
             {
-                var anchor = Scalar("SELECT min(change_id) FROM turso_cdc;", 0) is long first && first > 1 ? first : 0;
-                return new CdcRetained((string)Scalar(TursoStatements.Incarnation, 0)!, anchor,
+                using var command = _reader.CreateCommand();
+                var start = TursoStorageTransaction.HistoryStart(command) ?? throw new InvalidDataException("the change log has no recorded start");
+                var oldest = Scalar("SELECT min(change_id) FROM turso_cdc;", 0) as long?;
+                var newest = Scalar("SELECT max(change_id) FROM turso_cdc;", 0) as long? ?? 0;
+                var first = Math.Max(start, oldest ?? start);
+                var anchor = stored > newest ? stored + 1 : first > 1 ? first : 0;
+                return new CdcRetained((string)Scalar(TursoStatements.Incarnation, 0)!, anchor, start, oldest,
                     Time(Scalar("SELECT change_time FROM turso_cdc WHERE change_id = $anchor;", anchor)),
                     Time(Scalar("SELECT change_time FROM turso_cdc WHERE change_id > $anchor AND change_type = 2 ORDER BY change_id LIMIT 1;", stored)));
             }
@@ -39,11 +44,11 @@ internal sealed partial class TursoChangeTap
         {
             ObjectDisposedException.ThrowIf(_lineage != _store.Lineage, _store);
             using var command = writer.Connection.CreateCommand();
-            command.CommandText = "SELECT coalesce(min(change_id), 0) FROM turso_cdc;";
-            var first = (long)command.ExecuteScalar()!;
-            if (first > 1 && first > stored.Position)
+            var start = TursoStorageTransaction.HistoryStart(command) ?? throw new InvalidDataException("the change log has no recorded start");
+            command.CommandText = TursoStatements.NewestChange;
+            if (start > 1 && start > stored.Position || stored.Position > (long)command.ExecuteScalar()!)
             {
-                throw new InvalidOperationException("the backup's stored cursor is older than the retained change log");
+                throw new InvalidOperationException("the backup's stored cursor is outside the retained change log");
             }
 
             _anchor = stored.Position;
@@ -55,20 +60,30 @@ internal sealed partial class TursoChangeTap
         }, "the backup's recovered stored cursor", cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask DiscardAsync(CancellationToken cancellationToken)
-    {
+    public async ValueTask<CdcHistory> DiscardAsync(CancellationToken cancellationToken) =>
         await _store.WithWriterAsync(writer =>
         {
             ObjectDisposedException.ThrowIf(_lineage != _store.Lineage, _store);
-            using (var newest = writer.Connection.CreateCommand())
-            {
-                newest.CommandText = TursoStatements.NewestChange;
-                _durableAnchor = Math.Max(_durableAnchor, (long)newest.ExecuteScalar()!);
-            }
-
+            using var command = writer.Connection.CreateCommand();
+            command.CommandText = TursoStatements.NewestChange;
+            _durableAnchor = Math.Max(_durableAnchor, (long)command.ExecuteScalar()!);
             _store.BackupAnchor = _durableAnchor;
-            return Truncate(writer);
+            _ = Truncate(writer);
+            var start = TursoStorageTransaction.HistoryStart(command) ?? throw new InvalidDataException("the change log has no recorded start");
+            command.CommandText = "SELECT min(change_id) FROM turso_cdc;";
+            return new CdcHistory(start, command.ExecuteScalar() as long?);
         }, "the backup's discarded change log", cancellationToken).ConfigureAwait(false);
+
+    private static bool StartHistory(TursoSession writer)
+    {
+        using var command = writer.Connection.CreateCommand();
+        if (TursoStorageTransaction.HistoryStart(command) is null)
+        {
+            command.CommandText = "SELECT min(change_id) FROM turso_cdc;";
+            _ = TursoStorageTransaction.RecordHistoryStart(command, command.ExecuteScalar() as long? ?? 1);
+        }
+
+        return true;
     }
 
     private static DateTimeOffset? Time(object? seconds) => seconds is long value ? DateTimeOffset.FromUnixTimeSeconds(value) : null;

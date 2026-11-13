@@ -95,7 +95,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
                 var reader = new TursoConnection(connectionString) { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
                 tap = new TursoChangeTap(store, io, time, reader, lineage);
                 TursoSession.OpenExisting(reader, store.FilePath);
-                return tap.Reset(writer);
+                return StartHistory(writer) && tap.Reset(writer);
             }, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
             operation?.Complete();
             return tap!;
