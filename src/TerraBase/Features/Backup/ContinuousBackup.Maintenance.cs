@@ -53,6 +53,13 @@ internal sealed partial class ContinuousBackup
 
     private async Task RetainCoreAsync(ShippedFile file, CancellationToken cancellationToken)
     {
+        if (file.Database is { } database && await _catalog.ReadAsync<bool?>(async transaction =>
+                await transaction.GetAsync(DeletedDatabases.Kind, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null,
+                static _ => null, cancellationToken).ConfigureAwait(false) is not false)
+        {
+            return;
+        }
+
         var now = _time.GetUtcNow();
         if (file.Database is null)
         {

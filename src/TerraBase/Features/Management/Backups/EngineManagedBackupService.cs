@@ -428,6 +428,10 @@ internal sealed partial class EngineManagedBackupService(
         {
             var retained = await catalog.WriteAsync<CatalogResult<List<BackupRecord>>>(async transaction =>
             {
+                if (await transaction.GetAsync(DeletedDatabases.Kind, owner.DatabaseId, cancellationToken).ConfigureAwait(false) is not null)
+                {
+                    return new List<BackupRecord>();
+                }
                 var current = await GetPolicyAsync(transaction, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
                 var cutoff = time.GetUtcNow().AddDays(-current.RetentionDays);
                 var expired = new List<BackupRecord>();

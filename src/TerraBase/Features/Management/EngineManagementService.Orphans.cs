@@ -247,7 +247,8 @@ internal sealed partial class EngineManagementService
         && !record.Regions(options.Region).Contains(options.Region, StringComparer.Ordinal);
 
     private async ValueTask<bool> OwnedFileAsync(IStorageTransaction transaction, TenantContext database, CancellationToken token) =>
-        await IsRegisteredAsync(transaction, database, token).ConfigureAwait(false)
+        await transaction.GetAsync(DeletedDatabases.Kind, database.DatabaseId!, token).ConfigureAwait(false) is not null
+        || await IsRegisteredAsync(transaction, database, token).ConfigureAwait(false)
             && !await RemovedHomeFileAsync(transaction, database, token).ConfigureAwait(false)
         || await CatalogTables.PendingCleanupAsync(transaction, database.DatabaseId!, token).ConfigureAwait(false) is not null
         || await transaction.GetAsync(DatabasePurge.Kind, database.DatabaseId!, token).ConfigureAwait(false) is not null
