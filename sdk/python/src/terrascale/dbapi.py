@@ -5,7 +5,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from .client import TerraScale
-from .errors import SqlError, SqlErrorCodes, TerraScaleError
+from .errors import CommitUncertainError, SqlError, SqlErrorCodes, TerraScaleError
 from .session import SqlSession
 from .sql import StatementResult
 
@@ -81,7 +81,9 @@ _OPERATIONAL = frozenset(
 )
 
 
-def _translated(error: TerraScaleError) -> Error:
+def _translated(error: TerraScaleError) -> Error | CommitUncertainError:
+    if isinstance(error, CommitUncertainError):
+        return error
     if isinstance(error, SqlError):
         if error.code in _INTEGRITY:
             return IntegrityError(str(error))
@@ -200,6 +202,7 @@ class Connection:
         )
         self._db = self._client.database(database)
         self._session: SqlSession | None = None
+        self._failure: CommitUncertainError | None = None
         self._isolation_level: str | None = "SERIALIZABLE"
 
     @property
@@ -208,6 +211,7 @@ class Connection:
 
     @isolation_level.setter
     def isolation_level(self, value: str | None) -> None:
+        self._check_failure()
         self._isolation_level = value
         session, self._session = self._session, None
         if value != "SERIALIZABLE" and session is not None:
@@ -217,7 +221,18 @@ class Connection:
             with contextlib.suppress(TerraScaleError):
                 session.close()
 
+    def _check_failure(self) -> None:
+        if self._failure is not None:
+            raise self._failure
+        if self._session is not None:
+            try:
+                self._session.__enter__()
+            except CommitUncertainError as error:
+                self._failure = error
+                raise
+
     def _ensure_session(self) -> SqlSession:
+        self._check_failure()
         if self._session is None:
             self._session = self._db.connect()
         return self._session
@@ -227,6 +242,7 @@ class Connection:
             session.begin()
 
     def _run(self, sql: str, args: list[Any] | None) -> StatementResult:
+        self._check_failure()
         if self.isolation_level == "AUTOCOMMIT":
             return self._db.execute(sql, args)
         session = self._ensure_session()
@@ -234,6 +250,7 @@ class Connection:
         return session.execute(sql, args)
 
     def _run_many(self, statements: list[tuple[str, list[Any] | None]]) -> list[StatementResult]:
+        self._check_failure()
         if self.isolation_level == "AUTOCOMMIT":
             return self._db.batch(statements)
         session = self._ensure_session()
@@ -241,9 +258,11 @@ class Connection:
         return session.batch(statements)
 
     def cursor(self) -> Cursor:
+        self._check_failure()
         return Cursor(self)
 
     def commit(self) -> None:
+        self._check_failure()
         if self._session is not None and self._session.in_transaction:
             try:
                 self._session.commit()
@@ -251,11 +270,14 @@ class Connection:
                 raise _translated(error) from error
 
     def rollback(self) -> None:
+        self._check_failure()
         if self._session is not None and self._session.in_transaction:
             with contextlib.suppress(TerraScaleError):
                 self._session.rollback()
 
     def close(self) -> None:
+        with contextlib.suppress(CommitUncertainError):
+            self._check_failure()
         session, self._session = self._session, None
         if session is not None:
             with contextlib.suppress(TerraScaleError):

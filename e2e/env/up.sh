@@ -55,7 +55,7 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
     printf '%s\n' "$nats_token" >> "$state/secrets"
     if [ -n "${GITHUB_ACTIONS:-}" ]; then printf '::add-mask::%s\n' "$nats_token"; fi
     printf '%s' "$nats_token" > "$state/nats-token"
-    printf 'listen: 127.0.0.1:4222\nhttp: 127.0.0.1:8222\nauthorization { token: %s }\njetstream { store_dir: %s/nats }\n' \
+    printf 'listen: 127.0.0.1:4222\nhttp: 127.0.0.1:8222\nauthorization { token: "%s" }\njetstream { store_dir: "%s/nats" }\n' \
       "$nats_token" "$state" > "$state/nats.conf"
     start nats "$E2E_TOOLS/nats-server" --config "$state/nats.conf"
     ready nats curl -fsS --max-time 2 http://127.0.0.1:8222/healthz

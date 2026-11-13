@@ -88,9 +88,9 @@ transaction lasts at most 5 seconds. Calls may overlap and are matched by frame 
 clones share it. Frames are at most 1 MiB, checked before sending.
 
 An error frame is `Error::Sql` with `status: None`. A refused upgrade returns the same errors as REST. Nothing on a
-session is resent, including `serialization_conflict`. When the socket drops, calls in flight fail with
-`Error::Transport` and the next call opens a new socket with a fresh credential; if a transaction was open, every call
-except `rollback` returns `transaction_rolled_back` (40000) until `rollback()`, which only clears local state. After
+session is resent, including `serialization_conflict`. A lost committing reply returns `Error::CommitUncertain`,
+and every later call returns that error without reconnecting. If no committing request was sent, a lost open
+transaction returns `transaction_rolled_back` (40000) until `rollback()` clears local state; a later call can reconnect. After
 `close()` the session stays closed.
 
 Gaps: the session is qualified against recorded exchanges
@@ -247,3 +247,16 @@ are available in the source SDK. See [user profiles](../../docs/auth/user-profil
 for fields, scope requirements, hash encodings and the next-release API names.
 Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
 User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+
+### SQL session outcome rule
+
+An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
+open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
+autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.
+The SDK returns `write_outcome_unknown` (SQLSTATE `08007`) or its existing commit-uncertain error, retains that
+failure for every later call on the session, and closes the connection. It never reconnects or automatically
+retries an uncertain request. If the client cannot prove no request byte left, it treats the request as sent.
+An execute outside a confirmed transaction, or behind unanswered transaction control, is potentially committing.
+A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
+Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
+through another session before deciding whether to repeat it.

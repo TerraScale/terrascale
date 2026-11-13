@@ -15,6 +15,7 @@ case $service in
     cp -a src/TerraBase/bin/Release/net11.0 "$out/terrabase"
     dotnet restore e2e/keyring/Journey.Keyring.csproj --locked-mode -p:KeyringServiceDirectory="$out/terrabase"
     dotnet build e2e/keyring/Journey.Keyring.csproj -c Release --no-restore --output "$out/keyring" -p:KeyringServiceDirectory="$out/terrabase" -p:SourceRevisionId="$revision"
+    python3 e2e/fault/build-receipts.py "$root" "$out"
     python3 e2e/usage/build.py "$root" "$out/usage"
     ;;
   ts-auth)

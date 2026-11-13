@@ -36,8 +36,9 @@ The database enforces the invariants the code relies on:
 | One-use credentials (passcodes, sessions, challenges, rotating refresh tokens, GitHub Actions `jti`) win once | `credential_claims` primary key `(instance_id, kind, key)` |
 | Passkey credential ids unique in a tenant | `passkeys` primary key `(instance_id, credential_id)` |
 | OIDC reference tokens unique | `oidc_tokens` unique `(instance_id, reference_id)` |
+| One user per identity at an SSO connection | `sso_identity_links` primary key `(domain, issuer, subject)`; membership and connection foreign keys cascade deletes |
 | One SSO connection per organization and domain | `sso_connections` primary key `domain`, unique `organization_id` |
-| Rows of a deleted user, organization or project go with it | foreign keys with `ON DELETE CASCADE`: a user's sessions, MFA and passkey credentials, step-up proofs, email changes and provider links; an organization's memberships, grants, API keys, invitations, audit events and SSO connection; a project's grants, API keys, invitations, settings, webhook endpoints and webhook outbox |
+| Rows of a deleted user, organization or project go with it | foreign keys with `ON DELETE CASCADE`: a user's sessions, MFA and passkey credentials, step-up proofs, email changes and provider links; an organization's memberships, grants, API keys, invitations, audit events and SSO connection; identity links with their connection or membership; a project's grants, API keys, invitations, settings, webhook endpoints and webhook outbox |
 | An organization with projects, or a user who is still a member, cannot be deleted | `projects.organization_id`, `memberships.user_id` and `project_members.user_id` are `RESTRICT` |
 | Roles, statuses and counters stay in range | check constraints (`ck_*`) |
 

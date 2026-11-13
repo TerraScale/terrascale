@@ -2,7 +2,7 @@ import type { APIRequestContext } from '@playwright/test';
 import { deleteAccount } from '../support/account';
 import { test, expect } from '../support/remote-database';
 import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
-import { runOperations, sdks } from '../support/sdk';
+import { runOperations, runSessionFault, sdks } from '../support/sdk';
 import { prepareAuthManagement, closeAuthManagement } from '../support/auth-management';
 import { deleteProjectOwner } from '../support/project-owner';
 import { checkPasswordFairness } from '../support/password-fairness';
@@ -38,6 +38,27 @@ test('delete the dedicated auth feature owner after all auth flows', async ({ br
 test('a tenant at its hashing cap leaves other tenants normal sign-in capacity', async ({ browser }) => {
   await checkPasswordFairness(browser);
 });
+
+test('SQL sessions retain uncertainty after lost committing replies', async () => {
+  const failures: string[] = [];
+  for (const sdk of sdks) {
+    for (const asynchronous of sdk === 'python' ? [false, true] : [false]) {
+      const modes = ['commit', 'before', 'autocommit', 'batch', 'read'];
+      if (sdk === 'go') modes.push('overtake-commit', 'overtake-rollback', 'overtake-begin', 'overtake-batch', 'sql-error');
+      if (sdk === 'go' || sdk === 'rust') modes.push('retry');
+      if (sdk !== 'js') modes.push('cancel');
+      if (sdk === 'python' && !asynchronous) modes.push('dbapi');
+      for (const mode of modes) {
+        await test.step(`${sdk} ${mode}${asynchronous ? ' async' : ''}`, async () => {
+          try { await runSessionFault(sdk, mode, asynchronous); }
+          catch (error) { failures.push(`${sdk} ${mode}${asynchronous ? ' async' : ''}: ${String(error)}`); }
+        });
+      }
+    }
+  }
+  expect(failures).toEqual([]);
+});
+
 
 test.describe('SDK group A', () => {
   for (const sdk of sdks) {

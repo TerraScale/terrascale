@@ -247,7 +247,7 @@ internal sealed partial class RegionReplication
         timeout.CancelAfter(PlacementTimeout);
         try
         {
-            var observed = owners.Find(peer.Region);
+            var observed = owners.Confirmed(peer.Region);
             var writer = observed is { Activated: true } && observed.Node == peer.Name;
             if (options.NatsUrl is null)
             {
@@ -258,7 +258,7 @@ internal sealed partial class RegionReplication
             using var response = await _http.GetAsync(new Uri(peer.Internal, ReplicaRoutes.DatabasePath(database, "placement")), timeout.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                return writer && owners.Find(peer.Region) == observed ? new NotFound() : PlacementUnanswered;
+                return writer && owners.Confirmed(peer.Region) == observed ? new NotFound() : PlacementUnanswered;
             }
 
             return response.IsSuccessStatusCode

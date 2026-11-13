@@ -120,7 +120,7 @@ const retryableSqlCodes = new Set(["serialization_conflict", "tenant_busy", "una
 
 /**
  * A refused SQL statement. `code` is a TerraScale code (see SqlErrorCode) and `sqlstate` its PostgreSQL SQLSTATE.
- * Over REST and outside a WebSocket transaction the whole request rolled back.
+ * Over REST and outside a WebSocket transaction the whole request rolled back unless the code is write_outcome_unknown.
  */
 export class SqlError extends TerraBaseV1Error {
   /** @type {number} Zero-based index of the failing statement. */

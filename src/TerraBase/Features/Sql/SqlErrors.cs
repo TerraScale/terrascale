@@ -22,6 +22,7 @@ internal static partial class SqlErrors
     public const string RowConflict = "row_conflict";
     public const string TooLarge = "too_large";
     public const string QueryCanceled = "query_canceled";
+    public const string WriteOutcomeUnknown = "write_outcome_unknown";
     public const string TransactionRolledBack = "transaction_rolled_back";
     public const string TransactionAborted = "transaction_aborted";
     public const string ReadOnlyTransaction = "read_only_transaction";
@@ -50,6 +51,7 @@ internal static partial class SqlErrors
         RowConflict => "P0001",
         TooLarge => "54000",
         QueryCanceled => "57014",
+        WriteOutcomeUnknown => "08007",
         TransactionRolledBack => "40000",
         TransactionAborted => "25P02",
         ReadOnlyTransaction => "25006",
@@ -71,7 +73,7 @@ internal static partial class SqlErrors
         SerializationConflict or RowConflict => StatusCodes.Status409Conflict,
         TooLarge => StatusCodes.Status413PayloadTooLarge,
         QuotaExceeded or TenantBusy => StatusCodes.Status429TooManyRequests,
-        Unavailable => StatusCodes.Status503ServiceUnavailable,
+        Unavailable or WriteOutcomeUnknown => StatusCodes.Status503ServiceUnavailable,
         WrongRegion => StatusCodes.Status421MisdirectedRequest,
         InternalError => StatusCodes.Status500InternalServerError,
         _ => StatusCodes.Status400BadRequest,
