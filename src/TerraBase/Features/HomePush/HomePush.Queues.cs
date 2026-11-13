@@ -50,6 +50,7 @@ internal partial class HomePush
         internal CancellationToken Token { get; } = stopping.Token;
         internal bool Ended { get; set; }
         internal HashSet<PushQueue> Active { get; } = [];
+        internal Dictionary<string, ulong> ReplayFloors { get; } = new(StringComparer.Ordinal);
         internal TaskCompletionSource Idle { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
@@ -422,7 +423,7 @@ internal partial class HomePush
                 cursor = Math.Max(cursor, queue.Run.Previous.Floor);
                 break;
             case TenantDatabaseRecord record when record.Placement.Home != options.Region:
-                await AckThroughAsync(queue, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                await AckThroughAsync(queue, 0, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
                 queue.Cursor = null;
                 return null;
             case TenantDatabaseRecord:
@@ -438,10 +439,13 @@ internal partial class HomePush
         }
 
         queue.Cursor = cursor;
+        var floor = 0UL;
         if (home)
         {
+            floor = ReplayFloor(queue, cursor);
             var replayed = new List<PushDone>();
-            foreach (var replay in Unacked(queue).Where(delivered => delivered.Metadata?.Sequence.Stream <= cursor))
+            var replays = Unacked(queue).Where(delivered => delivered.Metadata?.Sequence.Stream <= floor).ToArray();
+            foreach (var replay in replays)
             {
                 var sequence = replay.Metadata!.Value.Sequence.Stream;
                 switch (await ApplyAsync(queue, replay.Subject, sequence, replay.Data, cancellationToken).ConfigureAwait(false))
@@ -449,7 +453,7 @@ internal partial class HomePush
                     case PushWait(var kind):
                         return new Held(kind, sequence);
                     case PushAway:
-                        await AckThroughAsync(queue, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                        await AckThroughAsync(queue, 0, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
                         return null;
                     case PushDone done:
                         replayed.Add(done);
@@ -459,7 +463,8 @@ internal partial class HomePush
                 }
             }
 
-            await AckThroughAsync(queue, cursor, cancellationToken).ConfigureAwait(false);
+            await AckReplayedAsync(queue, replays, cancellationToken).ConfigureAwait(false);
+            await AckThroughAsync(queue, floor, cursor, cancellationToken).ConfigureAwait(false);
             foreach (var done in replayed)
             {
                 await NoticeAsync(nats, done, cancellationToken).ConfigureAwait(false);
@@ -485,7 +490,7 @@ internal partial class HomePush
                     case PushWait(var kind):
                         return new Held(kind, stored.Seq);
                     case PushAway:
-                        await AckThroughAsync(queue, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                        await AckThroughAsync(queue, 0, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
                         queue.Cursor = null;
                         return null;
                     case PushPark(var reason):
@@ -505,7 +510,7 @@ internal partial class HomePush
                 cursor = stored.Seq;
                 queue.Cursor = cursor;
                 Released(queue);
-                await AckThroughAsync(queue, cursor, cancellationToken).ConfigureAwait(false);
+                await AckThroughAsync(queue, floor, cursor, cancellationToken).ConfigureAwait(false);
                 if (applied is not null)
                 {
                     await NoticeAsync(nats, applied, cancellationToken).ConfigureAwait(false);
@@ -514,7 +519,7 @@ internal partial class HomePush
 
             if (ended)
             {
-                await AckThroughAsync(queue, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                await AckThroughAsync(queue, floor, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
                 return null;
             }
         }
@@ -616,13 +621,34 @@ internal partial class HomePush
         }
     }
 
-    private async Task AckThroughAsync(PushQueue queue, ulong through, CancellationToken cancellationToken)
+    private ulong ReplayFloor(PushQueue queue, ulong frontier)
+    {
+        lock (_queuesGate)
+        {
+            return queue.Run.ReplayFloors.TryAdd(queue.Key, frontier) ? frontier : queue.Run.ReplayFloors[queue.Key];
+        }
+    }
+
+    private async Task AckReplayedAsync(PushQueue queue, IReadOnlyCollection<INatsJSMsg<byte[]>> replayed, CancellationToken cancellationToken)
+    {
+        lock (_queuesGate)
+        {
+            _ = queue.Unacked.RemoveAll(replayed.Contains);
+        }
+
+        foreach (var delivered in replayed)
+        {
+            await delivered.AckAsync(cancellationToken: cancellationToken).AsTask().WaitAsync(AckWait, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task AckThroughAsync(PushQueue queue, ulong above, ulong through, CancellationToken cancellationToken)
     {
         INatsJSMsg<byte[]>[] decided;
         lock (_queuesGate)
         {
-            decided = [.. queue.Unacked.Where(delivered => delivered.Metadata?.Sequence.Stream <= through)];
-            _ = queue.Unacked.RemoveAll(delivered => delivered.Metadata?.Sequence.Stream <= through);
+            decided = [.. queue.Unacked.Where(delivered => delivered.Metadata?.Sequence.Stream is { } at && at > above && at <= through)];
+            _ = queue.Unacked.RemoveAll(decided.Contains);
             _ = queue.Hints.RemoveWhere(hint => hint <= through);
         }
 

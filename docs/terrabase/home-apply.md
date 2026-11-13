@@ -260,7 +260,10 @@ while it still has work. A renewal before the lease lapses keeps the run; a rene
 node, is a new lease and starts a new run. Ending a run stops every sequencer of that origin and waits for them before
 the next run opens. The next run redelivers every retained message; a redelivered message at or below the frontier
 publishes its recorded result again (nothing when no result is kept) and commits nothing, and the sequencer continues
-from the frontier.
+from the frontier. Each run keeps, per database, the frontier its sequencer read first in that run: a delivery at or
+below it is acknowledged only after its recorded result is published, so a redelivery that arrives while a pass is
+running waits for the next pass instead of being acknowledged unpublished. Deliveries above it were decided in this run,
+which already published their result, and are acknowledged without publishing it again.
 
 A message leaves an origin stream only in two ways, both done by the origin on its own stream. The origin purges a
 database's messages up to a position once its copy of the database, pulled from the home, holds a recorded result for
