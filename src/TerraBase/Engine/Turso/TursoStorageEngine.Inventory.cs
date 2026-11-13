@@ -305,17 +305,17 @@ internal sealed partial class TursoStorageEngine
         var missing = new Dictionary<string, long>(StringComparer.Ordinal);
         var counts = InventoryLocalKeys(startup: true, missing, out _, out _, cancellationToken);
         RequireConfigured(missing);
-        if (SystemDatabaseExists)
+        try
         {
-            try
+            if (SystemDatabaseExists)
             {
                 _ = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-                await Io.RunAsync(() => InventoryCatalog(true, counts, missing, cancellationToken), cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception error) when (error is IOException or InvalidDataException or SqliteException or UnauthorizedAccessException)
-            {
-                Unknown(counts);
-            }
+            await Io.RunAsync(() => InventoryCatalog(true, counts, missing, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or SqliteException or UnauthorizedAccessException)
+        {
+            Unknown(counts);
         }
         RequireConfigured(missing);
         foreach (var id in Encryption.Keyring.KeyIds.Where(Encryption.Keyring.IsWeak))
