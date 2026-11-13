@@ -8,7 +8,7 @@ import { test, database, json, name, project, removeDatabase, sql } from '../pla
 import { auth, dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { receiptHandoff } from './receipt-handoff';
-import { backupPuts, backupStore, continuity, crashWrite, endpoint, faultId, holeRecords, Ledger, metric, nodes, nodeRequest, nodeStatus, plantHole, probe, regions, restartAfterKill, tokenReady, topology } from './support';
+import { backupPuts, backupStore, continuity, crashWrite, endpoint, faultId, holeRecords, Ledger, metric, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, regions, restartAfterKill, scrape, tokenReady, topology } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -148,8 +148,11 @@ test('history lost while the backup store is unreachable is one hole each time, 
     const duringSent = Date.now();
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
     const duringAcked = Date.now();
-    await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'the discarded history becomes exactly one hole' }).toBe(holes + 1);
-    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 1);
+    const counted = async () => {
+      const read = await scrape(writer);
+      return { holes: read('terrabase_backup_holes'), recorded: read('terrabase_backup_holes_recorded_total') };
+    };
+    await expect.poll(counted, { message: 'the discarded history becomes exactly one hole, counted once' }).toEqual({ holes: holes + 1, recorded: recordedHoles + 1 });
     await expect.poll(async () => {
       const state = await continuity(writer, created.id);
       return state.holes.length === 1 && state.holes[0]!.to === state.historyStart && state.oldestRetained === state.historyStart;
@@ -199,8 +202,7 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(kept, 'the restart keeps the last stored position until a replacement is stored').toMatchObject({ replacing: true, storedIncarnation: kept.incarnation });
     expect(kept.storedPosition).toBeGreaterThanOrEqual(closed.storedPosition!);
     const insideSecond = await churn(75);
-    await expect.poll(() => metric(writer, 'terrabase_backup_holes'), { message: 'history discarded while the replacement cannot be stored is one more hole' }).toBe(holes + 2);
-    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 2);
+    await expect.poll(counted, { message: 'history discarded while the replacement cannot be stored is one more hole, counted once' }).toEqual({ holes: holes + 2, recorded: recordedHoles + 2 });
     const twoHoles = (await continuity(writer, created.id)).holes;
     expect(twoHoles).toHaveLength(2);
     expect(twoHoles[1]).toMatchObject({ incarnation: kept.incarnation, from: kept.storedPosition, open: true });
@@ -209,6 +211,7 @@ test('history lost while the backup store is unreachable is one hole each time, 
       { message: 'a later discard moves the open hole to the new start of the change log' }).toBeGreaterThan(twoHoles[1]!.to);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 2);
 
+    const beforeRestart = await nodeHoles(writer);
     const restart = restartAfterKill(writer, true, undefined, async () => {
       expect(await probe(writer, '/readyz')).toBe(503);
       expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(1);
@@ -227,8 +230,14 @@ test('history lost while the backup store is unreachable is one hole each time, 
     const secondHole = new RegExp(`/holes/${kept.incarnation}-${String(kept.storedPosition).padStart(16, '0')}-\\d{16}-\\d{13}-(\\d{13}|unknown)-open$`);
     expect(afterSecond[0], `the first object the bucket receives after the second outage is its hole: ${afterSecond.join(' ')}`).toMatch(secondHole);
     expect(afterSecond.some(key => key.includes('/holes/') && key.endsWith('-closed'))).toBe(true);
-    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(0);
-    expect(await metric(writer, 'terrabase_backup_holes')).toBe(holes + 2);
+    expect(settled.holes.map(hole => [hole.incarnation, hole.from])).toEqual([[opened.incarnation, opened.holes[0]!.from], [kept.incarnation, kept.storedPosition]]);
+    const afterRestart = await nodeHoles(writer);
+    expect(new Set(afterRestart).size, `every hole on the node is recorded once: ${afterRestart.join(', ')}`).toBe(afterRestart.length);
+    expect(afterRestart.filter(hole => hole.startsWith(`${settled.file} `))).toEqual(beforeRestart.filter(hole => hole.startsWith(`${settled.file} `)));
+    const restartHoles = afterRestart.filter(hole => !beforeRestart.includes(hole));
+    console.log(`holes the restarted writer recorded for history it discarded before its backups resumed: ${JSON.stringify(restartHoles)}`);
+    await expect.poll(counted, { message: 'the restarted writer counts only the holes the node did not hold before, each once' })
+      .toEqual({ holes: holes + 2 + restartHoles.length, recorded: restartHoles.length });
 
     const error = await refusal(inside);
     const [from, to] = [Date.parse(error.unavailableFrom), Date.parse(error.unavailableTo)];

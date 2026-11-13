@@ -27,14 +27,22 @@ export type BackupContinuity = {
   replacing: boolean; holes: BackupHole[];
 };
 
-export async function continuity(node: Node, id: string): Promise<BackupContinuity & { file: string }> {
+async function backupFiles(node: Node): Promise<{ file: string; continuity: BackupContinuity | null }[]> {
   const response = await nodeRequest(node, '/v1/backup');
   expect(response.status, response.body).toBe(200);
-  const status = JSON.parse(response.body) as { files: { file: string; continuity: BackupContinuity | null }[] };
-  const files = status.files.filter(file => file.file.includes(`/${id}/nodes/`));
-  expect(files, JSON.stringify(status.files.map(file => file.file))).toHaveLength(1);
+  return (JSON.parse(response.body) as { files: { file: string; continuity: BackupContinuity | null }[] }).files;
+}
+
+export async function continuity(node: Node, id: string): Promise<BackupContinuity & { file: string }> {
+  const all = await backupFiles(node);
+  const files = all.filter(file => file.file.includes(`/${id}/nodes/`));
+  expect(files, JSON.stringify(all.map(file => file.file))).toHaveLength(1);
   expect(files[0]!.continuity).not.toBeNull();
   return { ...files[0]!.continuity!, file: files[0]!.file };
+}
+
+export async function nodeHoles(node: Node): Promise<string[]> {
+  return (await backupFiles(node)).flatMap(file => (file.continuity?.holes ?? []).map(hole => `${file.file} ${hole.incarnation} ${hole.from}`));
 }
 
 export type HoleRecord = { incarnation: string; from: number; to: number; fromAt: number | null; toAt: number | null; open: boolean };
@@ -256,11 +264,18 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
   };
 }
 
-export async function metric(node: Node, metricName: string, label = ''): Promise<number> {
+export async function scrape(node: Node): Promise<(metricName: string, label?: string) => number> {
   const response = await fetch(`http://${node.address}:${node.port + 1011}/metrics`);
   expect(response.status).toBe(200);
-  const line = (await response.text()).split('\n').find(text => new RegExp(`^${metricName}(\\{[^}]*\\})? `).test(text) && text.includes(label));
-  return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
+  const lines = (await response.text()).split('\n');
+  return (metricName, label = '') => {
+    const line = lines.find(text => new RegExp(`^${metricName}(\\{[^}]*\\})? `).test(text) && text.includes(label));
+    return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
+  };
+}
+
+export async function metric(node: Node, metricName: string, label = ''): Promise<number> {
+  return (await scrape(node))(metricName, label);
 }
 
 export async function probe(node: Node, path: '/readyz' | '/backupz'): Promise<number> {
