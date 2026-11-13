@@ -1,44 +1,31 @@
-/* Dropdown menus (ui.Dropdown), dialogs (ui.Dialog), tooltips, and the
-   region map. */
-
-details.ts-menu {
-  position: relative;
-}
-
-details.ts-menu > summary {
-  cursor: pointer;
-  list-style: none;
-}
-
-details.ts-menu > summary::-webkit-details-marker {
-  display: none;
-}
-
-details.ts-menu > .ts-menu-panel {
-  position: absolute;
-  top: calc(100% + var(--ts-s1));
-  z-index: var(--ts-z-dropdown);
-  display: grid;
+.ts-menu-panel[popover] {
+  inset: auto;
+  margin: var(--ts-s1) 0;
   width: max-content;
   min-width: 14rem;
-  max-width: min(90vw, 22rem);
+  max-width: min(calc(100vw - 2 * var(--ts-s4)), 22rem);
+  max-height: calc(100dvh - 2 * var(--ts-s4));
+  overflow: auto;
   padding: var(--ts-s1);
   border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface-2);
+  color: var(--ts-ink);
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
 }
 
-details.ts-menu[open] > .ts-menu-panel {
+.ts-menu-panel:popover-open {
+  display: grid;
   animation: ts-pop-in var(--ts-fast) var(--ts-ease);
 }
 
-details.ts-menu-end > .ts-menu-panel {
-  right: 0;
+.ts-menu-end > .ts-menu-panel {
+  position-area: bottom span-left;
 }
 
-details.ts-menu-up > .ts-menu-panel {
-  top: auto;
-  bottom: calc(100% + var(--ts-s1));
+.ts-menu-up > .ts-menu-panel {
+  position-area: top span-right;
 }
 
 .ts-menu-heading {

@@ -29,32 +29,8 @@
 .ts-filter-control {
   min-width: 0;
 }
-.ts-filter-menu > summary.ts-select {
-  display: flex;
-  align-items: center;
-  gap: var(--ts-s2);
+.ts-filter-control > .ts-select {
   width: 220px;
-  height: var(--ts-control-h-sm);
-  font-size: var(--ts-fs-sm);
-  white-space: nowrap;
-  user-select: none;
-}
-.ts-filter-menu[open] > summary.ts-select {
-  border-color: var(--ts-control-line-hover);
-}
-.ts-filter-menu-label {
-  flex: none;
-  color: var(--ts-ink-3);
-}
-.ts-filter-menu-value {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ts-filter-menu > .ts-menu-panel {
-  min-width: 100%;
-  max-height: min(60vh, 320px);
-  overflow-y: auto;
 }
 :is(.ts-analytics, .ts-usage) > :is(.ts-card, .ts-grid) {
   transition: opacity var(--ts-base) var(--ts-ease);
@@ -86,7 +62,7 @@ body.ts-nav-pending :is(.ts-analytics, .ts-usage) > :is(.ts-card, .ts-grid) {
     flex: 1 1 0;
     justify-content: center;
   }
-  .ts-filter-menu > summary.ts-select {
+  .ts-filter-control > .ts-select {
     width: 100%;
   }
 }

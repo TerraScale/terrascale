@@ -4,16 +4,6 @@
   overflow-x: auto;
 }
 
-.ts-table-wrap details.ts-menu[open] > .ts-menu-panel {
-  position: fixed;
-  animation: none;
-  inset: auto;
-  margin: 0;
-  max-width: calc(100vw - var(--ts-s4));
-  max-height: calc(100dvh - var(--ts-s4));
-  overflow: auto;
-}
-
 .ts-table {
   width: 100%;
   border-collapse: collapse;

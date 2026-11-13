@@ -84,13 +84,11 @@
   border: 1px solid transparent;
   border-radius: var(--ts-radius);
   cursor: pointer;
-  list-style: none;
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  text-align: left;
   transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
-}
-
-.ts-context-trigger::-webkit-details-marker,
-.ts-account-trigger::-webkit-details-marker {
-  display: none;
 }
 
 .ts-context-trigger {
@@ -99,7 +97,7 @@
 }
 
 .ts-context-trigger:hover,
-details[open] > .ts-context-trigger {
+.ts-context-menu:has(> :popover-open) > .ts-context-trigger {
   border-color: var(--ts-line-strong);
   background-color: var(--ts-surface-2);
 }
@@ -175,16 +173,13 @@ details[open] > .ts-context-trigger {
   display: block;
 }
 
-.ts-sidebar details.ts-context-menu > .ts-menu-panel,
-.ts-sidebar details.ts-account > .ts-menu-panel {
-  left: 0;
-  width: 100%;
-  min-width: 0;
+.ts-sidebar :is(.ts-context-menu, .ts-account) > .ts-menu-panel {
+  width: anchor-size(width);
+  min-width: min(14rem, calc(100vw - 2 * var(--ts-s4)));
 }
 
-.ts-sidebar details.ts-context-menu > .ts-menu-panel {
+.ts-context-menu > .ts-menu-panel {
   max-height: min(70dvh, 520px);
-  overflow-y: auto;
 }
 
 .ts-context-menu .ts-menu-item > svg {
@@ -320,7 +315,7 @@ details[open] > .ts-context-trigger {
 }
 
 .ts-account-trigger:hover,
-details[open] > .ts-account-trigger {
+.ts-account:has(> :popover-open) > .ts-account-trigger {
   border-color: var(--ts-line);
   background: var(--ts-surface-2);
 }

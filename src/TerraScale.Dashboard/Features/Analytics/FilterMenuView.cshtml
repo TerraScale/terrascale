@@ -1,8 +1,8 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.FilterControl>
 <form class="ts-filter-control" id="@(Model.Id)-form" method="get" action="@Model.Action" data-on:submit="history.replaceState(null, '', location.pathname + '?' + new URLSearchParams(new FormData(el, evt.submitter))); @@get(location.pathname, {contentType: 'form', retryMaxCount: 0})">
     @foreach (var field in Model.Carried) { <input type="hidden" name="@field.Name" value="@field.Value" /> }
-    <details class="ts-menu ts-filter-menu" id="@(Model.Id)-menu" name="ts-filter-menu" data-on:click__outside="el.open = false" data-on:click="evt.target.closest('.ts-menu-panel [type=submit]') &amp;&amp; (el.open = false, el.querySelector('summary').focus())" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; el.open &amp;&amp; (el.open = false, el.querySelector('summary').focus())" data-on:keydown="['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(evt.key) &amp;&amp; (evt.preventDefault(), el.open = true, (items => items[evt.key === 'Home' ? 0 : evt.key === 'End' ? items.length - 1 : items.includes(document.activeElement) ? (items.indexOf(document.activeElement) + (evt.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length : Math.max(0, items.findIndex(item => item.hasAttribute('aria-current')))].focus())([...el.querySelectorAll('.ts-menu-item')]))">
-        <summary class="ts-select"><span class="ts-filter-menu-label">@Model.Label</span><span class="ts-filter-menu-value">@Model.ValueLabel</span></summary>
-        <div class="ts-menu-panel">@foreach (var option in Model.Options) { <button class="ts-menu-item" type="submit" name="@Model.Name" value="@option.Value" aria-current="@(option.Value == Model.Value ? "true" : null)"><span class="ts-menu-label">@option.Label</span>@if (option.Value == Model.Value) { <span class="ts-menu-check" aria-hidden="true">@Icons.Render("Check", 15)</span> }</button> }</div>
-    </details>
+    <label class="ts-sr-only" for="@Model.Id">@Model.Label</label>
+    <select class="ts-select ts-input-sm" id="@Model.Id" name="@Model.Name" data-on:change="el.form.requestSubmit()">
+        @foreach (var option in Model.Options) { <option value="@option.Value" selected="@(option.Value == Model.Value)">@option.Label</option> }
+    </select>
 </form>

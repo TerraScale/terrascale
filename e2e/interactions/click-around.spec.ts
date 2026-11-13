@@ -235,3 +235,72 @@ test('an alert webhook secret is shown once, including two parallel reads, and i
   }
   await audit.check('alert rules after delete');
 });
+
+test('native dropdowns preserve filters and context while browser popovers dismiss and return focus', async ({ page, audit }) => {
+  const current = journey();
+  await page.goto('/analytics?range=7d');
+  const database = page.locator('select[name="database"]');
+  await database.selectOption(current.databaseId);
+  await expect(page).toHaveURL(url => url.searchParams.get('database') === current.databaseId && url.searchParams.get('project') === current.projectId && url.searchParams.get('range') === '7d');
+  await expect(database).toHaveValue(current.databaseId);
+  await audit.check('native analytics filters');
+
+  await page.goto('/usage?range=7d');
+  const project = page.locator('#usage-project');
+  const projectUpdated = page.waitForResponse(response => new URL(response.url()).pathname === '/usage' && new URL(response.url()).searchParams.get('project') === current.projectId);
+  await project.selectOption(current.projectId);
+  const projectResponse = await projectUpdated;
+  expect(projectResponse.status()).toBe(200);
+  await projectResponse.finished();
+  await expect(page.locator('body')).not.toHaveClass(/ts-nav-pending/);
+  await expect(page).toHaveURL(url => url.searchParams.get('project') === current.projectId && url.searchParams.get('range') === '7d');
+  await page.locator('#usage-database').selectOption(current.databaseId);
+  await expect(page).toHaveURL(url => url.searchParams.get('database') === current.databaseId && url.searchParams.get('project') === current.projectId && url.searchParams.get('range') === '7d');
+  await audit.check('native usage filters');
+
+  await page.goto('/organization?tab=members');
+  await page.getByRole('searchbox', { name: 'Filter members', exact: true }).fill(current.email);
+  const role = page.getByRole('combobox', { name: 'Organization role', exact: true });
+  await role.selectOption('owner');
+  await expect(role).toHaveValue('owner');
+  await expect(page.locator('#access-filter-form input[name="q"]')).toHaveValue(current.email);
+  expect(await role.evaluate(element => new FormData((element as HTMLSelectElement).form!).getAll('role'))).toEqual(['owner']);
+  await expect(page.locator('main tbody tr').filter({ hasText: current.email })).toContainText('Owner');
+  await audit.check('native member role filter');
+
+  const account = page.locator('.ts-account-trigger');
+  const context = page.locator('.ts-context-trigger');
+  const accountPanel = page.locator('#ts-account-menu');
+  const contextPanel = page.locator('#ts-context-menu');
+  await account.focus();
+  await account.press('Enter');
+  await expect(accountPanel).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(accountPanel).not.toBeVisible();
+  await expect(account).toBeFocused();
+  await account.click();
+  await context.click();
+  await expect(contextPanel).toBeVisible();
+  await expect(accountPanel).not.toBeVisible();
+  await audit.check('native context popover');
+  await page.locator('main h1').click();
+  await expect(contextPanel).not.toBeVisible();
+  await context.click();
+  await page.locator('[data-organization-option="' + current.organizationId + '"]').click();
+  await page.waitForLoadState('load');
+  await shell(page, current);
+  await context.click();
+  await page.locator('[data-project-option="' + current.projectId + '"]').click();
+  await page.waitForLoadState('load');
+  await shell(page, current);
+
+  await page.goto('/organization?tab=audit');
+  const exporter = page.getByRole('button', { name: 'Export audit events', exact: true });
+  await exporter.click();
+  await expect(page.locator('#audit-export-menu')).toBeVisible();
+  await expect(page.locator('#audit-export-menu a')).toHaveCount(3);
+  await audit.check('native audit export popover');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#audit-export-menu')).not.toBeVisible();
+  await expect(exporter).toBeFocused();
+});

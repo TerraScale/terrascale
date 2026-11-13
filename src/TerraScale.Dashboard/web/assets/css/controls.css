@@ -217,6 +217,8 @@ textarea.ts-input {
 }
 
 .ts-input[aria-invalid="true"],
+.ts-select[aria-invalid="true"],
+.ts-select:user-invalid,
 .ts-input:user-invalid {
   border-color: var(--ts-danger);
   outline-color: var(--ts-danger);
@@ -238,16 +240,11 @@ textarea.ts-input {
 }
 
 select.ts-input,
-.ts-select {
-  appearance: none;
-  padding-right: calc(var(--ts-s3) + var(--ts-s4) + var(--ts-s2));
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-position: right var(--ts-s3) center;
-  background-repeat: no-repeat;
+select.ts-select {
+  appearance: auto;
   cursor: pointer;
 }
 
-/* Keep long selected labels legible without clipping the final word. */
 select.ts-input:not([multiple]),
 select.ts-select:not([multiple]) {
   overflow: hidden;
@@ -255,10 +252,76 @@ select.ts-select:not([multiple]) {
   white-space: nowrap;
 }
 
-/* Native popup menus need an opaque surface as well as readable text. */
 select.ts-input option,
 select.ts-select option {
   background-color: var(--ts-surface);
+  color: var(--ts-ink);
+}
+
+@supports (appearance: base-select) {
+  select.ts-select:not([multiple]):not([size]),
+  select.ts-select:not([multiple]):not([size])::picker(select) {
+    appearance: base-select;
+  }
+
+  select.ts-select:not([multiple]):not([size]) {
+    align-items: center;
+  }
+
+  select.ts-select::picker-icon {
+    color: var(--ts-ink-3);
+  }
+
+  select.ts-select::picker(select) {
+    padding: var(--ts-s1);
+    border: 1px solid var(--ts-line-strong);
+    border-radius: var(--ts-radius-lg);
+    background: var(--ts-surface-2);
+    color: var(--ts-ink);
+    font: inherit;
+    box-shadow: 0 var(--ts-s2) var(--ts-s6) var(--ts-shadow);
+  }
+
+  select.ts-select option {
+    min-height: var(--ts-control-h-sm);
+    padding: var(--ts-s1) var(--ts-s2);
+    border-radius: var(--ts-radius);
+    background: transparent;
+  }
+
+  select.ts-select option:hover,
+  select.ts-select option:focus-visible {
+    background: var(--ts-hover);
+  }
+
+  select.ts-select option:checked {
+    background: var(--ts-selected);
+  }
+
+  select.ts-select option:disabled {
+    color: var(--ts-ink-3);
+  }
+
+  select.ts-select option::checkmark {
+    color: var(--ts-accent);
+  }
+}
+
+@media (forced-colors: active) {
+  select.ts-select:not([multiple]):not([size]),
+  select.ts-select:not([multiple]):not([size])::picker(select) {
+    appearance: auto;
+  }
+
+  select.ts-select option,
+  .ts-menu-panel[popover] {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  select.ts-select option:disabled {
+    color: GrayText;
+  }
 }
 
 select[multiple].ts-input,
@@ -277,19 +340,6 @@ select[multiple] option {
 select[multiple] option:checked {
   background-color: var(--ts-accent-soft);
   color: var(--ts-ink);
-}
-
-/* Select-shaped menu triggers. */
-summary.ts-select {
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  white-space: nowrap;
-  list-style: none;
-}
-
-summary.ts-select::-webkit-details-marker {
-  display: none;
 }
 
 /* Input with a trailing button (password reveal, copy). */

@@ -312,7 +312,7 @@ test('organization checkout creates nothing before payment and completes exactly
   const conflictOrganization = await external.json();
   await page.goto('/organization?tab=billing&organizationId=' + conflictOrganization.id);
   await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('No plan');
-  await page.locator('summary.ts-context-trigger').click();
+  await page.locator('.ts-context-trigger').click();
   await page.locator('[data-organization-option="' + conflictOrganization.id + '"]').click();
   await expect(page.locator('[data-active-organization-id="' + conflictOrganization.id + '"]')).toHaveText('Current organization: ' + conflictName);
   await page.locator('article.ts-plan', { has: page.locator('#plan-pro') }).getByRole('button', { name: 'Choose Pro', exact: true }).click();
