@@ -26,9 +26,9 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await expect(ownerPage.getByRole('navigation', { name: 'Authentication sections' }).getByRole('link', { name: 'Settings', exact: true })).toHaveCount(0);
   await expect(ownerPage.locator('#auth-section-select option[value="settings"]')).toHaveCount(0);
   await ownerAudit.check('customer authentication has no platform Settings section');
-  const settingsResponse = await ownerPage.goto(`${dash}/auth/settings`);
-  expect(settingsResponse?.status()).toBe(404);
-  await expect(ownerPage.getByRole('switch', { name: 'Organization picker at sign-in' })).toHaveCount(0);
+  const settingsResponse = await ownerPage.request.get(`${dash}/auth/settings`);
+  expect(settingsResponse.status()).toBe(404);
+  expect(await settingsResponse.text()).not.toContain('name="organization_picker"');
   await ownerPage.goto(`${dash}/organization?tab=members`);
   await ownerPage.locator('.ts-org-header').getByRole('button', { name: 'Invite', exact: true }).click();
   await expect(ownerPage.locator('dialog#team-invite')).toBeVisible();
