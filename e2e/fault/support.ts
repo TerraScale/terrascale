@@ -178,31 +178,36 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
         return true;
       }
     }, { message: 'the killed process releases its data directory before restart' }).toBe(true);
-    const log = join(stateDir, 'logs', `${node.service}.log`);
-    const offset = readFileSync(log).length;
-    const output = openSync(log, 'a', 0o600);
+    const issuer = access ? Number(readFileSync(join(stateDir, 'pids', 'ts-auth.pid'), 'utf8').trim()) : undefined;
+    if (issuer) process.kill(issuer, 'SIGSTOP');
     try {
-      const child = spawn(command[0], command.slice(1), { env: environment, stdio: ['ignore', output, output] });
-      child.on('error', error => { throw error; });
-      writeFileSync(pidFile, `${child.pid}\n`);
-      child.unref();
-    } finally {
-      closeSync(output);
-    }
-    await expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
-      message: 'the restarted writer opens its listeners',
-    }).toBe(true);
-    await expect.poll(() => nodeStatus(node), {
-      message: 'the restarted node restores its ready regional role',
-    }).toMatchObject({ writer, ready: true });
-    if (access) {
-      const response = await fetch(`http://127.0.0.1:${node.port}${access.path}`, { headers: { authorization: `Bearer ${access.token}` } });
-      if (response.status === 503) {
-        expect(await response.json()).toMatchObject({ error: { code: 'auth_unavailable' } });
-      } else {
-        expect(response.status, 'a valid credential is never refused after writer admission returns').toBe(200);
+      const log = join(stateDir, 'logs', `${node.service}.log`);
+      const offset = readFileSync(log).length;
+      const output = openSync(log, 'a', 0o600);
+      try {
+        const child = spawn(command[0], command.slice(1), { env: environment, stdio: ['ignore', output, output] });
+        child.on('error', error => { throw error; });
+        writeFileSync(pidFile, `${child.pid}\n`);
+        child.unref();
+      } finally {
+        closeSync(output);
       }
-      console.log(`startup authentication after writer admission ${node.name}: HTTP ${response.status}`);
+      await expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
+        message: 'the restarted writer opens its listeners',
+      }).toBe(true);
+      await expect.poll(() => nodeStatus(node), {
+        message: 'the restarted node restores its ready regional role',
+      }).toMatchObject({ writer, ready: true });
+      if (access) {
+        const response = await fetch(`http://127.0.0.1:${node.port}${access.path}`, {
+          headers: { authorization: `Bearer ${access.token}` }, signal: AbortSignal.timeout(15_000),
+        });
+        expect(response.status, 'a valid credential reports unavailable authentication while the issuer is paused').toBe(503);
+        expect(await response.json()).toMatchObject({ error: { code: 'auth_unavailable' } });
+        console.log(`startup authentication after writer admission ${node.name}: HTTP ${response.status}`);
+      }
+    } finally {
+      if (issuer) process.kill(issuer, 'SIGCONT');
     }
     await expect.poll(async () => {
       const response = await fetch(`http://127.0.0.1:${node.port + 1011}/metrics`);
