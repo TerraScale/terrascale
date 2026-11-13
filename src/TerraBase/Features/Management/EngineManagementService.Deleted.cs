@@ -91,23 +91,47 @@ internal sealed partial class EngineManagementService
                 Done => throw new UnreachableException(),
             };
         }
-        var available = await ReadAsync<Unavailable?>(async transaction =>
+        using var authority = await retention.EnterAsync(databaseId, cancellationToken).ConfigureAwait(false);
+        if (authority is null)
         {
-            if (await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not TenantContext)
+            return retention.Writer
+                ? new Unavailable("copy not available on this node yet", "retained_copy_unavailable")
+                : new Unavailable("this machine is not the current regional writer", "not_writer");
+        }
+        var prepared = await ReadAsync<SoftDeletionResult>(async transaction =>
+        {
+            var project = await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            if (project is not TenantContext)
             {
-                return null;
+                return project switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    TenantContext => throw new UnreachableException(),
+                };
             }
             var retained = await GetAsync(transaction, DeletedDatabases.Kind, databaseId, ManagementJsonContext.Default.DeletedDatabaseRecord, cancellationToken).ConfigureAwait(false);
             return retained is not null && retained.Storage.OrganizationId == organizationId && retained.Database.ProjectId == projectId
-                && !engine.HasDatabaseFiles(retained.Storage, cancellationToken)
-                ? new Unavailable("copy not available on this node yet", "retained_copy_unavailable") : null;
+                ? retained : ManagementErrors.NotFound;
         }, static error => error, cancellationToken).ConfigureAwait(false);
-        if (available is { } missing)
+        if (prepared is not DeletedDatabaseRecord verified)
+        {
+            return prepared switch
+            {
+                NotFound error => error,
+                Forbidden error => error,
+                Conflict error => error,
+                Unavailable error => error,
+                DeletedDatabaseRecord => throw new UnreachableException(),
+            };
+        }
+        if (await RetainedFilesUnavailableAsync(verified, cancellationToken).ConfigureAwait(false) is { } missing)
         {
             return missing;
         }
-        return await WriteRetentionAsync<SetDatabaseRegionsResult>(databaseId, async transaction =>
+        return await WriteAsync<SetDatabaseRegionsResult>(async transaction =>
         {
+            authority.Fence(transaction);
             if (ProjectAccess.Current is { DatabaseName: not null })
             {
                 return ManagementErrors.NotFound;
@@ -153,10 +177,8 @@ internal sealed partial class EngineManagementService
                 };
             }
 
-            if (!engine.HasDatabaseFiles(record.Storage, cancellationToken)
-                || !DatabaseRevision.TryParse(record.Revision, out var certified)
-                || await ((IDatabaseRevisions)engine).CurrentRevisionAsync(record.Storage, cancellationToken).ConfigureAwait(false) is not { } actual
-                || actual.Incarnation != certified.Incarnation || DatabaseRevision.Compare(actual, certified) < 0)
+            if (record.DeletedAt != verified.DeletedAt || record.Revision != verified.Revision
+                || !DatabasePurge.SameDatabase(record.Storage, verified.Storage) || !engine.HasDatabaseFiles(record.Storage, cancellationToken))
             {
                 return new Unavailable("copy not available on this node yet", "retained_copy_unavailable");
             }
@@ -265,7 +287,7 @@ internal sealed partial class EngineManagementService
             {
                 return false;
             }
-            if (await RetainedFilesUnavailableAsync(current, token).ConfigureAwait(false) is not null)
+            if (current.Revision != retained.Revision || !engine.HasDatabaseFiles(current.Storage, token))
             {
                 return false;
             }
@@ -359,7 +381,7 @@ internal sealed partial class EngineManagementService
                 return false;
             }
 
-            if (await RetainedFilesUnavailableAsync(current, token).ConfigureAwait(false) is not null)
+            if (current.Revision != record.Revision || !engine.HasDatabaseFiles(current.Storage, token))
             {
                 return false;
             }
@@ -385,7 +407,7 @@ internal sealed partial class EngineManagementService
         }
         _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "retained_files_missing"));
         logger.ZLogWarning($"Retained database {record.Database.Id:@Database} has no local files; purge preserves its keys and backups");
-        return new Unavailable("copy not available on this node yet");
+        return new Unavailable("copy not available on this node yet", "retained_copy_unavailable");
     }
 
 }
