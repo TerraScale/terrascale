@@ -83,11 +83,16 @@ be undone through these routes. Dashboard restoration controls and SDK convenien
 methods are separate follow-up work; these HTTP routes are available directly.
 
 
-Incoming replicated writes for a retained database currently retry because its live
-registration is missing. They must remain durable until restoration permits applying
-them or permanent purge permits discarding them. A consumer that parks writes must
-use only `DatabasePurge.IsPermanentlyPurgedAsync` to acknowledge without applying;
-retained-record presence must never trigger that acknowledgement.
+Incoming replicated writes must remain durable until restoration permits applying
+them or permanent purge permits discarding them. The current replication consumer
+acknowledges a missing live registration before its apply loop, so it does not yet
+preserve writes arriving during retention. This blocks release of retention-producing
+deletion. The consumer change must remove the missing-registration acknowledgement,
+use only positive `DatabasePurge.IsPermanentlyPurgedAsync` authority to acknowledge
+without applying, and leave missing or retained registrations in its existing durable
+progress-and-backoff loop until restoration or permanent purge. The replication
+consumer is outside this change; retained-record presence must never authorize an
+acknowledgement.
 
 Release order, with every node upgraded before the next step: handoff-import
 compatibility, retained-deletion receivers, then retention-producing deletion.
