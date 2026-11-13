@@ -270,7 +270,8 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         }
         try
         {
-            if (fault.IsCompleted || store.GetType().GetProperty("FaultRow", Hidden)!.GetValue(store) is not null)
+            if (await Task.WhenAny(fault, Task.Delay(TimeSpan.FromSeconds(5), cancellationToken)) == fault
+                || store.GetType().GetProperty("FaultRow", Hidden)!.GetValue(store) is not null)
             {
                 throw new InvalidOperationException("fault publication overtook native checkpoint backfill");
             }
