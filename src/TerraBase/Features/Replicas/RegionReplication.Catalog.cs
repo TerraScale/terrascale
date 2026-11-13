@@ -373,7 +373,15 @@ internal sealed partial class RegionReplication
                 await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
+                    if (home.Region == options.Region
+                        && await remote.RetentionAsync(home.Internal, database, cancellationToken).ConfigureAwait(false) is not false)
+                    {
+                        await StopFollowerAsync(Key(database)).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await StopFollowingAsync(Key(database), database, cancellationToken).ConfigureAwait(false);
+                    }
                     if (await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false) is Unavailable error)
                     {
                         faults.Failed(database, home.Region, new InvalidOperationException(error.Message));
@@ -406,6 +414,12 @@ internal sealed partial class RegionReplication
 
     private async Task StopFollowingAsync((string, string, string) key, TenantContext database, CancellationToken cancellationToken)
     {
+        await StopFollowerAsync(key).ConfigureAwait(false);
+        _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task StopFollowerAsync((string, string, string) key)
+    {
         Follower? follower;
         lock (_gate)
         {
@@ -416,8 +430,6 @@ internal sealed partial class RegionReplication
         {
             await follower.StopAsync().ConfigureAwait(false);
         }
-
-        _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
     }
 
 }

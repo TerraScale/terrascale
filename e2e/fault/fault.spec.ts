@@ -114,6 +114,10 @@ test('handoff receives receipts with their original bindings before exporting th
   console.log(result.stdout.split('\n').filter(line => line.startsWith('RECEIPT_')).join('\n'));
 });
 
+test('same-region retained receiver preserves its copy and resumes after restoration', async () => {
+  await receiptHandoff('retained');
+});
+
 for (const scenario of ['purge-holder', 'purge-authority', 'closure-holder', 'closure-authority', 'stale-closure', 'stale-refusal',
   'absent-holder', 'absent-authority', 'absent-database', 'absent-project', 'conflict-count', 'rows', 'bytes', 'identical']) {
   test(`receipt handoff ${scenario} preserves evidence and serving authority`, async () => {

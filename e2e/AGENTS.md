@@ -164,6 +164,12 @@ row/byte-limit rejection. Only the journey copy sends receipts; the product
 importer and handoff refusal path are unchanged in the driver. It adds no runtime
 product setting.
 
+The retained-receiver case uses isolated real driver nodes. Its source seeds a retained
+catalog record without enabling a production deletion feature. Repeated missing-registration
+sweeps must preserve the receiver's original row; restoring the source registration and
+writing another row must resume normal replication. The receiver build can be replaced
+with a previous-head driver through `E2E_RETAINED_RECEIVER_BUILD` for regression proof.
+
 Alongside the journey shards, the separately selected `engine crash recovery` job runs `env/engine-crash.py` against the shared PR service artifact
 and a separate build of the PR base revision. It checks rollback startup on each crash directory, stale rewrite
 intents at both rename boundaries, idle retained-history draining, missing root stores and three large-file

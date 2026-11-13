@@ -10,6 +10,7 @@ using TerraBase.Engine.Revisions;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.HomePush;
+using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replicas;
@@ -22,7 +23,7 @@ namespace TerraBase.Features.Replicas;
 internal sealed partial class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
-    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners, RemovedReplicaFaults faults) : BackgroundService
+    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners, RemovedReplicaFaults faults, RemoteDatabases remote) : BackgroundService
 {
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
 
@@ -475,17 +476,11 @@ internal sealed partial class RegionReplication(
     internal async Task SuspendAsync(TenantContext database)
     {
         var key = Key(database);
-        Follower? follower;
         lock (_gate)
         {
             _suspended[key] = true;
-            _ = _followers.TryRemove(key, out follower);
         }
-
-        if (follower is not null)
-        {
-            await follower.StopAsync().ConfigureAwait(false);
-        }
+        await StopFollowerAsync(key).ConfigureAwait(false);
     }
 
     internal void Resume(TenantContext database)
