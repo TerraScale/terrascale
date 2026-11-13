@@ -1,4 +1,5 @@
 [
+  {"path": "^e2e/keyring/InventoryProof\\.cs$", "repo": "terrascale", "terms": ["engine-brand"], "match": "\\bTurso\\b", "reason": "Journey-only imports bind the internal engine namespace and retained driver API; no product branding."},
   {"path": "(^|/)(?:LICENSE(?:\\.md|\\.txt)?|OFL-[A-Za-z0-9-]+\\.txt)$", "terms": ["documents", "collections"], "match": "\\bdocuments?\\b|\\bcollection\\b", "reason": "Apache and SIL Open Font licence text uses document/collection in their ordinary legal sense."},
   {"path": "(^|/)(?:THIRD[-_]PARTY[-_]NOTICES(?:\\.md|\\.txt)?|NOTICE(?:\\.md|\\.txt)?|LICENSE(?:\\.md|\\.txt)?)$", "terms": ["engine-brand", "libsql"], "reason": "Required upstream license and third-party attribution."},
   {"path": "(^|/)AGENTS\\.md$", "reason": "Human-owned agent instructions are governance, not product surfaces."},

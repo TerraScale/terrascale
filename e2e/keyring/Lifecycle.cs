@@ -36,6 +36,11 @@ internal static class Lifecycle
             Records.Rows(args[0]);
             return;
         }
+        if (args is ["inspection-seed", var seed])
+        {
+            InventoryProof.SeedInspection(seed);
+            return;
+        }
         if (args is ["inspection", var inspection])
         {
             InventoryProof.Inspection(inspection);

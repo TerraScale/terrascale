@@ -372,7 +372,7 @@ unknown. Missing ids in artifacts are also unknown, rather than startup failures
 
 `terrabase.keys.local.wrapped{key_id}` counts references on this node, including retained key
 files and intent wrappers, even with a single configured key and on non-writers. File references
-and sealed credential references are both read from persisted state on every scrape. Credential rows
+and sealed credential references are both read from persisted state on every scrape. Scrape response caching is disabled so a just-committed import cannot reuse a prior zero response. Credential rows
 are streamed from a catalog read snapshot; there is no credential-reference cache. Ordinary writes,
 credential rewrapping, imports, handoffs, replication and restores cannot bypass this count.
 Sealed credential writes validate the named key and its authentication before the transaction

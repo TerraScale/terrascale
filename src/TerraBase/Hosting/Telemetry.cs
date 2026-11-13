@@ -27,7 +27,7 @@ public static class Telemetry
 
         services.AddOpenTelemetry().WithMetrics(metrics => metrics
             .AddRuntimeInstrumentation()
-            .AddPrometheusExporter());
+            .AddPrometheusExporter(options => options.ScrapeResponseCacheDurationMilliseconds = 0));
         services.AddMetrics(metrics =>
         {
             metrics.EnableMetrics(MeterName, listenerName: "OpenTelemetry");

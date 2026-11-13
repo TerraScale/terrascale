@@ -1,9 +1,9 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -45,11 +45,31 @@ internal static class InventoryProof
 
     internal static async Task ImportAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
-        foreach (var service in services.GetServices<IHostedService>().OfType<KeyRewrap>())
+        var complete = false;
+        using var listener = new MeterListener
         {
-            await service.StopAsync(cancellationToken);
+            InstrumentPublished = (instrument, owner) =>
+            {
+                if (instrument.Name == "terrabase.keys.last_complete")
+                {
+                    owner.EnableMeasurementEvents(instrument);
+                }
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) => complete |= value > 0);
+        listener.Start();
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(50));
+        do
+        {
+            listener.RecordObservableInstruments();
+            if (complete)
+            {
+                break;
+            }
         }
+        while (await timer.WaitForNextTickAsync(cancellationToken));
         var engine = services.GetRequiredService<IStorageEngine>();
+        var receipts = services.GetRequiredService<RegionalReceiptImports>();
         var settings = services.GetRequiredService<TerraBaseOptions>().DatabaseKeyring!;
         var old = Ring("k0", settings.Keys);
         var absent = Ring("absent", new Dictionary<string, byte[]>
@@ -70,7 +90,7 @@ internal static class InventoryProof
             (await CredentialAsync(old, "marker")).Json);
         try
         {
-            await RegionalCatalog.ImportAsync(engine, snapshot with { Records = [.. snapshot.Records, marker, incoming] }, cancellationToken);
+            await RegionalCatalog.ImportAsync(engine, snapshot with { Records = [.. snapshot.Records, marker, incoming] }, receipts, cancellationToken);
             throw new InvalidOperationException("unknown key import committed");
         }
         catch (InvalidDataException error) when (error.Message.Contains("unconfigured key id 'absent'", StringComparison.Ordinal))
@@ -89,14 +109,14 @@ internal static class InventoryProof
             "terrabase_keys_local_wrapped", "k0");
         Require(before == 0, "old wrappers were not drained before import");
         incoming = await CredentialAsync(old, "old");
-        await RegionalCatalog.ImportAsync(engine, snapshot with { Records = [.. snapshot.Records, incoming] }, cancellationToken);
+        await RegionalCatalog.ImportAsync(engine, snapshot with { Records = [.. snapshot.Records, incoming] }, receipts, cancellationToken);
         var current = Gauge(await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken),
             "terrabase_keys_local_wrapped", "k0");
-        Require(current == 1, "imported old credential missing from immediate local gauge");
+        Require(current == 1, "imported old credential missing from immediate local gauge: " + current.ToString(CultureInfo.InvariantCulture));
         Console.WriteLine("keyring-driver:import absent=whole-refusal k0=0->1");
     }
 
-    internal static void Inspection(string request)
+    internal static void SeedInspection(string request)
     {
         using var json = JsonDocument.Parse(File.ReadAllText(request));
         var path = json.RootElement.GetProperty("path").GetString()!;
@@ -122,6 +142,16 @@ internal static class InventoryProof
             """;
         command.ExecuteNonQuery();
         Require(new FileInfo(path + "-wal").Length > 0, "inspection proof needs a nonempty log");
+        Console.WriteLine("keyring-driver:inspection-seed nonempty-wal-ready");
+        _ = Console.In.ReadLine() ?? throw new IOException("inspection seed control closed");
+    }
+
+    internal static void Inspection(string request)
+    {
+        using var json = JsonDocument.Parse(File.ReadAllText(request));
+        var path = json.RootElement.GetProperty("path").GetString()!;
+        var key = Convert.FromBase64String(json.RootElement.GetProperty("key").GetString()!);
+        Require(new FileInfo(path + "-wal").Length > 0, "inspection requires a dormant nonempty log");
         var hashes = Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + "*")
             .ToDictionary(file => file, file => SHA256.HashData(File.ReadAllBytes(file)), StringComparer.Ordinal);
         void Verify()
@@ -146,7 +176,6 @@ internal static class InventoryProof
         {
             Verify();
         }
-        connection.Close();
         File.Copy(path, path.Replace(".promote.db", ".db", StringComparison.Ordinal));
         var evidence = FileEvidence.Capture(path);
         File.Delete(path);

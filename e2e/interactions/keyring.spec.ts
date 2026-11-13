@@ -57,7 +57,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
         TERRABASE_POSTGRES_PORT: '18382',
         TERRABASE_METRICS_PORT: '18383',
       },
-      stdio: ['ignore', output, output],
+      stdio: [operation ? 'pipe' : 'ignore', output, output],
     });
     closeSync(output);
 
@@ -92,7 +92,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     return Buffer.concat([decipher.update(wrapped.subarray(12, -16)), decipher.final()]);
   }
 
-  async function rotated(expected: number): Promise<void> {
+  async function rotated(expected: number, credentials = 0): Promise<void> {
     await ready();
     await expect.poll(async () => {
       const metrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
@@ -101,7 +101,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     for (const path of files(data)) expect(readFileSync(path, 'ascii').startsWith('TERRABASE-DB-KEY-2\nv2.k1.')).toBe(true);
     expect(files(data)).toHaveLength(expected);
     const metrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
-    expect(metrics).toMatch(new RegExp(`terrabase_keys_local_wrapped(?:_\\w+)?\\{[^\\n]*key_id="k1"[^\\n]*\\} ${expected}(?:\\n|$)`));
+    expect(metrics).toMatch(new RegExp(`terrabase_keys_local_wrapped(?:_\\w+)?\\{[^\\n]*key_id="k1"[^\\n]*\\} ${expected + credentials}(?:\\n|$)`));
   }
 
   try {
@@ -246,7 +246,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k0' is required by 1 local wrappers");
     await stop();
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await rotated(paths.length + 2);
+    await rotated(paths.length + 2, 1);
     await stop();
     const catalogBytes = readFileSync(catalogKey);
     await start('k1', { k0: k0.toString('base64'), k1: randomBytes(32).toString('base64') });
@@ -270,13 +270,14 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k0' is required by 1 local wrappers");
     await stop();
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await rotated(paths.length + 2);
+    await rotated(paths.length + 2, 1);
     await stop();
     await start('k1', { k1: k1.toString('base64'), k2: randomBytes(32).toString('base64') });
     await ready();
     await stop();
     await rows('rows', 'k1');
     k0.fill(7);
+    saveSecret('keyring-weak', k0.toString('base64'));
     for (const path of files(data)) wrap(path, 'k0');
     await start('k0', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await ready();
@@ -290,7 +291,15 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     expect(readFileSync(log, 'utf8')).toContain("active master key id 'k0' consists of one repeated byte and has no local wrappers");
     await stop();
     const inspection = join(directory, 'inspection.json');
-    writeFileSync(inspection, JSON.stringify({ path: join(data, 'inspection', 'proof.promote.db'), key: randomBytes(32).toString('base64') }), { mode: 0o600 });
+    const inspectionKey = randomBytes(32).toString('base64');
+    saveSecret('keyring-inspection', inspectionKey);
+    writeFileSync(inspection, JSON.stringify({ path: join(data, 'inspection', 'proof.promote.db'), key: inspectionKey }), { mode: 0o600 });
+    await start('k0', { k0: k0.toString('base64') }, candidate, ['inspection-seed', inspection]);
+    await expect.poll(() => readFileSync(log, 'utf8')).toContain('keyring-driver:inspection-seed nonempty-wal-ready');
+    const killed = once(child!, 'exit');
+    child!.kill('SIGKILL');
+    await killed;
+    await stop();
     await start('k0', { k0: k0.toString('base64') }, candidate, ['inspection', inspection]);
     await expect.poll(() => child?.exitCode).toBe(0);
     expect(readFileSync(log, 'utf8')).toContain('keyring-driver:inspection nonempty-wal bytes-identical success+failure; removed-duplicate=refused');
