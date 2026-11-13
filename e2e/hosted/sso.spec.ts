@@ -285,7 +285,9 @@ test('SSO links identities once and completes required MFA without blocking enro
     const swappedOrdinary = await member.request.post(ui + '/sign-in/mfa', { headers: origin, form: { challenge, code: recoveryCode } });
     expect(swappedOrdinary.status()).toBe(401);
     await noSession(member);
-    expect((await members()).some(item => item.email === email)).toBe(false);
+    const stillUnlinked = await start();
+    expect(stillUnlinked.status()).toBe(200);
+    expect(await stillUnlinked.text()).toContain('id="sso-link-confirm"');
     await member.addCookies([ordinaryProof]);
     await noSession(member);
     await memberAudit.check('An unlinked SSO identity requires password before its enrolled authenticator');
