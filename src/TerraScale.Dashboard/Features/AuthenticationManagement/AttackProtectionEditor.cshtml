@@ -3,7 +3,7 @@
 @using TerraScale.Dashboard.Platform.TsAuth
 @{
     var protection = Model.Settings?.AttackProtection ?? new TsAuthAttackProtection();
-    var manage = Model.Context.CanManageAuthentication;
+    var manage = Model.Context.CanManageProject;
     bool Checked(string name, bool saved) => Model.Draft is { } draft ? draft[name] == "on" : saved;
 }
 <header class="ts-card-head"><h2 class="ts-card-title" id="auth-attack-protection-title">Attack protection</h2></header>

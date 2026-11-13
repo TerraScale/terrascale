@@ -232,8 +232,7 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
         }
 
         return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId),
-            organizationPicker: tenant == OidcIssuer.InstanceId && request.ClientId == OidcIssuer.DashboardClientId
-                && (await settings.GetAsync(PlatformBootstrap.AuthProjectId, cancellationToken)).OrganizationPicker);
+            organizationPicker: await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
     }
 }
 
@@ -364,8 +363,7 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
 
         return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, authenticationTime, principal.GetScopes(),
             OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt,
-            tenant == OidcIssuer.InstanceId && request.ClientId == OidcIssuer.DashboardClientId
-                && (await settings.GetAsync(PlatformBootstrap.AuthProjectId, cancellationToken)).OrganizationPicker);
+            await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
     }
 }
 
@@ -589,6 +587,10 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
 /// <summary>Sign-in and error results for the OpenIddict passthrough endpoints.</summary>
 internal static class OidcResults
 {
+    public static async Task<bool> OrganizationPickerAsync(ProjectAuthSettings settings, string tenant, string? clientId, CancellationToken cancellationToken) =>
+        tenant == OidcIssuer.InstanceId && clientId == OidcIssuer.DashboardClientId
+            && (await settings.GetAsync(PlatformBootstrap.AuthProjectId, cancellationToken)).OrganizationPicker;
+
     public static IResult DisallowedRedirect() => Results.Json(new OAuthErrorBody(Errors.InvalidRequest,
         "The project does not permit this redirect URI."), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status400BadRequest);
 

@@ -6,9 +6,9 @@
 <div class="ts-card-body">
 <form class="ts-form" method="post" action="/api/v1/auth-management/organization-picker">
 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-<fieldset class="ts-form" disabled="@(!Model.Context.CanManageAuthentication || Model.Settings is null)">
+<fieldset class="ts-form" disabled="@(!Model.Context.CanSetOrganizationPicker || Model.Settings is null)">
 <label class="ts-check"><input class="ts-switch" type="checkbox" role="switch" name="organization_picker" checked="@selected" aria-describedby="auth-organization-picker-help" /><span>Organization picker at sign-in</span></label>
-<p id="auth-organization-picker-help">After sign-in, users who belong to more than one organization choose one first. Off: they land on their last page and switch organization in the app.</p>
+<p id="auth-organization-picker-help">After sign-in to TerraScale, users who belong to more than one organization choose one first. Off: they land on their last page and switch organization in the app.</p>
 <button class="ts-btn ts-btn-primary" type="submit">Save settings</button>
 </fieldset>
 </form>

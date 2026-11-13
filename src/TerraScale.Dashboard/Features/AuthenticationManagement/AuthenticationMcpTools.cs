@@ -147,7 +147,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 throw new AccountAccessException("Project access is required.");
             }
 
-            if (manage && !context.CanManageAuthentication)
+            if (manage && !context.CanManageProject)
             {
                 throw new AccountAccessException("Project admin access is required.");
             }

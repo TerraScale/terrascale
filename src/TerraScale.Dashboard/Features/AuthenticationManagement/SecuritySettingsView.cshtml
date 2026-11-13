@@ -9,7 +9,7 @@
 <div class="ts-card-body">
 <form class="ts-form" method="post" action="/api/v1/auth-management/mfa-sessions">
 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-<fieldset class="ts-form" disabled="@(!Model.Context.CanManageAuthentication || Model.Settings is null)">
+<fieldset class="ts-form" disabled="@(!Model.Context.CanManageProject || Model.Settings is null)">
 @foreach (var (name, label, saved) in new[] { ("require_mfa", "Require MFA", config?.RequireMfa ?? false), ("allow_totp", "Allow authenticator apps", config?.AllowTotp ?? true), ("allow_passkey", "Allow passkeys", config?.AllowPasskey ?? true), ("single_session", "Single session per user", config?.SingleSession ?? false) })
 {
 <label class="ts-check"><input type="checkbox" name="@name" checked="@Checked(name, saved)" /><span>@label</span></label>

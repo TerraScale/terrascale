@@ -1,8 +1,10 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.AuthenticationManagement
+@using TerraScale.Dashboard.Common.Databases
 @{
-    var current = Model.Section; var settings = Model.Settings; var manage = Model.Context.CanManageAuthentication;
+    var current = Model.Section; var settings = Model.Settings; var manage = Model.Context.CanManageProject;
+    var sections = AuthenticationSection.All.Where(section => section.Key != "settings" || Model.Context.Project?.Id == PlatformDatabases.AuthProjectId);
     var projectName = Model.Context.Project?.Name ?? "";
     var dangers = new[]
     {
@@ -58,7 +60,7 @@
 <form class="ts-idp-mobile-nav" method="get" action="/auth">
 <label class="ts-sr-only" for="auth-section-select">Authentication section</label>
 <select class="ts-select" id="auth-section-select" name="section" data-on:change="el.form.requestSubmit()">
-@foreach (var group in AuthenticationSection.All.GroupBy(section => section.Group)) {
+@foreach (var group in sections.GroupBy(section => section.Group)) {
 <optgroup label="@(group.Key.Length > 0 ? group.Key : "Overview")">
 @foreach (var section in group) { <option value="@(section.Key)" selected="@(section.Key == current.Key)">@(section.Title)</option> }
 </optgroup>
@@ -68,7 +70,7 @@
 </form>
 <div class="ts-idp-layout">
 <nav class="ts-idp-nav" aria-label="Authentication sections">
-@foreach (var group in AuthenticationSection.All.GroupBy(section => section.Group)) {
+@foreach (var group in sections.GroupBy(section => section.Group)) {
 <div class="ts-nav-group">
 <h2 class="ts-nav-group-label">@(group.Key.Length > 0 ? group.Key : "Overview")</h2>
 <ul class="ts-nav">
@@ -92,7 +94,7 @@ else if (settings is not null && current.Key == "branding") {
 </div>
 @if (Model.Error.Length > 0 && failed.Length == 0) { <div class="ts-alert ts-alert-danger" role="alert" id="auth-error"><p class="ts-alert-body">@Model.Error</p></div> }
 @if (Model.Saved) { <div class="ts-alert ts-alert-success" role="status"><p class="ts-alert-body">Changes saved.</p></div> }
-@if (!manage && current.Key != "overview") { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">You can view this configuration. Organization owners and admins can change it.</p></div> }
+@if (!(current.Key == "settings" ? Model.Context.CanSetOrganizationPicker : manage) && current.Key != "overview") { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">You can view this configuration. Organization owners and admins can change it.</p></div> }
 @if (Model.Created is { } created) {
 <section class="ts-alert ts-alert-success" id="auth-created" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Created @created.Name</h2><p class="ts-alert-body">Client ID</p>@{ CopyValue("auth-created-client-id", created.ClientId, "new client ID"); }@if (created.ClientSecret is { } secret) { Secret("Client secret", "auth-client-secret", secret, "client secret"); }</section>
 }

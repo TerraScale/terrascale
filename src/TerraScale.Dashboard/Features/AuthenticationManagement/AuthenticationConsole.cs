@@ -3,6 +3,7 @@ using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.NotFound;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Common.Databases;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement
@@ -50,7 +51,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return RequestError.FormExpired(http, "/auth/" + key, Results.StatusCode(403));
             }
 
-            if (!context.CanManageAuthentication || context.Project is null)
+            if (!(parts is ["organization-picker"] ? context.CanSetOrganizationPicker : context.CanManageProject) || context.Project is null)
             {
                 return Results.StatusCode(403);
             }
@@ -342,6 +343,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return HttpRedirects.SeeOther("/");
             }
 
+            if (key == "settings" && context.Project.Id != PlatformDatabases.AuthProjectId)
+            {
+                return await NotFoundEndpoints.PageAsync(http, sessions, accounts);
+            }
+
             return await PageAsync(http, context, projects, key);
         }
 
@@ -381,11 +387,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case "sessions": var live = await projects.ListSessionsAsync(session, project, Value(page.User), Value(page.After), cancel); page = page with { Sessions = live.Items, Next = live.Next }; break;
                     case "clients": page = page with { Clients = await projects.ListClientsAsync(session, project, cancel) }; break;
                     case "logs":
-                        var events = context.CanManageAuthentication ? await projects.ListEventsAsync(session, project, Value(page.After), cancel) : new TsAuthPlatformPage<TsAuthWebhookEvent>([], null);
+                        var events = context.CanManageProject ? await projects.ListEventsAsync(session, project, Value(page.After), cancel) : new TsAuthPlatformPage<TsAuthWebhookEvent>([], null);
                         page = page with { Events = events.Items, Next = events.Next };
                         break;
                     case "webhooks":
-                        var hooks = context.CanManageAuthentication ? await projects.ListWebhookEndpointsAsync(session, project, cancel) : [];
+                        var hooks = context.CanManageProject ? await projects.ListWebhookEndpointsAsync(session, project, cancel) : [];
                         Dictionary<string, IReadOnlyList<TsAuthWebhookDelivery>> deliveries = [];
                         foreach (var hook in hooks)
                         {

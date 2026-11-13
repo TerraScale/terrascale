@@ -273,7 +273,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             Project is { Status: "active", Role: "member" or "admin" } project && TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(project.Id) &&
             project.OrganizationId == organization.Id && ReferenceEquals(organization.Projects.GetValueOrDefault(project.Id), project);
         public bool CanWriteProjectData => HasProjectAuthority && Organization is { } organization && !PlatformDatabases.IsPlatform(organization.Id);
-        public bool CanManageAuthentication => Project?.Role == "admin" && HasProjectAuthority;
+        public bool CanSetOrganizationPicker => Project?.Role == "admin" && HasProjectAuthority && Project.Id == PlatformDatabases.AuthProjectId;
         public bool CanManageProject => Project?.Role == "admin" && CanWriteProjectData;
         // ts-auth's key rule (ApiKeys.AuthorizeAsync): an organization owner/admin reaches every project; otherwise the
         // live project's member role carries list/create/rotate/revoke and each key's own allowlist, this project only.

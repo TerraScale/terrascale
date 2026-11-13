@@ -118,7 +118,6 @@ const authSections: [string, string][] = [
   ['sign-in', 'Sign-in methods'],
   ['social', 'Social sign-in'],
   ['configuration', 'Configuration'],
-  ['settings', 'Settings'],
   ['mfa-sessions', 'MFA and sessions'],
   ['attack-protection', 'Attack protection'],
   ['clients', 'OAuth applications'],
@@ -350,7 +349,6 @@ export const dashboardStates: readonly PageState[] = [
       data: async (page, journey) => {
         if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
         else if (section === 'logs') await expect(page.getByText('No events in the last 30 days.', { exact: true })).toBeVisible();
-        else if (section === 'settings') await expect(page.getByRole('switch', { name: 'Organization picker at sign-in' })).not.toBeChecked();
         else if (section === 'mfa-sessions') {
           await expect(page.locator('input[name=require_mfa]')).not.toBeChecked();
           await expect(page.locator('input[name=allow_totp]')).toBeChecked();

@@ -3,7 +3,7 @@
 @{
     var brand = Model.Settings!.Branding;
     var methods = Model.Settings.Methods;
-    var manage = Model.Context.CanManageAuthentication;
+    var manage = Model.Context.CanManageProject;
     string Field(string name, string? saved) => Model.Draft is { } draft ? draft[name].ToString() : saved ?? "";
     var theme = Field("default_theme", brand.DefaultTheme ?? "system");
     var size = (brand.TitleSize ?? 24).ToString(System.Globalization.CultureInfo.InvariantCulture);
