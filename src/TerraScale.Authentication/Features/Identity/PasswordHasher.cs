@@ -6,7 +6,7 @@ namespace TerraScale.Authentication.Features.Identity;
 
 public sealed class PasswordHasher : IDisposable
 {
-    private static readonly int Concurrency = Math.Clamp(Environment.ProcessorCount, 2, 4);
+    private static readonly int Concurrency = Math.Clamp(Environment.ProcessorCount / 2, 2, 4);
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
     private readonly SemaphoreSlim slots = new(Concurrency);
     private readonly TimeProvider clock;
