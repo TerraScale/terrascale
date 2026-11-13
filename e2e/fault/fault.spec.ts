@@ -175,7 +175,12 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(afterFirst[0], `the first object the bucket receives after the outage is the hole: ${afterFirst.join(' ')}`).toMatch(firstHole);
     const uploaded = await metric(writer, 'terrabase_backup_uploaded_bytes_total', 'kind="segment"');
     await ledger.write(cells, 'gru', [[3, 'after-outage']]);
+    const afterAcked = Date.now();
     await expect.poll(() => metric(writer, 'terrabase_backup_uploaded_bytes_total', 'kind="segment"'), { message: 'later passes store the writes after the outage' }).toBeGreaterThan(uploaded);
+    await expect.poll(async () => {
+      const window = await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`);
+      return window.status() === 200 ? Date.parse((await window.json() as { latest: string }).latest) : 0;
+    }, { message: 'the proven restore time reaches the write after the outage' }).toBeGreaterThanOrEqual(afterAcked);
     const closed = await continuity(writer, created.id);
     expect(closed).toMatchObject({ replacing: false, storedIncarnation: closed.incarnation });
     expect(closed.holes).toHaveLength(1);
