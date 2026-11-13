@@ -52,7 +52,10 @@ held-database gauge and oldest age growing and returning to zero; a partner's re
 transaction, with and without its stream position, answered 503 and applying nothing while an earlier position of the
 database is held, then confirmed after both apply in stream order; a purge marker ahead of a database's frontier with
 the head message purged unapplied, which holds the database with reason `purged` while the later message stays
-unapplied and another database applies; and 130 unknown databases with 32 messages each held on one origin while a
+unapplied and another database applies (the origin node's build record is written first, as an origin on this build does before
+every purge); a previous-build origin, shown by a freshly recreated stream without the origin node's build record, removing a
+database's messages without a marker, after which the home holds the database with reason `origin_previous_build` and applies
+nothing past the removal until the origin node's build record appears; and 130 unknown databases with 32 messages each held on one origin while a
 healthy database of that origin still applies.
 
 The run changes the real JetStream regional ownership record, including the matching predecessor/preparation

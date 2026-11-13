@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { createCipheriv, createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { Nats, putKey as putSealedKey, seal } from './push.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { appendFileSync, openSync, closeSync, readFileSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
@@ -93,86 +94,6 @@ function logged(child, text, fields = {}, after = 0) {
     check();
   });
 }
-class Nats {
-  buffer = Buffer.alloc(0);
-  pending = new Map();
-  next = 1;
-  persistent = new Set();
-  deadlines = new Set();
-  constructor() {
-    this.socket = createConnection({ port: 4222, host: '127.0.0.1' });
-    this.socket.on('error', error => {
-      for (const finish of this.pending.values()) finish({ error: { description: error.message } });
-    });
-    this.socket.on('data', chunk => {
-      this.buffer = Buffer.concat([this.buffer, chunk]);
-      while (true) {
-        const end = this.buffer.indexOf('\r\n');
-        if (end < 0) return;
-        const line = this.buffer.subarray(0, end).toString();
-        const parts = line.split(' ');
-        if (parts[0] === 'MSG' || parts[0] === 'HMSG') {
-          const size = Number(parts.at(-1));
-          if (this.buffer.length < end + 2 + size + 2) return;
-          const headerSize = parts[0] === 'HMSG' ? Number(parts.at(-2)) : 0;
-          const data = this.buffer.subarray(end + 2 + headerSize, end + 2 + size);
-          this.pending.get(parts[2])?.(data[0] === 123 ? JSON.parse(data) : { raw: data.toString(), subject: parts[1] });
-          if (!this.persistent.has(parts[2])) this.pending.delete(parts[2]);
-          this.buffer = this.buffer.subarray(end + 2 + size + 2);
-        } else {
-          if (line === 'PING') this.socket.write('PONG\r\n');
-          if (line.startsWith('-ERR')) {
-            for (const finish of this.pending.values()) finish({ error: { description: line } });
-            this.pending.clear();
-          }
-          this.buffer = this.buffer.subarray(end + 2);
-        }
-      }
-    });
-  }
-  async connect() {
-    await once(this.socket, 'connect');
-    this.socket.write('CONNECT ' + JSON.stringify({ auth_token: token, headers: true }) + '\r\n');
-  }
-  event(subject, matches = () => true) {
-    const sid = String(this.next++);
-    return new Promise((resolveEvent, reject) => {
-      const deadline = setTimeout(() => reject(new Error('Missing NATS event: ' + subject)), 90_000);
-      this.deadlines.add(deadline);
-      this.persistent.add(sid);
-      this.pending.set(sid, value => {
-        if (value.error) { clearTimeout(deadline); this.deadlines.delete(deadline); reject(new Error(value.error.description)); return; }
-        if (!matches(value)) return;
-        clearTimeout(deadline);
-        this.deadlines.delete(deadline);
-        this.pending.delete(sid);
-        this.persistent.delete(sid);
-        this.socket.write('UNSUB ' + sid + '\r\n');
-        resolveEvent(value);
-      });
-      this.socket.write('SUB ' + subject + ' ' + sid + '\r\n');
-    });
-  }
-  close() {
-    for (const deadline of this.deadlines) clearTimeout(deadline);
-    this.socket.destroy();
-  }
-  async request(subject, payload = {}, headers) {
-    const sid = String(this.next++);
-    const inbox = '_INBOX.frontier.' + sid;
-    const data = Buffer.isBuffer(payload) ? payload : Buffer.from(JSON.stringify(payload));
-    const result = new Promise((resolveResult, reject) => {
-      const deadline = setTimeout(() => reject(new Error('NATS request timed out: ' + subject)), 5000);
-      this.deadlines.add(deadline);
-      this.pending.set(sid, value => { clearTimeout(deadline); this.deadlines.delete(deadline); resolveResult(value); });
-    });
-    const prefix = 'SUB ' + inbox + ' ' + sid + '\r\nUNSUB ' + sid + ' 1\r\n';
-    const block = headers ? Buffer.from('NATS/1.0\r\n' + Object.entries(headers).map(([key, value]) => key + ': ' + value + '\r\n').join('') + '\r\n') : Buffer.alloc(0);
-    const publish = headers ? 'HPUB ' + subject + ' ' + inbox + ' ' + block.length + ' ' + (block.length + data.length) : 'PUB ' + subject + ' ' + inbox + ' ' + data.length;
-    this.socket.write(Buffer.concat([Buffer.from(prefix + publish + '\r\n'), block, data, Buffer.from('\r\n')]));
-    return result;
-  }
-}
 class Relay {
   links = new Set();
   trap = null;
@@ -225,44 +146,6 @@ class Relay {
     this.server.close();
   }
 }
-const sha = value => createHash('sha256').update(value).digest('hex');
-const hmac = (key, value) => createHmac('sha256', key).update(value).digest();
-async function putKey(scope, keyId, dataKey) {
-  const nonce = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', master, nonce);
-  const body = Buffer.from(Buffer.concat([nonce, cipher.update(dataKey), cipher.final(), cipher.getAuthTag()]).toString('base64'));
-  const path = '/journey-shapes/v1/keys/' + scope + '/' + keyId;
-  const host = 'journey.backups.terrascale.tech';
-  const date = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '');
-  const names = 'host;x-amz-content-sha256;x-amz-date';
-  const headers = 'host:' + host + '\nx-amz-content-sha256:' + sha(body) + '\nx-amz-date:' + date + '\n';
-  const canonical = ['PUT', path, '', headers, names, sha(body)].join('\n');
-  const credential = date.slice(0, 8) + '/auto/s3/aws4_request';
-  const signing = hmac(hmac(hmac(hmac('AWS4' + secret, date.slice(0, 8)), 'auto'), 's3'), 'aws4_request');
-  const signature = hmac(signing, ['AWS4-HMAC-SHA256', date, credential, sha(canonical)].join('\n')).toString('hex');
-  const response = await fetch('https://' + host + path, { method: 'PUT', body, headers: {
-    'x-amz-content-sha256': sha(body), 'x-amz-date': date,
-    authorization: 'AWS4-HMAC-SHA256 Credential=' + access + '/' + credential + ', SignedHeaders=' + names + ', Signature=' + signature,
-  } });
-  assert.equal(response.status, 200, await response.text());
-}
-function seal(transaction, scope, keyId, dataKey) {
-  const json = Buffer.from(JSON.stringify(transaction));
-  const lengths = [];
-  for (let n = json.length - 15; n >= 0; n -= 255) {
-    lengths.push(Math.min(n, 255));
-    if (n < 255) break;
-  }
-  const size = Buffer.alloc(4);
-  size.writeInt32BE(json.length);
-  const packed = Buffer.concat([size, Buffer.from([Math.min(json.length, 15) << 4, ...lengths]), json]);
-  const salt = randomBytes(32);
-  const header = Buffer.concat([Buffer.from('TBP1'), Buffer.from(keyId), salt]);
-  const key = hkdfSync('sha256', dataKey, salt, Buffer.from('TBP1 transaction\0' + scope), 32);
-  const cipher = createCipheriv('aes-256-gcm', key, Buffer.alloc(12));
-  cipher.setAAD(header);
-  return Buffer.concat([header, cipher.update(packed), cipher.final(), cipher.getAuthTag()]);
-}
 const home = 'http://127.0.0.1:8081';
 function cell(region, second = false) {
   const gru = region === 'gru';
@@ -296,7 +179,7 @@ try {
   const broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
   await logged(broker, 'Server is ready');
   await relay.listen();
-  nats = new Nats();
+  nats = new Nats(token);
   await nats.connect();
   const previousLayout = await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_PARK_GRU', { name: 'TERRABASE_PUSH_PARK_GRU', subjects: ['terrabase.push-park.gru.>'],
     storage: 'file', retention: 'limits', discard: 'new', max_bytes: 1 << 30, duplicate_window: 600_000_000_000, num_replicas: 1 });
@@ -326,7 +209,7 @@ try {
   }
   const dataKey = randomBytes(32);
   const keyId = id();
-  for (const db of [first, other]) await putKey(org.id + '/' + project.id + '/' + db.id, keyId, dataKey);
+  for (const db of [first, other]) await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + db.id, keyId, dataKey);
   const transaction = changes => ({ id: id(), region: 'fra', hlc: { physicalMilliseconds: Date.now(), logical: 0, nodeId: 'journey-2' }, changes });
   const effect = value => ({ op: 'update', table: 'items', key: { id: 1 }, values: { value } });
   const send = async (db, tx, encryptionId = keyId, addressed = 'gru') => {
@@ -377,7 +260,7 @@ try {
   await logged(b, 'Application started');
   await logged(b, 'This node holds a new home lease session');
   const heldKey = id(Date.now() - 60_000);
-  await putKey(org.id + '/' + project.id + '/' + first.id, heldKey, dataKey);
+  await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + first.id, heldKey, dataKey);
   writeFileSync(journeyState + '/r2-unavailable-keys', JSON.stringify({ ['v1/keys/' + org.id + '/' + project.id + '/' + first.id + '/' + heldKey]: 503 }), { mode: 0o600 });
   const progress = (sent, count, consumer = () => true) => {
     let seen = 0;
@@ -438,7 +321,7 @@ try {
   };
   const refusedKey = async db => {
     const key = id(Date.now() - 60_000);
-    await putKey(scope(db), key, dataKey);
+    await putSealedKey({ master, access, secret }, scope(db), key, dataKey);
     block(db, key);
     return key;
   };
@@ -482,7 +365,7 @@ try {
     await sql(db, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
     await sql(db, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
     await sql(db, 'INSERT INTO items VALUES (1, -1)');
-    await putKey(scope(db), keyId, dataKey);
+    await putSealedKey({ master, access, secret }, scope(db), keyId, dataKey);
     return db;
   };
   const audited = tx => ({ ...tx, changes: [...tx.changes, { op: 'insert', table: 'applications', values: { tx: tx.id, value: 0 } }] });
@@ -568,7 +451,7 @@ try {
   await sql(bulk, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
   await sql(bulk, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
   await sql(bulk, 'INSERT INTO items VALUES (1, 0)');
-  await putKey(scope(bulk), keyId, dataKey);
+  await putSealedKey({ master, access, secret }, scope(bulk), keyId, dataKey);
   const bulkKey = await refusedKey(bulk);
   const head = audited(transaction([effect(0)]));
   await held(bulk, send(bulk, head, bulkKey));
@@ -610,7 +493,7 @@ try {
   await sql(relocated, 'CREATE TABLE pairs (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER)');
   await sql(relocated, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
   await sql(relocated, 'INSERT INTO pairs VALUES (1, 0, 0)');
-  await putKey(scope(relocated), keyId, dataKey);
+  await putSealedKey({ master, access, secret }, scope(relocated), keyId, dataKey);
   const onFra = async statement => (await request('http://127.0.0.2:8081', '/v1/projects/' + project.id + '/databases/' + relocated.id + '/sql/execute', { statements: [{ sql: statement }] })).results[0].rows;
   const columnA = audited(transaction([{ op: 'update', table: 'pairs', key: { id: 1 }, values: { a: 1 } }]));
   const columnB = audited(transaction([{ op: 'update', table: 'pairs', key: { id: 1 }, values: { b: 2 } }]));
@@ -858,6 +741,8 @@ try {
   const [gapHead, gapTail] = series(2);
   const gapSent = await held(gapped, send(gapped, gapHead, gappedKey));
   const gapHeld = logged(gru, 'A pushed database is held', { Database: gapped.id, Kind: 'purged' }, offset());
+  const build = await nats.request('terrabase.push-state.fra.build.journey-2', Buffer.from('markers'));
+  assert(!build.error, JSON.stringify(build));
   const marker = await nats.request('terrabase.push-state.fra.purged.' + scope(gapped).replaceAll('/', '.'), Buffer.from(String(gapSent.seq)));
   assert(!marker.error, JSON.stringify(marker));
   const purged = await nats.request('$JS.API.STREAM.PURGE.TERRABASE_PUSH_FRA', { filter: 'terrabase.push.fra.*.' + scope(gapped).replaceAll('/', '.'), seq: gapSent.seq + 1 });
@@ -872,6 +757,30 @@ try {
   assert.deepEqual(await applications(gapped), []);
   assert.equal(await scrape(/^terrabase_push_held\{.*reason="purged"/), 1);
   console.log('purge marker at sequence ' + gapSent.seq + ' ahead of the frontier of a database whose head was purged unapplied: held with reason purged, the later message not applied, the other database applied');
+
+  const fraStream = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
+  assert((await nats.request('$JS.API.STREAM.DELETE.TERRABASE_PUSH_FRA')).success);
+  assert(!(await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_FRA', fraStream.config)).error);
+  const mixed = await database('mixed');
+  const [mixedFirst, mixedRemoved, mixedLater] = series(3);
+  await applied(mixed, mixedFirst);
+  const mixedKey = await refusedKey(mixed);
+  const mixedSent = await held(mixed, send(mixed, mixedRemoved, mixedKey));
+  const mixedHeld = logged(gru, 'A pushed database is held', { Database: mixed.id, Kind: 'origin_previous_build' }, offset());
+  const mixedPurge = await nats.request('$JS.API.STREAM.PURGE.TERRABASE_PUSH_FRA', { filter: 'terrabase.push.fra.*.' + scope(mixed).replaceAll('/', '.'), seq: mixedSent.seq + 1 });
+  assert(mixedPurge.success, JSON.stringify(mixedPurge));
+  let mixedApplied = null;
+  const mixedNotice = notice(mixed, mixedLater).then(result => { mixedApplied = result; return result; });
+  await send(mixed, mixedLater);
+  release(mixed, mixedKey);
+  await mixedHeld;
+  assert.equal(mixedApplied, null);
+  assert.deepEqual(await applications(mixed), [mixedFirst.id]);
+  const upgraded = await nats.request('terrabase.push-state.fra.build.journey-2', Buffer.from('markers'));
+  assert(!upgraded.error, JSON.stringify(upgraded));
+  assert.equal((await mixedNotice).state, 'confirmed');
+  assert.deepEqual(await applications(mixed), [mixedFirst.id, mixedLater.id]);
+  console.log('previous-build origin (no build record) removed a database\'s messages through sequence ' + mixedSent.seq + ' without a marker: the new-build home held it with reason origin_previous_build and applied nothing past the removal; once the origin node wrote its build record the later message applied');
 
   const strays = Array.from({ length: 130 }, () => id());
   const strayStarted = Date.now();

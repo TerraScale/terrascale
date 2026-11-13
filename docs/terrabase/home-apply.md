@@ -214,8 +214,11 @@ operator (`purged`).
 For each origin stream and database there is one sequencer on the home's writer node. It reads the database's
 frontier for that stream, asks the stream for the next message after it that matches the database (for every
 addressed home), applies that message, and advances the frontier to its position in the same commit; then it asks
-again. A delivery from the consumer only wakes the sequencer and tells it which positions to read ahead (up to 32
-reads at once); a delivered message is never applied because it was delivered. Acknowledging a delivery therefore
+again. A delivery from the consumer only wakes the sequencer and tells it which positions to read ahead; a delivered
+message is never applied because it was delivered. A round reads the position after the frontier and the nearest delivered
+positions after it (31 of them, 32 in a backlog round); while the database has more messages than one round read, a round also reads the next 32 positions
+in order, so a backlog applies up to 32 messages per round whether or not its deliveries are known. A held database keeps
+the delivered positions above its frontier when it acknowledges their deliveries. Acknowledging a delivery therefore
 decides nothing: a node that is not the database's home acknowledges its deliveries without applying them, and
 whatever it acknowledged is still read from the stream by whichever node becomes the home. Within one origin stream a
 database's retained messages apply in stream order, and the sequencer never moves past a purge the database's copy did
@@ -289,6 +292,7 @@ copies hold no frontier, so the origin does not purge them until the home runs t
 | Stream read or acknowledgement fails (`broker`, `io`, `cancelled`) | Retried; database held | Acknowledged at once |
 | The origin's purge marker for the database is ahead of this copy's frontier (`purged`) | Held for an operator; nothing more of the database applies from that stream | Acknowledged at once |
 | The stream's last sequence is below the frontier (`stream_behind`) | Held for an operator; nothing applies from that stream | Acknowledged at once |
+| The origin stream has removed messages (its first sequence is above 1 or it has interior deletions) and a node of the origin region named in the peers file has no build record in it (`origin_previous_build`) | Retried; database held until every node of the origin region runs this build | Acknowledged at once |
 | A message the previous build may have seen, older than the 7 day result retention, with no recorded result (`upgrade_ambiguous`) | Held for an operator | Acknowledged at once |
 | The origin stream was recreated | The consumer run ends | The next run reads the new stream from sequence 1 under its new identity |
 | Writer lease lost or lapsed (a renewal after a lapse is a new lease) | The consumer run ends at once; every sequencer of that origin stops and nothing more is dispatched or negatively acknowledged | The next run deletes the consumer and starts a fresh one at sequence 1; deliveries outstanding on the old consumer die with it |
@@ -331,6 +335,7 @@ What an operator does for each hold reason (the warning log line names the datab
 | `purged` | The database's copy at this home is behind what was acknowledged: the origin purged messages this copy never applied. Restore the database from the copy that applied them (the former home, a backup) or accept the loss explicitly; there is no automatic repair. |
 | `stream_behind` | The origin's stream was restored from an older state under the same identity. Compare the stream with the frontier and recreate or repair the stream; nothing applies until the stream's last sequence reaches the frontier again. |
 | `upgrade_ambiguous` | The previous build may have applied the message and its result has expired. Read the message's effects against the database and skip or republish it by hand. |
+| `origin_previous_build` | Nothing during a release while the origin region's nodes still run the previous build. If it lasts, upgrade every node of the origin region, or remove a node that no longer runs from the peers file. |
 
 To recover a parked record there is no command; the procedure is manual. Read the record with
 `nats stream get TERRABASE_PUSH_PARKED_<HOME> <sequence>`: a JSON record whose `payload` field holds the received
@@ -384,10 +389,22 @@ that no origin stream holds a message older than 7 days (`nats stream info TERRA
 time). The previous build ignores the `terrabase.push-state.*` subjects and keeps writing and reading the `Tb-Epoch`
 header, which this build still writes for it.
 
+Release order. The previous build purges its own stream without a purge marker, so a home on this build cannot tell
+a database whose messages that build purged from one that never had them. Every node of this build therefore writes a
+build record, `terrabase.push-state.<origin>.build.<node>`, into its own region's push stream when it opens the stream
+and again before every purge it makes, written only once per stream. A home on this build applies from an origin stream
+that has had messages removed only once every node of that origin region named in its peers file has such a record in
+the stream; until then every database of that origin is held (`origin_previous_build`) and its messages wait in the
+stream. A stream from which nothing was removed holds no gap, so it applies at once. The implied release order: during
+a rolling release, pushed writes from a region apply at their homes on this build only after every node of that region
+runs this build; they are delayed for that window, never skipped. A region's writes to homes still on the previous build
+are not affected. Rolling a node back after it wrote its record lets it purge without a marker again under a record
+that claims otherwise, so before rolling back an origin node, purge its record
+(`nats stream purge TERRABASE_PUSH_<REGION> --subject terrabase.push-state.<region>.build.<node>`).
+
 ## Known gaps
 
-- While an origin runs the previous build it purges without a purge marker, and while a home runs the previous build
-  its copies hold no frontier; the `purged` check covers only purges made by this build.
+- While a home runs the previous build its copies hold no frontier, so an origin on this build purges nothing for them.
 
 - Tombstones in `_ts_rows` are kept until the row's key is written again.
 - Applied writes are metered where they committed (the origin region), not again at the home.

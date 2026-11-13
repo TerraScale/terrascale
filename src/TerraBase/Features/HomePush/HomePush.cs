@@ -311,6 +311,7 @@ internal partial class HomePush(
             Placement = nats.ServerInfo?.Cluster is { Length: > 0 } ? new Placement { Tags = [$"region:{options.Region}"] } : null,
         };
         _ = await js.CreateOrUpdateStreamAsync(config, cancellationToken).ConfigureAwait(false);
+        await MarkBuildAsync(js, cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task RebuildForPromotionAsync(CancellationToken cancellationToken)
@@ -404,6 +405,8 @@ internal partial class HomePush(
         {
             return;
         }
+
+        await MarkBuildAsync(js, cancellationToken).ConfigureAwait(false);
         _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
         {
             Filter = PushNames.DatabaseFilter(options.Region, database),
@@ -426,6 +429,7 @@ internal partial class HomePush(
                     continue;
                 }
 
+                await MarkBuildAsync(js, cancellationToken).ConfigureAwait(false);
                 await MarkPurgedAsync(js, database, through, cancellationToken).ConfigureAwait(false);
                 _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
                 {

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -37,6 +38,32 @@ internal partial class HomePush
                 return;
             }
         }
+    }
+
+    private async Task MarkBuildAsync(NatsJSContext js, CancellationToken cancellationToken)
+    {
+        var subject = PushNames.Build(options.Region, options.MachineId);
+        var stream = await js.GetStreamAsync(PushNames.Stream(options.Region), cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (await LastAsync(stream, subject, cancellationToken).ConfigureAwait(false) is null)
+        {
+            _ = await PublishExpectedAsync(js, subject, "markers"u8.ToArray(), 0, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> OriginMarksAsync(INatsJSStream stream, string origin, CancellationToken cancellationToken)
+    {
+        IEnumerable<string> nodes = options.PeersFile is null
+            ? [options.MachineId]
+            : (await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)).Where(node => node.Region == origin).Select(node => node.Name);
+        foreach (var node in nodes)
+        {
+            if (await LastAsync(stream, PushNames.Build(origin, node), cancellationToken).ConfigureAwait(false) is null)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static async Task<ulong?> PurgedThroughAsync(INatsJSStream stream, string origin, TenantContext database, CancellationToken cancellationToken) =>

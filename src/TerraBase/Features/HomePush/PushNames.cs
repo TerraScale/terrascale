@@ -24,6 +24,8 @@ internal static class PushNames
 
     public static string Upgrade(string origin) => $"terrabase.push-state.{origin}.upgrade";
 
+    public static string Build(string origin, string node) => $"terrabase.push-state.{origin}.build.{node}";
+
     public static string? PreviousConsumerRegion(string name) =>
         name.StartsWith("home-", StringComparison.Ordinal) && !name.Contains("-epoch-", StringComparison.Ordinal) && name[5..] is var region && TerraBaseOptions.IsRegion(region) ? region : null;
 

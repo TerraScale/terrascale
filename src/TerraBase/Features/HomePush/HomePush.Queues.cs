@@ -45,6 +45,7 @@ internal partial class HomePush
         internal string Origin => origin;
         internal string? Source { get; set; }
         internal PreviousFloor Previous { get; set; } = new(0, 0);
+        internal bool OriginMarks { get; set; }
         internal CancellationTokenSource Stopping => stopping;
         internal CancellationToken Token { get; } = stopping.Token;
         internal bool Ended { get; set; }
@@ -376,7 +377,7 @@ internal partial class HomePush
                 _applyRetries?.Add(1, new KeyValuePair<string, object?>("reason", held.Kind));
                 try
                 {
-                    await AckThroughAsync(queue, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                    await AckHeldAsync(queue, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
@@ -526,10 +527,10 @@ internal partial class HomePush
         SortedSet<ulong> wanted;
         lock (_queuesGate)
         {
-            wanted = [cursor + 1, .. queue.Hints.GetViewBetween(cursor + 1, ulong.MaxValue).Take(ReadAhead - 1).Select(hint => hint + 1)];
+            wanted = [cursor + 1, .. queue.Hints.GetViewBetween(cursor + 1, ulong.MaxValue).Take(backlog ? ReadAhead : ReadAhead - 1).Select(hint => hint + 1)];
         }
 
-        for (var ahead = cursor + 2; backlog && wanted.Count < ReadAhead; ahead++)
+        for (var ahead = cursor + 2; backlog && ahead <= cursor + ReadAhead; ahead++)
         {
             _ = wanted.Add(ahead);
         }
@@ -557,6 +558,16 @@ internal partial class HomePush
         if (home && await PurgedThroughAsync(stream, queue.Origin, queue.Database, cancellationToken).ConfigureAwait(false) > cursor)
         {
             return ([], true, "purged");
+        }
+
+        if (home && !queue.Run.OriginMarks && (current.Info.State.FirstSeq > 1 || current.Info.State.NumDeleted > 0))
+        {
+            if (!await OriginMarksAsync(stream, queue.Origin, cancellationToken).ConfigureAwait(false))
+            {
+                return ([], true, "origin_previous_build");
+            }
+
+            queue.Run.OriginMarks = true;
         }
 
         var next = new Dictionary<ulong, StoredMessage?>(starts.Length);
@@ -590,6 +601,22 @@ internal partial class HomePush
         catch (NatsJSApiException error) when (error.Error.Code == 404 || error.Error.ErrCode == NoMessageFound)
         {
             return null;
+        }
+    }
+
+    private async Task AckHeldAsync(PushQueue queue, CancellationToken cancellationToken)
+    {
+        INatsJSMsg<byte[]>[] delivered;
+        lock (_queuesGate)
+        {
+            delivered = [.. queue.Unacked];
+            queue.Unacked.Clear();
+            _ = queue.Hints.RemoveWhere(hint => hint <= (queue.Cursor ?? 0));
+        }
+
+        foreach (var message in delivered)
+        {
+            await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 
