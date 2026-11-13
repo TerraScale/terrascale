@@ -108,10 +108,10 @@ test('history lost while the backup store is unreachable is one hole, survives a
     await backupStore('down');
     outage = true;
     let inside = 0;
-    for (let batch = 0; batch < 15; batch++) {
-      if (batch === 8) inside = Date.now();
+    for (let batch = 0; batch < 50; batch++) {
+      if (batch === 25) inside = Date.now();
       const response = await cells.post(`${endpoint('gru')}${database(created.id)}/sql/execute`, {
-        data: { statements: Array.from({ length: 10 }, (_, index) => ({ sql: `UPDATE fault_blob SET body = zeroblob(${1_048_576 + batch * 10 + index}) WHERE id = 1` })) },
+        data: { statements: Array.from({ length: 3 }, (_, index) => ({ sql: `UPDATE fault_blob SET body = zeroblob(${1_048_576 + batch * 3 + index}) WHERE id = 1` })) },
       });
       expect(response.status()).toBe(200);
     }
