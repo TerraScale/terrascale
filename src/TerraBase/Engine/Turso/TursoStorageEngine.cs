@@ -637,18 +637,20 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         DeleteSidecars(path);
                         if (eraseDetached)
                         {
-                            foreach (var retainedKey in Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".key.rewrapping*"))
-                            {
-                                DatabaseKeys.RejectLink(retainedKey);
-                                File.Delete(retainedKey);
-                            }
                             TursoReplicas.DeleteDetached(Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db"));
                             TursoReplicas.DeleteDetached(Path.Combine(_dataDirectory, TursoReplicas.DirectoryName, key.Organization, key.Project, key.Database + ".promote.db"));
                         }
                         var directory = Path.GetDirectoryName(path)!;
                         if (Directory.Exists(directory))
                         {
-
+                            if (eraseDetached)
+                            {
+                                foreach (var retainedKey in Directory.GetFiles(directory, Path.GetFileName(path) + ".key.rewrapping*"))
+                                {
+                                    DatabaseKeys.RejectLink(retainedKey);
+                                    File.Delete(retainedKey);
+                                }
+                            }
                             foreach (var file in Directory.EnumerateFiles(directory, $".{key.Database}.*.creating*")
                                 .Concat(Directory.EnumerateFiles(directory, $".{key.Database}.*.{RewriteSuffix}*")))
                             {
