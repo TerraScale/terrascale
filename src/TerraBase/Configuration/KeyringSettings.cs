@@ -35,14 +35,14 @@ public sealed class KeyringSettings
 
         try
         {
-            var document = JsonSerializer.Deserialize(json, KeyringJsonContext.Default.KeyringDocument);
-            if (document is null || document.Active is null || document.Keys is null || !ValidId(document.Active) || document.Keys.Count is < 1 or > 32
-                || !document.Keys.ContainsKey(document.Active) || document.Keys.Any(pair => !ValidId(pair.Key) || pair.Value is null))
+            var configuration = JsonSerializer.Deserialize(json, KeyringJsonContext.Default.KeyringConfiguration);
+            if (configuration is null || configuration.Active is null || configuration.Keys is null || !ValidId(configuration.Active) || configuration.Keys.Count is < 1 or > 32
+                || !configuration.Keys.ContainsKey(configuration.Active) || configuration.Keys.Any(pair => !ValidId(pair.Key) || pair.Value is null))
             {
                 throw new TerraBaseConfigurationException("master-keys requires 1 to 32 keys with valid ids and a configured active key");
             }
 
-            return new(document.Active, document.Keys.ToFrozenDictionary(pair => pair.Key, pair => BackupSettings.ParseMasterKey(pair.Value), StringComparer.Ordinal));
+            return new(configuration.Active, configuration.Keys.ToFrozenDictionary(pair => pair.Key, pair => BackupSettings.ParseMasterKey(pair.Value), StringComparer.Ordinal));
         }
         catch (JsonException)
         {
@@ -51,8 +51,8 @@ public sealed class KeyringSettings
     }
 }
 
-internal sealed record KeyringDocument(string Active, Dictionary<string, string> Keys);
+internal sealed record KeyringConfiguration(string Active, Dictionary<string, string> Keys);
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true, AllowDuplicateProperties = false)]
-[JsonSerializable(typeof(KeyringDocument))]
+[JsonSerializable(typeof(KeyringConfiguration))]
 internal sealed partial class KeyringJsonContext : JsonSerializerContext;
