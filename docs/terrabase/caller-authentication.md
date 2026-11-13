@@ -5,7 +5,9 @@ The internal HTTP/2 listener accepts a signed assertion in
 
 Set `TERRABASE_CALLERS_FILE` to a version 1 JSON registry containing a `callers`
 array. Each entry has `kid`, `caller`, `kind`, a public P-256 `jwk`, `grants`,
-and a UTC `notAfter`. Malformed entries stop startup with exit code 2.
+and a UTC `notAfter`. A missing, blank or malformed file and malformed entries
+stop startup with exit code 2. A valid registry whose `callers` array is empty
+starts and rejects every caller token.
 Expired entries are validated and skipped; their tokens are rejected as unknown
 keys. Registry changes take effect when TerraBase restarts. An unset registry permits existing
 peer authentication to continue.
