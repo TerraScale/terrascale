@@ -40,8 +40,10 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     const output = openSync(log, 'w', 0o600);
     const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
       !name.startsWith('TERRABASE_') && !name.startsWith('TS_') && !name.startsWith('AWS_') && name !== 'BUCKET_NAME'));
-    child = spawn('dotnet', operation ? ['exec', '--depsfile', join(process.env.E2E_BUILD!, 'terrabase/terrabase.deps.json'),
-      '--runtimeconfig', join(process.env.E2E_BUILD!, 'terrabase/terrabase.runtimeconfig.json'), process.env.E2E_KEYRING_DRIVER!, ...(Array.isArray(operation) ? operation : [operation])] : [binary], {
+    const executable = process.getuid?.() === 0 ? 'setpriv' : 'dotnet';
+    const confinement = executable === 'setpriv' ? ['--bounding-set=-dac_override,-dac_read_search', 'dotnet'] : [];
+    child = spawn(executable, [...confinement, ...(operation ? ['exec', '--depsfile', join(process.env.E2E_BUILD!, 'terrabase/terrabase.deps.json'),
+      '--runtimeconfig', join(process.env.E2E_BUILD!, 'terrabase/terrabase.runtimeconfig.json'), process.env.E2E_KEYRING_DRIVER!, ...(Array.isArray(operation) ? operation : [operation])] : [binary])], {
       env: {
         ...environment,
         DOTNET_ROOT: process.env.DOTNET_ROOT,
@@ -225,13 +227,16 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     rmSync(unauthentic);
     const intent = tenant.replace('.db', '.promote.db') + '.importing';
     writeFileSync(intent, '{}');
+    const intentBytes = readFileSync(intent);
     chmodSync(intent, 0);
     try {
-      writeFileSync(requestFile, JSON.stringify({ organization, project, database, healthy, mode: 'key-refused' }), { mode: 0o600 });
+      writeFileSync(requestFile, JSON.stringify({ organization, project, database, healthy, mode: 'key-refused', unreadable: intent }), { mode: 0o600 });
       await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, requestFile);
       await expect.poll(() => child?.exitCode).toBe(0);
       expect(readFileSync(log, 'utf8')).toContain('keyring-driver:key-refused counted=1 healthy=42');
+      expect(readFileSync(log, 'utf8')).toContain('keyring-driver:intent permission-denied');
       expect(existsSync(intent)).toBe(true);
+      expect(readFileSync(intent).equals(intentBytes)).toBe(true);
       await stop();
     } finally {
       chmodSync(intent, 0o600);

@@ -90,6 +90,7 @@ internal static class Lifecycle
             {
                 await InventoryProof.WaitForMaintenanceAsync(cancellationToken);
             }
+            await InventoryProof.QuiesceAsync(app.Services, cancellationToken);
             await FileEvidence.VerifyMetricsAsync(cancellationToken);
         }
         try

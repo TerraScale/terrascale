@@ -356,6 +356,19 @@ each import intent, and pages through credential records in one local catalog re
 It does not read tenant database rows or pages for this inventory. Startup work is proportional
 to the number of wrappers and credential records, rather than database sizes.
 
+The journey driver measured three local Linux runs under `nice -n 19`, each with 10,000
+synthetic wrapper files plus the node's own catalog files:
+
+| Run | Startup (ms) | First scrape (ms) | Immediate repeat scrape (ms) |
+| --- | ---: | ---: | ---: |
+| 1 | 3345.60 | 1227.64 | 148.31 |
+| 2 | 3334.68 | 1243.14 | 124.87 |
+| 3 | 3560.47 | 1186.07 | 105.02 |
+
+The first scrape recounts files. The repeat reports -1 for references because large inventories
+are limited to one recount per five seconds; it does not reuse a count. Wrapper strings are
+read and authenticated one at a time. Directory entries reuse their enumerated file metadata.
+
 If an authoritative wrapper or a stored credential names an id absent from configuration, startup refuses before readiness, names the id and reports
 how many local wrappers require it. Adding the key to configuration fixes this error. A restored
 disk with a catalog under `k0` and a tenant under `k1` therefore cannot start with only `k0`.
@@ -372,8 +385,12 @@ unknown. Missing ids in artifacts are also unknown, rather than startup failures
 
 `terrabase.keys.local.wrapped{key_id}` counts references on this node, including retained key
 files and intent wrappers, even with a single configured key and on non-writers. File references
-and sealed credential references are both read from persisted state on every scrape. Scrape response caching is disabled so a just-committed import cannot reuse a prior zero response. Credential rows
-are streamed from a catalog read snapshot; there is no credential-reference cache. Ordinary writes,
+and sealed credential references are read from persisted state without a credential-reference cache. Sealed credentials are read on every scrape.
+File inventories containing at least 4,096 wrapper/artifact files are recounted at most once every five seconds.
+Scrapes during another recount or before that interval expires report unknown for file references;
+no cached zero is returned. Smaller file inventories are read on every scrape. Scrape response caching
+is disabled so a just-committed import cannot reuse a prior zero response. Credential rows
+are streamed from a catalog read snapshot. Ordinary writes,
 credential rewrapping, imports, handoffs, replication and restores cannot bypass this count.
 Sealed credential writes validate the named key and its authentication before the transaction
 can commit; a regional import containing an unconfigured id rolls back the entire operation.

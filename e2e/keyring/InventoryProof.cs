@@ -8,8 +8,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
+using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Replicas;
+using TerraBase.Tenancy;
 using Turso.Data.Sqlite;
 using MasterKeyring = TerraBase.Features.Backup.Keyring;
 
@@ -39,8 +41,43 @@ internal static class InventoryProof
         var text = await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
         var scrape = timer.Elapsed.TotalMilliseconds;
         Require(Gauge(text, "terrabase_keys_local_wrapped", "k0") >= 10_000, "synthetic wrappers missing");
+        timer.Restart();
+        var repeated = await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
+        var repeat = timer.Elapsed.TotalMilliseconds;
+        Require(Gauge(repeated, "terrabase_keys_local_wrapped", "k0") == -1, "bounded recount must report unknown instead of a cached count");
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"keyring-driver:10000 startup_ms={startupMilliseconds:F2} scrape_ms={scrape:F2}"));
+            $"keyring-driver:10000 startup_ms={startupMilliseconds:F2} scrape_ms={scrape:F2} repeat_scrape_ms={repeat:F2} repeat_reference=-1 interval_s=5"));
+    }
+
+    internal static async Task QuiesceAsync(IServiceProvider services, CancellationToken cancellationToken)
+    {
+        var replication = services.GetRequiredService<RegionReplication>();
+        var catalog = services.GetRequiredService<IReplicaCatalog>();
+        var peers = await services.GetRequiredService<IReplicaPeers>().ListAsync(cancellationToken);
+        var region = services.GetRequiredService<TerraBaseOptions>().Region;
+        foreach (var home in peers.Select(peer => peer.Region).Append(region).Distinct(StringComparer.Ordinal))
+        {
+            TenantContext? after = null;
+            do
+            {
+                var page = await catalog.ListHomedAsync(home, after, cancellationToken) switch
+                {
+                    TenantDatabasePage found => found,
+                    Unavailable error => throw new IOException(error.Message),
+                };
+                foreach (var database in page.Databases)
+                {
+                    await replication.SuspendAsync(database);
+                }
+                after = page.Next;
+            }
+            while (after is not null);
+        }
+        foreach (var database in replication.Following)
+        {
+            await replication.SuspendAsync(database);
+        }
+        await replication.SyncCatalogsAsync(cancellationToken);
     }
 
     internal static async Task WaitForMaintenanceAsync(CancellationToken cancellationToken)

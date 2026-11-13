@@ -13,8 +13,21 @@ internal sealed class FileEvidence(Dictionary<string, byte[]> files)
         TerraBaseOptions.ReadSecretFiles();
         var options = TerraBaseOptions.FromProcess([]);
         var database = json.RootElement.GetProperty("database").GetString()!;
+        var unreadable = json.RootElement.TryGetProperty("unreadable", out var intent) ? intent.GetString() : null;
+        if (unreadable is not null)
+        {
+            try
+            {
+                _ = File.ReadAllBytes(unreadable);
+                throw new InvalidOperationException("intent permission proof was readable");
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Console.WriteLine("keyring-driver:intent permission-denied");
+            }
+        }
         return new(Directory.GetFiles(options.DataDirectory, "*", SearchOption.AllDirectories)
-            .Where(path => Path.GetFileName(path).Contains(database, StringComparison.Ordinal))
+            .Where(path => path != unreadable && Path.GetFileName(path).Contains(database, StringComparison.Ordinal))
             .ToDictionary(path => path, path => SHA256.HashData(File.ReadAllBytes(path)), StringComparer.Ordinal));
     }
 

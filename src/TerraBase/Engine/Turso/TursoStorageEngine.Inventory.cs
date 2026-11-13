@@ -14,6 +14,8 @@ internal sealed partial class TursoStorageEngine
 {
     private readonly ConcurrentDictionary<string, string> _keyRefusals = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _weakWarnings = new(StringComparer.Ordinal);
+    private long _fileInventoryAfter;
+    private int _fileInventoryRunning;
 
     private static IEnumerable<(FileSystemInfo Entry, bool Failed)> InventoryPaths(string directory)
     {
@@ -115,9 +117,10 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
-    private Dictionary<string, long> InventoryLocalKeys(bool startup, Dictionary<string, long> missing)
+    private Dictionary<string, long> InventoryLocalKeys(bool startup, Dictionary<string, long> missing, out long wrappers)
     {
         var counts = NewKeyCounts();
+        wrappers = 0;
         foreach (var (entry, failed) in InventoryPaths(_dataDirectory))
         {
             var path = entry.FullName;
@@ -134,6 +137,7 @@ internal sealed partial class TursoStorageEngine
             {
                 continue;
             }
+            wrappers++;
             var authoritative = wrapper && path.EndsWith(".db.key", StringComparison.Ordinal)
                 && !path.Contains(".creating", StringComparison.Ordinal);
             try
@@ -217,7 +221,7 @@ internal sealed partial class TursoStorageEngine
     public async ValueTask InventoryKeysAsync(CancellationToken cancellationToken)
     {
         var missing = new Dictionary<string, long>(StringComparer.Ordinal);
-        var counts = InventoryLocalKeys(startup: true, missing);
+        var counts = InventoryLocalKeys(startup: true, missing, out _);
         RequireConfigured(missing);
         if (SystemDatabaseExists)
         {
@@ -284,7 +288,25 @@ internal sealed partial class TursoStorageEngine
     private Dictionary<string, long> StoredKeyCounts()
     {
         var missing = new Dictionary<string, long>(StringComparer.Ordinal);
-        var counts = InventoryLocalKeys(startup: false, missing);
+        Dictionary<string, long> counts;
+        if (Time.GetTimestamp() < Volatile.Read(ref _fileInventoryAfter)
+            || Interlocked.CompareExchange(ref _fileInventoryRunning, 1, 0) != 0)
+        {
+            counts = NewKeyCounts();
+            Unknown(counts);
+        }
+        else
+        {
+            try
+            {
+                counts = InventoryLocalKeys(startup: false, missing, out var wrappers);
+                Volatile.Write(ref _fileInventoryAfter, wrappers >= 4096 ? Time.GetTimestamp() + 5 * Time.TimestampFrequency : 0);
+            }
+            finally
+            {
+                Volatile.Write(ref _fileInventoryRunning, 0);
+            }
+        }
         try
         {
             if (!SystemDatabaseExists)
