@@ -536,13 +536,13 @@ internal sealed partial class TursoReplicas(
             foreach (var file in Directory.EnumerateFiles(directory, name + "*"))
             {
                 if (WrappedKeyFile.IsKey(Path.GetFileName(file)))
-            {
-                WrappedKeyFile.Retain(file);
-            }
-            else
-            {
-                File.Delete(file);
-            }
+                {
+                    WrappedKeyFile.Retain(file);
+                }
+                else
+                {
+                    File.Delete(file);
+                }
                 deleted = true;
             }
 
