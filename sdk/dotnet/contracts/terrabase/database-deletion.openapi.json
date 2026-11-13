@@ -309,7 +309,7 @@
           "Databases"
         ],
         "summary": "Deletes a database only if its immutable identity matches",
-        "description": "expectedId must be a canonical uppercase ULID matching the database ID resolved from the name for this request. A mismatch answers 409 database_identity_mismatch before placement or deletion. Never fall back to unconditional DELETE on 404: older servers do not support this route. Matching deletion has the same home-region requirement, independent branches and durable replica-erasure behavior as deleteDatabase, including allRegions, without a placement PATCH. 204 moves the database to the seven-day deleted state, preserving its data, backups and keys until purgeAt. Restore by immutable ID through deleted-databases. This is not an atomic reset or replacement operation. Authorization: Bearer <ts-auth project access token>. project_id must equal {project}; scope must grant the operation. {database} is the immutable database ULID or its name. A token narrowed to one database cannot reach another. Tokens for another project or database answer 404.\n\nRequired JWT scopes: databases:write.",
+        "description": "expectedId must be a canonical uppercase ULID matching the database ID resolved from the name for this request. A mismatch answers 409 database_identity_mismatch before deletion. A matching deletion enters the seven-day deleted state. Data, backups and keys are retained until purgeAt. Restore by immutable ID through deleted-databases. Branches remain independent. Authorization: Bearer <ts-auth project access token>. project_id must equal {project}; scope must grant the operation. {database} is the immutable database ULID or its name. A token narrowed to one database cannot reach another. Tokens for another project or database answer 404.\n\nRequired JWT scopes: databases:write.",
         "operationId": "deleteDatabaseIfId",
         "parameters": [
           {
@@ -634,7 +634,7 @@
           "Databases"
         ],
         "summary": "Lists databases in the seven-day deleted state",
-        "description": "Requires a project token without a database restriction. Deleted databases retain their data and backups until purgeAt. Restore by immutable ID in the region that accepted deletion; a reused name or exhausted database allowance returns 409. Restoration clears the previous TTL. Query: after (exclusive cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.\n\nRequired JWT scopes: databases:read.",
+        "description": "Requires a project token without a database restriction. Each deleted item includes deletedAt and purgeAt. Data, backups and keys are retained until purgeAt. Call the region that accepted deletion. Query: after (exclusive cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.\n\nRequired JWT scopes: databases:read.",
         "operationId": "listDeletedDatabases",
         "parameters": [
           {
@@ -955,7 +955,7 @@
           "Databases"
         ],
         "summary": "Restores a deleted database before its seven-day deadline",
-        "description": "Requires a project token without a database restriction. Deleted databases retain their data and backups until purgeAt. Restore by immutable ID in the region that accepted deletion; a reused name or exhausted database allowance returns 409. Restoration clears the previous TTL. Query: after (exclusive cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.\n\nRequired JWT scopes: databases:write.",
+        "description": "Requires a project token without a database restriction. Deleted databases retain their data and backups until purgeAt. Restore by immutable ID in the region that accepted deletion; a reused name or exhausted database allowance returns 409. Restoration clears the previous TTL.\n\nRequired JWT scopes: databases:write.",
         "operationId": "restoreDeletedDatabase",
         "parameters": [
           {
@@ -1069,25 +1069,8 @@
               }
             }
           },
-          "503": {
-            "description": "Service Unavailable Error codes: storage_busy, capacity, unavailable.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ErrorBody"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized: missing, unknown or expired credential. Error codes: invalid_key.",
+          "421": {
+            "description": "Misdirected Request; X-TerraBase-Region identifies the serving node. Error codes: region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1178,8 +1161,25 @@
               }
             }
           },
-          "421": {
-            "description": "Misdirected Request; X-TerraBase-Region identifies the serving node. Error codes: region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region.",
+          "503": {
+            "description": "Service Unavailable Error codes: storage_busy, capacity, unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized: missing, unknown or expired credential. Error codes: invalid_key.",
             "content": {
               "application/json": {
                 "schema": {
