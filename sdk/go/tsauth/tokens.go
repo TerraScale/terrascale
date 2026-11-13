@@ -45,8 +45,8 @@ const (
 type APIKeyConfig struct {
 	// Issuer is the tenant issuer; empty means DefaultIssuer.
 	Issuer string
-	// Key is the whole API key, sk_<ULID>_<52>, or <ULID>_<52> for a key
-	// issued earlier. It is the client secret; the ULID is the client id.
+	// Key is the whole API key, <ULID>_<52>. It may start with sk_.
+	// It is the client secret; the ULID is the client id.
 	Key string
 	// Project is the project an organization key's token acts in; empty
 	// yields an organization token. A project key may name its own project.

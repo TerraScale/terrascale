@@ -1,6 +1,6 @@
 """API key token exchange with ts-auth.
 
-A TerraScale API key (``sk_<ULID>_<52 secret chars>``, or ``<ULID>_<52>`` for a key issued earlier) is an OAuth client
+A TerraScale API key (``<ULID>_<52 secret chars>``; it may start with ``sk_``) is an OAuth client
 credential. It is exchanged at ``<issuer>/oauth/token`` (client_credentials,
 HTTP Basic) for a short-lived project access token, which TerraBase accepts
 as ``Authorization: Bearer``. Sending the API key itself as a bearer fails.

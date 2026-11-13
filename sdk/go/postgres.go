@@ -39,7 +39,7 @@ type PostgresConfig struct {
 	Database string
 	// KeyID is optional; when supplied it must equal the ID in Password.
 	KeyID string
-	// Password is the complete dashboard API key: sk_<ULID>_<52 lowercase Crockford base32 characters>, or <ULID>_<52> for a key issued earlier.
+	// Password is the complete dashboard API key: <ULID>_<52 lowercase Crockford base32 characters>. It may start with sk_.
 	Password string
 }
 

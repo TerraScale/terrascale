@@ -7,7 +7,7 @@ import { shell } from '../support/shell';
 import { saveSecret, journey } from '../support/state';
 import { keyId } from '../support/api-key';
 
-const apiKeyFormat = /^sk_[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
+const apiKeyFormat = /^(?:sk_)?[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
 const tokenFormat = /^tspat_[A-Za-z0-9_-]{43}$/;
 const unique = (base: string) => `${base}-${journey().runId}${Date.now().toString(36)}`;
 

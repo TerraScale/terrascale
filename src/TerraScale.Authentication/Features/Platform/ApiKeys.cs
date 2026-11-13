@@ -223,7 +223,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             }
 
             var now = clock.GetUtcNow();
-            var secret = $"sk_{keyId}_{RandomNumberGenerator.GetString(Alphabet, 52)}";
+            var secret = $"{keyId}_{RandomNumberGenerator.GetString(Alphabet, 52)}";
             var rotated = key.Value with
             {
                 SecretHash = Tokens.Sha256Hex(secret),
@@ -366,7 +366,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     private static (string Id, string Secret) Generate()
     {
         var id = AuthIds.New();
-        return (id, $"sk_{id}_{RandomNumberGenerator.GetString(Alphabet, 52)}");
+        return (id, $"{id}_{RandomNumberGenerator.GetString(Alphabet, 52)}");
     }
 
     private async Task<IReadOnlyList<Change>> RequirementsAsync(UserRecord caller, CancellationToken cancellationToken) =>

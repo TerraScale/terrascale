@@ -15,7 +15,7 @@ Fastest path: install the [CLI](/cli), run `ts auth login`, then `ts init` — i
 3. Open **Databases**, select **New database**, enter a name starting with a lowercase letter and containing up to 63 lowercase letters, digits, underscores or hyphens (reserved names con, prn, aux, nul, com0–com9 and lpt0–lpt9 are rejected), and select **Create database**.
 4. Open **API keys** and select **Create key**. Name it, limit **Database** to that database, check **sql:read** and **sql:write**. Copy the key when the dashboard shows it and keep it in your secret manager.
 
-The key has the form `sk_<key ID>_<secret>`. It is a client credential, not a bearer token: the API answers `401` when you send it directly. Keys issued earlier as `<key ID>_<secret>` still work.
+The key has the form `<key ID>_<secret>`. It is a client credential, not a bearer token: the API answers `401` when you send it directly. A key may start with `sk_`.
 
 ## Exchange the key for an access token
 

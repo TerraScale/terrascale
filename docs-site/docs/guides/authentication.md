@@ -8,7 +8,7 @@ Create an API key in the dashboard for the exact project and database your appli
 
 ## API keys and access tokens
 
-A dashboard API key has the form `sk_<key ID>_<secret>` and is an OAuth 2.0 client credential. The key ID is a 26-character canonical ULID after `sk_`, followed by `_` and 52 lowercase Crockford base32 characters (82 characters in total). Exchange it at the token endpoint with the client credentials grant; the client ID is the key ID and the client secret is the whole key. Keys issued earlier as `<key ID>_<secret>` still authenticate:
+A dashboard API key has the form `<key ID>_<secret>` and is an OAuth 2.0 client credential. The key ID is a 26-character canonical ULID, followed by `_` and 52 lowercase Crockford base32 characters (79 characters in total); the key ID is the part before `_`. A key may start with `sk_`. Exchange it at the token endpoint with the client credentials grant; the client ID is the key ID and the client secret is the whole key:
 
 Use Bash, `curl` and `jq`, with the key already supplied privately as `TERRASCALE_API_KEY` and shell tracing off. This keeps the key out of process arguments and captures the token without printing it:
 
