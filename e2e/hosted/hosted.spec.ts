@@ -52,19 +52,17 @@ test('password reservations are returned after sign-in and retained for wrong pa
       });
       const window = 15 * 60_000;
       await waitForBudgetWindow(context.request, window);
-      let honestWindow: number | undefined;
+      let firstWindow: number | undefined;
       for (let index = 0; index < 11; index++) {
         const signedIn = await attempt(email, current.password);
-        honestWindow ??= budgetWindow(signedIn, window);
-        expect(budgetWindow(signedIn, window)).toBe(honestWindow);
+        firstWindow ??= budgetWindow(signedIn, window);
+        expect(budgetWindow(signedIn, window)).toBe(firstWindow);
         expect(signedIn.status(), `honest sign-in ${index + 1}`).toBe(200);
         expect(await signedIn.text()).toContain('You are signed in');
       }
-      await waitForBudgetWindow(context.request, window);
-      let firstWindow: number | undefined;
       for (let index = 0; index < 10; index++) {
         const wrong = await attempt(email, 'wrong-password-' + index);
-        firstWindow ??= budgetWindow(wrong, window);
+        expect(budgetWindow(wrong, window)).toBe(firstWindow);
         expect(wrong.status(), `wrong password ${index + 1}`).toBe(401);
         const disabled = await attempt(disabledEmail, current.password);
         expect(budgetWindow(disabled, window)).toBe(firstWindow);
