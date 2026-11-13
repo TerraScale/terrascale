@@ -12,7 +12,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
     public override void Configure()
     {
         Put(Root + "/clients/{client_id}");
-        this.Describe("update_project_client", "Update an OAuth client", "Changes a client's display name and redirect URIs; its client_id stays the same and no secret is answered. redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments, and each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty. Needs the admin project role.", "Project tenants", typeof(UpdateClientRequest), StatusCodes.Status200OK, typeof(ClientBody));
+        this.Describe("update_project_client", "Update an OAuth client", "Changes a client's display name and redirect URIs, or a machine app's allowed_scopes, allowed_audiences and token_lifetime_minutes (5 to 60); machine apps require no redirect URIs; its client_id stays the same and no secret is answered. redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments, and each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty. Needs the admin project role.", "Project tenants", typeof(UpdateClientRequest), StatusCodes.Status200OK, typeof(ClientBody));
     }
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
@@ -22,12 +22,12 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var request = await this.BodyAsync(ProjectTenantJson.Default.UpdateClientRequest, cancellationToken);
         var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
         List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => ClientRedirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
-        if (redirects.Count is < 1 or > 10)
+        if (redirects.Count > 10)
         {
             throw Invalid("redirect_uris must hold 1 to 10 URIs.");
         }
 
-        foreach (var redirect in request.RedirectUris!)
+        foreach (var redirect in request.RedirectUris ?? [])
         {
             if (!await OidcResults.AllowsRedirectAsync(settings, projectId, redirect, cancellationToken))
             {
@@ -45,8 +45,25 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
                 throw PlatformDirectory.NotFound();
             }
 
+            var policy = MachineClients.Policy(application);
+            if (policy is null && (request.AllowedScopes is not null || request.AllowedAudiences is not null || request.TokenLifetimeMinutes is not null))
+            {
+                throw Invalid("Machine policies require a machine app.");
+            }
+
+            if (policy is not null ? redirects.Count != 0 : redirects.Count == 0)
+            {
+                throw Invalid("Interactive apps need redirect URIs; machine apps need none.");
+            }
+
             var descriptor = new OpenIddictApplicationDescriptor();
             await applications.PopulateAsync(descriptor, application, cancellationToken);
+            if (policy is not null)
+            {
+                MachineClients.Configure(descriptor, MachineClients.Validate(request.AllowedScopes ?? policy.AllowedScopes,
+                    request.AllowedAudiences ?? policy.AllowedAudiences, request.TokenLifetimeMinutes ?? policy.TokenLifetimeMinutes));
+            }
+
             descriptor.DisplayName = name;
             descriptor.RedirectUris.Clear();
             descriptor.RedirectUris.UnionWith(redirects);

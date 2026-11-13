@@ -72,5 +72,6 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     [JsonSerializable(typeof(TsAuthCreateProjectInvitation))]
     [JsonSerializable(typeof(TsAuthPlatformPage<TsAuthProjectInvitation>))]
     [JsonSerializable(typeof(TsAuthPlatformPage<TsAuthWaitlistEntry>))]
+    [JsonSerializable(typeof(TsAuthUserApiKeyPage))]
     internal sealed partial class TsAuthIntegrationJsonContext : JsonSerializerContext;
 }

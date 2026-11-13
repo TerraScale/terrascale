@@ -171,7 +171,10 @@ public sealed record TerraScaleAuthProjectOAuthClient(
     [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string> RedirectUris,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("client_secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null)
+    [property: JsonPropertyName("client_secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null,
+    [property: JsonPropertyName("allowed_scopes")] IReadOnlyList<string>? AllowedScopes = null,
+    [property: JsonPropertyName("allowed_audiences")] IReadOnlyList<string>? AllowedAudiences = null,
+    [property: JsonPropertyName("token_lifetime_minutes")] int? TokenLifetimeMinutes = null)
 {
     /// <inheritdoc />
     public override string ToString() => "TerraScaleAuthProjectOAuthClient { sensitive fields redacted }";
@@ -183,13 +186,19 @@ public sealed record TerraScaleAuthProjectOAuthClient(
 public sealed record TerraScaleAuthProjectCreateOAuthClient(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("type")] string? Type,
-    [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris);
+    [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris,
+    [property: JsonPropertyName("allowed_scopes")] IReadOnlyList<string>? AllowedScopes = null,
+    [property: JsonPropertyName("allowed_audiences")] IReadOnlyList<string>? AllowedAudiences = null,
+    [property: JsonPropertyName("token_lifetime_minutes")] int? TokenLifetimeMinutes = null);
 
 /// <summary>PUT /clients/{client_id} body. Name and 1 to 10 redirect URIs with the same rules as creation;
 /// the client_id, type and secret stay unchanged.</summary>
 public sealed record TerraScaleAuthProjectUpdateOAuthClient(
     [property: JsonPropertyName("name")] string? Name,
-    [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris);
+    [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris,
+    [property: JsonPropertyName("allowed_scopes")] IReadOnlyList<string>? AllowedScopes = null,
+    [property: JsonPropertyName("allowed_audiences")] IReadOnlyList<string>? AllowedAudiences = null,
+    [property: JsonPropertyName("token_lifetime_minutes")] int? TokenLifetimeMinutes = null);
 
 /// <summary>POST /clients/{client_id}/secret/rotate body. GraceSeconds is 0 to 86400; null uses the producer
 /// default of 3600.</summary>

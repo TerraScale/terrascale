@@ -118,6 +118,16 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         Same(((int?)refusal.StatusCode)?.ToString(CultureInfo.InvariantCulture) ?? "missing", "403", "read key cannot disable");
         Same((await auth.Projects.DisableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "disabled", "write key disables");
         Same((await auth.Projects.EnableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "enabled", "write key enables");
+        var key = await auth.Projects.CreateUserApiKeyAsync(write, project, user, new("journey", ["invoices:read"]), cancellationToken);
+        var secret = key.Key ?? throw new InvalidOperationException("The key secret is missing.");
+        RegisterSecret("user-api-key-dotnet", secret);
+        var keys = await auth.Projects.ListUserApiKeysAsync(read, project, user, cancellationToken);
+        Same(keys.Items.Any(item => item.Id == key.Id) ? "found" : "missing", "found", "list user key");
+        var verified = await auth.Projects.VerifyUserApiKeyAsync(read, project, new(secret), cancellationToken);
+        Same(verified.Valid && verified.UserId == user && verified.Scopes is ["invoices:read"] ? "valid" : "invalid", "valid", "verify user key");
+        await auth.Projects.RevokeUserApiKeyAsync(write, project, user, key.Id, cancellationToken);
+        Same((await auth.Projects.VerifyUserApiKeyAsync(read, project, new(secret), cancellationToken)).Valid ? "valid" : "invalid", "invalid", "revoked user key");
+
     }
 
     private async Task UserProfilesAsync(JsonElement op, CancellationToken cancellationToken)

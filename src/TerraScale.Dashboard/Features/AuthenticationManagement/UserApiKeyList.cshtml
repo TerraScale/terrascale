@@ -1,0 +1,19 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationPage>
+<section class="ts-card" id="auth-user-api-keys" aria-labelledby="auth-user-api-keys-title">
+<header class="ts-card-head"><h2 class="ts-card-title" id="auth-user-api-keys-title">API keys</h2><a class="ts-btn ts-btn-ghost ts-btn-sm" href="/auth/users">All users</a></header>
+<div class="ts-card-body">
+<p class="ts-mono ts-break">@Model.User</p>
+@if (Model.UserApiKeys is not { Count: > 0 } keys) {
+<div class="ts-empty" role="status"><p class="ts-empty-title">No API keys.</p></div>
+} else {
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="User API keys"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Scopes</th><th scope="col">Expires</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>
+@foreach (var key in keys) {
+<tr><td class="ts-table-strong">@key.Name</td><td class="ts-mono" data-label="Prefix">@key.Prefix</td><td class="ts-break" data-label="Scopes">@string.Join(", ", key.Scopes)</td><td data-label="Expires">@(key.ExpiresAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture) ?? "Never")</td><td class="ts-table-actions">
+@if (Model.Context.CanManageProject) {
+<form method="post" action="@("/api/v1/auth-management/users/" + Model.User + "/api-keys/" + key.Id + "/revoke")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Revoke</button></form>
+}
+</td></tr>
+}
+</tbody></table></div>
+}
+</div></section>

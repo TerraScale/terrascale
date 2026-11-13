@@ -216,6 +216,9 @@ import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
  *   readonly redirect_uris: readonly string[];
  *   readonly created_at: string;
  *   readonly client_secret?: string | undefined;
+ *   readonly allowed_scopes?: readonly string[] | null | undefined;
+ *   readonly allowed_audiences?: readonly string[] | null | undefined;
+ *   readonly token_lifetime_minutes?: number | null | undefined;
  * }} TsAuthProjectOAuthClient
  */
 
@@ -231,6 +234,9 @@ import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
  *   readonly name: string;
  *   readonly type: string;
  *   readonly redirect_uris: readonly string[];
+ *   readonly allowed_scopes?: readonly string[] | null | undefined;
+ *   readonly allowed_audiences?: readonly string[] | null | undefined;
+ *   readonly token_lifetime_minutes?: number | null | undefined;
  * }} TsAuthProjectCreateClientRequest
  */
 
@@ -238,6 +244,9 @@ import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
  * @typedef {{
  *   readonly name: string;
  *   readonly redirect_uris: readonly string[];
+ *   readonly allowed_scopes?: readonly string[] | null | undefined;
+ *   readonly allowed_audiences?: readonly string[] | null | undefined;
+ *   readonly token_lifetime_minutes?: number | null | undefined;
  * }} TsAuthProjectUpdateClientRequest
  */
 
@@ -338,6 +347,9 @@ function requireCursor(after, maximumLength) {
  * @typedef {TsAuthUserProfile & { email: string, password?: string }} TsAuthCreateUser
  * @typedef {TsAuthUserProfile & { email: string, email_verified?: boolean, password_hash?: string }} TsAuthImportUser
  * @typedef {{ items: { index: number, user: TsAuthProjectUser }[], errors: { index: number, code: string, message: string }[] }} TsAuthImportUsersResult
+ * @typedef {{ id: string, user_id: string, name: string, prefix: string, scopes: readonly string[], created_at: string, expires_at: string | null, key?: string }} TsAuthUserApiKey
+ * @typedef {{ name: string, scopes: readonly string[], expires_at?: string | null }} TsAuthCreateUserApiKey
+ * @typedef {{ valid: boolean, user_id: string | null, scopes: readonly string[] | null, key_id: string | null, expires_at: string | null }} TsAuthUserApiKeyVerification
  */
 
 export class TsAuthProjectsClient {
@@ -350,8 +362,98 @@ export class TsAuthProjectsClient {
   #http;
 
   /**
-   * @param {TsAuthHttp} http
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {TsAuthCreateUserApiKey} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthUserApiKey>>}
    */
+  createUserApiKey(credential, projectId, userId, request, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/api-keys`,
+      routeName: "tsauth.projects.create_user_api_key",
+      projectAccessToken: managementCredential(credential),
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<{items: readonly TsAuthUserApiKey[]}>>}
+   */
+  listUserApiKeys(credential, projectId, userId, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "GET",
+      path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/api-keys`,
+      routeName: "tsauth.projects.list_user_api_keys",
+      projectAccessToken: managementCredential(credential),
+
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {string} keyId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  revokeUserApiKey(credential, projectId, userId, keyId, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "DELETE",
+      path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/api-keys/${requireId(keyId, "keyId")}`,
+      routeName: "tsauth.projects.revoke_user_api_key",
+      projectAccessToken: managementCredential(credential),
+
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {{key: string}} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthUserApiKeyVerification>>}
+   */
+  verifyUserApiKey(credential, projectId, request, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/api-keys/verify`,
+      routeName: "tsauth.projects.verify_user_api_key",
+      projectAccessToken: managementCredential(credential),
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {{allowed_scopes: readonly string[]}} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<{allowed_scopes: readonly string[]}>>}
+   */
+  setUserApiKeyPolicy(credential, projectId, request, options = {}) {
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "PUT",
+      path: `v1/${requireId(projectId, "projectId")}/user-api-key-policy`,
+      routeName: "tsauth.projects.set_user_api_key_policy",
+      projectAccessToken: managementCredential(credential),
+      body: request,
+    });
+  }
+
+  /** @param {TsAuthHttp} http */
   constructor(http) {
     this.#http = http;
     this.organizations = new TsAuthOrganizationsClient(http);
@@ -831,7 +933,7 @@ export class TsAuthProjectsClient {
    */
   createClient(signIn, projectId, request, options) {
     members(options, ["signal", "stepUpProof"]);
-    members(request, ["name", "type", "redirect_uris"]);
+    members(request, ["name", "type", "redirect_uris", "allowed_scopes", "allowed_audiences", "token_lifetime_minutes"]);
     return this.#http.request({
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
@@ -855,7 +957,7 @@ export class TsAuthProjectsClient {
    */
   updateClient(signIn, projectId, clientId, request, options) {
     members(options, ["signal", "stepUpProof"]);
-    members(request, ["name", "redirect_uris"]);
+    members(request, ["name", "redirect_uris", "allowed_scopes", "allowed_audiences", "token_lifetime_minutes"]);
     return this.#http.request({
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "PUT",

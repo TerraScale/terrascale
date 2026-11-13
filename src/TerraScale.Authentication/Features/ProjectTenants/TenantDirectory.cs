@@ -123,7 +123,7 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         await data.ReadAsync((db, token) => db.OidcApplications.Where(client => client.InstanceId == projectId).OrderBy(client => client.Id).ToListAsync(token), cancellationToken)
             .ConfigureAwait(false);
 
-    public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, UserRecord caller, string projectId, string name, string type, IReadOnlyList<Uri> redirectUris, IOpenIddictApplicationManager manager, CancellationToken cancellationToken)
+    public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, UserRecord caller, string projectId, string name, string type, IReadOnlyList<Uri> redirectUris, IOpenIddictApplicationManager manager, MachineClientPolicy? policy, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(manager);
@@ -132,12 +132,12 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         {
             throw StepUpProofs.Required();
         }
-        var secret = type == ClientTypes.Confidential ? Tokens.RandomToken(48) : null;
+        var secret = type is ClientTypes.Confidential or "machine" ? Tokens.RandomToken(48) : null;
         var descriptor = new OpenIddictApplicationDescriptor
         {
             ClientId = AuthIds.New(),
             ClientSecret = secret,
-            ClientType = type,
+            ClientType = policy is null ? type : ClientTypes.Confidential,
             ApplicationType = ApplicationTypes.Web,
             ConsentType = ConsentTypes.Implicit,
             DisplayName = name,
@@ -149,6 +149,11 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
             },
             Requirements = { Requirements.Features.ProofKeyForCodeExchange },
         };
+        if (policy is not null)
+        {
+            MachineClients.Configure(descriptor, policy);
+        }
+
         descriptor.RedirectUris.UnionWith(redirectUris);
         descriptor.PostLogoutRedirectUris.UnionWith(redirectUris);
         var previous = context.Items[Tenancy.ItemKey];

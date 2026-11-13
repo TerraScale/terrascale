@@ -16,6 +16,7 @@ The served `/openapi/v1.json` and `/scalar` describe current HTTP operations. Pu
 - [Project tenant management](project-tenant-management.md).
 - [Project MFA and session policies](mfa-sessions.md).
 - [Project sign-in attack protection](attack-protection.md).
+- [Machine tokens and user-owned API keys](machine-tokens-and-user-api-keys.md).
 - [Scoped end-user tokens](scoped-end-user-tokens.md) for authorized SQL shapes.
 - [Project social sign-in](project-social-sign-in.md).
 - [End-user lifecycle webhooks](webhooks.md).

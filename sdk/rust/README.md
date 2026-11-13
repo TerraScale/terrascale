@@ -246,3 +246,4 @@ Project user profile creation, merge-patch updates, and partial password-hash im
 are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
 for fields, scope requirements, hash encodings and the next-release API names.
 Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
+User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).

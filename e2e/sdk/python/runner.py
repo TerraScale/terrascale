@@ -67,6 +67,18 @@ def auth_manage_user(op):
     with TerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:
         same(write.disable_user(user).disabled, True, "write key disables")
         same(write.enable_user(user).disabled, False, "write key enables")
+        key = write.create_user_api_key(user, "journey", ["invoices:read"])
+        secret = Path(os.environ["E2E_SECRETS"], "user-api-key-python")
+        secret.touch(mode=0o600)
+        secret.write_text(key.key, encoding="utf-8")
+        with TerraScale(api_key=os.environ["E2E_AUTH_READ_KEY"], project=project) as read:
+            same(any(item.id == key.id for item in read.list_user_api_keys(user).items), True, "list user key")
+            verified = read.verify_user_api_key(key.key)
+            same(verified.valid and verified.user_id == user, True, "verify user key")
+            same(verified.scopes, ["invoices:read"], "user key scopes")
+            write.revoke_user_api_key(user, key.id)
+            same(read.verify_user_api_key(key.key).valid, False, "revoked user key invalid immediately")
+
 
     async def asynchronous():
         async with AsyncTerraScale(api_key=os.environ["E2E_AUTH_WRITE_KEY"], project=project) as write:

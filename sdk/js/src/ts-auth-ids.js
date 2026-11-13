@@ -20,6 +20,16 @@ export function validateTsAuthIds(value, route, entity = false) {
     return;
   }
   if (typeof value !== "object" || value === null) return;
+  if (route === "tsauth.projects.verify_user_api_key") {
+    const valid = Reflect.get(value, "valid");
+    if (typeof valid !== "boolean") throw new TypeError("User key verification requires valid.");
+    if (!valid) {
+      if (["user_id", "key_id", "scopes", "expires_at"].some(field => Reflect.get(value, field) !== null))
+        throw new TypeError("An invalid user key must have null identity fields.");
+      return;
+    }
+    requireId(Reflect.get(value, "key_id"), "key_id");
+  }
   if (requiredReference !== undefined) requireId(Reflect.get(value, requiredReference), requiredReference);
   if (entity) {
     requireId(Reflect.get(value, "id"), "entity id");

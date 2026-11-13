@@ -209,8 +209,11 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         throw ApiException.Unavailable();
     }
 
+    public Task<AttemptRejection?> CheckAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
+        this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, false, false, cancellationToken), purpose, cancellationToken);
+
     private Task<AttemptRejection?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken) =>
-        this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, cooldown, cancellationToken), purpose, cancellationToken);
+        this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, cooldown, true, cancellationToken), purpose, cancellationToken);
 
     // Runs a check on TerraBase; when that storage fails (not when the caller gave up), runs it on this replica's memory.
     private async Task<T> WithFallbackAsync<T>(Func<IAttemptStore, Task<T>> check, string purpose, CancellationToken cancellationToken)
@@ -246,7 +249,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         _ => false,
     };
 
-    private async Task<AttemptRejection?> AcquireAsync(IAttemptStore source, string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
+    private async Task<AttemptRejection?> AcquireAsync(IAttemptStore source, string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, bool charge, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentException.ThrowIfNullOrEmpty(purpose);
@@ -297,6 +300,11 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
                     ? DateTimeOffset.FromUnixTimeMilliseconds(effective) + window
                     : DateTimeOffset.FromUnixTimeSeconds((effective + 1) * windowSeconds);
                 return new AttemptRejection(end, TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((end - clock.GetUtcNow()).TotalSeconds))));
+            }
+
+            if (!charge)
+            {
+                return null;
             }
 
             var current = components[this.regionIndex];

@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Features.UserApiKeys;
 using System.Net;
 using TerraScale.Authentication.Features.AttackProtection;
 using Fido2NetLib;
@@ -173,6 +174,7 @@ public static class App
         builder.Services.AddSingleton<StepUpProofs>();
         builder.Services.AddSingleton<EmailChanges>();
         builder.Services.AddSingleton<ApiKeys>();
+        builder.Services.AddSingleton<UserApiKeys>();
         builder.Services.AddSingleton<PlatformGrants>();
         builder.Services.AddSingleton<EndUserAccessTokens>();
         // Singletons keep factory clients (discovery and key caches), so a rotating handler could never be collected:

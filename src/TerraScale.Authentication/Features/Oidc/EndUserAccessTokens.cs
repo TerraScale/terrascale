@@ -79,6 +79,7 @@ public sealed class EndUserAccessTokens(ApiKeys apiKeys, PlatformDirectory proje
                 {
                     ["sub"] = userId,
                     ["token_kind"] = "end_user",
+                    ["token_use"] = "user",
                     ["instance_id"] = project,
                     ["project_id"] = project,
                     ["roles"] = roles.Distinct(StringComparer.Ordinal).ToArray(),

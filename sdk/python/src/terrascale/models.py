@@ -9,6 +9,7 @@ from typing import Any
 from .ids import validate_id
 
 __all__ = [
+    "UserApiKey", "UserApiKeyPage", "UserApiKeyVerification", "UserApiKeyPolicy",
     "ApiKey",
     "ApiKeyPage",
     "ApiKeySecret",
@@ -301,13 +302,16 @@ class ProjectClient:
     redirect_uris: list[str]
     created_at: str
     client_secret: str | None = field(default=None, repr=False)
+    allowed_scopes: list[str] | None = None
+    allowed_audiences: list[str] | None = None
+    token_lifetime_minutes: int | None = None
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectClient:
         for key in ("client_id", "name", "type", "created_at"):
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project client metadata")
-        if body["type"] not in ("public", "confidential"):
+        if body["type"] not in ("public", "confidential", "machine"):
             raise ValueError("invalid project client type")
         secret = body.get("client_secret")
         if secret is not None and (not isinstance(secret, str) or not secret):
@@ -319,6 +323,8 @@ class ProjectClient:
             redirect_uris=_strings(body, "redirect_uris", "project client redirect uris"),
             created_at=body["created_at"],
             client_secret=secret,
+            allowed_scopes=body.get("allowed_scopes"), allowed_audiences=body.get("allowed_audiences"),
+            token_lifetime_minutes=body.get("token_lifetime_minutes"),
         )
 
 
@@ -923,3 +929,52 @@ class ImportProjectUsersResult:
     def from_json(cls, body: dict[str, Any]) -> ImportProjectUsersResult:
         return cls(items=[ImportedProjectUser(row["index"], ProjectUser.from_json(row["user"])) for row in body["items"]],
                    errors=[UserImportError(row["index"], row["code"], row["message"]) for row in body["errors"]])
+
+@dataclass(frozen=True, repr=False)
+class UserApiKey:
+    id: str
+    user_id: str
+    name: str
+    prefix: str
+    scopes: list[str]
+    created_at: str
+    expires_at: str | None
+    key: str | None = None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> UserApiKey:
+        return cls(validate_id(body["id"], "key"), validate_id(body["user_id"], "user"),
+                   body["name"], body["prefix"], _strings(body, "scopes", "user key scopes"),
+                   body["created_at"], body["expires_at"], body.get("key"))
+
+
+@dataclass(frozen=True)
+class UserApiKeyPage:
+    items: list[UserApiKey]
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> UserApiKeyPage:
+        return cls([UserApiKey.from_json(item) for item in body["items"]])
+
+
+@dataclass(frozen=True)
+class UserApiKeyVerification:
+    valid: bool
+    user_id: str | None
+    scopes: list[str] | None
+    key_id: str | None
+    expires_at: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> UserApiKeyVerification:
+        if not isinstance(body["valid"], bool):
+            raise ValueError("invalid user key verification")
+        return cls(body["valid"], body["user_id"], body["scopes"], body["key_id"], body["expires_at"])
+
+@dataclass(frozen=True)
+class UserApiKeyPolicy:
+    allowed_scopes: list[str]
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> UserApiKeyPolicy:
+        return cls(_strings(body, "allowed_scopes", "user key policy"))

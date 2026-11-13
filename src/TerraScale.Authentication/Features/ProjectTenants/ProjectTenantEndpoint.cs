@@ -67,15 +67,15 @@ public sealed record ProjectSessionPageBody(IReadOnlyList<ProjectSessionBody> It
 
 /// <summary>An OAuth client of the tenant; <c>client_secret</c> only in the answer that created a confidential client.</summary>
 public sealed record ClientBody(string ClientId, string Name, string Type, IReadOnlyList<string> RedirectUris, DateTimeOffset CreatedAt,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null);
 
 /// <summary>The tenant's clients, in one page.</summary>
 public sealed record ClientPageBody(IReadOnlyList<ClientBody> Items, string? Next);
 
 /// <summary><c>POST /v1/{project}/clients</c>.</summary>
-public sealed record CreateClientRequest(string? Name, string? Type, IReadOnlyList<string>? RedirectUris);
+public sealed record CreateClientRequest(string? Name, string? Type, IReadOnlyList<string>? RedirectUris, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null);
 
-public sealed record UpdateClientRequest(string? Name, IReadOnlyList<string>? RedirectUris);
+public sealed record UpdateClientRequest(string? Name, IReadOnlyList<string>? RedirectUris, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null);
 
 public sealed record RotateClientRequest(int? GraceSeconds);
 
@@ -139,7 +139,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         }
     }
 
-    protected async Task<string> AccessAsync(ProjectCaller caller, string minimum, CancellationToken cancellationToken)
+    protected async Task<string> AccessAsync(ProjectCaller caller, string minimum, CancellationToken cancellationToken, string? requiredScope = null)
     {
         ArgumentNullException.ThrowIfNull(caller);
         var projectId = this.RouteId("project");
@@ -149,8 +149,8 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
                 await this.Tenants.CheckAccessAsync(person.Id, projectId, minimum, cancellationToken);
                 break;
             case ProjectCaller.SecretKey(var key):
-                await this.Tenants.CheckKeyAccessAsync(key, projectId, HttpMethods.IsGet(this.HttpContext.Request.Method) && minimum != Roles.Admin
-                    ? TerraBaseScopes.AuthRead : TerraBaseScopes.AuthWrite, this.HttpContext.Connection.RemoteIpAddress, cancellationToken);
+                await this.Tenants.CheckKeyAccessAsync(key, projectId, requiredScope ?? (HttpMethods.IsGet(this.HttpContext.Request.Method) && minimum != Roles.Admin
+                    ? TerraBaseScopes.AuthRead : TerraBaseScopes.AuthWrite), this.HttpContext.Connection.RemoteIpAddress, cancellationToken);
 
                 break;
             default:
@@ -184,8 +184,9 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
     protected static ProjectUserBody Map(UserRecord user) => ProjectUserBody.From(user);
 
     /// <summary>A client, with its secret when just created.</summary>
-    protected static ClientBody Map(OidcApplication client, string? secret = null) => new(client.ClientId!, client.DisplayName ?? string.Empty, client.ClientType!,
-        [.. client.RedirectUris], NUlid.Ulid.Parse(client.ClientId).Time, secret);
+    protected static ClientBody Map(OidcApplication client, string? secret = null) => new(client.ClientId!, client.DisplayName ?? string.Empty, MachineClients.Policy(client) is null ? client.ClientType! : "machine",
+        [.. client.RedirectUris], NUlid.Ulid.Parse(client.ClientId).Time, secret, MachineClients.Policy(client)?.AllowedScopes,
+        MachineClients.Policy(client)?.AllowedAudiences, MachineClients.Policy(client)?.TokenLifetimeMinutes);
 
     protected static Uri? ClientRedirect(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) && string.IsNullOrEmpty(uri.UserInfo) && !value.Contains('#', StringComparison.Ordinal)
