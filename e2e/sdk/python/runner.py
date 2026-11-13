@@ -16,6 +16,11 @@ from terrascale.auth_organizations import OrganizationInvitationRequest, Organiz
 from terrascale.errors import ServiceUnavailableError
 from terrascale.models import CreateProjectUser, ImportProjectUser, UpdateProjectUser
 
+if os.environ.get("E2E_SESSION_FAULT"):
+    from session_fault import session_fault
+    session_fault()
+    sys.exit(0)
+
 spec = json.loads(Path(os.environ["E2E_OPERATIONS"]).read_text(encoding="utf-8"))
 run = os.environ["E2E_RUN_ID"]
 project = os.environ["TERRASCALE_PROJECT_ID"]

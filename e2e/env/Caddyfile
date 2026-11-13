@@ -88,3 +88,8 @@ https://identity.journey.terrascale.tech {
 	import edge
 	reverse_proxy 127.0.0.1:8031
 }
+
+https://login.journey-idp.example {
+	import edge
+	reverse_proxy 127.0.0.1:8033
+}

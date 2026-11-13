@@ -1042,6 +1042,7 @@ name = "terrascale-e2e-runner"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "reqwest",
  "serde_json",
  "terrascale",
  "tokio",

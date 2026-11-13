@@ -417,6 +417,9 @@ internal sealed partial class RegionReplication(
         }
     }
 
+    private bool CanRebuild(ReplicaPeer home) => options.NatsUrl is null
+        || owners.Confirmed(home.Region) is { Activated: true } observed && observed.Node == home.Name;
+
     private async Task FollowRegisteredAsync((string, string, string) key, TenantContext database, ReplicaPeer home, CancellationToken cancellationToken)
     {
         Follower? stale = null;
@@ -429,7 +432,9 @@ internal sealed partial class RegionReplication(
 
             if (_followers.TryGetValue(key, out var current))
             {
-                if (current.Home.Region == home.Region && current.Home.Internal == home.Internal)
+                if (current.Home.Region == home.Region && current.Home.Internal == home.Internal
+                    || options.NatsUrl is not null && owners.Confirmed(current.Home.Region) is null
+                    || !CanRebuild(home))
                 {
                     return;
                 }
@@ -817,6 +822,12 @@ internal sealed partial class RegionReplication(
             {
                 _owner.Logger.ZLogError($"Replica of database {Database.DatabaseId:@Database} diverged again within {HealGap.TotalMinutes} minutes of its last rebootstrap; the next waits");
                 _nextVerify = _lastHeal + HealGap;
+                return;
+            }
+
+            if (!_owner.CanRebuild(_home))
+            {
+                _nextVerify = now + RetryGap;
                 return;
             }
 
