@@ -177,12 +177,12 @@ An SDK needs no knowledge of a database's region. Connect to any serving region.
 database validates the customer's credential before discovering a destination or opening a downstream connection.
 For browser SQL WebSockets it accepts the upgrade and checks the first auth frame locally, with the same 16 KiB
 and five-second bounds as a local session, then replays that frame to the destination for its independent check.
-REST, header-authenticated WebSockets and PostgreSQL also validate the credential before opening the proxy leg.
+REST, header-authenticated WebSockets and PostgreSQL complete project, database, scope and client-address authorization before destination discovery or connection. Restrictions that cannot be resolved locally fail closed.
 
 A proxied request pays one additional inter-region round trip, about 170 ms between the current regions. It passes
 two request admissions: the receiving region protects its forwarding resources, and the destination protects its
 execution resources. Each region applies the organization's rate and concurrency limits and returns the usual
-busy response and retry hint. Only the destination records usage: requests, operation units and bytes. Session
+busy response and retry hint. Completed requests and bytes are attributed to the final destination; terminal forwarding failures are counted at the receiving region. Intermediate placement refusals are not counted. Operation units are recorded where executed. Session
 limits are separate from request admission; relayed-session admission attaches where each relay opens a session.
 
 The proxy carries remaining request time as a duration, so clocks in different regions need not agree. Discovery,
@@ -190,7 +190,7 @@ connection, sending and waiting for the response share the original request budg
 not reset it. WebSocket and PostgreSQL statements have their own five-second transport budget. The proxy never
 replays an unanswered write. After the request body has been sent, a dropped leg or expired deadline can leave
 the outcome unknown: `write_outcome_unknown` for REST/WebSocket and SQLSTATE 08007 for PostgreSQL. An idle open
-transaction whose session ends is rolled back; a commit already in flight may have committed.
+transaction whose session ends is rolled back; a commit already in flight may have committed. A proven single read on a WebSocket or PostgreSQL session returns ordinary unavailable instead (SQLSTATE 08006 for PostgreSQL). Multiple or unparsed statements and transactions with earlier writes retain an unknown outcome.
 
 When a destination refuses a request because it does not hold the database, it has done no database work. The
 receiving region invalidates the cached route and refreshes discovery once, at most once per database per second.

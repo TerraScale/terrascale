@@ -28,6 +28,10 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             return;
         }
 
+        if (!await ForwardingAuthorization.CheckAsync(context, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
         context.Features.Set(new HomeForwarding.ProxiedRequest());
         using var upstream = new ClientWebSocket
         {
@@ -71,14 +75,21 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         catch (WebSocketException) when (upstream.HttpStatusCode is not 0)
         {
             var status = upstream.HttpStatusCode;
-            if (status == HttpStatusCode.ServiceUnavailable
-                && upstream.HttpResponseHeaders?.ContainsKey(HomeForwarding.PlacementMissHeader) == true
+            var misplaced = status == HttpStatusCode.MisdirectedRequest
+                    && upstream.HttpResponseHeaders?.ContainsKey("X-TerraBase-Database-Home") == true
+                || status == HttpStatusCode.ServiceUnavailable
+                    && upstream.HttpResponseHeaders?.ContainsKey(HomeForwarding.PlacementMissHeader) == true;
+            if (misplaced
                 && await RefreshAsync().ConfigureAwait(false) is { } fresh)
             {
                 await RunAsync(context, fresh, cancellationToken, accepted, authFrame, attempt + 1).ConfigureAwait(false);
                 return;
             }
 
+            if (misplaced)
+            {
+                status = HttpStatusCode.ServiceUnavailable;
+            }
             if (accepted is not null)
             {
                 await RefuseAsync(context, accepted, context.Features.Get<BrowserConnection>()?.Id,

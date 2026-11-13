@@ -222,7 +222,7 @@ Region status exposes every selected region in `regions`, with nullable `role`, 
 An SDK needs no knowledge of a database's region: it can connect to any region. A region that does not hold the
 database authenticates the client and proxies to a region that holds it, which authenticates again. This adds one
 inter-region round trip (about 170 ms between the current regions) and passes two request admissions, one in each
-region. Only the destination records requests, operation units and bytes.
+region. Completed requests and bytes are attributed to the final destination. A terminal forwarding failure is counted at the receiving region; intermediate placement refusals are not counted. Operation units are recorded where executed.
 
 A writer move closes pinned WebSocket sessions with 1012 and PostgreSQL sessions with 57P01; an open transaction is
 rolled back. Reconnect for later requests. If the proxy leg drops while a statement or commit is in flight, its

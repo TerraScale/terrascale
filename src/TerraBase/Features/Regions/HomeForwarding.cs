@@ -23,6 +23,13 @@ internal static class HomeForwarding
 {
     internal sealed class ProxiedRequest;
 
+    internal sealed class ForwardedAccounting
+    {
+        internal string? CompletedRegion { get; set; }
+    }
+
+    internal const string AccountingHeader = "X-TerraBase-Request-Accounting";
+
     internal const string PlacementMissMessage = "this region no longer holds the database; refresh its placement";
     internal const string PlacementMissHeader = "X-TerraBase-Placement-Miss";
     internal const string ForwardedForHeader = "X-TerraBase-Forwarded-For";
@@ -33,12 +40,12 @@ internal static class HomeForwarding
     {
         "Host", "Connection", "Keep-Alive", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Proxy-Connection", "Proxy-Authorization",
         "X-TerraScale-Caller", "Content-Length", "Content-Type", "X-TerraScale-Region-Pin", "ts-replay-src", "ts-replay-failed", "X-Forwarded-For", "X-Forwarded-Host",
-        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader, ProxyRequestBudget.RemainingHeader, PlacementMissHeader,
+        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader, ProxyRequestBudget.RemainingHeader, PlacementMissHeader, AccountingHeader,
     };
 
     private static readonly HashSet<string> Unreturned = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Connection", "Keep-Alive", "Transfer-Encoding", "Trailer", "Upgrade", "Proxy-Connection", ShapeOverlay.CommitHeader, PlacementMissHeader,
+        "Connection", "Keep-Alive", "Transfer-Encoding", "Trailer", "Upgrade", "Proxy-Connection", ShapeOverlay.CommitHeader, PlacementMissHeader, AccountingHeader,
     };
 
     public static WebApplication UseTerraBaseHomeForwarding(this WebApplication app)
@@ -70,7 +77,10 @@ internal static class HomeForwarding
                 return;
             }
 
-            await next(context).ConfigureAwait(false);
+            if (context.Features.Get<ForwardingAuthorization.Refused>() is null)
+            {
+                await next(context).ConfigureAwait(false);
+            }
         });
         return app;
     }
@@ -120,20 +130,9 @@ internal static class HomeForwarding
             return null;
         }
 
-        if (context.Features.Get<ProjectAccess>() is null && UserAuthExtensions.Identity(context.User) is { } identity)
+        if (!await ForwardingAuthorization.CheckAsync(context, cancellationToken).ConfigureAwait(false))
         {
-            if (await ProjectGrants.GrantAsync(context, identity, project, bucketCreation: false).ConfigureAwait(false) is not ProjectAccess grant)
-            {
-                return null;
-            }
-            if (grant.DatabaseName is not null && context.Request.RouteValues["database"] as string != grant.DatabaseId
-                && (await context.RequestServices.GetRequiredService<IManagementService>()
-                    .FindDatabaseRecordAsync(grant.OrganizationId, project, context.Request.RouteValues["database"] as string ?? "", cancellationToken)
-                    .ConfigureAwait(false) is not ManagedDatabase restricted || restricted.Id != grant.DatabaseId))
-            {
-                return null;
-            }
-            context.Features.Set(grant);
+            return null;
         }
 
         var owners = context.RequestServices.GetRequiredService<RegionalOwners>();
@@ -219,7 +218,7 @@ internal static class HomeForwarding
                     .RunAsync(admitted, destination, cancellationToken, socket, frame).ConfigureAwait(false);
             }
         }, context.RequestServices.GetRequiredService<IMemoryBudget>()).ConfigureAwait(false);
-        return destination is not null || socket.State != WebSocketState.Open;
+        return destination is not null || context.Features.Get<ForwardingAuthorization.Refused>() is not null || socket.State != WebSocketState.Open;
     }
 
     internal static void Sign(HttpContext context, HttpRequestMessage request, string region)
@@ -247,7 +246,12 @@ internal static class HomeForwarding
             return;
         }
 
-        context.Features.Set(new ProxiedRequest());
+        if (!await ForwardingAuthorization.CheckAsync(context, context.RequestAborted).ConfigureAwait(false))
+        {
+            return;
+        }
+        var accounting = context.Features.Get<ForwardedAccounting>() ?? new ForwardedAccounting();
+        context.Features.Set(accounting);
         using var deadline = ProxyRequestBudget.For(context).Link(context.RequestAborted);
         if (body is null && context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
         {
@@ -276,7 +280,7 @@ internal static class HomeForwarding
         using var initial = first;
         var response = initial;
         HttpResponseMessage? refreshedResponse = null;
-        if (initial.StatusCode == HttpStatusCode.ServiceUnavailable && initial.Headers.Contains(PlacementMissHeader)
+        if (IsPlacementMiss(initial)
             && context.Request.RouteValues["project"] is string project)
         {
             HomeNode? fresh;
@@ -303,6 +307,11 @@ internal static class HomeForwarding
 
         using (refreshedResponse)
         {
+            if (IsPlacementMiss(response))
+            {
+                await UnavailableAsync(context, home.Region).ConfigureAwait(false);
+                return;
+            }
             answered?.Invoke(response);
             context.Response.StatusCode = (int)response.StatusCode;
             foreach (var (name, values) in response.Headers.Concat(response.Content.Headers))
@@ -324,6 +333,17 @@ internal static class HomeForwarding
             {
                 await using var answer = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
                 await answer.CopyToAsync(context.Response.Body, deadline.Token).ConfigureAwait(false);
+                if (!IsPlacementMiss(response))
+                {
+                    if (response.Headers.TryGetValues(AccountingHeader, out var ownership) && ownership.Contains("source"))
+                    {
+                        accounting.CompletedRegion = home.Region;
+                    }
+                    else
+                    {
+                        context.Features.Set(new ProxiedRequest());
+                    }
+                }
             }
             catch (Exception error) when (Unanswered(context, error) || error is IOException)
             {
@@ -334,7 +354,7 @@ internal static class HomeForwarding
                 else
                 {
                     context.Response.Clear();
-                    await UnansweredAsync(context, home.Region, error, sent: !response.Headers.Contains(PlacementMissHeader)).ConfigureAwait(false);
+                    await UnansweredAsync(context, home.Region, error, sent: !IsPlacementMiss(response)).ConfigureAwait(false);
                 }
             }
         }
@@ -359,6 +379,7 @@ internal static class HomeForwarding
             }
 
             Sign(context, request, target.Region);
+            request.Headers.TryAddWithoutValidation(AccountingHeader, "source");
             if (pushThrough is not null)
             {
                 request.Headers.TryAddWithoutValidation(PushThroughHeader, pushThrough);
@@ -388,6 +409,10 @@ internal static class HomeForwarding
             }
         }
     }
+
+    internal static bool IsPlacementMiss(HttpResponseMessage response) =>
+        response.StatusCode == HttpStatusCode.ServiceUnavailable && response.Headers.Contains(PlacementMissHeader)
+        || response.StatusCode == HttpStatusCode.MisdirectedRequest && response.Headers.Contains("X-TerraBase-Database-Home");
 
     private static async Task<byte[]?> ReadBodyAsync(HttpContext context, CancellationToken cancellationToken)
     {

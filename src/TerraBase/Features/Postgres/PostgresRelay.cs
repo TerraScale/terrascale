@@ -149,6 +149,7 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                         {
                             admitted.Dispose();
                             exchange.Status = buffer[0];
+                            exchange.Mutation.Answered(buffer[0] != 'I');
                             exchange.End();
                             exchange.Open();
                             handshake.CancelAfter(Timeout.InfiniteTimeSpan);
@@ -159,8 +160,8 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                 catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !closed.IsCancellationRequested)
                 {
                     var writer = new PgWriter(output);
-                    writer.Error(exchange.RetryAfter is not null ? "53300" : exchange.Pending ? "08007" : "08006", exchange.RetryAfter is { } retryAfter
-                        ? $"tenant busy, retry after {retryAfter}s" : exchange.Pending
+                    writer.Error(exchange.RetryAfter is not null ? "53300" : exchange.Pending && exchange.Mutation.MayMutate ? "08007" : "08006", exchange.RetryAfter is { } retryAfter
+                        ? $"tenant busy, retry after {retryAfter}s" : exchange.Pending && exchange.Mutation.MayMutate
                         ? "write outcome unknown: the statement or commit may have run in the database region"
                         : "the relayed session ended; its open transaction was rolled back", fatal: true);
                     await writer.FlushAsync(closed).ConfigureAwait(false);
@@ -253,7 +254,7 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                         remaining = remaining.Slice(length + 1);
                         continue;
                     }
-                    if (!await exchange.EnterAsync((char)header[0], cancellationToken).ConfigureAwait(false))
+                    if (!await exchange.EnterAsync((char)header[0], remaining.Slice(5, length - 4).ToArray(), cancellationToken).ConfigureAwait(false))
                     {
                         _rejectedUntilSync = header[0] != 'Q';
                         await BusyAsync(readyOnly: false, cancellationToken).ConfigureAwait(false);
@@ -265,6 +266,10 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                         await stream.WriteAsync(segment, cancellationToken).ConfigureAwait(false);
                     }
                     await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    if (header[0] == 'S')
+                    {
+                        await exchange.SynchronizeAsync(cancellationToken).ConfigureAwait(false);
+                    }
                     remaining = remaining.Slice(length + 1);
                 }
 

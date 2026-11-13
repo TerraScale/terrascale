@@ -8,7 +8,7 @@ An SDK needs no knowledge of a database's region. A region that does not hold th
 customer locally, applies the organization's request admission, then proxies to a region that holds it. The
 destination authenticates the same credential and applies its own request admission before executing work.
 A proxied request therefore passes two admissions and pays one extra inter-region round trip, about 170 ms
-between the current regions. Only the destination meters requests, operation units and bytes.
+between the current regions. Completed requests and bytes are attributed to the final destination. Terminal forwarding failures are counted at the receiving region; intermediate placement refusals are not counted. Operation units are recorded where executed.
 
 ### Forwarding between regions
 

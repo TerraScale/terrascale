@@ -391,6 +391,16 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return new PgError("57P03", "auth_unavailable: " + KeyAuthorityMessages.Unavailable, Fatal: true);
         }
 
+        switch (await ForwardingAuthorization.AuthorizeAsync(services,
+            new ApiKey(key.Subject, "project grant", [.. key.Scopes], key.OrganizationId, key.ProjectId, key.Database),
+            key.ProjectId, database[(slash + 1)..], [ApiKeyScopes.SqlRead], key.Allowlists, client, cancellationToken).ConfigureAwait(false))
+        {
+            case NotFound or Forbidden:
+                return Denied;
+            case Unavailable:
+                return new PgError("57P03", "the database is unavailable; retry");
+        }
+
         var organization = await services.GetRequiredService<IProjectCatalog>()
             .ResolveProjectAsync(key.ProjectId, key.Subject, createIn: null, cancellationToken).ConfigureAwait(false);
         if (organization is Unavailable)
@@ -455,6 +465,15 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             || (!EntityIds.IsValid(database[(slash + 1)..]) && !DatabaseName.TryParse(database[(slash + 1)..], out _)))
         {
             return Denied;
+        }
+
+        switch (await ForwardingAuthorization.AuthorizeAsync(services, key, project, database[(slash + 1)..],
+            [ApiKeyScopes.SqlRead], [], client, cancellationToken).ConfigureAwait(false))
+        {
+            case NotFound or Forbidden:
+                return Denied;
+            case Unavailable:
+                return new PgError("57P03", "the database is unavailable; retry");
         }
 
         return await Tenants.FindDatabaseAsync(key.OrganizationId, project, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch

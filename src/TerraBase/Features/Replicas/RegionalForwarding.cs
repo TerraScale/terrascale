@@ -52,6 +52,11 @@ internal static class RegionalForwarding
             await next(context).ConfigureAwait(false);
             return;
         }
+        if (Listeners.ArrivedOn(context) == TerraBaseListener.Client
+            && !await ForwardingAuthorization.CheckAsync(context, context.RequestAborted).ConfigureAwait(false))
+        {
+            return;
+        }
         var options = services.GetRequiredService<TerraBaseOptions>();
         var owner = (await owners.NodesAsync(context.RequestAborted).ConfigureAwait(false))
             .FirstOrDefault(node => node.Region == options.Region && node.Name != options.MachineId);

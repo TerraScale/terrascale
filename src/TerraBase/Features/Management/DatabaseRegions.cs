@@ -125,12 +125,15 @@ internal static class DatabaseRegions
             return;
         }
 
+        if (!await ForwardingAuthorization.CheckAsync(context, context.RequestAborted).ConfigureAwait(false))
+        {
+            return;
+        }
         var peers = context.RequestServices.GetRequiredService<IRegionPeers>();
         var peer = (await peers.OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
             .FirstOrDefault(candidate => candidate.Region == region);
         if (peer is null)
         {
-            context.Features.Set(new HomeForwarding.ProxiedRequest());
             context.Response.Headers[HomeForwarding.PlacementMissHeader] = "1";
             await HomeForwarding.UnavailableAsync(context, region).ConfigureAwait(false);
             return;

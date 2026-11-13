@@ -11,10 +11,12 @@ import { expect, type APIResponse, type Page } from '@playwright/test';
 import { test, authenticatedCells, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
 import { auth, dash, production, stateDir } from '../support/stack';
 import { Audit, auditedContext } from '../support/audit';
-import { journey, saveCookies, saveSecret } from '../support/state';
+import { journey, ownerSession, saveCookies, saveSecret } from '../support/state';
 import { confirmWithPassword, onboard, signUp, verify } from '../support/hosted';
 import { newAddress } from '../support/inbox';
+import { forgedHeaders, issueKey, sourceRefusals, unanswered } from './forwarding';
 import { createApiKey } from '../support/paid';
+import { signInToken } from '../support/auth-management';
 
 test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
 test.describe.configure({ mode: 'default', timeout: 180_000 });
@@ -55,9 +57,13 @@ async function seed(cells: Cells, id: string, projectId?: string): Promise<void>
   await sql(cells, home, id, 'INSERT INTO placement_rows VALUES (1), (2), (3)', projectId);
 }
 
+let followedHints = 0;
+test.afterEach(() => console.log('placement management 421 hints followed: ' + followedHints));
+
 async function patch(cells: Cells, id: string, regions: string[], projectId?: string): Promise<APIResponse> {
   let response = await cells.patch(`${home}${database(id, projectId)}`, { data: { regions } });
   if (response.status() === 421) {
+    followedHints++;
     await answer(response, 421, 'wrong_region');
     response = await cells.patch(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(id, projectId)}`, { data: { regions } });
   }
@@ -128,8 +134,9 @@ type Meter = { requests: number; operations: number; received: number; sent: num
 type Usage = { items: { region: string; series: { requests: Record<string, number>; operations: Record<string, number>; clientBandwidth: { bytesReceived: number; bytesSent: number } }[] }[] };
 
 async function usageAt(cells: Cells, id: string, region: string): Promise<Meter> {
-  const url = region === 'gru' ? home : replica;
-  const usage = await json<Usage>(await cells.get(`${url}${project()}/analytics?database=${id}&region=${region}&range=1h`));
+  const readings = await Promise.all([home, replica].map(async url =>
+    json<Usage>(await cells.get(url + project() + '/analytics?database=' + id + '&region=' + region + '&range=1h'))));
+  const usage = { items: readings.flatMap(reading => reading.items) };
   return usage.items.filter(item => item.region === region).flatMap(item => item.series).reduce((sum, point) => ({
     requests: sum.requests + Object.values(point.requests).reduce((a, b) => a + b, 0),
     operations: sum.operations + Object.values(point.operations).reduce((a, b) => a + b, 0),
@@ -138,18 +145,19 @@ async function usageAt(cells: Cells, id: string, region: string): Promise<Meter>
   }), { requests: 0, operations: 0, received: 0, sent: 0 });
 }
 
-async function meteredOnce(cells: Cells, id: string, protocol: string, work: () => Promise<unknown>): Promise<void> {
+async function meteredOnce(cells: Cells, id: string, protocol: string, work: () => Promise<unknown>, owner: 'gru' | 'fra' = 'fra'): Promise<void> {
   const before = { gru: await usageAt(cells, id, 'gru'), fra: await usageAt(cells, id, 'fra') };
   await work();
   let after = before;
-  await expect.poll(async () => {
+  await expect.configure({ soft: true }).poll(async () => {
     after = { gru: await usageAt(cells, id, 'gru'), fra: await usageAt(cells, id, 'fra') };
     return { gru: after.gru.requests - before.gru.requests, fra: after.fra.requests - before.fra.requests };
-  }, { message: `${protocol} is metered as one destination request` }).toEqual({ gru: 0, fra: 1 });
-  expect(after.gru, `${protocol} records no receiving-region requests, units or bytes`).toEqual(before.gru);
-  expect(after.fra.sent - before.fra.sent).toBeGreaterThan(0);
-  if (protocol !== 'regions') expect(after.fra.operations - before.fra.operations).toBe(1);
-  console.log(`R3 usage ${protocol}: gru requests +0, operations +0, bytes +0; fra requests +1, operations +${after.fra.operations - before.fra.operations}, received +${after.fra.received - before.fra.received}, sent +${after.fra.sent - before.fra.sent}`);
+  }, { message: `${protocol} is metered as one destination request` }).toEqual(owner === 'fra' ? { gru: 0, fra: 1 } : { gru: 1, fra: 0 });
+  const other = owner === 'fra' ? 'gru' : 'fra';
+  expect.soft(after[other], protocol + ' records no intermediate requests, units or bytes').toEqual(before[other]);
+  expect.soft(after[owner].sent - before[owner].sent).toBeGreaterThan(0);
+  if (['REST', 'WebSocket', 'Postgres'].includes(protocol)) expect.soft(after[owner].operations - before[owner].operations).toBe(1);
+  console.log('R3 usage ' + protocol + ': owner ' + owner + ', requests +1; ' + other + ' requests, operations and bytes +0');
 }
 
 function postgresRows(id: string): string {
@@ -168,6 +176,42 @@ async function acceptedSockets(request: Cells): Promise<number> {
   const row = (await response.text()).split('\n').find(line => line.startsWith('terrabase_sql_connections_total{') && line.includes('region="fra"'));
   return row ? Number(row.slice(row.lastIndexOf(' ') + 1)) : 0;
 }
+
+test('R3 replace: authorization ends at the source before discovery or connection', async ({ cells, request, page, browser }) => {
+  const current = journey();
+  const restricted = await create(cells, ['gru']);
+  const databaseKey = await issueKey(current.organizationId, current.projectId, restricted.id);
+  const projectKey = await issueKey('00000000000000000000000001', '00000000000000000000000002');
+  await removeDatabase(cells, restricted.id);
+  const created = await named(cells, replica, name('source-auth'), ['fra'], current.projectId);
+  try {
+    await sourceRefusals(cells, request, page, created.id, { project: projectKey, database: databaseKey });
+    const forged = await cells.post(home + database(created.id) + '/sql/execute', {
+      headers: forgedHeaders, data: { statements: [{ sql: 'SELECT 1' }] },
+    });
+    await answer(forged, 200, '200 customer headers cannot mark a request internal or shorten its deadline');
+    expect(forged.headers()['x-terrabase-region']).toBe('fra');
+    const context = await auditedContext(browser, { storageState: ownerSession() });
+    try {
+      const owner = await signInToken(context.request, 'placement-ip-owner');
+      const issued = await json<{ key: string }>(await context.request.post(auth + '/v1/terrascale/organizations/' + current.organizationId + '/projects/' + current.projectId + '/api-keys', {
+        headers: { authorization: 'Bearer ' + owner },
+        data: { name: 'placement IP refusal', scopes: ['sql:read'], allowed_cidrs: ['192.0.2.1/32'] },
+      }), 201);
+      saveSecret('placement-ip-key', issued.key);
+      const grant = await json<{ access_token: string }>(await request.post(auth + '/terrascale/oauth/token', {
+        form: { grant_type: 'client_credentials', client_id: issued.key.slice(0, 26), client_secret: issued.key, project: current.projectId, scope: 'sql:read' },
+      }));
+      saveSecret('placement-ip-token', grant.access_token);
+      await sourceRefusals(cells, request, page, created.id, {}, grant.access_token);
+    } finally {
+      await saveCookies(context);
+      await context.close();
+    }
+  } finally {
+    await removeDatabase(cells, created.id);
+  }
+});
 
 test('R3 replace the writer and proxy REST and WebSocket through a removed region', async ({ cells, request, page }) => {
   const created = await create(cells, ['gru', 'fra']);
@@ -285,6 +329,13 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     expect(missingCredentialClose).toBe(1008);
     expect(await acceptedSockets(request)).toBe(connectionsBefore);
     console.log('R3 anonymous browser WebSocket: invalid and absent credential close locally with 1008; destination accepted connections +0');
+    await meteredOnce(cells, created.id, 'forged internal headers', async () => {
+      const response = await cells.post(home + database(created.id) + '/sql/execute', {
+        headers: forgedHeaders, data: { statements: [{ sql: 'SELECT 1' }] },
+      });
+      await answer(response, 200, '200 forged internal marks do not affect forwarding, metering or deadline');
+      expect(response.headers()['x-terrabase-region']).toBe('fra');
+    });
     await meteredOnce(cells, created.id, 'REST', () => sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value'));
     await meteredOnce(cells, created.id, 'regions', () => progress(cells, created.id, home));
     await page.setExtraHTTPHeaders({ Authorization: `Bearer ${grant.access_token}` });
@@ -324,12 +375,21 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     const peers = join(stateDir, 'peers');
     const original = readFileSync(peers, 'utf8');
     try {
+      writeFileSync(peers, original.replace(/^(journey-\d+ fra) \S+$/gm, '$1 127.0.0.1'));
+      await meteredOnce(cells, created.id, 'terminal placement refusal', async () => {
+        await answer(await cells.post(home + database(created.id) + '/sql/execute', { data: { statements: [{ sql: 'SELECT 1' }] } }), 503, 'unavailable');
+      }, 'gru');
+    } finally {
+      writeFileSync(peers, original);
+    }
+
+    try {
       writeFileSync(peers, original.split('\n').filter(line => !line.includes(' fra ')).join('\n'));
-      const missing = await cells.post(`${home}${database(created.id)}/sql/execute`, {
-        data: { statements: [{ sql: 'SELECT 1' }] },
-      });
-      await answer(missing, 503, 'unavailable');
-      expect(missing.headers()['retry-after']).toBe('1');
+      await meteredOnce(cells, created.id, 'no destination', async () => {
+        const missing = await cells.post(home + database(created.id) + '/sql/execute', { data: { statements: [{ sql: 'SELECT 1' }] } });
+        await answer(missing, 503, 'unavailable');
+        expect(missing.headers()['retry-after']).toBe('1');
+      }, 'gru');
       const refused = await page.evaluate(({ url, token }) => new Promise<{ code: string; message: string }>((resolve, reject) => {
         const socket = new WebSocket(url, 'terrascale.sql.v1');
         socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'auth', token }));
@@ -346,6 +406,8 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     } finally {
       writeFileSync(peers, original);
     }
+    await sql(cells, replica, created.id, 'CREATE TABLE relay_outcomes (value INTEGER)');
+    await unanswered(cells, page, created.id, grant.access_token);
     const paused = Number(readFileSync(join(stateDir, 'pids', 'terrabase-fra.pid'), 'utf8').trim());
     process.kill(paused, 'SIGSTOP');
     try {
@@ -1239,5 +1301,71 @@ test('R21 five-region writer moves retain every acknowledged write and refresh s
     if (created) await removeDatabase(cells, created.id);
     for (const node of nodes.reverse()) await node.stop();
     restore();
+  }
+});
+
+test('R3 replace: a refused stale attempt is metered only at its final destination', async ({ cells }) => {
+  const restore = extendPeers(['sjc']);
+  let node: RegionProcess | undefined;
+  let created: Database | undefined;
+  try {
+    node = await startRegion('sjc', 0);
+    created = await create(cells, ['gru', 'fra', 'sjc']);
+    await seed(cells, created.id);
+    for (const region of ['fra', 'sjc']) {
+      await expect.poll(async () => (await progress(cells, created!.id)).regions.find(row => row.region === region),
+        { message: region + ' has received the database before promotion', timeout: 45_000, intervals: [250, 500, 1000] })
+        .toMatchObject({ revision: expect.any(String), lastPulledAt: expect.any(String) });
+    }
+    await expect.poll(async () => {
+      const response = await cells.patch(home + database(created!.id), { data: { regions: ['fra', 'sjc'] } });
+      if (response.status() === 503) { await answer(response, 503, 'replica_not_ready'); return false; }
+      await answer(response, 200, '200 first writer move');
+      return true;
+    }, { message: 'the first replacement is ready to commit', timeout: 45_000, intervals: [1000] }).toBe(true);
+    await sql(cells, home, created.id, 'SELECT value FROM placement_rows');
+    await expect.poll(async () => (await progress(cells, created!.id, replica)).regions.find(row => row.region === 'sjc'),
+      { message: 'the next writer has received the first promotion', timeout: 45_000, intervals: [250, 500, 1000] })
+      .toMatchObject({ revision: expect.any(String), lastPulledAt: expect.any(String) });
+    await expect.poll(async () => {
+      await sql(cells, home, created!.id, 'SELECT value FROM placement_rows');
+      const response = await cells.patch(replica + database(created!.id), { data: { regions: ['sjc'] } });
+      if (response.status() === 503) { await answer(response, 503, 'replica_not_ready'); return false; }
+      await answer(response, 200, '200 second writer move');
+      return true;
+    }, { message: 'the final writer is ready while the source route names fra', timeout: 45_000, intervals: [1000] }).toBe(true);
+    const endpoints = [home, replica, node.endpoint];
+    const counts = async () => {
+      const readings = await Promise.all(endpoints.map(async endpoint =>
+        json<Usage>(await cells.get(endpoint + project() + '/analytics?database=' + created!.id + '&range=1h'))));
+      return Object.fromEntries(['gru', 'fra', 'sjc'].map(region => [region, readings.flatMap(reading => reading.items)
+        .filter(item => item.region === region).flatMap(item => item.series)
+        .reduce((total, point) => total + Object.values(point.requests).reduce((sum, count) => sum + count, 0), 0)]));
+    };
+    const before = await counts();
+    const response = await cells.post(home + database(created.id) + '/sql/execute', {
+      data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
+    });
+    await answer(response, 200, '200 after a refused stale attempt');
+    expect((await response.json()).results[0].rows).toEqual([[1], [2], [3]]);
+    expect((response.headers()['server-timing']?.match(/home;dur=/g) ?? []).length, 'a refusal and exactly one refreshed attempt').toBe(2);
+    await expect.poll(async () => {
+      const after = await counts();
+      return Object.fromEntries(['gru', 'fra', 'sjc'].map(region => [region, after[region] - before[region]]));
+    }, { message: 'only the final destination owns the customer request' }).toEqual({ gru: 0, fra: 0, sjc: 1 });
+    console.log('R3 stale refusal then success: gru +0, refused fra +0, final sjc +1');
+  } catch (error) {
+    console.log('R3 retry primary failure:', error);
+    throw error;
+  } finally {
+    try {
+      if (created) await removeDatabase(cells, created.id);
+    } finally {
+      try {
+        if (node) await node.stop();
+      } finally {
+        restore();
+      }
+    }
   }
 });

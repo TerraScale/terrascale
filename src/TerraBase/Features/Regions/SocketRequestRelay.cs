@@ -28,8 +28,9 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
             {
                 if (exchange.Pending)
                 {
-                    await HomeSocketRelay.RefuseAsync(context, client, exchange.Id, SqlErrors.WriteOutcomeUnknown,
-                        "the database region did not answer; the statement or commit may have run there", cancellationToken).ConfigureAwait(false);
+                    await HomeSocketRelay.RefuseAsync(context, client, exchange.Id, exchange.Mutation.MayMutate ? SqlErrors.WriteOutcomeUnknown : SqlErrors.Unavailable,
+                        exchange.Mutation.MayMutate ? "the database region did not answer; the statement or commit may have run there"
+                            : "the database region did not answer; retry the read", cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -75,6 +76,12 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
                         continue;
                     }
 
+                    exchange.Mutation.Sent(parsed switch
+                    {
+                        SqlSocketRequest { Type: "begin" or "commit" or "rollback" } => false,
+                        SqlSocketRequest { Type: "execute", Statements: [var statement] } => RelayMutation.MayMutateStatement(statement.Sql),
+                        _ => true,
+                    });
                     exchange.Begin(id, lease);
                     await destination.SendAsync(frame.Bytes, frame.Type, true, stop.Token).ConfigureAwait(false);
                 }
@@ -100,6 +107,10 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
                     {
                         if (frame.Type == WebSocketMessageType.Close)
                         {
+                            if (exchange.Pending)
+                            {
+                                throw new IOException("the database region closed before answering");
+                            }
                             stop.CancelAfter(SqlLimits.MaxRequestTime);
                             await client.CloseOutputAsync(destination.CloseStatus ?? WebSocketCloseStatus.EndpointUnavailable,
                                 destination.CloseStatusDescription, stop.Token).ConfigureAwait(false);
@@ -112,6 +123,7 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
                         {
                             exchange.Transaction = transaction.GetBoolean();
                         }
+                        exchange.Mutation.Answered(exchange.Transaction);
                         exchange.End();
                         turn.Release();
                     }
@@ -178,6 +190,7 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
         private readonly Lock _gate = new();
         private IDisposable? _lease;
         private ITimer? _timer;
+        internal RelayMutation Mutation { get; } = new();
         internal bool Transaction { get; set; }
         internal long? Id { get; private set; }
         internal bool Pending { get { lock (_gate) { return _lease is not null; } } }
