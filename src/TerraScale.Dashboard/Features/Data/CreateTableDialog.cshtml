@@ -1,0 +1,58 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
+@using TerraScale.Dashboard.Features.Data
+@{
+    var open = Model.Context.CanWriteProjectData || Model.Dialog == "create-table";
+    var draft = Model.TableDraft ?? CreateTableSql.Blank;
+    var sql = CreateTableSql.Statement(draft);
+}
+@if (open)
+{
+<dialog id="create-table" class="ts-dialog ts-dialog-wide" closedby="any" aria-labelledby="create-table-title">
+<div class="ts-dialog-content">
+<header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="create-table-title">New table</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="create-table">@Icons.Render("X", 18)</button></header>
+<form id="create-table-form" method="post" action="/api/v1/dashboard/data/sql/tables" class="ts-form">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<input type="hidden" name="databaseId" value="@Model.Database.Id" />
+<input type="hidden" name="sql" value="@Model.Sql" />
+@if (Model.History is { Count: > 0 }) { <input type="hidden" name="history" value="@System.Text.Json.JsonSerializer.Serialize(Model.History)" /> }
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.DialogErrorView, DialogError>(new("create-table", Model.Dialog == "create-table" ? Model.FormError : "")))
+<div class="ts-field"><label class="ts-label" for="create-table-name">Table name</label><input class="ts-input ts-mono" id="create-table-name" name="tableName" value="@draft.Name" required maxlength="128" autocomplete="off" spellcheck="false" /></div>
+<label class="ts-check"><input type="checkbox" name="ifNotExists" value="1" checked="@draft.IfNotExists" /><span>If not exists</span></label>
+<div class="ts-create-table-columns" data-column-rows>
+@for (var i = 0; i < draft.Columns.Count; i++)
+{
+    var column = draft.Columns[i];
+    var index = i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    <div class="ts-create-table-column" data-column-row>
+        <input type="hidden" name="columnIndex" value="@index" />
+        <label class="ts-field"><span class="ts-label">Name</span><input class="ts-input ts-mono" name="columnName" value="@column.Name" required maxlength="128" autocomplete="off" spellcheck="false" /></label>
+        <label class="ts-field"><span class="ts-label">Type</span><select class="ts-select" name="columnType">@foreach (var type in CreateTableSql.ColumnTypes) { <option value="@type" selected="@(type == column.Type)">@type</option> }</select></label>
+        <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-remove-column aria-label="Remove column">@Icons.Render("Trash2", 16)<span>Remove</span></button>
+        <div class="ts-create-table-flags">
+            <label class="ts-check"><input type="checkbox" name="columnPk" value="@index" checked="@column.PrimaryKey" data-column-flag /><span>Primary key</span></label>
+            <label class="ts-check"><input type="checkbox" name="columnNotNull" value="@index" checked="@column.NotNull" data-column-flag /><span>Not null</span></label>
+            <label class="ts-check"><input type="checkbox" name="columnUnique" value="@index" checked="@column.Unique" data-column-flag /><span>Unique</span></label>
+            <label class="ts-field ts-create-table-default"><span class="ts-label">Default</span><input class="ts-input ts-mono" name="columnDefault" value="@column.DefaultValue" maxlength="512" autocomplete="off" spellcheck="false" /></label>
+        </div>
+    </div>
+}
+</div>
+<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-add-column>@Icons.Render("Plus", 16)<span>Add column</span></button>
+<div class="ts-field"><label class="ts-label" for="create-table-sql">SQL</label><ts-code-editor class="ts-code-editor" data-language="sql"><textarea class="ts-input ts-mono" id="create-table-sql" rows="6" readonly="readonly" spellcheck="false" autocapitalize="off" autocomplete="off">@sql</textarea></ts-code-editor></div>
+<div class="ts-dialog-footer ts-create-table-actions"><button class="ts-btn ts-btn-primary" type="submit" name="intent" value="create">Create table</button><button class="ts-btn ts-btn-secondary" type="submit" name="intent" value="editor">Open in SQL editor</button><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="create-table">Cancel</button></div>
+</form>
+</div>
+</dialog>
+<template id="create-table-column"><div class="ts-create-table-column" data-column-row>
+<input type="hidden" name="columnIndex" value="0" />
+<label class="ts-field"><span class="ts-label">Name</span><input class="ts-input ts-mono" name="columnName" value="" required maxlength="128" autocomplete="off" spellcheck="false" /></label>
+<label class="ts-field"><span class="ts-label">Type</span><select class="ts-select" name="columnType">@foreach (var type in CreateTableSql.ColumnTypes) { <option value="@type" selected="@(type == "TEXT")">@type</option> }</select></label>
+<button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-remove-column aria-label="Remove column">@Icons.Render("Trash2", 16)<span>Remove</span></button>
+<div class="ts-create-table-flags">
+<label class="ts-check"><input type="checkbox" name="columnPk" value="0" data-column-flag /><span>Primary key</span></label>
+<label class="ts-check"><input type="checkbox" name="columnNotNull" value="0" data-column-flag /><span>Not null</span></label>
+<label class="ts-check"><input type="checkbox" name="columnUnique" value="0" data-column-flag /><span>Unique</span></label>
+<label class="ts-field ts-create-table-default"><span class="ts-label">Default</span><input class="ts-input ts-mono" name="columnDefault" value="" maxlength="512" autocomplete="off" spellcheck="false" /></label>
+</div>
+</div></template>
+}
