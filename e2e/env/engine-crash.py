@@ -393,8 +393,8 @@ def crash_recording(identity, operation="fault"):
 
 def boundary_cases(selected=None):
     global proof_reads
-    if selected == "c67":
-        for case in ("latency", "native", "native-timeout", "opened-key", "key-retry", "unknown-key", "creation", "checkpoints"):
+    if selected == "isolation":
+        for case in ("latency", "native", "native-timeout", "recreate", "opened-key", "key-retry", "unknown-key", "creation", "checkpoints"):
             boundary_cases(case)
         return
     if selected in (None, "latency"):
@@ -439,10 +439,10 @@ def boundary_cases(selected=None):
             assert "process exit" in str(error), error
         assert node.wait(timeout=5) != 0
         elapsed = time.perf_counter() - began
-        assert 29 <= elapsed < 40, elapsed
+        assert 34 <= elapsed < 45, elapsed
         log = state / ("node-" + str(generation) + ".log")
         reader.join(timeout=5)
-        assert "A copy mutation exceeded 30 seconds" in log.read_text()
+        assert "outlived the 35 second fault publication bound" in log.read_text()
         end()
         release.unlink()
         assert (state / "data" / organization / project / (identity + ".db")).is_file()

@@ -124,9 +124,9 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
         var opening = false;
         try
         {
+            using var mutation = store is null ? null : await store.EnterMutationAsync(cancellationToken).ConfigureAwait(false);
             await io.RunAsync(() =>
             {
-                using var mutation = store?.EnterMutation();
                 opening = true;
                 OpenExisting(connection, new SqliteConnectionStringBuilder(connectionString).DataSource);
                 if (store is not null)
@@ -136,7 +136,6 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
             }, cancellationToken).ConfigureAwait(false);
             await session.ExecuteAsync(io, () =>
             {
-                using var mutation = store?.EnterMutation();
                 using var command = connection.CreateCommand();
                 command.CommandText = pragmas;
                 command.ExecuteNonQuery();

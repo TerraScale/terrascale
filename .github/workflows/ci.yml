@@ -106,6 +106,7 @@ jobs:
               - src/TerraBase/TerraBase.csproj
               - src/TerraBase/Features/Sql/SqlErrors.cs
               - src/TerraBase/Features/Sql/SqlService.cs
+              - src/TerraBase/Features/Sql/SqlScript.cs
               - src/TerraBase/Features/Sql/SqlSocket.cs
               - src/TerraBase/Features/Postgres/PostgresConnectionHandler.cs
               - e2e/env/engine-crash*

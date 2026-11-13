@@ -35,7 +35,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
     private readonly ConcurrentDictionary<Key, CopyMutationBarrier> _mutations = new();
 
     internal CopyMutationBarrier Mutations(TenantContext database) =>
-        _mutations.GetOrAdd(Key.Of(database), _ => new CopyMutationBarrier(engine.HostTime));
+        _mutations.GetOrAdd(Key.Of(database), _ => new CopyMutationBarrier());
     private readonly CancellationTokenSource _retryStopping = new();
     private Task? _retry;
 
@@ -161,14 +161,23 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         }
 
         var key = Key.Of(database);
-        var system = await SystemAsync(CancellationToken.None).ConfigureAwait(false);
-        var deleted = Deleted(key);
-        var binding = await BindingAsync(key, incarnation).ConfigureAwait(false);
-        using var mutation = await Mutations(database).EnterAsync(CancellationToken.None).ConfigureAwait(false);
         if (engine.OpenStore(key) is { } faulted && faulted.Incarnation == incarnation)
         {
             faulted.CopyFault = Bounded(reason);
         }
+        TursoDatabaseStore system;
+        try
+        {
+            system = await SystemAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            FailClosed($"the storage fault ledger could not be opened: {error.GetType().Name}");
+            throw;
+        }
+        var deleted = Deleted(key);
+        var binding = await BindingAsync(key, incarnation).ConfigureAwait(false);
+        using var mutation = await Mutations(database).PublishFaultAsync(engine.QueryBudget).ConfigureAwait(false);
 
         await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
@@ -279,7 +288,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
 
     internal async Task FlagAsync(TursoDatabaseStore store)
     {
-        using var mutation = await Mutations(store.Tenant!).EnterAsync(CancellationToken.None).ConfigureAwait(false);
+        using var mutation = await Mutations(store.Tenant!).PublishFaultAsync(engine.QueryBudget).ConfigureAwait(false);
         try
         {
             await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);

@@ -283,9 +283,24 @@ internal sealed partial class TursoDatabaseStore(
         }
     }
 
+    internal async Task<IDisposable?> EnterMutationAsync(CancellationToken cancellationToken)
+    {
+        var lease = !IsSystem && Tenant is { } database && Ledger is { } ledger
+            ? await ledger.Mutations(database).EnterAsync(cancellationToken).ConfigureAwait(false) : null;
+        try
+        {
+            ThrowIfUnavailable();
+            return lease;
+        }
+        catch
+        {
+            lease?.Dispose();
+            throw;
+        }
+    }
+
     internal void NoteCopyFault(string reason)
     {
-        using var mutation = !IsSystem && Tenant is { } database ? Ledger?.Mutations(database).Enter() : null;
         CopyFault = reason;
         if (IsSystem)
         {

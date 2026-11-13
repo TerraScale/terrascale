@@ -264,15 +264,19 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
             [tenant, store.Incarnation, "another reader detected damage during checkpoint backfill"])!).AsTask();
         if (timeout)
         {
-            Console.WriteLine("native checkpoint held until fail-stop deadline");
+            Console.WriteLine("native checkpoint held past the fault publication bound");
             await checkpoint;
-            throw new InvalidOperationException("the stalled checkpoint escaped its fail-stop deadline");
+            throw new InvalidOperationException("the stalled checkpoint escaped the fault publication bound");
         }
         try
         {
-            if (fault.IsCompleted || store.Refused.IsCancellationRequested)
+            if (fault.IsCompleted || store.GetType().GetProperty("FaultRow", Hidden)!.GetValue(store) is not null)
             {
                 throw new InvalidOperationException("fault publication overtook native checkpoint backfill");
+            }
+            if (!store.Refused.IsCancellationRequested)
+            {
+                throw new InvalidOperationException("the copy was not refused while its fault publication waited");
             }
             Console.WriteLine("fault publication waits inside native checkpoint backfill");
         }
@@ -281,7 +285,13 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
             using var release = new FileStream(control + ".release", FileMode.Open, FileAccess.Write);
             release.WriteByte(1);
         }
-        await checkpoint;
+        try
+        {
+            await checkpoint;
+        }
+        catch (Exception error) when (error.GetType().Name == "StorageCopyFaultedException")
+        {
+        }
         await fault;
         operation.GetType().GetMethod("Complete")!.Invoke(operation, null);
         await operation.DisposeAsync();
