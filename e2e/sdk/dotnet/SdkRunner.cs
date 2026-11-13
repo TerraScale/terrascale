@@ -69,6 +69,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
     {
         "auth.manage_user" => ManageUserAsync(cancellationToken),
         "auth.user_profiles" => UserProfilesAsync(op, cancellationToken),
+        "auth.organizations" => OrganizationsAsync(cancellationToken),
         "sql.execute.positional" => ExecutePositionalAsync(op, cancellationToken),
         "sql.execute.named" => ExecuteNamedAsync(op, cancellationToken),
         "sql.execute.statement" => ExecuteStatementAsync(op, cancellationToken),
@@ -140,6 +141,28 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         Same(imported.Errors.Single().Index.ToString(CultureInfo.InvariantCulture), "1", "refuse malformed row");
         await auth.DeleteUserAsync(write, project, imported.Items[0].User.Id, cancellationToken);
         await auth.DeleteUserAsync(write, project, created.Id, cancellationToken);
+    }
+
+    private async Task OrganizationsAsync(CancellationToken cancellationToken)
+    {
+        using var http = new HttpClient();
+        var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech"), InstanceSlug = "terrascale" }).Projects;
+        var read = Required("E2E_AUTH_READ_KEY");
+        var write = Required("E2E_AUTH_WRITE_KEY");
+        var user = Required("E2E_AUTH_USER");
+        var created = await auth.CreateOrganizationAsync(write, project, new("SDK organization", table.Replace('_', '-'), user, null, null, null, null, "off"), cancellationToken);
+        try
+        {
+            Same((await auth.GetOrganizationAsync(read, project, created.Id, cancellationToken)).Id, created.Id, "organization read");
+            Same((await auth.ListOrganizationsAsync(read, project, cancellationToken: cancellationToken)).Items.Any(item => item.Id == created.Id) ? "true" : "false", "true", "organization listed");
+            Same((await auth.ListOrganizationMembersAsync(read, project, created.Id, cancellationToken: cancellationToken)).Items.Any(item => item.UserId == user && item.Role == "admin") ? "true" : "false", "true", "initial admin");
+            await auth.CreateOrganizationInvitationAsync(write, project, created.Id, new("org-" + run + "@example.com", "member"), cancellationToken);
+            Same((await auth.ListOrganizationInvitationsAsync(read, project, created.Id, cancellationToken: cancellationToken)).Items.Any(item => item.Status == "pending") ? "true" : "false", "true", "invitation listed");
+        }
+        finally
+        {
+            await auth.DeleteOrganizationAsync(write, project, created.Id, cancellationToken);
+        }
     }
 
     private async Task ExecutePositionalAsync(JsonElement op, CancellationToken cancellationToken)

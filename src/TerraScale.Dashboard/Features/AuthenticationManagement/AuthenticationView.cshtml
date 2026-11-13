@@ -163,6 +163,7 @@ Card("OAuth applications");
 <div class="ts-field"><label class="ts-label" for="auth-client-uris">Redirect URIs</label><textarea class="ts-input ts-mono" id="auth-client-uris" name="redirect_uris" rows="3" required spellcheck="false" autocomplete="off" placeholder="https://app.example.com/callback (one per line, up to 10)">@Draft("auth-create-client-dialog", "redirect_uris", "")</textarea></div>
 @{ DialogFooter("auth-create-client-dialog", "Add application"); }</form></div></dialog> }
 }
+else if (current.Key == "organizations") { @(await RenderPartialAsync<AuthenticationOrganizations, AuthenticationPage>(Model)) }
 else if (current.Key == "logs") { @(await RenderPartialAsync<AuthenticationLogs, AuthenticationPage>(Model)) }
 else if (current.Key == "webhooks") {
 Card("Webhooks");

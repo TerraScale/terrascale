@@ -174,6 +174,55 @@ func (r *runner) do(op operation) error {
 	}
 	ctx := r.ctx
 	switch op.ID {
+	case "auth.organizations":
+		auth, err := tsauth.New(tsauth.Config{})
+		if err != nil {
+			return err
+		}
+		read := auth.WithToken(os.Getenv("E2E_AUTH_READ_KEY"))
+		write := auth.WithToken(os.Getenv("E2E_AUTH_WRITE_KEY"))
+		user := os.Getenv("E2E_AUTH_USER")
+		created, err := write.CreateProjectOrganization(ctx, r.project, tsauth.ProjectOrganizationRequest{Name: "SDK organization", Slug: strings.ReplaceAll(r.table, "_", "-"), AdminUserId: &user, DomainJoin: "off"})
+		if err != nil {
+			return err
+		}
+		defer write.DeleteProjectOrganization(ctx, r.project, created.Id)
+		found, err := read.GetProjectOrganization(ctx, r.project, created.Id)
+		if err != nil {
+			return err
+		}
+		if err = same(found.Id, created.Id, "organization read"); err != nil {
+			return err
+		}
+		listed, err := read.ListProjectOrganizations(ctx, r.project, 100, "")
+		if err != nil {
+			return err
+		}
+		seen := false
+		for _, item := range listed.Items {
+			if item.Id == created.Id {
+				seen = true
+			}
+		}
+		if err = same(seen, true, "organization listed"); err != nil {
+			return err
+		}
+		members, err := read.ListProjectOrganizationMembers(ctx, r.project, created.Id, 100, "")
+		if err != nil {
+			return err
+		}
+		if err = same(members.Items[0].Role, "admin", "initial admin"); err != nil {
+			return err
+		}
+		_, err = write.CreateProjectOrganizationInvitation(ctx, r.project, created.Id, tsauth.ProjectOrganizationInvitationRequest{Email: "org-" + r.run + "@example.com", Role: "member"})
+		if err != nil {
+			return err
+		}
+		invites, err := read.ListProjectOrganizationInvitations(ctx, r.project, created.Id, 100, "")
+		if err != nil {
+			return err
+		}
+		return same(invites.Items[0].Status, "pending", "invitation listed")
 	case "auth.manage_user":
 		auth, err := tsauth.New(tsauth.Config{})
 		if err != nil {

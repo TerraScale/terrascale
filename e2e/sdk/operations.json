@@ -20,6 +20,11 @@
       "password_hash": "$2b$10$abcdefghijklmnopqrstuuB5higg1tp13mgPBqluztPkYplq4K0O6"
     },
     {
+      "id": "auth.organizations",
+      "group": "a",
+      "title": "project organization CRUD, initial admin membership and invitations through every SDK"
+    },
+    {
       "id": "sql.execute.positional",
       "group": "a",
       "title": "execute with positional arguments",

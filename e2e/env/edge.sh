@@ -14,6 +14,7 @@ pg_edge_serves() { openssl s_client -starttls postgres -connect 127.0.0.1:5432 -
 start mailpit "$tools/mailpit" --listen 127.0.0.1:8025 --smtp 127.0.0.1:587 \
   --smtp-tls-cert "$pki/edge.pem" --smtp-tls-key "$pki/edge.key" --smtp-require-starttls --smtp-auth-accept-any \
   --smtp-disable-rdns --disable-version-check
+start dns node "$here/dns.mjs"
 start webhook-receiver node "$here/webhook-receiver.mjs"
 start cloudflare-sink node "$here/cloudflare-sink.mjs"
 start stripe node "$here/stripe.mjs"

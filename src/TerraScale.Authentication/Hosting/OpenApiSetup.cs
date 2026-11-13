@@ -6,6 +6,7 @@ using Scalar.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.ProjectOrganizations;
 
 namespace TerraScale.Authentication.Hosting;
 
@@ -268,7 +269,7 @@ public static partial class OpenApiSetup
     // so renaming a parent property first would hide its entire subtree from that traversal.
     private static void MatchProjectWireSchema(IOpenApiSchema input, JsonTypeInfo type)
     {
-        var wire = ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? UserProfileJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type) ?? ImpersonationJson.Default.GetTypeInfo(type.Type);
+        var wire = ProjectOrganizationsJson.Default.GetTypeInfo(type.Type) ?? ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? UserProfileJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type) ?? ImpersonationJson.Default.GetTypeInfo(type.Type);
         if (wire is null || (input is OpenApiSchemaReference reference ? reference.Target : input) is not OpenApiSchema schema)
         {
             return;

@@ -76,3 +76,8 @@ https://api.pwnedpasswords.com, https://challenges.cloudflare.com {
 	import edge
 	reverse_proxy 127.0.0.1:8030
 }
+
+https://cloudflare-dns.com {
+	import edge
+	reverse_proxy 127.0.0.1:8032
+}

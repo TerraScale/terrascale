@@ -6,6 +6,7 @@
 /** @typedef {{readonly items: readonly TsAuthWaitlistEntry[], readonly next: string | null}} TsAuthWaitlistPage */
 
 import { requireId } from "./ids.js";
+import { TsAuthOrganizationsClient } from "./ts-auth-organizations.js";
 /** @import { TsAuthHttp } from "./http.js" */
 /** @import { TerraScaleResult } from "./result.js" */
 
@@ -340,6 +341,8 @@ function requireCursor(after, maximumLength) {
  */
 
 export class TsAuthProjectsClient {
+  /** @type {TsAuthOrganizationsClient} */
+  organizations;
   /**
    * @type {TsAuthHttp}
    * @readonly
@@ -351,6 +354,7 @@ export class TsAuthProjectsClient {
    */
   constructor(http) {
     this.#http = http;
+    this.organizations = new TsAuthOrganizationsClient(http);
   }
 
 

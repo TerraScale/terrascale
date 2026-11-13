@@ -11,6 +11,7 @@ from typing import Any, TypeVar, overload
 import httpx
 
 from . import _spec, models
+from . import auth_organizations as _organizations
 from . import backups as _backups
 from . import sql as _sql
 from ._spec import Call
@@ -418,6 +419,86 @@ class TerraScale:
     def reject_project_waitlist(self, entry: str, *, project: str | None = None) -> None:
         self._send(reject_project_waitlist_call(
             self._issuer, project if project is not None else self.project, entry))
+
+    def create_organization(self, project: str, request: _organizations.OrganizationRequest) -> _organizations.Organization:
+        """POST /v1/{project}/organizations."""
+        return self._send(_organizations.create_organization_call(self._issuer, project, request))
+
+    def list_organizations(
+        self, project: str, limit: int | None = None, after: str | None = None
+    ) -> _organizations.OrganizationPage:
+        """GET /v1/{project}/organizations."""
+        return self._send(_organizations.list_organizations_call(self._issuer, project, limit, after))
+
+    def get_organization(self, project: str, org: str) -> _organizations.Organization:
+        """GET /v1/{project}/organizations/{org}."""
+        return self._send(_organizations.get_organization_call(self._issuer, project, org))
+
+    def update_organization(
+        self, project: str, org: str, request: _organizations.OrganizationRequest
+    ) -> _organizations.Organization:
+        """PUT /v1/{project}/organizations/{org}."""
+        return self._send(_organizations.update_organization_call(self._issuer, project, org, request))
+
+    def delete_organization(self, project: str, org: str) -> None:
+        """DELETE /v1/{project}/organizations/{org}."""
+        self._send(_organizations.delete_organization_call(self._issuer, project, org))
+
+    def add_organization_member(
+        self, project: str, org: str, request: _organizations.OrganizationMembershipRequest
+    ) -> _organizations.OrganizationMembership:
+        """POST /v1/{project}/organizations/{org}/memberships."""
+        return self._send(_organizations.add_organization_member_call(self._issuer, project, org, request))
+
+    def list_organization_members(
+        self, project: str, org: str, limit: int | None = None, after: str | None = None
+    ) -> _organizations.OrganizationMembershipPage:
+        """GET /v1/{project}/organizations/{org}/memberships."""
+        return self._send(_organizations.list_organization_members_call(self._issuer, project, org, limit, after))
+
+    def update_organization_member(
+        self, project: str, org: str, user: str, request: _organizations.OrganizationMembershipRequest
+    ) -> _organizations.OrganizationMembership:
+        """PUT /v1/{project}/organizations/{org}/memberships/{user}."""
+        return self._send(_organizations.update_organization_member_call(self._issuer, project, org, user, request))
+
+    def delete_organization_member(self, project: str, org: str, user: str) -> None:
+        """DELETE /v1/{project}/organizations/{org}/memberships/{user}."""
+        self._send(_organizations.delete_organization_member_call(self._issuer, project, org, user))
+
+    def create_organization_invitation(
+        self, project: str, org: str, request: _organizations.OrganizationInvitationRequest
+    ) -> _organizations.OrganizationInvitation:
+        """POST /v1/{project}/organizations/{org}/invitations."""
+        return self._send(_organizations.create_organization_invitation_call(self._issuer, project, org, request))
+
+    def list_organization_invitations(
+        self, project: str, org: str, limit: int | None = None, after: str | None = None
+    ) -> _organizations.OrganizationInvitationPage:
+        """GET /v1/{project}/organizations/{org}/invitations."""
+        return self._send(_organizations.list_organization_invitations_call(self._issuer, project, org, limit, after))
+
+    def revoke_organization_invitation(self, project: str, org: str, invitation: str) -> None:
+        """DELETE /v1/{project}/organizations/{org}/invitations/{invitation}."""
+        self._send(_organizations.revoke_organization_invitation_call(self._issuer, project, org, invitation))
+
+    def add_organization_domain(
+        self, project: str, org: str, request: _organizations.OrganizationDomainRequest
+    ) -> _organizations.OrganizationDomain:
+        """POST /v1/{project}/organizations/{org}/domains."""
+        return self._send(_organizations.add_organization_domain_call(self._issuer, project, org, request))
+
+    def list_organization_domains(self, project: str, org: str) -> _organizations.OrganizationDomainPage:
+        """GET /v1/{project}/organizations/{org}/domains."""
+        return self._send(_organizations.list_organization_domains_call(self._issuer, project, org))
+
+    def verify_organization_domain(self, project: str, org: str, domain: str) -> _organizations.OrganizationDomain:
+        """POST /v1/{project}/organizations/{org}/domains/{domain}/verify."""
+        return self._send(_organizations.verify_organization_domain_call(self._issuer, project, org, domain))
+
+    def delete_organization_domain(self, project: str, org: str, domain: str) -> None:
+        """DELETE /v1/{project}/organizations/{org}/domains/{domain}."""
+        self._send(_organizations.delete_organization_domain_call(self._issuer, project, org, domain))
 
     def get_settings(self, *, project: str | None = None) -> models.ProjectSettings:
         """Read the project's end-user sign-in settings; viewer access with the caller's sign-in token."""

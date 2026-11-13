@@ -5,6 +5,9 @@
 //! request, viewer for reads and admin for changes. Obtain a client with
 //! [`crate::TerraScaleClient::projects`].
 
+mod organizations;
+pub use organizations::*;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

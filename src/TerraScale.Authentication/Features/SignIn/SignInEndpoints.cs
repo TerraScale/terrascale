@@ -915,6 +915,7 @@ internal static class SignInFlow
         next is not null && Tenancy.Resolved(context) is { } tenant
             && (next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
                 || HostedTheme.Of(context).RedirectUrls.Contains(next, StringComparer.Ordinal)
+                || Tenancy.IsProject(tenant) && next.StartsWith($"/ui/{tenant}/organization-invitations?token=", StringComparison.Ordinal)
                 || next == SecurityPath(tenant)
                 || next == AuthOptions.DashboardOrigin + "/profile"
                 || next == AuthOptions.DashboardOrigin + "/profile?tab=security"

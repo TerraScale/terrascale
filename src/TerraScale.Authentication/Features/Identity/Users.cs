@@ -11,7 +11,7 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Identity;
 
-public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock, SignUpRestrictions restrictions)
+public sealed partial class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock, SignUpRestrictions restrictions)
 {
     public static string? NormalizeEmail(string? email)
     {
@@ -319,6 +319,12 @@ public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox 
                     impersonation.Value.UserId == userId ? "target_deleted" : "admin_deleted", impersonation.Value.ActorId, outbox, clock));
             }
 
+            if (await this.RemoveOrganizationMembershipsAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } memberships)
+            {
+                continue;
+            }
+
+            changes.AddRange(memberships);
             if (await outbox.CreateAsync(instanceId, "user.deleted", userId, current.Email, null, cancellationToken).ConfigureAwait(false) is { } deleted)
             {
                 changes.Add(deleted);

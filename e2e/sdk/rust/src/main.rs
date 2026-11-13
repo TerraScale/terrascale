@@ -274,6 +274,95 @@ impl Runner {
         let fill = |key: &str| self.fill(&text(op, key));
         let e = |error: Error| error.to_string();
         match id.as_str() {
+            "auth.organizations" => {
+                let config = ClientConfig::builder()
+                    .auth_base_url("https://auth.terrascale.tech")
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                let transport =
+                    terrascale::transport::ReqwestTransport::with_root_certificates(&self.ca)
+                        .map_err(|error| error.to_string())?;
+                let auth = terrascale::TerraScaleClient::with_transport(
+                    config,
+                    std::sync::Arc::new(transport),
+                )
+                .projects()
+                .map_err(|error| error.to_string())?;
+                let read = std::env::var("E2E_AUTH_READ_KEY").map_err(|error| error.to_string())?;
+                let write =
+                    std::env::var("E2E_AUTH_WRITE_KEY").map_err(|error| error.to_string())?;
+                let user = std::env::var("E2E_AUTH_USER").map_err(|error| error.to_string())?;
+                let created = auth
+                    .create_organization(
+                        &write,
+                        &self.project,
+                        &terrascale::auth_projects::OrganizationRequest {
+                            name: "SDK organization".into(),
+                            slug: self.table.replace('_', "-"),
+                            admin_user_id: Some(user.clone()),
+                            image_url: None,
+                            public_metadata: None,
+                            private_metadata: None,
+                            max_members: None,
+                            domain_join: "off".into(),
+                        },
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let found = auth
+                    .get_organization(&read, &self.project, &created.id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(json!(found.id), &json!(created.id), "organization read")?;
+                let listed = auth
+                    .list_organizations(&read, &self.project, Some(100), None)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(
+                    json!(listed.items.iter().any(|item| item.id == created.id)),
+                    &json!(true),
+                    "organization listed",
+                )?;
+                let members = auth
+                    .list_organization_members(&read, &self.project, &created.id, Some(100), None)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(
+                    json!(members.items[0].role),
+                    &json!("admin"),
+                    "initial admin",
+                )?;
+                auth.create_organization_invitation(
+                    &write,
+                    &self.project,
+                    &created.id,
+                    &terrascale::auth_projects::OrganizationInvitationRequest {
+                        inviter_name: None,
+                        email: format!("org-{}@example.com", self.table),
+                        role: "member".into(),
+                    },
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+                let invites = auth
+                    .list_organization_invitations(
+                        &read,
+                        &self.project,
+                        &created.id,
+                        Some(100),
+                        None,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                same(
+                    json!(invites.items[0].status),
+                    &json!("pending"),
+                    "invitation listed",
+                )?;
+                auth.delete_organization(&write, &self.project, &created.id)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
             "auth.manage_user" => {
                 let config = ClientConfig::builder()
                     .auth_base_url("https://auth.terrascale.tech")

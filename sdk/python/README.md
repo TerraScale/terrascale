@@ -328,3 +328,4 @@ Project invitation and waitlist management on this branch is described in [the a
 Project user profile creation, merge-patch updates, and partial password-hash imports
 are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
 for fields, scope requirements, hash encodings and the next-release API names.
+Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
