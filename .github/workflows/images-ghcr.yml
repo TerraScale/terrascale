@@ -74,6 +74,16 @@ jobs:
             echo deploy=false >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          ci=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&branch=main&event=push&per_page=100" \
+            --jq '.workflow_runs | max_by(.id) | .status == "completed" and .conclusion == "success"')
+          if [ "$ci" != true ]; then
+            if [ "$EVENT_NAME" = workflow_dispatch ]; then
+              echo 'The dispatched revision must pass main CI before dashboard deployment' >&2
+              exit 1
+            fi
+            echo deploy=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           deploy=$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")
           if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$deploy" != true ]; then
             echo 'Dispatch deployment only for the newest unreleased dashboard commit on green main' >&2
