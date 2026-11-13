@@ -1,7 +1,7 @@
 # TerraBase SDK contract
 
 - `routes.json` records every client method and path.
-- `database-deletion.openapi.json` is the scoped live OpenAPI export for seven-day deletion and restoration, excluding common response headers and examples. Regenerate with `python3 scripts/terrabase/export-deletion-openapi.py <openapi-v1.json> sdk/dotnet/contracts/terrabase/database-deletion.openapi.json` from the repo root. SDK convenience methods ship after this producer is deployed.
+- `database-deletion.openapi.json` is the scoped live OpenAPI export for deletion, restoration and durable purge jobs (GET 200 and DELETE 202/204), excluding common response headers and examples. Regenerate with `python3 scripts/terrabase/export-deletion-openapi.py <openapi-v1.json> sdk/dotnet/contracts/terrabase/database-deletion.openapi.json` from the repo root. SDK convenience methods ship after this producer is deployed.
 - `current-public-routes.json` is the full public route inventory of TerraBase's `/openapi/v1.json` at its `serverCommit`.
 - `sql/` holds the SQL error codes and WebSocket session contract shared by every SDK; see [`sdk/SQL-API.md`](../../../SQL-API.md), [`sql-execute.md`](sql-execute.md) and [`sql-websocket.md`](sql-websocket.md).
 - `functions.json`, `function-invocations.json`, `file-storage/`, `project-metrics.json`, `public-health.md`, `regions.md`, `request-logs.md`, `database-rename.md` and `project-erasure.md` pin their scoped producer sources.
