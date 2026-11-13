@@ -142,13 +142,17 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     const originalBytes = paths.map(path => readFileSync(path));
     await start('k0', { k0: k0.toString('base64') });
     await ready();
-    await expect.poll(async () => Number((await (await fetch('http://127.0.0.1:18383/metrics')).text())
-      .match(/terrabase_keys_last_complete[^\n]* (\d+)/)?.[1] ?? '0')).toBeGreaterThan(0);
+    const skipped = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+    expect(skipped).toMatch(/terrabase_keys_last_complete[^\n]* 0(?:\n|$)/);
+    expect(skipped).toMatch(/terrabase_keys_wrapped[^\n]*key_id="k0"[^\n]*\} -1(?:\n|$)/);
     await stop();
     for (const [index, path] of paths.entries()) expect(readFileSync(path).equals(originalBytes[index])).toBe(true);
+    const leftover = paths[0] + '.rewrapping';
+    writeFileSync(leftover, originalBytes[0], { mode: 0o600 });
     const originalKeys = paths.map(path => createHash('sha256').update(process.env.E2E_KEYRING_BASELINE ? dataKey(path) : legacy(path)).digest('hex'));
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await rotated(paths.length);
+    expect(existsSync(leftover)).toBe(false);
     await stop();
     expect(createHash('sha256').update(legacy(paths[0])).digest('hex')).toBe(originalKeys[0]);
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
@@ -169,7 +173,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await expect.poll(async () => (await (await fetch('http://127.0.0.1:18383/metrics')).text())
       .match(/terrabase_keys_wrapped[^\n]*status="unreadable"[^\n]*\} (\d+)/)?.[1]).toBe('1');
     expect(readFileSync(later, 'ascii').startsWith('TERRABASE-REPLICA-KEY-2\nv2.k1.')).toBe(true);
-    expect(readFileSync(orphan, 'ascii')).toBe('interrupted promote');
+    expect(existsSync(orphan)).toBe(false);
     expect(readFileSync(log, 'utf8').split('\n').filter(line =>
       line.includes('"component":"TerraBase.Features.Backup.KeyRewrap"') && line.includes(malformed))).toHaveLength(1);
     await stop();
@@ -201,7 +205,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await start('absent', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await expect.poll(() => child?.exitCode).toBe(2);
     expect(readFileSync(log, 'utf8').includes('configured active key')).toBe(true);
-    console.log(`keyring: ${paths.length} existing encrypted databases opened; mixed k0/k1 sidecars resumed; k0=0 k1=${paths.length}; unchanged k0 upgrade; malformed item counted and later replica rotated; promote orphan skipped; k0 retired; missing, wrong and unknown ids refused; missing active key rejected`);
+    console.log(`keyring: ${paths.length} existing encrypted databases opened; mixed k0/k1 sidecars resumed; k0=0 k1=${paths.length}; unchanged k0 upgrade; malformed item counted and later replica rotated; rewrapping and promote leftovers removed; k0 retired; missing, wrong and unknown ids refused; missing active key rejected`);
   } finally {
     await stop();
     k0.fill(0);

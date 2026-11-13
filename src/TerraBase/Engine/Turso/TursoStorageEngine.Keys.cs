@@ -12,6 +12,7 @@ internal sealed partial class TursoStorageEngine : IWrappedKeyFiles
             await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                WrappedKeyFile.RemoveLeftover(path);
                 DatabaseKeys.RejectLink(path);
                 if (!File.Exists(path))
                 {
@@ -43,7 +44,9 @@ internal sealed partial class TursoStorageEngine : IWrappedKeyFiles
         try
         {
             DatabaseKeys.RejectLink(directory);
-            files = Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix);
+            files = Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix)
+                .Concat(Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix + ".rewrapping").Select(path => path[..^11]))
+                .Distinct(StringComparer.Ordinal).ToArray();
             children = Directory.GetDirectories(directory);
         }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)

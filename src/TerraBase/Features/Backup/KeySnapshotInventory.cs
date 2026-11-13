@@ -8,7 +8,7 @@ internal sealed class KeySnapshotInventory(IKeyring keyring, TimeProvider time, 
     internal async Task<IReadOnlyDictionary<string, double>> RunAsync(KeyInventory inventory, CancellationToken cancellationToken)
     {
         var ages = keyring.KeyIds.ToDictionary(id => id, _ => 0d, StringComparer.Ordinal);
-        if (bucket is null || keys is null)
+        if (keyring.KeyIds.Count == 1 || bucket is null || keys is null)
         {
             return ages;
         }

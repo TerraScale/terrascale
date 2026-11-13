@@ -99,7 +99,7 @@ internal sealed partial class S3ObjectStore
                 {
                     return id;
                 }
-                using var content = new MemoryStream(Encoding.ASCII.GetBytes(keyring.Wrap(key)));
+                using var content = new MemoryStream(Encoding.ASCII.GetBytes(keyring.Rewrap(key, path)));
                 try
                 {
                     await SafeAsync(_s3.PutObjectAsync(new PutObjectRequest

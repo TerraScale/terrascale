@@ -617,6 +617,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         DeleteFileIfPresent(path);
                         _checkpoint("delete.main_file", database);
                         DeleteSidecars(path);
+                        TursoReplicas.DeleteDetached(Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db"));
                         var directory = Path.GetDirectoryName(path)!;
                         if (Directory.Exists(directory))
                         {
@@ -1318,6 +1319,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private void DeleteSidecars(string path, bool keepKey = false)
     {
         RejectDatabaseLinks(path);
+        WrappedKeyFile.RemoveLeftover(path + DatabaseKeys.Suffix);
         foreach (var sidecar in Sidecars.Where(sidecar => !keepKey || sidecar != DatabaseKeys.Suffix))
         {
             RejectLink(path + sidecar);

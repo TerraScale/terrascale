@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using Amazon.S3;
 using TerraBase.Engine;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using ZLogger;
 
@@ -9,7 +10,7 @@ namespace TerraBase.Features.Backup;
 
 internal sealed class KeyRewrap(
     IKeyring keyring, IEnumerable<IWrappedKeyFiles> files, CredentialKeyRewrap credentials, KeySnapshotInventory snapshots,
-    IMeterFactory meters, TimeProvider time, ILogger<KeyRewrap> logger, ICatalogGate gate, KeyCustody? custody = null) : BackgroundService
+    IMeterFactory meters, TimeProvider time, ILogger<KeyRewrap> logger, ICatalogGate gate, RegionalOwners owners, KeyRewrapFaults faults, KeyCustody? custody = null) : BackgroundService
 {
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private readonly HashSet<string> _logged = new(StringComparer.Ordinal);
@@ -25,6 +26,11 @@ internal sealed class KeyRewrap(
             "Unix time of the last complete inventory, including unreadable items; zero until the first completion.");
         _meter.CreateObservableGauge("terrabase.keys.oldest_snapshot_age", ObserveSnapshots, "s",
             "Age of the oldest retained platform snapshot embedding each key id; zero means none, minus one means unknown.");
+        if (keyring.KeyIds.Count == 1)
+        {
+            Volatile.Write(ref _counts, keyring.KeyIds.ToDictionary(id => id, _ => -1L, StringComparer.Ordinal));
+            return;
+        }
         await gate.Opened.WaitAsync(cancellationToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(TimeSpan.FromHours(1), time);
         do
@@ -33,7 +39,7 @@ internal sealed class KeyRewrap(
             Volatile.Write(ref _snapshotAges, null);
             try
             {
-                var inventory = new KeyInventory(logger, _logged);
+                var inventory = new KeyInventory(logger, _logged, faults);
                 foreach (var id in keyring.KeyIds)
                 {
                     inventory.Counts[id] = 0;
@@ -42,7 +48,7 @@ internal sealed class KeyRewrap(
                 {
                     await source.RewrapAsync(inventory, cancellationToken).ConfigureAwait(false);
                 }
-                if (custody is not null)
+                if (owners.Writer && custody is not null)
                 {
                     await foreach (var item in custody.Store.ListAsync("v1/keys/", null, cancellationToken).ConfigureAwait(false))
                     {
@@ -67,8 +73,12 @@ internal sealed class KeyRewrap(
                         }
                     }
                 }
-                await credentials.RunAsync(inventory, cancellationToken).ConfigureAwait(false);
-                var ages = await snapshots.RunAsync(inventory, cancellationToken).ConfigureAwait(false);
+                IReadOnlyDictionary<string, double> ages = keyring.KeyIds.ToDictionary(id => id, _ => -1d, StringComparer.Ordinal);
+                if (owners.Writer)
+                {
+                    await credentials.RunAsync(inventory, cancellationToken).ConfigureAwait(false);
+                    ages = await snapshots.RunAsync(inventory, cancellationToken).ConfigureAwait(false);
+                }
                 Interlocked.Exchange(ref _unreadable, inventory.UnreadableCount);
                 Volatile.Write(ref _snapshotAges, ages);
                 Volatile.Write(ref _counts, inventory.Counts);
@@ -84,8 +94,8 @@ internal sealed class KeyRewrap(
 
     private IEnumerable<Measurement<long>> Observe() => Volatile.Read(ref _counts) is { } counts
         ? counts.Select(pair => new Measurement<long>(pair.Value, new KeyValuePair<string, object?>("key_id", pair.Key)))
-            .Append(new Measurement<long>(Interlocked.Read(ref _unreadable), new KeyValuePair<string, object?>("status", "unreadable")))
-        : [];
+            .Append(new Measurement<long>(Interlocked.Read(ref _unreadable) + faults.Count, new KeyValuePair<string, object?>("status", "unreadable")))
+        : [new Measurement<long>(faults.Count, new KeyValuePair<string, object?>("status", "unreadable"))];
 
     private IEnumerable<Measurement<double>> ObserveSnapshots() => Volatile.Read(ref _snapshotAges) is { } ages
         ? ages.Select(pair => new Measurement<double>(pair.Value, new KeyValuePair<string, object?>("key_id", pair.Key)))

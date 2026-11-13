@@ -20,11 +20,12 @@ public static class EngineExtensions
         ArgumentNullException.ThrowIfNull(options);
         services.TryAddSingleton(options);
         services.TryAddSingleton<INativeTemporaryStorage, NativeTemporaryStorage>();
+        services.AddSingleton<KeyRewrapFaults>();
         services.TryAddKeyedSingleton<IKeyring>(DatabaseMasterKey, (provider, _) =>
         {
             var configured = provider.GetRequiredService<TerraBaseOptions>();
             return new Keyring(configured.DatabaseKeyring ?? configured.Backup?.Keyring
-                ?? throw new TerraBaseConfigurationException("master-key is required for database encryption"));
+                ?? throw new TerraBaseConfigurationException("master-key is required for database encryption"), provider.GetRequiredService<KeyRewrapFaults>());
         });
         services.TryAddSingleton<IKeyring>(provider => provider.GetRequiredKeyedService<IKeyring>(DatabaseMasterKey));
         services.AddSingleton<CredentialKeyRewrap>();

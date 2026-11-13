@@ -10,14 +10,20 @@ internal sealed partial class TursoReplicas : IWrappedKeyFiles
         {
             return Task.CompletedTask;
         }
-        foreach (var file in ReplicaKeyFiles(Root, inventory).Where(file => !file.EndsWith(".promote.db.key", StringComparison.Ordinal)))
+        foreach (var file in ReplicaKeyFiles(Root, inventory))
         {
             cancellationToken.ThrowIfCancellationRequested();
             lock (KeyRecords)
             {
                 try
                 {
+                    WrappedKeyFile.RemoveLeftover(file);
                     DatabaseKeys.RejectLink(file);
+                    if (file.EndsWith(".promote.db.key", StringComparison.Ordinal))
+                    {
+                        DeleteDetached(file[..^DatabaseKeys.Suffix.Length]);
+                        continue;
+                    }
                     if (!File.Exists(file))
                     {
                         continue;
@@ -43,7 +49,9 @@ internal sealed partial class TursoReplicas : IWrappedKeyFiles
         try
         {
             DatabaseKeys.RejectLink(directory);
-            files = Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix);
+            files = Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix)
+                .Concat(Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix + ".rewrapping").Select(path => path[..^11]))
+                .Distinct(StringComparer.Ordinal).ToArray();
             children = Directory.GetDirectories(directory);
         }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)

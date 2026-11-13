@@ -135,39 +135,49 @@ internal sealed partial class TursoReplicas(
 
         return await Task.Run(() =>
         {
-            var wrapped = DataKeyRecord(path) ?? throw new InvalidDataException("the replica's data key record is missing");
-            var plain = master.Unwrap(wrapped);
-            try
+            lock (KeyRecords)
             {
-                wrapped = master.Wrap(plain);
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(plain);
-            }
-            var detached = Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db");
-            DeleteDetached(detached);
-            DatabaseKeys.RejectLink(path);
-            File.Move(path, detached);
-            if (File.Exists(path + "-wal"))
-            {
-                File.Move(path + "-wal", detached + "-wal");
-            }
+                var wrapped = DataKeyRecord(path) ?? throw new InvalidDataException("the replica's data key record is missing");
+                if (master.NeedsRewrap(wrapped))
+                {
+                    var plain = master.Unwrap(wrapped);
+                    try
+                    {
+                        wrapped = master.Rewrap(plain, path + DatabaseKeys.Suffix);
+                    }
+                    finally
+                    {
+                        CryptographicOperations.ZeroMemory(plain);
+                    }
+                }
+                var detached = Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db");
+                DeleteDetached(detached);
+                DatabaseKeys.RejectLink(path);
+                File.Move(path, detached);
+                if (File.Exists(path + "-wal"))
+                {
+                    File.Move(path + "-wal", detached + "-wal");
+                }
 
-            using (var file = new FileStream(detached + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? DatabaseKeys.Header : DatabaseKeys.PreviousHeader) + wrapped + "\n"));
-                file.Flush(flushToDisk: true);
+                using (var file = new FileStream(detached + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? DatabaseKeys.Header : DatabaseKeys.PreviousHeader) + wrapped + "\n"));
+                    file.Flush(flushToDisk: true);
+                }
+                DirectorySync.Sync(Path.GetDirectoryName(detached)!);
+                _ = DeleteFiles(path, keepDetached: true);
+                return detached;
             }
-
-            _ = DeleteFiles(path);
-            return detached;
         }, cancellationToken).ConfigureAwait(false);
     }
 
     internal static void DeleteDetached(string detached)
     {
-        foreach (var suffix in (string[])["", "-wal", "-shm", DatabaseKeys.Suffix])
+        if (!Directory.Exists(Path.GetDirectoryName(detached)))
+        {
+            return;
+        }
+        foreach (var suffix in (string[])["", "-wal", "-shm", DatabaseKeys.Suffix, DatabaseKeys.Suffix + ".rewrapping"])
         {
             DatabaseKeys.RejectLink(detached + suffix);
             File.Delete(detached + suffix);
@@ -429,7 +439,7 @@ internal sealed partial class TursoReplicas(
         }
     }
 
-    private static bool DeleteFiles(string path)
+    private static bool DeleteFiles(string path, bool keepDetached = false)
     {
         lock (KeyRecords)
         {
@@ -448,6 +458,10 @@ internal sealed partial class TursoReplicas(
                 deleted = true;
             }
 
+            if (!keepDetached)
+            {
+                DeleteDetached(Path.Combine(directory, Path.GetFileNameWithoutExtension(path) + ".promote.db"));
+            }
             return deleted;
         }
     }

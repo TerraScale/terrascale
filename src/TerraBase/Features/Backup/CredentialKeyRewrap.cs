@@ -73,7 +73,7 @@ internal sealed class CredentialKeyRewrap(SystemCatalog catalog, RegionalOwners 
                                 }
                                 await PutAsync(transaction, kind, stored.Id, current with
                                 {
-                                    Credentials = current.Credentials with { WrappedKey = keyring.Wrap(key) },
+                                    Credentials = current.Credentials with { WrappedKey = keyring.Rewrap(key, kind + "/" + stored.Id) },
                                 }, BackupJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
                                 return keyring.ActiveId;
                             }, static error => throw new IOException(error.Message), cancellationToken).ConfigureAwait(false);

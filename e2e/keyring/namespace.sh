@@ -1,7 +1,8 @@
 export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH";
 set -euo pipefail
 ip link set lo up
-printf '127.0.0.1 localhost journey.backups.terrascale.tech 6cd3f3639e928077593d9b470765efeb.r2.cloudflarestorage.com\n' > "$E2E_STATE/hosts"
+ip address add 8.8.8.8/32 dev lo
+printf '127.0.0.1 localhost\n8.8.8.8 journey.backups.terrascale.tech 6cd3f3639e928077593d9b470765efeb.r2.cloudflarestorage.com\n' > "$E2E_STATE/hosts"
 printf 'hosts: files\n' > "$E2E_STATE/nsswitch.conf"
 mount --bind "$E2E_STATE/hosts" /etc/hosts
 mount --bind "$E2E_STATE/nsswitch.conf" /etc/nsswitch.conf

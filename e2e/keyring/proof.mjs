@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:https';
 import { join, resolve } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { internal, project } from './operations.mjs';
 
 const root = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const profile = process.env.E2E_STATE;
@@ -39,8 +40,10 @@ async function stop(child) {
   }
   children.delete(child);
 }
-const standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store', { ...clean, E2E_REGIONS: '2' });
+let standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store', { ...clean, E2E_REGIONS: '2' });
+const requests = [];
 const proxy = createServer({ key: readFileSync(join(profile, 'tls.key')), cert: readFileSync(join(profile, 'tls.pem')) }, (request, response) => {
+  requests.push({ method: request.method, path: request.url, range: request.headers.range });
   const upstream = httpRequest({ hostname: '127.0.0.1', port: 8028, method: request.method, path: request.url, headers: request.headers }, answer => {
     response.writeHead(answer.statusCode, answer.headers);
     answer.pipe(response);
@@ -48,7 +51,7 @@ const proxy = createServer({ key: readFileSync(join(profile, 'tls.key')), cert: 
   upstream.on('error', () => { response.writeHead(502); response.end(); });
   request.pipe(upstream);
 });
-proxy.listen(443, '127.0.0.1');
+proxy.listen(443, '0.0.0.0');
 await once(proxy, 'listening');
 const sha = body => createHash('sha256').update(body).digest('hex');
 const hmac = (key, value) => createHmac('sha256', key).update(value).digest();
@@ -76,17 +79,19 @@ async function objects(bucket, prefix) {
 const files = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry =>
   entry.isDirectory() ? files(join(directory, entry.name)) : entry.name.endsWith('.key') ? [join(directory, entry.name)] : []);
 let sequence = 0;
-function node(binary, active) {
-  const ring = join(profile, 'ring.json');
+function node(binary, active, extra = {}) {
+  const ring = join(profile, 'ring-' + sequence + '.json');
   writeFileSync(ring, JSON.stringify({ active, keys: active === 'k0' ? { k0: master } : { k0: master, k1: next } }), { mode: 0o600 });
   return startProcess('dotnet', [binary], `node-${++sequence}`, {
     ...clean, DOTNET_ROOT: process.env.DOTNET_ROOT, DOTNET_PROCESSOR_COUNT: '4', DOTNET_ENVIRONMENT: 'Development',
+    TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
     ...(binary === baseline ? { TERRABASE_MASTER_KEY: master } : { TERRABASE_MASTER_KEYS_FILE: ring }),
     TERRABASE_PEER_SECRET: peer, TERRABASE_DATA_DIRECTORY: data, TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
     TERRABASE_PORT: '18380', TERRABASE_INTERNAL_PORT: '18381', TERRABASE_POSTGRES_PORT: '18382', TERRABASE_METRICS_PORT: '18383',
     AWS_ENDPOINT_URL_S3: 'https://journey.backups.terrascale.tech', AWS_REGION: 'auto', BUCKET_NAME: 'journey-backups',
     AWS_ACCESS_KEY_ID: access, AWS_SECRET_ACCESS_KEY: secret,
     TERRABASE_SHAPES_ACCESS_KEY_ID: access, TERRABASE_SHAPES_SECRET_ACCESS_KEY: secret, TERRABASE_SHAPES_CDN_API_TOKEN: peer,
+    ...extra,
   });
 }
 async function until(name, child, condition) {
@@ -110,6 +115,13 @@ try {
   await ready(child);
   await until('origin custody and snapshots', child, async () =>
     (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).length > 0 && (await objects('journey-backups', 'v1/')).some(key => key.includes('/snapshots/')));
+  const scope = await project(peer, 'http://127.0.0.1:18381', 'keyring-proof');
+  const projectPath = '/v1/projects/' + scope.project;
+  const database = await internal(peer, 'http://127.0.0.1:18381', 'POST', projectPath + '/databases', { name: 'keyring-delete' });
+  await internal(peer, 'http://127.0.0.1:18381', 'PUT', projectPath + '/backup-destination', {
+    endpoint: 'https://journey.backups.terrascale.tech', region: 'auto', bucket: 'journey-backups',
+    accessKeyId: access, secretKey: secret, mode: 'both',
+  });
   await stop(child);
   const keyFiles = new Map(files(data).map(path => [path, sha(readFileSync(path))]));
   const custody = new Map();
@@ -119,30 +131,35 @@ try {
     custody.set(path, sha(Buffer.from(await response.arrayBuffer())));
   }
   console.log(`origin/main created ${keyFiles.size} key files and ${custody.size} custody objects`);
+  const readsBefore = requests.length;
   child = node(candidate, 'k0');
   await ready(child);
-  await until('inventory completed', child, async () => value(await metrics(), 'terrabase_keys_last_complete') > 0);
-  const started = Date.now();
-  for await (const tick of setInterval(1000)) {
-    void tick;
-    assert.equal(child.exitCode, null);
-    const current = await metrics();
-    assert.ok(value(current, 'terrabase_keys_last_complete') > 0);
-    assert.equal(value(current, 'terrabase_keys_wrapped', 'status="unreadable"'), 0);
-    for (const [path, hash] of keyFiles) assert.equal(sha(readFileSync(path)), hash, 'key file byte identity');
-    for (const [path, hash] of custody) {
-      const response = await object('GET', 'ts-terrabase-shapes-prod', path);
-      assert.equal(response.status, 200);
-      assert.equal(sha(Buffer.from(await response.arrayBuffer())), hash, 'custody byte identity');
-    }
-    if (Date.now() - started >= 300_000) break;
-  }
+  const skipped = await metrics();
+  assert.equal(value(skipped, 'terrabase_keys_last_complete'), 0);
+  assert.equal(value(skipped, 'terrabase_keys_wrapped', 'key_id="k0"'), -1);
+  assert.equal(value(skipped, 'terrabase_keys_oldest_snapshot_age', 'key_id="k0"'), -1);
+  const passRequests = requests.slice(readsBefore);
+  const rootListings = passRequests.filter(request => {
+    const query = new URL(request.path, 'https://standin').searchParams;
+    return request.method === 'GET' && query.get('prefix') === 'v1/keys/' && !query.has('start-after');
+  });
+  const snapshotReads = passRequests.filter(request => request.method === 'GET' && request.range === 'bytes=0-2097151');
+  assert.equal(rootListings.length, 1, 'only the independent shred sweep lists the custody root');
+  assert.equal(snapshotReads.length, 0, 'single-key inventory made no snapshot reads');
+  for (const [path, hash] of keyFiles) assert.equal(sha(readFileSync(path)), hash, 'key file byte identity');
   await stop(child);
-  console.log(`upgrade: 300 seconds, ${keyFiles.size} key files and ${custody.size} custody objects byte-identical; unreadable=0`);
+  for (const [path, hash] of custody) {
+    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
+    assert.equal(response.status, 200);
+    assert.equal(sha(Buffer.from(await response.arrayBuffer())), hash, 'custody byte identity');
+  }
+  console.log('one key: maintenance skipped; extra custody root listings=0 (shred sweep=1), snapshot range reads=0; wrapped=-1 last_complete=0 snapshot_age=-1; existing wrappers byte-identical');
   child = node(baseline, 'k0');
   await ready(child);
   await stop(child);
-  console.log('rollback: origin/main opened the same directory after the five-minute upgrade');
+  console.log('rollback: origin/main opened the same directory after the single-key upgrade');
+  const leftover = join(data, '_system.db.key.rewrapping');
+  writeFileSync(leftover, readFileSync(join(data, '_system.db.key')), { mode: 0o600 });
   child = node(candidate, 'k1');
   await ready(child);
   await until('rotation and snapshot inventory', child, async () => {
@@ -152,10 +169,51 @@ try {
   const current = await metrics();
   assert.equal(value(current, 'terrabase_keys_wrapped', 'status="unreadable"'), 0);
   assert.ok(value(current, 'terrabase_keys_oldest_snapshot_age', 'key_id="k0"') > 0, 'embedded k0 snapshot still blocks retirement');
-  console.log('rotation with custody: k0 wrappers=0, unreadable=0, oldest retained k0 snapshot age>0 (retirement blocked)');
+  assert.equal(existsSync(leftover), false);
+  for (const path of files(data)) {
+    const wrapped = readFileSync(path, 'ascii').trim().split('\n')[1];
+    assert.ok(wrapped.startsWith('v2.k1.'));
+    const body = Buffer.from(wrapped.split('.')[2], 'base64');
+    const cipher = createDecipheriv('aes-256-gcm', Buffer.from(next, 'base64'), body.subarray(0, 12));
+    cipher.setAAD(Buffer.from('v2.k1'));
+    cipher.setAuthTag(body.subarray(-16));
+    assert.equal(Buffer.concat([cipher.update(body.subarray(12, -16)), cipher.final()]).length, 32);
+  }
+  for (const path of custody.keys()) {
+    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
+    const wrapped = await response.text();
+    assert.ok(wrapped.startsWith('v2.k1.'));
+    const body = Buffer.from(wrapped.split('.')[2], 'base64');
+    const cipher = createDecipheriv('aes-256-gcm', Buffer.from(next, 'base64'), body.subarray(0, 12));
+    cipher.setAAD(Buffer.from('v2.k1'));
+    cipher.setAuthTag(body.subarray(-16));
+    assert.equal(Buffer.concat([cipher.update(body.subarray(12, -16)), cipher.final()]).length, 32);
+  }
+  assert.ok(value(current, 'terrabase_keys_wrapped', 'key_id="k1"') >= keyFiles.size + custody.size + 2,
+    'current and historical credentials are included and verified');
+  const databaseKey = join(data, scope.organization, scope.project, database.id + '.db.key');
+  assert.equal(existsSync(databaseKey), true);
+  writeFileSync(databaseKey + '.rewrapping', readFileSync(databaseKey), { mode: 0o600 });
+  const promoteKey = databaseKey.replace('.db.key', '.promote.db.key');
+  writeFileSync(promoteKey, readFileSync(databaseKey), { mode: 0o600 });
+  await internal(peer, 'http://127.0.0.1:18381', 'DELETE', projectPath + '/databases/' + database.id);
+  assert.equal(existsSync(databaseKey), false);
+  assert.equal(existsSync(databaseKey + '.rewrapping'), false);
+  assert.equal(existsSync(promoteKey), false);
+  console.log('two keys: local files, custody and current/historical credentials rewrapped and authenticated; retained k0 snapshot age>0');
+  console.log('leftovers: next multi-key pass removed .rewrapping; database deletion removed .rewrapping and .promote.db.key');
   await stop(child);
+  const firstLog = await (await fetch('http://127.0.0.1:8028/log')).json();
+  assert.deepEqual(firstLog.unexpected, [], 'first scenario had no unexpected object-store requests');
+  await stop(standin);
+  standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store-promotion', { ...clean, E2E_REGIONS: '2' });
   mkdirSync(join(profile, 'journey'), { recursive: true });
-  const journey = spawn(join(root, 'e2e/node_modules/.bin/playwright'), ['test', '--config', join(root, 'artifacts/C33-playwright.config.ts')], {
+  writeFileSync(join(profile, 'journey', 'r2'), readFileSync(join(profile, 'r2')), { mode: 0o600 });
+  const config = join(profile, 'playwright.config.ts');
+  writeFileSync(config, 'import { defineConfig } from ' + JSON.stringify(join(root, 'e2e/node_modules/@playwright/test'))
+    + '; export default defineConfig(' + JSON.stringify({ testDir: join(root, 'e2e'), testMatch: ['interactions/keyring.spec.ts', 'keyring/promotion.spec.ts'],
+      timeout: 90000, expect: { timeout: 20000 }, retries: 0, workers: 1, reporter: 'list', outputDir: join(profile, 'journey-results') }) + ');');
+  const journey = spawn(join(root, 'e2e/node_modules/.bin/playwright'), ['test', '--config', config], {
     env: { ...clean, E2E_STATE: join(profile, 'journey'), E2E_KEYRING_BASELINE: baseline }, stdio: 'inherit',
   });
   children.add(journey);

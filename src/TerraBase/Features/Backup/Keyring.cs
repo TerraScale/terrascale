@@ -16,6 +16,8 @@ internal interface IKeyring
 
     string Wrap(ReadOnlySpan<byte> key);
 
+    string Rewrap(ReadOnlySpan<byte> key, string item);
+
     byte[] Unwrap(string wrapped);
 
     Task<(byte[] Key, string Wrapped)> GenerateDataKeyAsync(CancellationToken cancellationToken);
@@ -23,7 +25,7 @@ internal interface IKeyring
     Task<byte[]> UnwrapAsync(string wrapped, CancellationToken cancellationToken);
 }
 
-internal sealed class Keyring(KeyringSettings settings) : IKeyring
+internal sealed class Keyring(KeyringSettings settings, KeyRewrapFaults faults) : IKeyring
 {
     private const int KeyBytes = 32;
     private const int NonceBytes = 12;
@@ -99,6 +101,33 @@ internal sealed class Keyring(KeyringSettings settings) : IKeyring
     }
 
     public bool NeedsRewrap(string wrapped) => KeyId(wrapped) != ActiveId;
+
+    public string Rewrap(ReadOnlySpan<byte> key, string item)
+    {
+        try
+        {
+            var wrapped = Wrap(key);
+            var verified = Unwrap(wrapped);
+            try
+            {
+                if (!CryptographicOperations.FixedTimeEquals(key, verified))
+                {
+                    throw new InvalidDataException("rewrapped data key verification failed");
+                }
+                faults.Verified(item);
+                return wrapped;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(verified);
+            }
+        }
+        catch (Exception error) when (error is InvalidDataException or CryptographicException)
+        {
+            faults.Failed(item);
+            throw new InvalidDataException("rewrapped data key verification failed");
+        }
+    }
 
     public string Wrap(ReadOnlySpan<byte> key)
     {

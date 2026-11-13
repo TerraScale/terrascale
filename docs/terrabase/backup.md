@@ -343,27 +343,51 @@ Selecting a different active id starts rotation. New wrappers then use
 `v2.<keyId>.<base64(nonce|ciphertext|tag)>`, with the version and id authenticated as AES-GCM
 associated data, and sidecars use version 2 headers. Unprefixed wrappers use only `k0`.
 Both sidecar versions remain readable. Missing, malformed, unknown or unauthentic ids fail
-closed without trying other keys. The native database format identity and encrypted data pages
+closed without trying other keys. A malformed replica key record fails every open of that
+replica; it is not silently reset. Clear that disposable cache by stopping the node, removing
+that replica's database and sidecars under the replica directory, and restarting to pull it again.
+The native database format identity and encrypted data pages
 do not change; key sidecars have their own version. **After the first rotation, rollback to a
 build that cannot read version 2 wrappers is unsupported.**
 
 Before selecting a different active id, the operator must verify that **every node in every
-region** runs a build that reads version 2 wrappers. There is no fleet keyring-capability signal;
+region** runs a build that reads version 2 wrappers and every node has the same keyring
+configuration, including the active id. Different active ids are not detected: nodes would
+re-wrap shared objects to their own active key every hour; conditional writes prevent lost
+updates but do not prevent this churn. There is no fleet keyring-capability signal;
 this is an operator precondition, not an automatically enforced rollout gate. First upgrade all
 nodes with the original `k0` active. Distribute the new key to every node while retaining the
 current active id, restart all nodes, and only then select the new active id and restart again.
 Keyring configuration is immutable for the process lifetime, so every active-id change starts
-a new process and a startup inventory. Never return to `k0` after rotating away from it.
+a new process and, with multiple configured keys, a startup inventory.
+Never return to `k0` after rotating away from it.
 
-The full maintenance pass runs at startup (after the catalog opens), on an active-id change
+With exactly one configured key, the entire maintenance pass is skipped: there is no local,
+credential, custody or snapshot scan, and no inventory object-store request. Its wrapper count
+is -1 (unknown), unreadable is zero unless verification has failed, last-complete stays zero,
+and oldest-snapshot-age is -1 (unknown). These values are not retirement evidence.
+
+With multiple configured keys, the full maintenance pass runs at startup (after the catalog
+opens), on an active-id change
 through restart, and hourly thereafter. It atomically replaces only sidecars needing a different
 key, syncs the parent directory after each rename, conditionally replaces shared custody objects,
 and updates current and historical customer credential wrappers only when they must change.
+Only the catalog writer performs the shared custody, credential and snapshot work; local
+key files are scanned on every node. Other nodes report snapshot ages as unknown (-1).
+Before any replacement is written, the new wrapper is opened and its plaintext compared with
+the original in constant time; temporary plaintext is cleared. Verification failures retain
+the original, log one line per item and contribute to the unreadable gauge, including promotion
+failures outside a pass. Such a failure stays counted until a successful verification or restart.
 The creation lock is taken per local file; a scan never holds it across the whole directory.
 Interrupted passes resume from remaining old wrappers. Custody replacements require the ETag
-read with the wrapper, so deletion or another rotation cannot be overwritten. Detached
-`*.promote.db.key` files in the replica directory are excluded: a subsequent promote discards
-these crash leftovers before making its own detached database. They are not live replica keys.
+read with the wrapper, so deletion or another rotation cannot be overwritten. Promotion copies
+an active-key wrapper unchanged; an old-key wrapper is verified before use. The destination
+file and directory are synced before the source key record is deleted. Detached
+`*.promote.db.key` files in the replica directory and `*.key.rewrapping` files are crash leftovers,
+removed under the key-file lock at the next multi-key pass, even when their original file is
+absent. Database deletion removes both kinds immediately; promotion also discards its previous
+detached files. Leftovers are not counted as live wrappers; cleanup failures are unreadable items.
+With one key, the next pass is skipped, so deletion or a later multi-key pass removes leftovers.
 
 `terrabase.keys.wrapped{key_id}` counts local database and replica sidecars, custody keys, and
 current and historical customer credentials after a complete inventory. Unreadable items are
@@ -374,7 +398,7 @@ that count to be zero. An inventory that cannot finish publishes no wrapper coun
 `terrabase.keys.last_complete` is the Unix timestamp of the last complete pass, initially zero;
 a stale timestamp exposes a node whose passes keep failing. Require fresh complete inventories
 on every node with the same active id, the old key at zero, and unreadable at zero. Shared items
-are counted on multiple nodes; do not sum those copies to infer unique counts.
+are counted only by catalog writers; local copies are per node, so do not sum them as unique objects.
 
 The wrapper count **does not cover snapshot bundles or volume backups**: a bundle embeds its
 original database key file, and a historical catalog also embeds its credential wrappers.
@@ -382,9 +406,13 @@ original database key file, and a historical catalog also embeds its credential 
 platform snapshot bundle embedding that id. The inventory authenticates the first backup chunk,
 including snapshots visible only in retained bucket snapshots, without downloading whole databases.
 Zero means none remain; minus one or an absent sample means unknown and blocks retirement.
-A failed snapshot read also increments the unreadable count. Customer-bucket snapshots and
-volume backups require a separate operator inventory; the platform gauge does not inspect them.
-An operator must verify that neither retains material requiring the old key.
+A failed snapshot read also increments the unreadable count. Neither gauge inspects credential
+wrappers inside catalog snapshots, custody objects inside
+retained bucket snapshot views, customer-bucket snapshots, volume backups or restore leases.
+Each requires a separate operator inventory before retirement.
+
+Retirement is an operator action: no code blocks removal of an old key from configuration.
+The gauges provide incomplete evidence, not an enforced retirement gate.
 
 Start the retirement waiting period when the **last wrapper on the last node leaves the old key**,
 not when rotation begins. Retain the key for the longest retention any plan allows (currently
@@ -392,7 +420,7 @@ not when rotation begins. Retain the key for the longest retention any plan allo
 extends the lifetime of that material. Extend this bound for longer customer-bucket or volume
 backup retention. A 21-day wait is insufficient. The old key may be removed only after this
 whole period, fresh old-key and unreadable counts are zero everywhere, the oldest-snapshot-age
-gauge for that key is zero everywhere, no restore lease still needs it, and customer/volume
+gauge for that key is zero on every catalog writer, no restore lease still needs it, and customer/volume
 backup inventories show no remaining dependency. A zero wrapper count alone never permits retirement.
 
 ## Bucket layout (version 1)
