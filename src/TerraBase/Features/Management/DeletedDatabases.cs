@@ -1,3 +1,4 @@
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Tenancy;
 
@@ -15,6 +16,12 @@ internal sealed record DeletedDatabaseRecord(TenantContext Storage, ManagedDatab
 internal static class DeletedDatabases
 {
     public const string Kind = "deleted_databases";
+
+    public static async ValueTask RemoveAsync(IStorageTransaction transaction, DeletedDatabaseRecord record, CancellationToken token)
+    {
+        _ = await transaction.DeleteAsync(Kind, record.Database.Id, token).ConfigureAwait(false);
+        _ = await transaction.DeleteAsync(Project(record.Database.ProjectId), record.Database.Id, token).ConfigureAwait(false);
+    }
 
     public static string Project(string projectId) => Kind + "/" + projectId;
 }
