@@ -28,6 +28,7 @@ namespace TerraBase.Features.Management;
 [JsonSerializable(typeof(DatabaseBackup))]
 [JsonSerializable(typeof(DatabaseOwner))]
 [JsonSerializable(typeof(DeletedDatabaseRecord))]
+[JsonSerializable(typeof(DatabasePurgeBody))]
 [JsonSerializable(typeof(DeletedDatabaseBody))]
 [JsonSerializable(typeof(ManagementPage<DeletedDatabaseBody>))]
 [JsonSerializable(typeof(DatabaseExpiry))]

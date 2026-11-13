@@ -26,6 +26,8 @@ internal sealed partial class EngineManagementService
 
     private void RegisterPurgeMetrics()
     {
+        _recoveryMeter.CreateObservableGauge("terrabase.retention.nonwriter_maintenance_passes", () => Interlocked.Read(ref _nonwriterRetentionPasses));
+        _recoveryMeter.CreateObservableGauge("terrabase.retention.expiries_waiting_confirmation", () => Interlocked.Read(ref _expiryWaiting));
         _recoveryMeter.CreateObservableGauge("terrabase.purge.pending", () => Interlocked.Read(ref _purgePending));
         _recoveryMeter.CreateObservableGauge("terrabase.purge.overdue", () => Interlocked.Read(ref _purgeOverdue));
         _recoveryMeter.CreateObservableGauge("terrabase.purge.oldest_age", () =>

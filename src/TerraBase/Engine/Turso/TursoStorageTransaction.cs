@@ -197,6 +197,15 @@ internal sealed partial class TursoStorageTransaction(
         }
     }
 
+    private long? _regionalEpoch;
+
+    void IStorageTransaction.FenceRegionalWriter(long epoch)
+    {
+        var gate = store.Leases ?? throw new InvalidOperationException("regional writer gate is missing");
+        gate.ThrowIfRegionalWriterChanged(epoch);
+        _regionalEpoch = epoch;
+    }
+
     public async ValueTask<CommitResult> CommitAsync(CancellationToken cancellationToken)
     {
         var result = await RunAsync(() =>
@@ -225,6 +234,10 @@ internal sealed partial class TursoStorageTransaction(
                     store.ThrowIfUnleased(leased);
                 }
 
+                if (_regionalEpoch is { } epoch)
+                {
+                    store.Leases!.ThrowIfRegionalWriterChanged(epoch);
+                }
                 committing = true;
                 transaction.Commit();
                 _committed = true;

@@ -28,7 +28,7 @@ internal sealed partial class EngineManagementService
     public async ValueTask<DeleteDatabaseResult> DeleteDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken)
     {
-        var result = await WriteAsync<SoftDeletionResult>(async transaction =>
+        var result = await WriteRetentionAsync<SoftDeletionResult>(databaseId, async transaction =>
         {
             return await DeletableAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, cancellationToken).ConfigureAwait(false) switch
             {

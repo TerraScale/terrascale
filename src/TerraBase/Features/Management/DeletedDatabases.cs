@@ -23,5 +23,8 @@ internal static class DeletedDatabases
         _ = await transaction.DeleteAsync(Project(record.Database.ProjectId), record.Database.Id, token).ConfigureAwait(false);
     }
 
+    public static async ValueTask<bool> IsRetainedAsync(IStorageTransaction transaction, string databaseId, CancellationToken token) =>
+        await transaction.GetAsync(Kind, databaseId, token).ConfigureAwait(false) is not null;
+
     public static string Project(string projectId) => Kind + "/" + projectId;
 }

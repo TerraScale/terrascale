@@ -11,6 +11,21 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService
 {
     private string? _deletedAfter;
+    private async ValueTask<T> WriteRetentionAsync<T>(string database,
+        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken token)
+    {
+        using var lease = await retention.EnterAsync(database, token).ConfigureAwait(false);
+        if (lease is null)
+        {
+            return unavailable(new Unavailable("this machine is not the current regional writer", "not_writer"));
+        }
+        return await WriteAsync<T>(transaction =>
+        {
+            lease.Fence(transaction);
+            return write(transaction);
+        }, unavailable, token).ConfigureAwait(false);
+    }
+
 
     private async ValueTask<DeletedDatabaseRecord> RetainDeletedAsync(
         IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken)
@@ -68,7 +83,7 @@ internal sealed partial class EngineManagementService
                 Done => throw new UnreachableException(),
             };
         }
-        return await WriteAsync<SetDatabaseRegionsResult>(async transaction =>
+        return await WriteRetentionAsync<SetDatabaseRegionsResult>(databaseId, async transaction =>
         {
             if (ProjectAccess.Current is { DatabaseName: not null })
             {
@@ -95,11 +110,6 @@ internal sealed partial class EngineManagementService
             if (await transaction.GetAsync(DatabasePurge.Kind, databaseId, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return new Conflict("permanent deletion has already begun", "database_purging");
-            }
-
-            if (record.PurgeAt <= time.GetUtcNow())
-            {
-                return new Conflict("the seven-day restore window has ended", "restore_window_expired");
             }
 
             if (CheckDeletionPlacement(record.Database, options.Region) is Conflict refused)
@@ -132,9 +142,32 @@ internal sealed partial class EngineManagementService
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<DeleteDatabaseResult> PurgeDeletedDatabaseAsync(
+    public async ValueTask<PurgeDatabaseResult> PurgeDeletedDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken)
     {
+        using var authority = await retention.EnterAsync(databaseId, cancellationToken).ConfigureAwait(false);
+        if (authority is null)
+        {
+            return new Unavailable("this machine is not the current regional writer", "not_writer");
+        }
+        var known = await GetDatabasePurgeAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
+        if (known is DatabasePurgeBody existing)
+        {
+            if (existing.State == "complete")
+            {
+                return ManagementErrors.NotFound;
+            }
+            await AdvancePurgeAsync(databaseId, cancellationToken).ConfigureAwait(false);
+            return await GetDatabasePurgeAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
+        }
+        if (known is Forbidden forbidden)
+        {
+            return forbidden;
+        }
+        if (known is Unavailable unavailable)
+        {
+            return unavailable;
+        }
         var prepared = await ReadAsync<SoftDeletionResult>(async transaction =>
         {
             if (ProjectAccess.Current is { DatabaseName: not null })
@@ -179,6 +212,7 @@ internal sealed partial class EngineManagementService
         }
         var result = await DeleteRecordedAsync(retained.Storage, async (transaction, token) =>
         {
+            authority.Fence(transaction);
             if (await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, token).ConfigureAwait(false) is not TenantContext)
             {
                 return false;
@@ -198,11 +232,12 @@ internal sealed partial class EngineManagementService
         }, cancellationToken).ConfigureAwait(false);
         if (result is true)
         {
-            _ = await shredding.Value.DestroyAsync(retained.Storage, DateTimeOffset.MaxValue, cancellationToken).ConfigureAwait(false);
+            await AdvancePurgeAsync(databaseId, cancellationToken).ConfigureAwait(false);
+            return await GetDatabasePurgeAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
         }
         return result switch
         {
-            true => new Done(),
+            true => throw new UnreachableException(),
             false => new Conflict("the deleted database changed during purge", "database_purging"),
             Unavailable error => error,
         };
@@ -216,6 +251,10 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask PurgeDeletedDatabasesAsync(CancellationToken cancellationToken)
     {
+        if (!retention.Writer)
+        {
+            return;
+        }
         var page = await ReadAsync<ManagementPage<DeletedDatabaseRecord>?>(async transaction => await SystemCatalog.ListAsync(
             transaction, DeletedDatabases.Kind, _deletedAfter, CatalogPage, ManagementJsonContext.Default.DeletedDatabaseRecord,
             record => record.Database.Id, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
@@ -224,10 +263,16 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        foreach (var record in page.Items.Where(record => record.PurgeAt <= time.GetUtcNow() && record.Database.Home(options.Region) == options.Region))
+        var waiting = 0L;
+        foreach (var record in page.Items.Where(record => record.PurgeAt.AddHours(1) <= time.GetUtcNow() && record.Database.Home(options.Region) == options.Region))
         {
             try
             {
+                if (!await ConfirmExpiryAsync(record, cancellationToken).ConfigureAwait(false))
+                {
+                    waiting++;
+                    continue;
+                }
                 if (await PurgeDeletedRecordAsync(record, cancellationToken).ConfigureAwait(false) is Unavailable unavailable)
                 {
                     _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "retained_cleanup"));
@@ -241,18 +286,30 @@ internal sealed partial class EngineManagementService
             }
         }
 
+        _expiryPassWaiting += waiting;
         _deletedAfter = page.Next;
+        if (page.Next is null)
+        {
+            Interlocked.Exchange(ref _expiryWaiting, _expiryPassWaiting);
+            _expiryPassWaiting = 0;
+        }
     }
     private async ValueTask<RecordedDeletion> PurgeDeletedRecordAsync(DeletedDatabaseRecord record, CancellationToken cancellationToken)
     {
+        using var authority = await retention.EnterAsync(record.Database.Id, cancellationToken).ConfigureAwait(false);
+        if (authority is null)
+        {
+            return false;
+        }
         if (RetainedFilesUnavailable(record) is { } missing)
         {
             return missing;
         }
         var result = await DeleteRecordedAsync(record.Storage, async (transaction, token) =>
         {
+            authority.Fence(transaction);
             var current = await GetAsync(transaction, DeletedDatabases.Kind, record.Database.Id, ManagementJsonContext.Default.DeletedDatabaseRecord, token).ConfigureAwait(false);
-            if (current is null || current.DeletedAt != record.DeletedAt || current.PurgeAt > time.GetUtcNow()
+            if (current is null || current.DeletedAt != record.DeletedAt || current.PurgeAt.AddHours(1) > time.GetUtcNow()
                 || !DatabasePurge.SameDatabase(current.Storage, record.Storage))
             {
                 return false;

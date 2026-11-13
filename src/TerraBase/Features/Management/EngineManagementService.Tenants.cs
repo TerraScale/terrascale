@@ -297,7 +297,8 @@ internal sealed partial class EngineManagementService
         var history = await ReadAsync<AdoptDatabaseResult>(
             async transaction => !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                 ? UnreadableCatalog
-                : !await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
+                : !await DatabasePurge.IsPermanentlyPurgedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
+                    && !await DeletedDatabases.IsRetainedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
                     && await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken)
                         .ConfigureAwait(false) is null
                     && await transaction.GetVersionAsync(RetiredDatabases, database.DatabaseId, cancellationToken).ConfigureAwait(false) is null
@@ -339,7 +340,8 @@ internal sealed partial class EngineManagementService
             placement.AllRegions, ExpiresAt: identity?.ExpiresAt);
         return await WriteAsync<AdoptDatabaseResult>(async transaction =>
         {
-            if (await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false))
+            if (await DatabasePurge.IsPermanentlyPurgedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
+                || await DeletedDatabases.IsRetainedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false))
             {
                 return CatalogDatabaseDeleted;
             }
@@ -607,7 +609,8 @@ internal sealed partial class EngineManagementService
                     : (await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
                         && (await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false))
                             ?.PlacedIn(options.Region) == true)
-                        || (!await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
+                        || (!await DatabasePurge.IsPermanentlyPurgedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
+                    && !await DeletedDatabases.IsRetainedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
                             && await CatalogTables.PendingCleanupAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false) is not null),
                 static error => error, cancellationToken);
     }

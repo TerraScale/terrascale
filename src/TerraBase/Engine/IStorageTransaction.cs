@@ -44,5 +44,7 @@ public interface IStorageTransaction : IAsyncDisposable
 
     internal ValueTask AddSqlStorageAsync(long delta, CancellationToken cancellationToken);
 
+    internal void FenceRegionalWriter(long epoch);
+
     ValueTask<CommitResult> CommitAsync(CancellationToken cancellationToken);
 }

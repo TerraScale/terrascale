@@ -1460,6 +1460,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         new(SystemName, path, Pool, Io, _pragmas, null, Time, RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
         {
             HostTime = HostTime,
+            Leases = Leases,
             QueryBudget = QueryBudget,
             Checkpoint = _checkpoint,
             Ledger = Ledger,

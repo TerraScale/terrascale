@@ -52,6 +52,7 @@ internal sealed partial class RegionalHandoff(
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         gate.RegionalWriter = () => owners.Writer;
+        gate.RegionalEpoch = () => owners.Find(options.Region)?.Epoch ?? 0;
         return base.StartAsync(cancellationToken);
     }
 

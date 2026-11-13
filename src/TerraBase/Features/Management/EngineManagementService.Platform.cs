@@ -142,7 +142,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
                     : new Conflict("a platform database name holds another database, or the platform database with another placement", "platform_database_taken");
         }
 
-        return await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false)
+        return await DatabasePurge.IsPermanentlyPurgedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false)
             ? new Conflict("a platform database id is permanently deleted", "platform_database_purged")
             : ManagementErrors.NotFound;
     }

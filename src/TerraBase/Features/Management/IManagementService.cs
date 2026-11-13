@@ -144,7 +144,10 @@ internal interface IManagementService
     ValueTask<SetDatabaseRegionsResult> RestoreDeletedDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
-    ValueTask<DeleteDatabaseResult> PurgeDeletedDatabaseAsync(
+    ValueTask<PurgeDatabaseResult> GetDatabasePurgeAsync(
+        string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
+
+    ValueTask<PurgeDatabaseResult> PurgeDeletedDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
     ValueTask<DeleteDatabaseResult> DeleteDatabaseAsync(

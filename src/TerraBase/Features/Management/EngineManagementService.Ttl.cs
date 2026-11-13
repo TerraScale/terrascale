@@ -52,7 +52,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask ExpireDatabasesAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
-        if (now < _nextExpirySweep)
+        if (!retention.Writer || now < _nextExpirySweep)
         {
             return;
         }
@@ -66,7 +66,7 @@ internal sealed partial class EngineManagementService
         {
             try
             {
-                if (await WriteAsync<bool>(transaction => UnregisterExpiredAsync(transaction, storage, now, cancellationToken), static _ => false, cancellationToken).ConfigureAwait(false)
+                if (await WriteRetentionAsync<bool>(storage.DatabaseId!, transaction => UnregisterExpiredAsync(transaction, storage, now, cancellationToken), static _ => false, cancellationToken).ConfigureAwait(false)
                     is bool deleted && deleted)
                 {
                     logger.ZLogInformation($"Deleted database {storage.DatabaseId:@Database} at the end of its TTL");
