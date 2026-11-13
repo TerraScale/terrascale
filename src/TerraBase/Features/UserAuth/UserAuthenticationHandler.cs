@@ -9,6 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.UserAuth;
 
@@ -40,6 +41,7 @@ internal sealed class UserAuthenticationHandler(
     {
         var header = Request.Headers.Authorization.ToString();
         if (terraBase.AuthIssuer is null || Listeners.ArrivedOn(Context) != TerraBaseListener.Client
+                && Context.Features.Get<CallerIdentity>() is null
             || !header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
             return AuthenticateResult.NoResult();

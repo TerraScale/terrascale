@@ -3,6 +3,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Platform;
 
@@ -11,6 +12,7 @@ internal sealed class ListPlatformDatabasesEndpoint(IManagementService managemen
 {
     public override void Configure()
     {
+        Metadata(new Requires("catalog.read"));
         Get(PlatformExplore.Databases);
         Name("listPlatformDatabases");
         Summary("Lists the platform databases");

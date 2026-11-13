@@ -26,6 +26,7 @@ The product goal is to write in any region and read in any region, with free rea
 - [HTTP API](api.md) and [interactive reference](api-reference.md).
 - [Management API](management-api.md).
 - [TLS and authentication](transport-security.md).
+- [Service caller authentication](caller-authentication.md).
 - [Listener metadata](security.md): closed fallback when a route has no listener metadata.
 - [API-key ownership](customer-api-key-ownership.md) and [revocation](key-revocation.md).
 - [Cross-project isolation](cross-project-errors.md).

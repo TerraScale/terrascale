@@ -3,6 +3,7 @@ using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Management;
 
@@ -10,6 +11,7 @@ internal sealed class InspectProjectClosureEndpoint(IProjectCatalog catalog) : E
 {
     public override void Configure()
     {
+        Metadata(new Requires("closure"));
         Get(ClosureFanout.Route);
         Name("inspectProjectClosure");
         Summary("Answers what a project closure would find in this region");

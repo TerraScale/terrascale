@@ -21,7 +21,7 @@ public static class PlatformExplore
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddAuthorizationBuilder().AddPolicy(PolicyName, policy => policy
-            .AddAuthenticationSchemes(UserAuthExtensions.TokenScheme)
+            .AddAuthenticationSchemes(UserAuthExtensions.TokenScheme, UserAuthExtensions.OperatorScheme)
             .RequireAuthenticatedUser()
             .RequireClaim(RoleClaim, AdminRole));
         return services;

@@ -76,6 +76,7 @@ namespace TerraScale.TerraBase.Rpc
             request.Headers.Accept = accept;
             if (forwardCredentials)
             {
+                request.Headers["X-TerraScale-Caller"] = outer.Request.Headers["X-TerraScale-Caller"];
                 request.Headers[TerraBaseRpc.PeerCredentialHeader] = outer.Request.Headers[TerraBaseRpc.PeerCredentialHeader];
                 if (outer.Request.Headers.Authorization.Count > 0)
                 {
@@ -110,7 +111,8 @@ namespace TerraScale.TerraBase.Rpc
                 LocalIpAddress = outer.Connection.LocalIpAddress,
                 LocalPort = outer.Connection.LocalPort,
             });
-            pipeline.Connection(features, request.Headers.Authorization.Count > 0 || request.Headers[TerraBaseRpc.PeerCredentialHeader].Count == 0);
+            pipeline.Connection(features, request.Headers["X-TerraScale-Caller"].Count == 0
+                && (request.Headers.Authorization.Count > 0 || request.Headers[TerraBaseRpc.PeerCredentialHeader].Count == 0));
             try
             {
                 await pipeline.Pipeline(new DefaultHttpContext(features)).ConfigureAwait(false);

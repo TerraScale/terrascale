@@ -3,6 +3,7 @@ using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.ApiKeys;
 
@@ -10,6 +11,7 @@ public sealed class RevokeApiKeyEndpoint(IApiKeyStore keys) : EndpointWithoutReq
 {
     public override void Configure()
     {
+        Metadata(new Requires("admin"));
         Delete("/admin/api-keys/{key}");
         Metadata(AnchoredRevocation.Instance, ListenerMetadata.Internal);
         Name("revokeApiKey");
