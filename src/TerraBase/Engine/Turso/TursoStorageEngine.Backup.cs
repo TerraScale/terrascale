@@ -112,6 +112,7 @@ internal sealed partial class TursoStorageEngine
             {
                 var sourceConnection = await Encryption.ExistingAsync(file, Io, cancellationToken).ConfigureAwait(false);
                 var targetConnection = await Encryption.CreateAsync(temporary, Io, cancellationToken).ConfigureAwait(false);
+                TursoReplicas.PrepareImport(file, temporary, Encryption.Keyring);
                 await Io.RunAsync(() =>
                 {
                     using var source = new TursoConnection(sourceConnection);
@@ -123,7 +124,11 @@ internal sealed partial class TursoStorageEngine
                     TursoCopy.Write(source, targetConnection, cancellationToken);
                 }, cancellationToken).ConfigureAwait(false);
                 await TursoDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, Encryption, cancellationToken).ConfigureAwait(false);
-                TursoReplicas.PrepareImport(file, temporary);
+                await Io.RunAsync(() =>
+                {
+                    TursoReplicas.SealImport(file, temporary, targetConnection, Encryption.Keyring);
+                    return true;
+                }, cancellationToken).ConfigureAwait(false);
             }).ConfigureAwait(false);
             if (!file.EndsWith(".promote.db", StringComparison.Ordinal))
             {

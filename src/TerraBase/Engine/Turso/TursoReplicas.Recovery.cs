@@ -1,6 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using TerraBase.Features.Backup;
 using TerraBase.Primitives;
+using Turso.Data.Sqlite;
+using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
@@ -14,19 +18,64 @@ internal sealed partial class TursoReplicas
             {
                 return;
             }
-            DatabaseKeys.RejectLink(Root);
-            foreach (var detached in Directory.GetFiles(Root, "*.promote.db", SearchOption.AllDirectories)
-                .Concat(Directory.GetFiles(Root, "*.promote.db.key", SearchOption.AllDirectories))
-                .Concat(Directory.GetFiles(Root, "*.promote.db.importing", SearchOption.AllDirectories))
-                .Select(path => path[..(path.LastIndexOf(".promote.db", StringComparison.Ordinal) + ".promote.db".Length)])
-                .Distinct(StringComparer.Ordinal))
+            foreach (var detached in DetachedPaths(Root))
             {
-                RecoverDetached(detached);
+                TryRecoverDetached(detached);
             }
         }
     }
 
-    internal static void PrepareImport(string source, string temporary)
+    private IEnumerable<string> DetachedPaths(string directory)
+    {
+        string[] files;
+        string[] children;
+        try
+        {
+            DatabaseKeys.RejectLink(directory);
+            files = Directory.GetFiles(directory, "*.promote.db*");
+            children = Directory.GetDirectories(directory);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            var scope = Path.GetRelativePath(Root, directory);
+            if (storage is TursoStorageEngine engine)
+            {
+                engine.RefuseDetachedScope(scope);
+            }
+            logger.ZLogError($"Detached import recovery cannot enumerate database scope {scope:@Scope}; its databases are refused and all copies preserved: {error.GetType().Name:@Error}");
+            yield break;
+        }
+        foreach (var detached in files.Select(path => path[..(path.LastIndexOf(".promote.db", StringComparison.Ordinal) + ".promote.db".Length)]).Distinct(StringComparer.Ordinal))
+        {
+            yield return detached;
+        }
+        foreach (var child in children)
+        {
+            foreach (var detached in DetachedPaths(child))
+            {
+                yield return detached;
+            }
+        }
+    }
+
+    private void TryRecoverDetached(string detached)
+    {
+        try
+        {
+            RecoverDetached(detached);
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or SqliteException or JsonException)
+        {
+            var database = Path.GetRelativePath(Root, detached[..^".promote.db".Length] + ".db");
+            if (storage is TursoStorageEngine engine)
+            {
+                engine.RefuseDetached(database);
+            }
+            logger.ZLogError($"Detached import recovery refused database {database:@Database}; all remaining copies are preserved: {error.GetType().Name:@Error}");
+        }
+    }
+
+    internal static void PrepareImport(string source, string temporary, IKeyring master)
     {
         if (!source.EndsWith(".promote.db", StringComparison.Ordinal))
         {
@@ -38,15 +87,49 @@ internal sealed partial class TursoReplicas
             {
                 throw new IOException("a detached import must hold its registration");
             }
-            var intent = source + ".importing";
-            DatabaseKeys.RejectLink(intent);
-            using (var file = new FileStream(intent, FileMode.Create, FileAccess.Write, FileShare.None))
+            var intent = DetachedImport.Read(source, Path.GetFileName(source)[..^".promote.db".Length]);
+            var sourceKey = master.Unwrap(intent.SourceKey);
+            try
             {
-                file.Write(DatabaseKeys.ReadRecord(temporary));
-                file.Flush(flushToDisk: true);
+                intent.Verify(source, sourceKey);
             }
-            DirectorySync.Sync(Path.GetDirectoryName(source)!);
+            finally
+            {
+                CryptographicOperations.ZeroMemory(sourceKey);
+            }
+            (intent with { DestinationKey = DatabaseKeys.ReadWrapped(temporary) }).Write(source, create: false);
         }
+    }
+
+    internal static void SealImport(string source, string temporary, string targetConnection, IKeyring master)
+    {
+        if (!source.EndsWith(".promote.db", StringComparison.Ordinal))
+        {
+            return;
+        }
+        var intent = DetachedImport.Read(source, Path.GetFileName(source)[..^".promote.db".Length]);
+        using (var connection = new SqliteConnection(targetConnection))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = TursoStatements.RenewIncarnation;
+            command.Parameters.AddWithValue("$incarnation", intent.Incarnation);
+            command.ExecuteNonQuery();
+            command.Parameters.Clear();
+            command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            command.ExecuteScalar();
+        }
+        var key = master.Unwrap(DatabaseKeys.ReadWrapped(temporary));
+        try
+        {
+            intent.Verify(temporary, key);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+        using var handle = File.OpenHandle(temporary, FileMode.Open, FileAccess.ReadWrite);
+        RandomAccess.FlushToDisk(handle);
     }
 
     private void RecoverDetached(string detached)
@@ -62,100 +145,136 @@ internal sealed partial class TursoReplicas
         }
         var replica = detached[..^".promote.db".Length] + ".db";
         var destination = Path.Combine(options.DataDirectory, Path.GetRelativePath(Root, replica));
-        var intent = detached + ".importing";
-        foreach (var path in (string[])[detached, replica, destination, intent])
+        foreach (var path in (string[])[detached, replica, destination])
         {
             DatabaseKeys.RejectLink(path);
             DatabaseKeys.RejectLink(path + DatabaseKeys.Suffix);
         }
-        if (File.Exists(intent) && File.Exists(destination) && File.Exists(destination + DatabaseKeys.Suffix))
-        {
-            if (new FileInfo(intent).Length is <= 0 or > DatabaseKeys.MaxFileBytes)
-            {
-                throw new InvalidDataException("the detached import intent is malformed");
-            }
-            var record = File.ReadAllBytes(intent);
-            DatabaseKeys.ValidateRecord(record);
-            var expected = master.Unwrap(Encoding.ASCII.GetString(record.AsSpan(DatabaseKeys.Header.Length, record.Length - DatabaseKeys.Header.Length - 1)));
-            try
-            {
-                var published = master.Unwrap(DatabaseKeys.ReadWrapped(destination));
-                try
-                {
-                    if (!CryptographicOperations.FixedTimeEquals(expected, published))
-                    {
-                        throw new InvalidDataException("the destination does not match the detached import");
-                    }
-                }
-                finally
-                {
-                    CryptographicOperations.ZeroMemory(published);
-                }
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(expected);
-            }
-            var publishedDirectory = Path.GetDirectoryName(destination)!;
-            while (true)
-            {
-                DirectorySync.Sync(publishedDirectory);
-                if (publishedDirectory == options.DataDirectory)
-                {
-                    break;
-                }
-                publishedDirectory = Path.GetDirectoryName(publishedDirectory) ?? throw new InvalidDataException("publication escaped the data directory");
-            }
-            DeleteFiles(replica, keepDetached: true);
-            DirectorySync.Sync(directory);
-            DeleteDetachedFiles(detached);
-            return;
-        }
-        if (File.Exists(detached))
-        {
-            File.Move(detached, replica, overwrite: false);
-        }
-        foreach (var file in Directory.GetFiles(directory, Path.GetFileName(detached) + "-*"))
-        {
-            DatabaseKeys.RejectLink(file);
-            File.Move(file, replica + file[detached.Length..], overwrite: false);
-        }
-        if (!File.Exists(replica))
-        {
-            throw new InvalidDataException("a detached replica has no database to put back");
-        }
-        if (!File.Exists(replica + DatabaseKeys.Suffix))
-        {
-            var wrapped = DatabaseKeys.ReadWrapped(detached);
-            using var file = new FileStream(replica + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? KeyHeader : PreviousKeyHeader) + wrapped + "\n"));
-            file.Flush(flushToDisk: true);
-        }
-        var restored = DataKeyRecord(replica) ?? throw new InvalidDataException("the put-back replica key is missing");
-        var verified = master.Unwrap(restored);
+        var intent = DetachedImport.Read(detached, Path.GetFileName(replica)[..^3]);
+        var sourceKey = master.Unwrap(intent.SourceKey);
+        byte[]? destinationKey = null;
         try
         {
-            if (File.Exists(detached + DatabaseKeys.Suffix))
+            destinationKey = intent.DestinationKey is { } wrapped ? master.Unwrap(wrapped) : null;
+            if (File.Exists(destination))
             {
-                var detachedKey = master.Unwrap(DatabaseKeys.ReadWrapped(detached));
-                try
+                if (destinationKey is null)
                 {
-                    if (!CryptographicOperations.FixedTimeEquals(verified, detachedKey))
+                    throw new InvalidDataException("a destination exists without publication evidence");
+                }
+                VerifyKey(DatabaseKeys.ReadWrapped(destination), destinationKey);
+                intent.Verify(destination, destinationKey);
+                if (DataKeyRecord(replica) is { } replicaKey)
+                {
+                    VerifyKey(replicaKey, sourceKey);
+                }
+                if (File.Exists(replica))
+                {
+                    if (DataKeyRecord(replica) is null)
                     {
-                        throw new InvalidDataException("the put-back replica key does not match the detached copy");
+                        throw new InvalidDataException("an existing replica has no key");
                     }
+                    intent.Verify(replica, sourceKey);
                 }
-                finally
+                if (File.Exists(detached))
                 {
-                    CryptographicOperations.ZeroMemory(detachedKey);
+                    VerifyKey(DatabaseKeys.ReadWrapped(detached), sourceKey);
+                    intent.Verify(detached, sourceKey);
                 }
+                SyncDatabase(destination);
+                var publishedDirectory = Path.GetDirectoryName(destination)!;
+                while (true)
+                {
+                    DirectorySync.Sync(publishedDirectory);
+                    if (publishedDirectory == options.DataDirectory)
+                    {
+                        break;
+                    }
+                    publishedDirectory = Path.GetDirectoryName(publishedDirectory) ?? throw new InvalidDataException("publication escaped the data directory");
+                }
+                DeleteFiles(replica, keepDetached: true);
+                DirectorySync.Sync(directory);
+                DeleteDetachedFiles(detached);
+                return;
+            }
+            if (File.Exists(destination + DatabaseKeys.Suffix))
+            {
+                if (destinationKey is null)
+                {
+                    throw new InvalidDataException("an unpublished destination key has no intent");
+                }
+                VerifyKey(DatabaseKeys.ReadWrapped(destination), destinationKey);
+            }
+            if (File.Exists(detached) && File.Exists(replica))
+            {
+                throw new InvalidDataException("an independent replica conflicts with the detached source");
+            }
+            if (File.Exists(detached))
+            {
+                VerifyKey(DatabaseKeys.ReadWrapped(detached), sourceKey);
+                File.Move(detached, replica, overwrite: false);
+            }
+            foreach (var file in Directory.GetFiles(directory, Path.GetFileName(detached) + "-*"))
+            {
+                DatabaseKeys.RejectLink(file);
+                File.Move(file, replica + file[detached.Length..], overwrite: false);
+            }
+            intent.Verify(replica, sourceKey);
+            if (DataKeyRecord(replica) is { } restored)
+            {
+                VerifyKey(restored, sourceKey);
+            }
+            else
+            {
+                using var file = new FileStream(replica + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                file.Write(Encoding.ASCII.GetBytes((intent.SourceKey.StartsWith("v2.", StringComparison.Ordinal) ? KeyHeader : PreviousKeyHeader) + intent.SourceKey + "\n"));
+                file.Flush(flushToDisk: true);
+            }
+            SyncDatabase(replica);
+            DirectorySync.Sync(directory);
+            if (File.Exists(destination + DatabaseKeys.Suffix))
+            {
+                File.Delete(destination + DatabaseKeys.Suffix);
+                DirectorySync.Sync(Path.GetDirectoryName(destination)!);
+            }
+            DeleteDetachedFiles(detached);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(sourceKey);
+            if (destinationKey is not null)
+            {
+                CryptographicOperations.ZeroMemory(destinationKey);
+            }
+        }
+    }
+
+    private static void SyncDatabase(string database)
+    {
+        foreach (var path in (string[])[database, database + "-wal"])
+        {
+            DatabaseKeys.RejectLink(path);
+            if (File.Exists(path))
+            {
+                using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read);
+                RandomAccess.FlushToDisk(handle);
+            }
+        }
+    }
+
+    private void VerifyKey(string wrapped, byte[] expected)
+    {
+        var actual = master.Unwrap(wrapped);
+        try
+        {
+            if (!CryptographicOperations.FixedTimeEquals(expected, actual))
+            {
+                throw new InvalidDataException("a detached import key does not match its intent");
             }
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(verified);
+            CryptographicOperations.ZeroMemory(actual);
         }
-        DirectorySync.Sync(directory);
-        DeleteDetachedFiles(detached);
     }
 }

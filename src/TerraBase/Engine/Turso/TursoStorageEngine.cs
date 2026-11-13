@@ -9,6 +9,7 @@ using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -329,10 +330,12 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         meter.CreateObservableGauge("terrabase.cdc.retained.rows", () => _stores.Values.Sum(store => store.RetainedCdcRows),
             description: "Retained CDC row span across open tenant databases, sampled by retention maintenance.");
         meter.CreateObservableGauge("terrabase.storage.open_writers", () => Pool.OpenWriters, description: "Client databases holding an open writer connection.");
+        meter.CreateObservableCounter("terrabase.storage.detached_recovery_failures", () => Interlocked.Read(ref _detachedRecoveryFailures),
+            description: "Detached database recovery refusals; remaining copies are preserved.");
         _ownership = Own(configured.DataDirectory);
         try
         {
-            KeyringHistory.Record(_dataDirectory, masterKey.KeyIds);
+            KeyringHistory.Record(_dataDirectory, masterKey.Fingerprints);
             nativeTemporaryStorage?.Initialize();
             CheckIntentJournal();
             DeleteRewriteScratch();
@@ -615,7 +618,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     var eraseDetached = _system is { } system && await Io.WithAdmissionAsync(async () =>
                     {
                         await using var transaction = await system.BeginTransactionAsync(write: false, CancellationToken.None).ConfigureAwait(false);
-                        return await transaction.GetAsync(DatabaseErasure.Kind, key.Database, CancellationToken.None).ConfigureAwait(false) is not null;
+                        var erasure = await SystemCatalog.GetAsync(transaction, DatabaseErasure.Kind, key.Database,
+                            ManagementJsonContext.Default.DatabasePurgeRecord, CancellationToken.None).ConfigureAwait(false);
+                        return erasure is { FormatVersion: 1 } && DatabasePurge.SameDatabase(erasure.Database, database);
                     }).ConfigureAwait(false);
                     await Io.RunAsync(() =>
                     {
@@ -736,6 +741,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
 
+        ThrowIfDetachedRefused(Place(database).Path);
         if (_stores.TryGetValue(Key(database), out var open))
         {
             return open.FilePresent(Volatile.Read(ref _fileEpoch)) ? open : null;
@@ -1091,6 +1097,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private ((string Organization, string Project, string Database) Key, string Path) Locate(TenantContext database)
     {
         var located = Place(database);
+        ThrowIfDetachedRefused(located.Path);
         RejectDatabaseLinks(located.Path);
         return located;
     }
@@ -1457,6 +1464,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken, out bool started)
     {
         started = false;
+        ThrowIfDetachedRefused(path);
         if (_stores.TryGetValue(key, out var store))
         {
             return Task.FromResult(store);

@@ -12,6 +12,7 @@ using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
+using TerraBase.Features.Management;
 using TerraBase.Features.Sync;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -106,7 +107,9 @@ internal sealed partial class TursoReplicas(
 
         var system = await storage.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await system.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        var erased = await transaction.GetAsync(DatabaseErasure.Kind, key.Database, cancellationToken).ConfigureAwait(false) is not null;
+        var erasure = await SystemCatalog.GetAsync(transaction, DatabaseErasure.Kind, key.Database,
+            ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+        var erased = erasure is { FormatVersion: 1 } && DatabasePurge.SameDatabase(erasure.Database, database);
         return await Task.Run(() =>
         {
             lock (KeyRecords)
@@ -171,6 +174,18 @@ internal sealed partial class TursoReplicas(
                 try
                 {
                     DatabaseKeys.RejectLink(path);
+                    var sourceKey = master.Unwrap(wrapped);
+                    try
+                    {
+                        using var source = DetachedImport.Open(path, sourceKey);
+                        var evidence = DetachedImport.Inspect(source);
+                        new DetachedImport(1, key.Database, evidence.Incarnation, evidence.Position, new FileInfo(path).Length,
+                            evidence.Rows, evidence.Bytes, evidence.Digest, wrapped, null).Write(detached, create: true);
+                    }
+                    finally
+                    {
+                        CryptographicOperations.ZeroMemory(sourceKey);
+                    }
                     using (var file = new FileStream(detached + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                     {
                         file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? DatabaseKeys.Header : DatabaseKeys.PreviousHeader) + wrapped + "\n"));
@@ -212,7 +227,7 @@ internal sealed partial class TursoReplicas(
         lock (KeyRecords)
         {
             ActiveDetached.Remove(detached);
-            RecoverDetached(detached);
+            TryRecoverDetached(detached);
         }
     }
 
@@ -325,6 +340,10 @@ internal sealed partial class TursoReplicas(
     private async Task<Replica> CreateAsync((string Organization, string Project, string Database) key, Uri source, HttpClient http)
     {
         var path = PathOf(key);
+        if (storage is TursoStorageEngine engine)
+        {
+            engine.ThrowIfDetachedRefused(Path.Combine(options.DataDirectory, Path.GetRelativePath(Root, path)));
+        }
         lock (KeyRecords)
         {
             RecoverDetached(path[..^3] + ".promote.db");

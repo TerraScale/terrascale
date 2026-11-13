@@ -1,9 +1,34 @@
+using System.Collections.Concurrent;
 using TerraBase.Features.Backup;
 
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoStorageEngine : IWrappedKeyFiles
 {
+    private readonly ConcurrentDictionary<string, byte> _detachedRefusals = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _detachedRefusalScopes = new(StringComparer.Ordinal);
+    private long _detachedRecoveryFailures;
+
+    internal void RefuseDetachedScope(string relative)
+    {
+        _detachedRefusalScopes.TryAdd(Path.GetFullPath(Path.Combine(_dataDirectory, relative)) + Path.DirectorySeparatorChar, 0);
+        Interlocked.Increment(ref _detachedRecoveryFailures);
+    }
+
+    internal void RefuseDetached(string relative)
+    {
+        _detachedRefusals.TryAdd(Path.Combine(_dataDirectory, relative), 0);
+        Interlocked.Increment(ref _detachedRecoveryFailures);
+    }
+
+    internal void ThrowIfDetachedRefused(string path)
+    {
+        if (_detachedRefusals.ContainsKey(path) || _detachedRefusalScopes.Keys.Any(scope => Path.GetFullPath(path).StartsWith(scope, StringComparison.Ordinal)))
+        {
+            throw new InvalidDataException("database '" + Path.GetFileNameWithoutExtension(path) + "' has an unresolved detached import");
+        }
+    }
+
     async Task IWrappedKeyFiles.RewrapAsync(KeyInventory inventory, CancellationToken cancellationToken)
     {
         foreach (var path in KeyFiles(_dataDirectory, inventory))

@@ -42,6 +42,11 @@ public sealed class KeyringSettings
                 throw new TerraBaseConfigurationException("master-keys requires 1 to 32 keys with valid ids and a configured active key");
             }
 
+            if (configuration.Keys.Count == 1 && configuration.Active != "k0")
+            {
+                throw new TerraBaseConfigurationException("a single master key must use the original id 'k0' for byte compatibility");
+            }
+
             return new(configuration.Active, configuration.Keys.ToFrozenDictionary(pair => pair.Key, pair => BackupSettings.ParseMasterKey(pair.Value), StringComparer.Ordinal));
         }
         catch (JsonException)

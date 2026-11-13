@@ -10,6 +10,8 @@ internal interface IKeyring
 
     IReadOnlyCollection<string> KeyIds { get; }
 
+    IReadOnlyDictionary<string, string> Fingerprints { get; }
+
     bool NeedsRewrap(string wrapped);
 
     string KeyId(string wrapped);
@@ -30,6 +32,9 @@ internal sealed class Keyring(KeyringSettings settings, KeyRewrapFaults faults) 
     private const int KeyBytes = 32;
     private const int NonceBytes = 12;
     private const int TagBytes = 16;
+
+    public IReadOnlyDictionary<string, string> Fingerprints { get; } = settings.Keys.ToDictionary(
+        pair => pair.Key, pair => Convert.ToHexString(HMACSHA256.HashData(pair.Value, "TerraBase/master-key-history/v1"u8)), StringComparer.Ordinal);
 
     public string ActiveId => settings.Active;
 

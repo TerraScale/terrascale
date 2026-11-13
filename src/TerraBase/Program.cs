@@ -131,7 +131,10 @@ try
     callers.Observe(app.Services.GetRequiredService<IMeterFactory>(), app.Services.GetRequiredService<TimeProvider>());
     try
     {
+        await KeyringHistory.RecordAsync(options.DataDirectory, app.Services.GetRequiredService<IKeyring>(),
+            app.Services.GetService<S3ObjectStore>(), app.Logger, app.Lifetime.ApplicationStopping);
         _ = app.Services.GetRequiredService<IStorageEngine>();
+        _ = app.Services.GetRequiredService<IDatabaseReplicas>();
     }
     catch (TerraBaseConfigurationException error)
     {
