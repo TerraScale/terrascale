@@ -103,7 +103,10 @@ internal sealed partial class ContinuousBackup
         {
             await RestartAsync(file, account with
             {
-                Incarnation = retained.Incarnation, Destination = file.Target.Revision, Replacing = true, Upload = null,
+                Incarnation = retained.Incarnation,
+                Destination = file.Target.Revision,
+                Replacing = true,
+                Upload = null,
                 Lost = [.. account.Lost.Select(hole => hole.Open && hole.Incarnation == account.Incarnation ? hole with { Open = false } : hole)],
             }, "lineage", cancellationToken).ConfigureAwait(false);
             return false;
