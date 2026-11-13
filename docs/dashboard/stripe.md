@@ -128,19 +128,23 @@ successful delivery attempts in Stripe Workbench when validating an endpoint.
 ## Closed-month overage ledger
 
 Paid operation and storage overage is frozen only after its UTC month closes.
-`billing_months` records the last plan observed before the boundary, including its
-name, allowances, unit rates, currency and pricing-version hash. The record uses
-stored terms, never a retrospective lookup in the current catalog. A refresh
-records the previous month's terms before observing today's catalog. If no
-qualifying plan was observed, `billing_skipped_months` permanently closes the
-month without a charge and increments the skipped-month counter and log.
+`billing_term_observations` appends the plan name, allowances, rates, currency,
+pricing version and observation time atomically with each binding change.
+An unmapped price is also an observed fact: any affected month is skipped, with
+a known computed amount retained when possible. The month uses the last observed terms before it started and every set observed
+during it. Each meter freezes the lowest resulting integer-cent charge, which
+can select different terms for operations and storage. The row names the terms
+it selected. `billing_months` also retains a closing observation and indexes
+completed months. Neither source looks up historical prices in today's catalog.
+If no qualifying plan was observed, `billing_skipped_months` permanently closes
+the month without a charge and increments the skipped-month counter and log.
 Missing storage-contract data also skips the month before either meter freezes.
 
 `billing_overage_charges` has a unique key on organisation, subscription, UTC
 month and meter. Each insert freezes usage, allowance, unit rate, currency,
 pricing version, plan name, overage quantity, rounded amount and description.
 Concurrent inserts read the winning row. The payload cannot change after that
-insert; only the provider ID and acceptance time can be recorded. A zero-cent
+insert; only the provider ID, acceptance time and terminal skip reason can be recorded. A zero-cent
 row closes its meter without a provider object. Usage arriving after freezing
 is never charged. `terrascale_billing_overage_late_usage_observations_total`
 counts observations with usage above the frozen value, including repeated
@@ -149,8 +153,7 @@ observations; it is not a unique count of late units.
 Before dispatching any nonzero row without a provider ID, the reporter lists
 all of that customer's invoice items and matches `terrascale_charge=<row ID>`.
 It records an existing match rather than creating another item, including after
-the provider's idempotency cache expires. Creation uses the immutable row's
-quantity, rate, currency and description, with key
+the provider's idempotency cache expires. Creation sends the immutable row's exact integer-cent amount, currency and description, with key
 `TerraScale.Dashboard/overage-<row ID>`. The row ID uniquely identifies the
 organisation, subscription, month and meter. Two dispatchers send the same key
 and payload. The provider item also carries organisation, month and meter
@@ -159,8 +162,14 @@ metadata. Accepted provider objects are never updated or deleted by the reporter
 The hourly pass records boundary observations and dispatches pending ledger
 rows. The daily pass freezes closed-month usage; failures remain pending per
 row and neither block nor reopen later months. There is no progress watermark.
-Monthly scans begin at `billing.overage_starts_at`, set to the first full UTC month after deployment for existing subscriptions
-and the first observation month for new customers. Months before deployment
+Monthly scans query distinct recorded months at or after `billing.overage_starts_at`,
+set to the first full UTC month after deployment for existing subscriptions
+and the reservation's UTC month for new customers. They never walk calendar
+months from an unchecked date; unset starts are excluded. An unobserved month
+after a service gap is forgiven rather than reconstructed from current terms.
+Canceled and incomplete-expired subscriptions keep their computed amounts in
+ledger rows with `skip_reason = 'subscription_ended'`; those rows are never
+dispatched or retried. Pending rows are checked again before provider creation. Months before deployment
 are never charged by this code. The deployment month is also excluded for
 existing customers: the previous reporter may already have created items for
 it. That month's unreported overage is forgiven rather than risking a second
@@ -207,28 +216,29 @@ automatic retries (three days) and manual resend (up to 30 days).
 Events created more than 30 days ago are
 acknowledged without effects, so cleanup cannot reopen old events.
 
-## Schema rollout and rollback
+## Releasing this change
 
-The unreleased grace, progress and monthly-plan migrations are replaced by
-migrations for the final tables. Apply them only after draining every previous
-dashboard instance, then start the new build. There is no dashboard background
-job leader or single-runner barrier: jobs run in every instance. New expiry
-work starts only with the new instances. This ordering closes the mixed-build
-window but requires a dashboard maintenance interval.
+Complete the rollout to every region without a soak between regions and before
+the last UTC day of a month. The schema changes only add tables and columns.
+Going back to the previous build is safe only before the first ledger month
+starts. After that boundary, roll forward: the previous reporter does not
+honor frozen charges.
 
-A schema-first rolling deployment with previous instances still serving is
-unsafe: they ignore grace, and their refresh or plan publication can restrict
-a customer in grace. Their reporter can also change provider items frozen by
-the new build or create items outside the ledger. The exposure lasts from schema application until the last
-old instance is stopped; there is no application-enforced upper bound. Do not
-claim a 30-second bound: the old job's period bounds detection, not exposure.
+After the last instance starts, both read-only checks must return no rows:
+no organization is both in payment grace and restricted, and no binding with
+a subscription has an unset start month.
 
-Rollback of the application leaves the additive schema and ledger in place.
-The previous build ignores grace, receipts and ledger completion. Do not run
-its reporting jobs against this schema: it can recreate or change overage
-items and restrict customers in grace. Drain all new instances and keep the dashboard
-stopped until a corrected build with these invariants is available. There is
-no safe supported rollback to the previous dashboard's background jobs.
+```sql
+SELECT id, billing_status, payment_grace_until
+FROM organizations
+WHERE payment_grace_until > strftime('%Y-%m-%d %H:%M:%f', 'now')
+  AND billing_status <> 'active';
+
+SELECT organization_id
+FROM billing
+WHERE kind = 'stripe' AND subscription_id <> ''
+  AND (overage_starts_at IS NULL OR julianday(overage_starts_at) <= julianday('0001-01-01'));
+```
 
 ## Internal billing
 

@@ -1063,6 +1063,69 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingTermObservation", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("SubscriptionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<DateTime>("ObservedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("observed_at");
+
+                    b.Property<string>("PricingVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("pricing_version");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("currency");
+
+                    b.Property<DateTime>("Month")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("month");
+
+                    b.Property<decimal>("OperationRate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("operation_rate");
+
+                    b.Property<long>("OperationsAllowance")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("operations_allowance");
+
+                    b.Property<string>("Plan")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan");
+
+                    b.Property<string>("PlanName")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan_name");
+
+                    b.Property<long>("StorageAllowance")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("storage_allowance");
+
+                    b.Property<decimal>("StorageRate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("storage_rate");
+
+                    b.HasKey("OrganizationId", "SubscriptionId", "ObservedAt", "PricingVersion");
+
+                    b.HasIndex("Month");
+
+                    b.ToTable("billing_term_observations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_billing_term_observations", "length(subscription_id) > 0");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.InternalBillingRow", b =>
                 {
                     b.Property<string>("Id")
@@ -1167,6 +1230,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     b.Property<long>("Quantity")
                         .HasColumnType("INTEGER")
                         .HasColumnName("quantity");
+
+                    b.Property<string>("SkipReason")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("skip_reason");
 
                     b.Property<string>("SubscriptionId")
                         .IsRequired()
@@ -2411,6 +2478,15 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 });
 
             modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingMonth", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingTermObservation", b =>
                 {
                     b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
                         .WithMany()

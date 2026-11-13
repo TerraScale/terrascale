@@ -629,8 +629,16 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
                 else
                 {
+                    if (binding.ObservedPricingVersion.Length > 0 || binding.EffectivePlanSince is null)
+                    {
+                        binding.EffectivePlanSince = time.GetUtcNow();
+                    }
                     binding.ObservedPricingVersion = "";
-                    binding.EffectivePlanSince = time.GetUtcNow();
+                }
+                if (binding.OverageStartsAt == default)
+                {
+                    var now = time.GetUtcNow();
+                    binding.OverageStartsAt = new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
                 }
                 binding.ExpiryUnavailableSince = null;
                 binding.ExpiryLastLoggedAt = null;
@@ -668,6 +676,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private async Task<BillingBinding> ReserveAsync(string orgId, string projectId, string plan, string interval, string returnPath, CancellationToken cancellationToken)
         {
+            var now = time.GetUtcNow();
             var initial = new BillingBinding
             {
                 OrganizationId = orgId,
@@ -676,7 +685,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 Interval = interval,
                 ReturnPath = returnPath,
                 RequestId = Guid.CreateVersion7().ToString(),
-                StartedAt = time.GetUtcNow()
+                StartedAt = now,
+                OverageStartsAt = new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero)
             };
             if (await storage.InsertAsync(initial, cancellationToken))
             {

@@ -153,8 +153,8 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 50, Level = LogLevel.Warning, Message = "Revoking the ts-auth grant of expired dashboard session {SessionId} failed ({ErrorType}, status {Status}, code {ErrorCode}); its row stays for the next pass.")]
         internal static partial void RevokingAnExpiredSessionFailed(this ILogger logger, string sessionId, string errorType, object? status, string errorCode);
 
-        [LoggerMessage(EventId = 51, Level = LogLevel.Warning, Message = "Skipped overage for organization {OrganizationId}, month {Month:yyyy-MM}: {Reason}.")]
-        internal static partial void UsageOverageMonthSkipped(this ILogger logger, string organizationId, DateTimeOffset month, string reason);
+        [LoggerMessage(EventId = 51, Level = LogLevel.Warning, Message = "Skipped overage for month {Month:yyyy-MM}: {Reason}.")]
+        internal static partial void UsageOverageMonthSkipped(this ILogger logger, DateTimeOffset month, string reason);
 
         [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
         internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);

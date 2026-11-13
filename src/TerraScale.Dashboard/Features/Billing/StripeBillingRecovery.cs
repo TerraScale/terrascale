@@ -13,7 +13,7 @@ public sealed partial class StripeBilling
         if (row.Erased) { throw new IOException("Billing organization was erased."); }
         if (row.Organization.BillingStatus != "active" || row.Organization.PaymentGraceUntil is not { } deadline || deadline > time.GetUtcNow()) { return row.Organization; }
         try { await RefreshAsync(organizationId, cancellationToken); }
-        catch (Exception error) when (error is StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (error is DbUpdateException or StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             telemetry.ReportDeferredGraceExpiry();
             while (true)
@@ -73,7 +73,7 @@ public sealed partial class StripeBilling
             receipt.ProcessingUntil = now.AddMinutes(5);
             if (!await storage.ReplaceAsync(receipt, cancellationToken)) { continue; }
             try { await ApplyEventReceiptAsync(receipt, cancellationToken); }
-            catch (Exception error) when (error is StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (error is DbUpdateException or StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 receipt.ProcessingUntil = time.GetUtcNow();
                 await storage.ReplaceAsync(receipt, cancellationToken);
@@ -87,8 +87,6 @@ public sealed partial class StripeBilling
         var cutoff = time.GetUtcNow().AddDays(-30);
         await using var db = await storage.CreateDbContextAsync(cancellationToken);
         var now = time.GetUtcNow();
-        var expired = await db.StripeEventReceipts.Where(row => row.ReceivedAt < cutoff && row.ProcessingUntil < now).ToListAsync(cancellationToken);
-        db.StripeEventReceipts.RemoveRange(expired);
-        await db.SaveChangesAsync(cancellationToken);
+        await db.StripeEventReceipts.Where(row => row.ReceivedAt < cutoff && row.ProcessingUntil < now).ExecuteDeleteAsync(cancellationToken);
     }
 }

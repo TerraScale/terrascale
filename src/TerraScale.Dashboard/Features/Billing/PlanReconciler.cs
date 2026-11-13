@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 try { await RunOnceAsync(stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
+                catch (Exception error) when (error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
                 {
                     logger.PlanReconciliationIsUnavailableRetryingIn(error.GetType().Name);
                 }
@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 {
                     await billing.ReconcilePendingCheckoutAsync(binding, cancellationToken);
                 }
-                catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or Stripe.StripeException)
+                catch (Exception error) when (error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or Stripe.StripeException)
                 {
                     logger.APendingCheckoutDidNotReconcile(error.GetType().Name);
                 }

@@ -22,6 +22,7 @@ public sealed class OverageCharge
     public required long Quantity { get; init; }
     public required long AmountCents { get; init; }
     public required string Description { get; init; }
+    public string? SkipReason { get; set; }
     public string? ProviderId { get; set; }
     public DateTimeOffset? AcceptedAt { get; set; }
 
@@ -37,7 +38,7 @@ public sealed class OverageCharge
             builder.Property(row => row.Month).HasConversion(BillingColumns.Utc);
             builder.Property(row => row.FrozenAt).HasConversion(BillingColumns.Utc);
             builder.Property(row => row.AcceptedAt).HasConversion(BillingColumns.OptionalUtc);
-            foreach (var property in builder.Metadata.GetProperties().Where(property => property.Name is not (nameof(ProviderId) or nameof(AcceptedAt))))
+            foreach (var property in builder.Metadata.GetProperties().Where(property => property.Name is not (nameof(ProviderId) or nameof(AcceptedAt) or nameof(SkipReason))))
             {
                 property.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
             }

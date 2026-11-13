@@ -61,6 +61,7 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
     public DbSet<StripeEventReceipt> StripeEventReceipts => Set<StripeEventReceipt>();
 
     public DbSet<BillingMonth> BillingMonths => Set<BillingMonth>();
+    public DbSet<BillingTermObservation> BillingTermObservations => Set<BillingTermObservation>();
 
     public DbSet<StripeCustomerRow> StripeCustomers => Set<StripeCustomerRow>();
 
@@ -102,6 +103,7 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
         modelBuilder.ApplyConfiguration(new PendingOrganizationCheckout.Configuration());
         modelBuilder.ApplyConfiguration(new BillingBinding.Configuration());
         modelBuilder.ApplyConfiguration(new BillingMonth.Configuration());
+        modelBuilder.ApplyConfiguration(new BillingTermObservation.Configuration());
         modelBuilder.ApplyConfiguration(new OverageCharge.Configuration());
         modelBuilder.ApplyConfiguration(new SkippedBillingMonth.Configuration());
         modelBuilder.ApplyConfiguration(new StripeEventReceipt.Configuration());

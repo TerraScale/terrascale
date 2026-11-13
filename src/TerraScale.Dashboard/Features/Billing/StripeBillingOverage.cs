@@ -7,22 +7,30 @@ public sealed partial class StripeBilling
 {
     internal void RecordLateOverage() => telemetry.ReportLateOverage();
 
-    internal void RecordSkippedOverageMonth(string organizationId, DateTimeOffset month, string reason)
+    internal void RecordSkippedOverageMonth(DateTimeOffset month, string reason)
     {
         telemetry.ReportSkippedOverageMonth();
-        logger.UsageOverageMonthSkipped(organizationId, month, reason);
+        logger.UsageOverageMonthSkipped(month, reason);
     }
 
     internal async Task ReportOverageAsync(OverageCharge charge, CancellationToken cancellationToken)
     {
-        if (charge.AmountCents == 0 || charge.ProviderId is not null) { return; }
+        if (charge.AmountCents == 0 || charge.ProviderId is not null || charge.SkipReason is not null) { return; }
+        var binding = await storage.BindingRowAsync(charge.OrganizationId, cancellationToken);
+        if (binding is null || binding.State == "deleting" || binding.ErasureId is not null) { return; }
+        if (binding.Status is "canceled" or "incomplete_expired")
+        {
+            await using var ended = await storage.CreateDbContextAsync(cancellationToken);
+            await ended.OverageCharges.Where(row => row.Id == charge.Id && row.ProviderId == null).ExecuteUpdateAsync(setters => setters.SetProperty(row => row.SkipReason, "subscription_ended"), cancellationToken);
+            return;
+        }
         var client = await ClientAsync(cancellationToken);
         string? providerId = null;
         await foreach (var item in client.V1.InvoiceItems.ListAutoPagingAsync(new() { Customer = charge.CustomerId, Limit = 100 }, cancellationToken: cancellationToken))
         {
             if (item.Metadata?.GetValueOrDefault("terrascale_charge") == charge.Id)
             {
-                if (item.CustomerId != charge.CustomerId || item.Currency != charge.Currency || item.Quantity != charge.Quantity || item.Amount != charge.AmountCents)
+                if (item.CustomerId != charge.CustomerId || item.Currency != charge.Currency || item.Amount != charge.AmountCents)
                 {
                     throw new IOException("The provider charge does not match its frozen ledger row.");
                 }
@@ -32,8 +40,6 @@ public sealed partial class StripeBilling
         }
         if (providerId is null)
         {
-            var binding = await storage.BindingRowAsync(charge.OrganizationId, cancellationToken);
-            if (binding is null || binding.State == "deleting" || binding.ErasureId is not null) { return; }
             if (binding.EffectiveInterval == "annual")
             {
                 await client.V1.Subscriptions.UpdateAsync(charge.SubscriptionId, new() { PendingInvoiceItemInterval = new() { Interval = "month", IntervalCount = 1 } }, cancellationToken: cancellationToken);
@@ -43,8 +49,7 @@ public sealed partial class StripeBilling
                 Customer = charge.CustomerId,
                 Subscription = charge.SubscriptionId,
                 Currency = charge.Currency,
-                Quantity = charge.Quantity,
-                UnitAmountDecimal = charge.UnitRate,
+                Amount = charge.AmountCents,
                 Description = charge.Description,
                 Metadata = new()
                 {
@@ -54,6 +59,7 @@ public sealed partial class StripeBilling
                     ["terrascale_org"] = charge.OrganizationId
                 }
             }, Idempotent("overage-" + charge.Id), cancellationToken);
+            if (item.Amount != charge.AmountCents || item.CustomerId != charge.CustomerId || item.Currency != charge.Currency) { throw new IOException("The provider charge does not match its frozen ledger row."); }
             providerId = item.Id;
         }
         await using var db = await storage.CreateDbContextAsync(cancellationToken);

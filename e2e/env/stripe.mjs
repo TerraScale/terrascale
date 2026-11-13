@@ -118,7 +118,7 @@ const api = [
     log.refunds.push({ payment: payment.id, subscription: payment.subscription, amount: refund.amount });
     return refund;
   }, { payment_intent: /^pi_\w+$/ }, {}, ['payment_intent', 'charge', 'amount', 'reason']],
-  ['POST', /^\/v1\/invoiceitems$/, (form) => store({ id: id('ii'), object: 'invoiceitem', customer: form.get('customer'), currency: form.get('currency'), quantity: Number(form.get('quantity')), amount: Math.round(Number(form.get('quantity')) * Number(form.get('unit_amount_decimal'))), unit_amount_decimal: form.get('unit_amount_decimal'), description: form.get('description'), metadata: fields(form, 'metadata'), parent: { type: 'subscription_details', subscription_details: { subscription: form.get('subscription') } } }), { customer: customerId }, {}, ['customer', 'subscription', 'currency', 'quantity', 'unit_amount_decimal', 'description', 'metadata']],
+  ['POST', /^\/v1\/invoiceitems$/, (form) => store({ id: id('ii'), object: 'invoiceitem', customer: form.get('customer'), currency: form.get('currency'), quantity: 1, amount: Number(form.get('amount')), description: form.get('description'), metadata: fields(form, 'metadata'), parent: { type: 'subscription_details', subscription_details: { subscription: form.get('subscription') } } }), { customer: customerId }, {}, ['customer', 'subscription', 'currency', 'amount', 'description', 'metadata']],
   ['GET', /^\/v1\/invoiceitems$/, (query) => list(owned('ii', query.get('customer'))), { customer: customerId }, {}, ['customer', 'created', 'limit', 'starting_after']],
 ];
 
@@ -192,17 +192,18 @@ async function handle(request, response, body) {
     return reply(response, 200, { now: new Date(JSON.parse(body).now).toISOString() });
   }
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-subscription') {
-    const { organization } = JSON.parse(body);
+    const { organization, price: selected = "price_starter_month" } = JSON.parse(body);
+    const price = selected === "unmapped" ? store({ ...find("price", "price_starter_month"), id: id("price"), unit_amount: 1234 }) : find("price", selected);
     const customer = store({ id: id('cus'), metadata: { organization_id: organization } });
     const session = store({ id: id('cs_test'), customer: customer.id, automatic_tax: { enabled: true } });
-    checkouts.set(session.id, { price: find('price', 'price_starter_month'), metadata: { organization_id: organization, terrascale_tax: 'automatic' } });
+    checkouts.set(session.id, { price, metadata: { organization_id: organization, terrascale_tax: 'automatic' } });
     complete(session);
     const subscription = find('sub', session.subscription);
     return reply(response, 200, { customer: customer.id, subscription: subscription.id });
   }
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/billing-items') {
     const items = owned('ii', url.searchParams.get('customer')).filter((item) => item.metadata.terrascale_month === url.searchParams.get('month'));
-    return reply(response, 200, { count: items.length, quantity: items.reduce((sum, item) => sum + item.quantity, 0) });
+    return reply(response, 200, { count: items.length, amount: items.reduce((sum, item) => sum + item.amount, 0) });
   }
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-forget-idempotency') {
     replays.clear();

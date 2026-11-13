@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -11,6 +12,7 @@ using TerraScale.Dashboard;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.Persistence.Migrations;
 
 var cancellationToken = CancellationToken.None;
@@ -43,12 +45,12 @@ async Task AdvanceAsync(string value)
     clock.Now = DateTimeOffset.Parse(time.Now, CultureInfo.InvariantCulture);
 }
 
-async Task<BillingBinding> CreateAsync(DateTimeOffset start, DateTimeOffset? since)
+async Task<BillingBinding> CreateAsync(DateTimeOffset start, DateTimeOffset? since, string price = "price_starter_month")
 {
     var id = AccountService.NewId();
     await organizations.CreateAsync(new() { Id = id, PlanId = OrganizationRecord.StarterPlanId, PaymentMethodValidated = true }, cancellationToken);
     created.Add(id);
-    using var response = await control.PostAsJsonAsync("/billing-subscription", new SubscriptionInput(id), BillingJson.Default.SubscriptionInput, cancellationToken);
+    using var response = await control.PostAsJsonAsync("/billing-subscription", new SubscriptionInput(id, price), BillingJson.Default.SubscriptionInput, cancellationToken);
     response.EnsureSuccessStatusCode();
     var vendor = await response.Content.ReadFromJsonAsync(BillingJson.Default.SubscriptionIds, cancellationToken) ?? throw new IOException("Billing subscription is unavailable.");
     var binding = new BillingBinding
@@ -73,6 +75,7 @@ async Task<BillingBinding> CreateAsync(DateTimeOffset start, DateTimeOffset? sin
     db.Billing.Add(binding);
     db.StripeCustomers.Add(new() { Id = AccountService.NewId(), OrganizationId = id, CustomerId = vendor.Customer, CreatedAt = start.UtcDateTime });
     await db.SaveChangesAsync(cancellationToken);
+    await BillingMonth.RecordAsync(storage, binding, clock.Now, cancellationToken);
     return binding;
 }
 
@@ -84,6 +87,7 @@ async Task<BillingBinding> BindingAsync(string id)
 
 async Task PlanAsync(string id, string key)
 {
+    await BillingMonth.RecordAsync(storage, await BindingAsync(id), clock.Now, cancellationToken);
     var org = await organizations.FindAsync(id, cancellationToken) ?? throw new IOException("Billing organization is unavailable.");
     org.Organization.PlanId = PlanCatalog.For(key).Id;
     await organizations.ReplaceAsync(org, cancellationToken);
@@ -93,6 +97,7 @@ async Task PlanAsync(string id, string key)
     BillingMonth.Observe(binding, PlanCatalog.For(key), clock.Now);
     binding.Version = AccountService.NewId();
     await db.SaveChangesAsync(cancellationToken);
+    await BillingMonth.RecordAsync(storage, binding, clock.Now, cancellationToken);
 }
 
 async Task CheckAsync(BillingBinding binding, string month, long quantity)
@@ -100,9 +105,9 @@ async Task CheckAsync(BillingBinding binding, string month, long quantity)
     using var response = await control.GetAsync("/billing-items?customer=" + binding.CustomerId + "&month=" + month, cancellationToken);
     response.EnsureSuccessStatusCode();
     var items = await response.Content.ReadFromJsonAsync(BillingJson.Default.ItemTotals, cancellationToken) ?? throw new IOException("Billing items are unavailable.");
-    if (items.Quantity != quantity || items.Count != (quantity > 0 ? 1 : 0))
+    if (items.Amount != OperationUnitOverage.Cents(quantity) || items.Count != (quantity > 0 ? 1 : 0))
     {
-        throw new InvalidOperationException($"Overage {month}: expected one charge of {quantity}, got {items.Count} items totaling {items.Quantity}.");
+        throw new InvalidOperationException($"Overage {month}: expected one charge of {quantity}, got {items.Count} items totaling {items.Amount} cents.");
     }
 }
 
@@ -111,6 +116,14 @@ async Task ControlAsync(string path, object input)
     var json = JsonSerializer.SerializeToElement(input, input.GetType(), BillingJson.Default);
     using var response = await control.PostAsJsonAsync(path, json, BillingJson.Default.JsonElement, cancellationToken);
     response.EnsureSuccessStatusCode();
+}
+
+async Task<int> ProviderCallsAsync()
+{
+    using var response = await control.GetAsync("/log", cancellationToken);
+    response.EnsureSuccessStatusCode();
+    var log = await response.Content.ReadFromJsonAsync(BillingJson.Default.JsonElement, cancellationToken);
+    return log.GetProperty("calls").GetArrayLength();
 }
 
 async Task<OverageCharge> ChargeAsync(BillingBinding binding, DateTimeOffset month)
@@ -196,12 +209,21 @@ try
     if (unchanged.UnitRate != frozen.UnitRate || unchanged.AmountCents != frozen.AmountCents || unchanged.PlanName != frozen.PlanName) { throw new InvalidOperationException("Catalog change rewrote the charge."); }
     await CheckAsync(binding, "2028-01", frozen.Quantity);
     await PlanAsync(delayed.OrganizationId, "pro");
+    var aboveBoth = await CreateAsync(clock.Now, clock.Now);
+    await PlanAsync(aboveBoth.OrganizationId, "pro");
+    await AdvanceAsync("2028-03-20T00:00:00Z");
+    await PlanAsync(delayed.OrganizationId, "starter");
+    await PlanAsync(aboveBoth.OrganizationId, "starter");
     await AdvanceAsync("2028-04-01T00:00:00Z");
     await BillingMonth.RecordAsync(storage, await BindingAsync(delayed.OrganizationId), clock.Now, cancellationToken);
-    await PlanAsync(delayed.OrganizationId, "starter");
+    await BillingMonth.RecordAsync(storage, await BindingAsync(aboveBoth.OrganizationId), clock.Now, cancellationToken);
     await reporter.ReportAsync(delayed.OrganizationId, 1_250_000, 0, january.AddMonths(2), cancellationToken);
     await CheckAsync(delayed, "2028-03", 0);
-    Console.WriteLine("billing ledger journey: changed catalog preserves closed-month terms and charge; downgrade uses observed plan");
+    await reporter.ReportAsync(aboveBoth.OrganizationId, 3_000_000, 0, january.AddMonths(2), cancellationToken);
+    await CheckAsync(aboveBoth, "2028-03", 1_000_000);
+    var lower = await ChargeAsync(aboveBoth, january.AddMonths(2));
+    if (lower.PlanName != "Pro" || lower.Allowance != 2_000_000 || lower.AmountCents != 500) { throw new InvalidOperationException("Two plans must freeze the lower per-meter charge."); }
+    Console.WriteLine("billing ledger journey: mid-month downgrade within Pro allowance -> zero; usage above both allowances -> Pro amount; closed catalog terms unchanged");
 
     await using (var db = await storage.CreateDbContextAsync(cancellationToken))
     {
@@ -236,6 +258,105 @@ try
         if (!await db.SkippedBillingMonths.AnyAsync(row => row.OrganizationId == existing.OrganizationId && row.Month == january.AddMonths(4), cancellationToken)) { throw new InvalidOperationException("Unknown plan must have a permanent skipped-month record."); }
     }
     Console.WriteLine("billing migration journey: deployment month and earlier excluded; missing historical plan permanently skipped");
+
+    var expiredReceipt = "evt_cleanup_" + AccountService.NewId();
+    var liveReceipt = "evt_cleanup_" + AccountService.NewId();
+    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+    {
+        foreach (var (id, age) in new[] { (expiredReceipt, 31), (liveReceipt, 1) })
+        {
+            db.StripeEventReceipts.Add(new()
+            {
+                Id = id,
+                Version = AccountService.NewId(),
+                OrganizationId = binding.OrganizationId,
+                SubscriptionId = binding.SubscriptionId,
+                InvoiceId = "",
+                EventType = "customer.subscription.updated",
+                ReceivedAt = clock.Now.AddDays(-age),
+                EventCreated = clock.Now.AddDays(-age),
+                CompletedAt = clock.Now.AddDays(-age),
+                ProcessingUntil = clock.Now.AddDays(-age)
+            });
+        }
+        await db.SaveChangesAsync(cancellationToken);
+    }
+    await Task.WhenAll(billing.CleanEventReceiptsAsync(cancellationToken), contender.Services.GetRequiredService<StripeBilling>().CleanEventReceiptsAsync(cancellationToken));
+    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+    {
+        if (await db.StripeEventReceipts.AnyAsync(row => row.Id == expiredReceipt, cancellationToken) ||
+            !await db.StripeEventReceipts.AnyAsync(row => row.Id == liveReceipt, cancellationToken)) { throw new InvalidOperationException("Concurrent receipt cleanup changed retention."); }
+    }
+    Console.WriteLine("billing webhook journey: concurrent bulk cleanup removes expired receipt and retains recent receipt");
+
+    var midpoint = await CreateAsync(clock.Now, clock.Now);
+    var ended = await CreateAsync(clock.Now, clock.Now);
+    var expired = await CreateAsync(clock.Now, clock.Now);
+    var endedPending = await CreateAsync(clock.Now, clock.Now);
+    await AdvanceAsync("2028-07-01T00:00:00Z");
+    var june = january.AddMonths(5);
+    await BillingMonth.RecordAsync(storage, await BindingAsync(midpoint.OrganizationId), clock.Now, cancellationToken);
+    await reporter.ReportAsync(midpoint.OrganizationId, 251_000, 0, june, cancellationToken);
+    var rounded = await ChargeAsync(midpoint, june);
+    await CheckAsync(midpoint, "2028-06", 1_000);
+    if (rounded.AmountCents != 1 || rounded.Description != "Operation units overage, Starter, 2028-06: 1,000") { throw new InvalidOperationException("Midpoint amount or readable invoice description differs."); }
+    Console.WriteLine("billing ledger journey: half-cent midpoint -> exact one-cent provider item; readable operation name, plan, month and quantity");
+
+    await BillingMonth.RecordAsync(storage, await BindingAsync(endedPending.OrganizationId), clock.Now, cancellationToken);
+    await ControlAsync("/failure", new FailureInput("POST", "/v1/invoiceitems", 400, 1, false));
+    await reporter.ReportAsync(endedPending.OrganizationId, 1_250_000, 0, june, cancellationToken);
+    foreach (var (closed, status) in new[] { (ended, "canceled"), (expired, "incomplete_expired"), (endedPending, "canceled") })
+    {
+        await ControlAsync("/payment", new PaymentInput(closed.SubscriptionId, false, false, status));
+        await EventAsync(closed, "evt_ended_" + AccountService.NewId());
+        var calls = await ProviderCallsAsync();
+        await reporter.ReportAsync(closed.OrganizationId, 1_250_000, 0, june, cancellationToken);
+        if (await ProviderCallsAsync() != calls) { throw new InvalidOperationException("Ended subscription reporting called the provider."); }
+    }
+    await reporter.RunCurrentAsync(cancellationToken);
+    await reporter.RunCurrentAsync(cancellationToken);
+    foreach (var closed in new[] { ended, expired, endedPending })
+    {
+        var skipped = await ChargeAsync(closed, june);
+        if (skipped.AmountCents != 500 || skipped.SkipReason != "subscription_ended" || skipped.ProviderId is not null) { throw new InvalidOperationException("Ended subscription must retain a visible, permanently skipped charge."); }
+        await CheckAsync(closed, "2028-06", 0);
+    }
+    Console.WriteLine("billing ledger journey: canceled and incomplete-expired keep skipped amounts; already-pending canceled charge is not retried");
+
+    long reads = 0;
+    using (var listener = new MeterListener
+    {
+        InstrumentPublished = (instrument, active) =>
+        {
+            if (instrument.Meter.Name == TerraBaseRpcClient.MeterName && instrument.Name == "dashboard.terrabase.rpc.calls") { active.EnableMeasurementEvents(instrument); }
+        }
+    })
+    {
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "method" && Equals(tag.Value, "ListAllowancesAsync")) { Interlocked.Add(ref reads, value); }
+            }
+        });
+        listener.Start();
+        await reporter.RunOnceAsync(cancellationToken);
+        var before = reads;
+        var unmapped = await CreateAsync(clock.Now, null, "unmapped");
+        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        {
+            var unknown = await db.Billing.SingleAsync(row => row.OrganizationId == unmapped.OrganizationId, cancellationToken);
+            unknown.EffectivePlan = "";
+            unknown.ObservedPricingVersion = "";
+            unknown.EffectivePlanSince = null;
+            unknown.OverageStartsAt = default;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        reads = 0;
+        await reporter.RunOnceAsync(cancellationToken);
+        if (before == 0 || reads != before) { throw new InvalidOperationException($"Unmapped subscription changed historical usage reads: {before} -> {reads}."); }
+        Console.WriteLine($"billing ledger journey: unset-start unmapped subscription adds no usage-month reads ({reads})");
+    }
 
     await SetGraceAsync(binding);
     var paid = await billing.ResolveExpiredGraceAsync(binding.OrganizationId, cancellationToken);
@@ -299,9 +420,9 @@ internal sealed class BillingClock : TimeProvider
 }
 
 internal sealed record ClockInput(string Now);
-internal sealed record SubscriptionInput(string Organization);
+internal sealed record SubscriptionInput(string Organization, string Price);
 internal sealed record SubscriptionIds(string Customer, string Subscription);
-internal sealed record ItemTotals(int Count, long Quantity);
+internal sealed record ItemTotals(int Count, long Amount);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(JsonElement))]
@@ -319,7 +440,7 @@ internal sealed partial class BillingJson : JsonSerializerContext;
 
 internal sealed record EmptyInput;
 internal sealed record FailureInput(string Method, string Path, int Status, int? Remaining, bool Transport);
-internal sealed record PaymentInput(string Subscription, bool Paid, bool Deliver);
+internal sealed record PaymentInput(string Subscription, bool Paid, bool Deliver, string? Status = null);
 internal sealed record TaxState(int Updates, bool Enabled);
 internal sealed record TaxInput(string Subscription, string Location, string Policy);
 internal sealed record EventInput(string Id, [property: JsonPropertyName("api_version")] string ApiVersion, EventData Data, bool Livemode, string Type, long Created);

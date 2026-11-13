@@ -27,7 +27,7 @@ test('completed overage months use recorded plans and deployment never rebills o
   if (!build) throw new Error('E2E_BUILD is required for the billing journey');
   const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll')], { env: process.env });
   const lines = result.stdout.split('\n').filter((line) => /^billing (ledger|migration|grace|tax|webhook) journey:/.test(line));
-  expect(lines).toHaveLength(11);
+  expect(lines).toHaveLength(15);
   console.log(lines.join('\n'));
 });
 
