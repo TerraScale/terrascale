@@ -1,7 +1,7 @@
 import base64
 import concurrent.futures
-import hashlib
 import fcntl
+import hashlib
 import json
 import os
 import pathlib
@@ -131,7 +131,11 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
             while line := process.stdout.readline():
                 output.write(line)
                 output.flush()
-                if b"Database restart proof:" in line or b"recovery proof is incomplete" in line or b"pending database recovery proof completed" in line:
+                if (
+                    b"Database restart proof:" in line
+                    or b"recovery proof is incomplete" in line
+                    or b"pending database recovery proof completed" in line
+                ):
                     with proof_finished:
                         proof_events += 1
                         proof_finished.notify_all()
@@ -365,7 +369,11 @@ def admission_cases():
     assert hook("ledger", marked) == [1, 0]
     assert gauge("terrabase_storage_faulted_databases") == hook("ledger", "*")[0] >= 1
     assert files(marked) == before, (before, files(marked))
-    print("FAULTED: existing Postgres transaction and new SELECT -> 57P03 copy_faulted; HTTP read -> 503 copy_faulted; files/key unchanged; fault gauge survives restart", flush=True)
+    print(
+        "FAULTED: existing Postgres transaction and new SELECT -> 57P03 copy_faulted; HTTP read -> 503 "
+        "copy_faulted; files/key unchanged; fault gauge survives restart",
+        flush=True,
+    )
     end()
 
     for kind in ("locked", "io"):
@@ -387,7 +395,11 @@ def admission_cases():
         control.unlink()
         lock.close()
         recovered([identity])
-        print(f"{kind}: INCOMPLETE, no fault, intent retained, files/key unchanged; PostgreSQL 57P03 recovery_pending and HTTP 503 recovery_pending; PASSED after removal, both protocols read", flush=True)
+        print(
+            f"{kind}: INCOMPLETE, no fault, intent retained, files/key unchanged; PostgreSQL 57P03 "
+            "recovery_pending and HTTP 503 recovery_pending; PASSED after removal, both protocols read",
+            flush=True,
+        )
         end()
 
     start()
@@ -422,7 +434,11 @@ def admission_cases():
     for identity in unreadable:
         assert files(identity) == before[identity]
     recovered(unreadable)
-    print("24 unreadable keys: INCOMPLETE, zero new faults, 24 intents and unchanged files; each protocol unavailable; all 24 PASSED and readable after key access restored", flush=True)
+    print(
+        "24 unreadable keys: INCOMPLETE, zero new faults, 24 intents and unchanged files; each protocol "
+        "unavailable; all 24 PASSED and readable after key access restored",
+        flush=True,
+    )
     end()
 
     start()
@@ -437,7 +453,11 @@ def admission_cases():
     unavailable(empty, "copy_faulted")
     assert hook("ledger", empty) == [1, 0]
     assert files(empty) == before
-    print("zero-length main with WAL after kill: DAMAGED; main/WAL/key unchanged; PostgreSQL 57P03 copy_faulted, HTTP 503 copy_faulted", flush=True)
+    print(
+        "zero-length main with WAL after kill: DAMAGED; main/WAL/key unchanged; PostgreSQL 57P03 "
+        "copy_faulted, HTTP 503 copy_faulted",
+        flush=True,
+    )
     end()
     return time.perf_counter() - added_started
 
@@ -645,7 +665,11 @@ try:
     for identity in (damaged, inaccessible):
         assert hook("ledger", identity) == [0, 0]
         hook("check", identity)
-    print("damaged wrapped key and inaccessible key: INCOMPLETE, no faults, intents retained; healthy database readable; both recover after key repair", flush=True)
+    print(
+        "damaged wrapped key and inaccessible key: INCOMPLETE, no faults, intents retained; healthy "
+        "database readable; both recover after key repair",
+        flush=True,
+    )
     end()
     assert rollback_count == 9, rollback_count
     added_duration = admission_cases()
