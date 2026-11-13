@@ -4,6 +4,10 @@ The platform databases (`ts-auth` and `ts-dashboard`, [platform-databases.md](pl
 their own: `ts-dashboard` in each region, homed in the region that seeds it, and `ts-auth` only in gru, its home. Each
 is homed where it is seeded, with no replicas and placement version 1. That placement cannot change.
 
+Regions seeded before this change keep an unused `ts-auth` database record. It is never served by ts-auth:
+replicas outside gru read gru, and storage readiness refuses any answering region other than gru outside Development.
+New regions do not create that record. Existing records and data are not deleted.
+
 ## API
 
 On a database of the platform organization:

@@ -17,6 +17,8 @@ public sealed class AuthConfigurationException(string message) : Exception(messa
 /// </summary>
 public sealed partial record AuthOptions
 {
+    public const string AuthHome = "gru";
+
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
         "listen",

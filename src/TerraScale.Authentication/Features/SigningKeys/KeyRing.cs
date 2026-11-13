@@ -220,30 +220,46 @@ public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clo
     /// </summary>
     public async Task<bool> RotateIfDueAsync(string instanceId, CancellationToken cancellationToken)
     {
-        if (!await this.ClaimRotationAsync(cancellationToken).ConfigureAwait(false))
+        ArgumentException.ThrowIfNullOrEmpty(instanceId);
+        var current = await this.ReadAsync(this.authority, instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
+        if (current.Keys.Count > 0
+            && clock.GetUtcNow().ToUnixTimeSeconds() < current.Keys.Max(key => key.Key.CreatedAt) + (long)RotationAge.TotalSeconds)
         {
             return false;
         }
 
-        using var key = await this.RotateAsync(instanceId, scheduled: true, cancellationToken).ConfigureAwait(false);
-        return key is not null;
+        if (await this.ClaimRotationAsync(cancellationToken).ConfigureAwait(false) is not { } lease)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var key = await this.RotateAsync(instanceId, scheduled: true, cancellationToken).ConfigureAwait(false);
+            return key is not null;
+        }
+        finally
+        {
+            _ = await Guard(() => data.SaveAsync(Change.Delete(lease), CancellationToken.None), CancellationToken.None).ConfigureAwait(false);
+        }
     }
 
-    private async Task<bool> ClaimRotationAsync(CancellationToken cancellationToken)
+    private async Task<Versioned<RotationLeaseRecord>?> ClaimRotationAsync(CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
         var current = await Guard(() => data.ReadAsync((db, token) => db.RotationLeases
             .Where(row => row.Name == RotationLease).WithVersion().SingleOrDefaultAsync(token), cancellationToken), cancellationToken)
             .ConfigureAwait(false);
-        var lease = new RotationLeaseRecord(RotationLease, now + RotationClaim);
-        if (current is null)
+        if (current is not null && current.Value.LeaseUntil > now)
         {
-            return await Guard(() => data.SaveAsync(Change.Insert(lease), cancellationToken), cancellationToken).ConfigureAwait(false);
+            return null;
         }
 
-        return current.Value.LeaseUntil > now
-            ? false
-            : await Guard(() => data.SaveAsync(Change.Update(current, lease), cancellationToken), cancellationToken).ConfigureAwait(false);
+        var lease = new RotationLeaseRecord(RotationLease, now + RotationClaim);
+        var claim = current is null ? Change.Insert(lease) : Change.Update(current, lease);
+        return await Guard(() => data.SaveAsync(claim, cancellationToken), cancellationToken).ConfigureAwait(false)
+            ? new(lease, claim.Version ?? throw new InvalidOperationException("A rotation lease claim must have a version."))
+            : null;
     }
 
     // Every key is verified and opened first, so a rotation never adds to keys this replica cannot use.

@@ -56,13 +56,17 @@ project, so signing out, resetting a password, or removing the creator's session
 
 ## Cost and limits
 
-ts-auth answers the status check in every region: its one storage database is homed in gru, and the check's read runs
-at the home through `TerraScale-Write: home`, so a regional copy can never say yes on a lagging replica. It admits at
+ts-auth answers the status check in every region: its one storage database is homed in gru, and every replica's
+storage URL points at gru, so the check's read lands there. Every storage request carries `TerraScale-Write: home`;
+TerraBase reads that preference only when the database's home is another region, to route work to the home instead
+of serving a replica. At gru, it already executes at home without consulting that preference. Storage readiness
+refuses a missing region header or any answering region other than gru outside Development. It admits at
 most 512 checks in flight per instance, and at most 20
 storage-backed checks per second for one key, key string and project. Beyond those limits it answers 503 or 429, and
 TerraBase refuses on both. A caller hammering its own key throttles only that key.
 
 A node asks about each warm key about twice a second, one round trip to the ts-auth of its region.
+In sjc and fra, each status check pays one extra round trip from ts-auth to the storage authority in gru.
 Nodes keep up to 256 validated key tokens warm in the background until their signed expiry. Every 250 ms they check which answers are at least 500 ms old and join the same per-key status flight. A pause between read warmup and the first insert therefore does not move a status RTT onto that insert. Expiry and the two-second revocation deadline remain strict; failed refreshes never extend a yes. A key outside that bounded warm set, or the first request using a new key, can still wait for one round trip. A new key
 works in every region from its first request: when the first answer arrives too late to admit new work (a cold
 cross-region connection), TerraBase asks once more before it answers `503 auth_unavailable`. That second question is

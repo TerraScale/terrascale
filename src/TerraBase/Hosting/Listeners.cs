@@ -219,6 +219,16 @@ public static class Listeners
         ArgumentNullException.ThrowIfNull(app);
         app.Use(async (context, next) =>
         {
+            if (ArrivedOn(context) == TerraBaseListener.Internal)
+            {
+                var region = context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
+                context.Response.OnStarting(() =>
+                {
+                    context.Response.Headers["X-TerraBase-Region"] = region;
+                    return Task.CompletedTask;
+                });
+            }
+
             if (ArrivedOn(context) == TerraBaseListener.Internal
                 && context.Request.Headers.TryGetValue(HomeForwarding.ForwardedForHeader, out var forwardedFor)
                 && context.RequestServices.GetRequiredService<InternalCredential>().Matches(context))

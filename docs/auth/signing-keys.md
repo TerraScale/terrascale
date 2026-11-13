@@ -15,9 +15,11 @@ which is supplied by OCI Vault. Private key material and the master key never ap
   attempt has failed or the bootstrap has succeeded, at Error.
 - Tampered keys or a different master key fail closed. Startup does not replace unusable keys.
 - Concurrent initial starts may generate multiple keys; all remain published and replicas select the same signer.
-- Scheduled rotation adds keys after 30 days, with a two-day publication overlap. Whichever replica claims the
-  `signing-key-rotation` lease row adds exactly one key; the other replicas, due at the same moment, add none. Project
-  tenants receive their first key only while their project exists at the storage authority.
+- Scheduled rotation adds keys after 30 days, with a two-day publication overlap. Replicas check whether rotation
+  is due before claiming the `signing-key-rotation` lease, recheck while holding it, and release it with its claimed
+  version after inserting the key. There is normally exactly one key per rotation; a holder stalled past the
+  5-minute lease can let a second replica add one more key, which is harmless (both are published). Project tenants
+  receive their first key only while their project exists at the storage authority.
 
 `ts-auth provision-signing-key` remains an idempotent diagnostic command.
 Normal startup requires no operator provisioning step.

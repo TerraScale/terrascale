@@ -42,16 +42,21 @@ public static class App
     public static void ValidateAuthenticationAuthority(AuthOptions options, string? region)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var serving = region ?? (options.Development ? "gru" : null);
+        var serving = region ?? (options.Development ? AuthOptions.AuthHome : null);
         if ((!options.Development || options.Smtp is not null || options.CloudflareEmail is not null)
             && (serving is null || !AttemptLimiter.Regions.Contains(serving, StringComparer.Ordinal)))
         {
             throw new AuthConfigurationException($"TS_REGION must be one of the serving auth regions ({string.Join(", ", AttemptLimiter.Regions)}); the auth database stays homed in gru");
         }
 
-        if (!options.Development && serving != "gru" && TerraBaseOrigin(options).IsLoopback)
+        if (!options.Development && serving != AuthOptions.AuthHome)
         {
-            throw new AuthConfigurationException("outside gru, TS_AUTH_TERRABASE_URL must be gru's internal listener, not loopback");
+            var origin = TerraBaseOrigin(options);
+            if (origin.IsLoopback || origin.Host is "0.0.0.0" or "[::]"
+                || origin.Host.Equals("localhost.", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new AuthConfigurationException("outside gru, TS_AUTH_TERRABASE_URL must reach gru's internal listener over the private network");
+            }
         }
     }
 
@@ -106,13 +111,13 @@ public static class App
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton(services => new HttpClient(StorageTiming.Wrap(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
+        builder.Services.AddSingleton(services => new HttpClient(TerraBaseStorageHealth.Wrap(StorageTiming.Wrap(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
             [],
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
             peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable],
             caller: services.GetRequiredService<IConfiguration>()["TS_AUTH_TERRABASE_KEY_FILE"] is { Length: > 0 } path
                 ? new CallerCredential("ts-auth", File.ReadAllText(path), services.GetRequiredService<TimeProvider>()) : null),
-            services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable]))));
+            services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])))));
         builder.Services.AddSingleton(services => new TerraBaseSqlClient(services.GetRequiredService<HttpClient>(), new TerraBaseSqlClientOptions
         {
             BaseAddress = TerraBaseOrigin(options),
