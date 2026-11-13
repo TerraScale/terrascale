@@ -1,18 +1,3 @@
-/* Automatic incidents. After every probe round the coordinator steps this
-   state machine with each component's measured state:
-
-   - a component unhealthy long enough opens an incident (down or partially
-     down after a minute, degraded after ten), investigating;
-   - a worse state raises the incident's impact;
-   - passing checks move it to monitoring, and five healthy minutes resolve
-     it; failing again sends it back to investigating;
-   - five minutes in which the monitor itself cannot measure the component
-     (such as a spent canary quota) close it: an outage nothing confirms is
-     not shown, and the page lists the monitoring issue instead.
-
-   Components in maintenance never open incidents, and an incident an
-   operator has edited is theirs: the machine lets go of it. */
-
 import { STATE_LABELS, worst, type IncidentImpact, type IncidentStatus, type TimelineState } from "./status";
 
 type Unhealthy = "degraded" | "partial_outage" | "major_outage";
