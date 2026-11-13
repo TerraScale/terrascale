@@ -242,6 +242,7 @@ export function observe(
         name: component.name,
         // Healthy HTTP siblings cannot prove recovery while the canary is unmeasured.
         state: state === "operational" && monitorFault ? "none" : state,
+        monitorFault,
         detail: `${failing} of ${total} checks failing, ${slow} slow${errors.length > 0 ? ` (${errors.slice(0, 3).join(", ")})` : ""}`,
         suppressed: maintenance.includes(null) || maintenance.includes(component.id),
       },

@@ -12,6 +12,8 @@ export interface Tracker {
   healthySince: number | null;
   /** Last failure detail posted; absent in trackers saved before detail updates. */
   detail?: string;
+  /** Since when the monitor itself has been unable to measure the component. */
+  unmeasuredSince?: number;
 }
 
 export interface Observation {
@@ -22,6 +24,8 @@ export interface Observation {
   detail: string;
   /** A maintenance window covers the component. */
   suppressed: boolean;
+  /** Why the monitor itself could not measure it, e.g. "Canary quota exhausted". */
+  monitorFault?: string | null;
 }
 
 export type Action =
@@ -98,6 +102,23 @@ export function step(
     if (tracker?.incidentId && options.touched.has(tracker.incidentId)) {
       delete next[id];
       continue;
+    }
+    if (observation.state === "none" && observation.monitorFault && tracker?.incidentId) {
+      const since = tracker.unmeasuredSince ?? now;
+      if (now - since >= RESOLVE_AFTER) {
+        delete next[id];
+        actions.push({
+          type: "resolve",
+          incidentId: tracker.incidentId,
+          body: `Our monitors cannot measure ${observation.name} right now (${observation.monitorFault}), so this outage is not confirmed. This incident is closed and the monitoring issue is listed on this page.`,
+        });
+      } else
+        next[id] = { ...tracker, unmeasuredSince: since, healthySince: tracker.healthySince === null ? null : now };
+      continue;
+    }
+    if (tracker?.unmeasuredSince !== undefined) {
+      const { unmeasuredSince: _, ...measured } = tracker;
+      tracker = next[id] = measured;
     }
     if (observation.state === "none") {
       // An unmeasured round is not a healthy one: a recovery being
