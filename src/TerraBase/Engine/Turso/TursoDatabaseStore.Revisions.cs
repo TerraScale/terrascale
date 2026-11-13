@@ -18,7 +18,18 @@ internal sealed partial class TursoDatabaseStore
 
         try
         {
-            if (await WriteLane.RunAsync(() => Revisions.AfterWrite(writer.Connection), CancellationToken.None).ConfigureAwait(false) && Tenant is { } tenant && !IsSystem)
+            if (await WriteLane.RunAsync(() =>
+            {
+                if (Captures && BackupAnchor is null && Volatile.Read(ref BackupTaps) == 0)
+                {
+                    while (TursoStorageTransaction.Trim(writer.Connection, null, long.MaxValue, IsSystem))
+                    {
+                    }
+                    ObserveCdcSize(writer.Connection);
+                }
+
+                return Revisions.AfterWrite(writer.Connection);
+            }, CancellationToken.None).ConfigureAwait(false) && Tenant is { } tenant && !IsSystem)
             {
                 Revised?.Invoke(tenant);
             }

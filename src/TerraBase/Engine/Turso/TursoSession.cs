@@ -104,6 +104,7 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
         var pageCacheBytes = memoryBudget / 4;
         var cacheKib = Math.Max(2048, pageCacheBytes / threads / 1024);
         return string.Create(CultureInfo.InvariantCulture, $"""
+            PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA cache_size = -{cacheKib};
             PRAGMA foreign_keys = ON;

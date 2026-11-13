@@ -311,13 +311,21 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
                 break;
             }
 
-            HashSet<long> evicted = [];
-            foreach (var (rowid, key, _, _) in intents.Where(intent => !intent.Faulting))
+            Dictionary<long, string> failures = [];
+            foreach (var (rowid, key, incarnation, faulting) in intents)
             {
                 var started = Stopwatch.GetTimestamp();
-                if (engine.Evicted(key.Tenant))
+                if (!Deleted(key))
                 {
-                    evicted.Add(rowid);
+                    var failure = await engine.RecoverCopyAsync(key.Tenant, incarnation, cancellationToken).ConfigureAwait(false);
+                    if (failure is not null)
+                    {
+                        failures.Add(rowid, failure);
+                    }
+                    else if (faulting)
+                    {
+                        failures.Add(rowid, "the copy reported a storage failure before the process exited");
+                    }
                 }
                 proofs.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
@@ -325,8 +333,8 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
             {
                 foreach (var (rowid, key, incarnation, _) in intents)
                 {
-                    if (ReadRow(command, key) is var current && !(current is null && (Deleted(key) || evicted.Contains(rowid)))
-                        && Faulted(key, current, incarnation, "the process exited uncleanly while this copy was written") is { } row)
+                    if (failures.TryGetValue(rowid, out var reason)
+                        && Faulted(key, ReadRow(command, key), incarnation, reason) is { } row)
                     {
                         Upsert(command, row);
                         faults++;

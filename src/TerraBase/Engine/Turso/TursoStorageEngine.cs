@@ -333,6 +333,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         try
         {
             nativeTemporaryStorage?.Initialize();
+            RecoverPublications();
             CheckIntentJournal();
             DeleteRewriteScratch();
             Ledger = new StorageFaultLedger(this, logger, schemaMemory);
@@ -615,6 +616,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     {
                         RejectLink(path);
                         DeleteFileIfPresent(path);
+                        SyncExistingDirectory(Path.GetDirectoryName(path)!);
                         _checkpoint("delete.main_file", database);
                         DeleteSidecars(path);
                         var directory = Path.GetDirectoryName(path)!;
@@ -634,6 +636,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
                         }
 
+                        SyncExistingDirectory(directory);
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
                     _ = _publishing.TryRemove(key, out _);
@@ -646,7 +649,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     await Io.RunAsync(() =>
                     {
                         DeleteIfEmpty(Path.GetDirectoryName(path)!);
+                        SyncExistingDirectory(Path.Combine(_dataDirectory, key.Organization));
                         DeleteIfEmpty(Path.Combine(_dataDirectory, key.Organization));
+                        DirectorySync(_dataDirectory);
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
                     return existed;
@@ -1285,16 +1290,19 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RejectDatabaseLinks(temporary);
             RejectDatabaseLinks(path);
             await ThrowIfPurgeFencedAsync(name, CancellationToken.None).ConfigureAwait(false);
-            File.Move(temporary + DatabaseKeys.Suffix, path + DatabaseKeys.Suffix, overwrite: false);
-            try
+            await Io.RunAsync(() =>
             {
+                foreach (var file in new[] { temporary, temporary + DatabaseKeys.Suffix })
+                {
+                    using var handle = File.OpenHandle(file, FileMode.Open, FileAccess.ReadWrite);
+                    RandomAccess.FlushToDisk(handle);
+                }
+
+                File.Move(temporary + DatabaseKeys.Suffix, path + DatabaseKeys.Suffix, overwrite: false);
+                SyncPublicationDirectory(Path.GetDirectoryName(path)!);
                 File.Move(temporary, path, overwrite: false);
-            }
-            catch
-            {
-                File.Move(path + DatabaseKeys.Suffix, temporary + DatabaseKeys.Suffix, overwrite: false);
-                throw;
-            }
+                DirectorySync(Path.GetDirectoryName(path)!);
+            }, CancellationToken.None).ConfigureAwait(false);
             published = true;
         }
         finally
@@ -1304,7 +1312,15 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 _ = _publishing.TryRemove(publication, out _);
             }
 
-            DeleteFiles(temporary);
+            await Io.RunAsync(() =>
+            {
+                DeleteFiles(temporary);
+                if (!File.Exists(path))
+                {
+                    DeleteSidecars(path);
+                }
+                DirectorySync(Path.GetDirectoryName(path)!);
+            }, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
