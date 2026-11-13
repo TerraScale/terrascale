@@ -167,19 +167,30 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
     const userPage = await userContext.newPage();
     const userAudit = new Audit(userPage, info);
     try {
-      const racers = await Promise.all([request.newContext(), request.newContext()]);
-      try {
-        const responses = await Promise.all(racers.map(racer => racer.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
-          headers: { Origin: auth }, form: { email: imported.value.items[0].user.email, password },
-        })));
-        for (const response of responses) {
-          expect(response.status()).toBe(200);
-          expect(await response.text()).toContain('You are signed in.');
+      const raceImports = await sdk.importUsers(management.writeKey, current.projectId, { users: Array.from({ length: 19 }, (_, sample) => ({
+        email: `import-race-${sample}-${current.runId}@example.com`, email_verified: true, password_hash: vector.password_hash,
+      })) });
+      expect(raceImports.ok).toBe(true);
+      if (!raceImports.ok) throw new Error('race import failed');
+      expect(raceImports.value.errors).toEqual([]);
+      expect(raceImports.value.items).toHaveLength(19);
+      extraIds.push(...raceImports.value.items.map(item => item.user.id));
+      for (const item of [imported.value.items[0], ...raceImports.value.items]) {
+        const racers = await Promise.all([request.newContext(), request.newContext()]);
+        try {
+          const responses = await Promise.all(racers.map(racer => racer.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
+            headers: { Origin: auth }, form: { email: item.user.email, password },
+          })));
+          for (const response of responses) {
+            expect(response.status()).toBe(200);
+            expect(await response.text()).toContain('You are signed in.');
+          }
+          for (const racer of racers) for (const cookie of (await racer.storageState()).cookies) saveSecret('race-cookie', cookie.value);
+        } finally {
+          await Promise.all(racers.map(racer => racer.dispose()));
         }
-        for (const racer of racers) for (const cookie of (await racer.storageState()).cookies) saveSecret('race-cookie', cookie.value);
-      } finally {
-        await Promise.all(racers.map(racer => racer.dispose()));
       }
+      console.log('20 concurrent imported-password upgrade pairs passed');
       await userPage.goto(`${auth}/ui/${current.projectId}/sign-in`);
       await hostedReady(userPage);
       await userPage.locator('#sign-in-email').fill(imported.value.items[0].user.email);

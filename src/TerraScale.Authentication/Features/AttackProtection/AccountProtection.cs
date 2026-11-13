@@ -32,6 +32,13 @@ public sealed class AccountProtection(AuthData data, ProjectAuthSettings project
         using var reservation = mail.Reserve();
         for (var round = 0; round < 3; round++)
         {
+            var authenticated = user is null ? null : await data.ReadAsync((db, token) => db.Users
+                .SingleOrDefaultAsync(row => row.InstanceId == tenant && row.Id == user.Id, token), cancellationToken);
+            if (user is not null && (authenticated is not { Disabled: false } || authenticated.AuthStamp != user.AuthStamp || authenticated.AuthEpoch != user.AuthEpoch))
+            {
+                return false;
+            }
+
             var current = await data.ReadAsync((db, token) => db.AccountLocks
                 .Where(row => row.InstanceId == tenant && row.Subject == subject).WithVersion().SingleOrDefaultAsync(token), cancellationToken);
             var now = clock.GetUtcNow();
