@@ -177,8 +177,7 @@ internal sealed partial class TursoReplicas(
                     var sourceKey = master.Unwrap(wrapped);
                     try
                     {
-                        using var source = DetachedImport.Open(path, sourceKey);
-                        var evidence = DetachedImport.Inspect(source);
+                        var evidence = DetachedImport.Inspect(path, sourceKey);
                         new DetachedImport(1, key.Database, evidence.Incarnation, evidence.Position, wrapped, null).Write(detached + ".importing", create: true);
                     }
                     finally

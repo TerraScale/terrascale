@@ -121,7 +121,14 @@ async function ready(child) {
   });
 }
 const metrics = async () => (await fetch('http://127.0.0.1:18383/metrics')).text();
-const value = (text, name, label = '') => Number(text.split('\n').find(line => line.startsWith(name) && (!label || line.includes(label)))?.split(' ').at(-1) ?? 0);
+const value = (text, name, label = '') => {
+  assert.ok(text.split('\n').some(line => line.startsWith('# TYPE ' + name) && /^[_ ]/.test(line.slice(7 + name.length))), 'metric instrument exists: ' + name);
+  const sample = text.split('\n').find(line => line.startsWith(name) && (!label || line.includes(label)));
+  assert.ok(sample, 'metric sample exists: ' + name + ' ' + label);
+  const result = Number(sample.split(' ').at(-1));
+  assert.ok(Number.isFinite(result), 'metric sample is numeric: ' + name);
+  return result;
+};
 try {
   let child = node(baseline, 'k0');
   await ready(child);
@@ -268,6 +275,23 @@ try {
     assert.deepEqual(rotated, { ...original, KeyId: 'k1' }, 'reopened credential plaintext and ciphertext match for ' + original.Id);
   }
   console.log('startup read row=42 from every database; reopened both current and historical credentials, compared plaintext and unchanged ciphertext');
+  for (let sample = 0; sample < 3; sample++) {
+    const directory = join(profile, 'inventory-cost-' + sample);
+    const local = { TERRABASE_DATA_DIRECTORY: directory, AWS_ENDPOINT_URL_S3: undefined, AWS_REGION: undefined,
+      BUCKET_NAME: undefined, AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined,
+      TERRABASE_SHAPES_ACCESS_KEY_ID: undefined, TERRABASE_SHAPES_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_CDN_API_TOKEN: undefined };
+    const initialized = node(candidate, 'k0', local);
+    await ready(initialized);
+    await stop(initialized);
+    const measured = node(process.env.E2E_KEYRING_DRIVER, 'k0', local, ['inventory-cost']);
+    const log = join(profile, 'node-' + sequence + '.log');
+    const [code] = await once(measured, 'exit');
+    children.delete(measured);
+    assert.equal(code, 0, '10000-wrapper measurement');
+    const result = readFileSync(log, 'utf8').split('\n').find(line => line.startsWith('keyring-driver:10000 '));
+    assert.ok(result, 'startup and scrape timings are present');
+    console.log(result);
+  }
   const firstLog = await (await fetch('http://127.0.0.1:8028/log')).json();
   assert.deepEqual(firstLog.unexpected, [], 'first scenario had no unexpected object-store requests');
   await stop(standin);

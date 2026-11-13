@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Diagnostics.Metrics;
 using System.Reflection;
 using System.Text.Json;
@@ -35,6 +36,15 @@ internal static class Lifecycle
             Records.Rows(args[0]);
             return;
         }
+        if (args is ["inspection", var inspection])
+        {
+            InventoryProof.Inspection(inspection);
+            return;
+        }
+        if (args is ["inventory-cost"])
+        {
+            InventoryProof.SeedCost();
+        }
         await RunAsync(args);
     }
 
@@ -60,6 +70,7 @@ internal static class Lifecycle
         }));
         var entryPoint = typeof(TerraBaseOptions).Assembly.GetType("Program")!.GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(method => method.ReturnType == typeof(Task<int>) && method.GetParameters() is [{ ParameterType: var type }] && type == typeof(string[]));
+        var startup = Stopwatch.StartNew();
         var running = (Task<int>)(entryPoint.Invoke(null, [Array.Empty<string>()]) ?? throw new InvalidOperationException("service did not start"));
         var app = await built.Task.WaitAsync(cancellationToken);
         using var eventSubscription = hostEvents;
@@ -70,10 +81,20 @@ internal static class Lifecycle
         if (evidence is not null && args.Length == 1 && File.ReadAllText(args[0]).Contains("\"mode\"", StringComparison.Ordinal)
             && !File.ReadAllText(args[0]).Contains("key-refused", StringComparison.Ordinal))
         {
-            await evidence.VerifyMetricsAsync(cancellationToken);
+            await FileEvidence.VerifyMetricsAsync(cancellationToken);
         }
         try
         {
+            if (args[0] == "inventory-cost")
+            {
+                await InventoryProof.CostAsync(startup.Elapsed.TotalMilliseconds, cancellationToken);
+                return;
+            }
+            if (args[0] == "inventory-import")
+            {
+                await InventoryProof.ImportAsync(app.Services, cancellationToken);
+                return;
+            }
             if (args[0] is "credentials" or "rows" or "seed-rows")
             {
                 await Records.RunAsync(app.Services, args, cancellationToken);
@@ -83,6 +104,28 @@ internal static class Lifecycle
             var root = request.RootElement;
             var database = new TenantContext(root.GetProperty("organization").GetString()!, PlanTier.Pro,
                 root.GetProperty("project").GetString()!, root.GetProperty("database").GetString()!);
+            if (root.TryGetProperty("mode", out var temporaryMode) && temporaryMode.GetString() == "temporary")
+            {
+                var store = await app.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
+                    ?? throw new InvalidOperationException("tenant with partial temporary missing");
+                await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken);
+                var result = await transaction.ExecuteStatementAsync(new SqlStatement("SELECT value FROM keyring_startup", [],
+                    new Dictionary<string, object?>(), 10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
+                Require(result.Rows is [var row] && row is [long value] && value == 42, "tenant with partial temporary did not serve");
+                using var client = new HttpClient();
+                var metrics = await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
+                Require(metrics.Split('\n').Any(line => line.StartsWith("terrabase_keys_local_wrapped", StringComparison.Ordinal)
+                    && line.Contains("key_id=\"k1\"", StringComparison.Ordinal) && line.EndsWith(" -1", StringComparison.Ordinal)),
+                    "unauthentic temporary did not make its key unknown");
+                var count = root.GetProperty("files").GetInt64();
+                Require(metrics.Split('\n').Any(line => line.StartsWith("terrabase_storage_retained_files", StringComparison.Ordinal)
+                    && line.EndsWith(" " + count.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)), "temporary file count is not exact");
+                var expected = " " + root.GetProperty("bytes").GetInt64().ToString(CultureInfo.InvariantCulture);
+                Require(metrics.Split('\n').Any(line => line.StartsWith("terrabase_storage_retained_bytes", StringComparison.Ordinal)
+                    && line.EndsWith(expected, StringComparison.Ordinal)), "temporary bytes are not exact");
+                await Console.Out.WriteLineAsync("keyring-driver:partial-temporaries catalog-started tenant=42 unknown=k1 retained=" + count.ToString(CultureInfo.InvariantCulture));
+                return;
+            }
             if (root.TryGetProperty("mode", out var keyMode) && keyMode.GetString() == "key-refused")
             {
                 var engine = app.Services.GetRequiredService<IStorageEngine>();

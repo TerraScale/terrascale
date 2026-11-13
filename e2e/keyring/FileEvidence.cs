@@ -27,18 +27,23 @@ internal sealed class FileEvidence(Dictionary<string, byte[]> files)
             .ToDictionary(path => path, path => SHA256.HashData(File.ReadAllBytes(path)), StringComparer.Ordinal));
     }
 
-    internal async Task VerifyMetricsAsync(CancellationToken cancellationToken)
+    internal static async Task VerifyMetricsAsync(CancellationToken cancellationToken)
     {
         using var client = new HttpClient();
-        var text = await client.GetStringAsync("http://127.0.0.1:18493/metrics", cancellationToken);
-        var retained = files.Keys.Where(path => path.Contains(".promote.db", StringComparison.Ordinal) && File.Exists(path)).ToArray();
+        var options = TerraBaseOptions.FromProcess([]);
+        var text = await client.GetStringAsync("http://127.0.0.1:" + options.MetricsPort.ToString(CultureInfo.InvariantCulture) + "/metrics", cancellationToken);
+        var retained = Directory.GetFiles(TerraBaseOptions.FromProcess([]).DataDirectory, "*", SearchOption.AllDirectories)
+            .Where(path => path.Contains(".promote.db", StringComparison.Ordinal)
+                || path.Contains(".key.rewrapping", StringComparison.Ordinal) || path.Contains(".creating", StringComparison.Ordinal)
+                || path.Contains(".key.tmp", StringComparison.Ordinal)
+                || path.EndsWith(".key", StringComparison.Ordinal) && !File.Exists(path[..^4])).ToArray();
         var count = ReadGauge(text, "terrabase_storage_retained_files");
         var bytes = ReadGauge(text, "terrabase_storage_retained_bytes");
-        if (count < retained.Length || bytes < retained.Sum(path => new FileInfo(path).Length))
+        if (count != retained.Length || bytes != retained.Sum(path => new FileInfo(path).Length))
         {
             throw new InvalidDataException("retained files or bytes were not counted");
         }
-        Console.WriteLine("keyring-driver:retained-gauges-cover-files=" + retained.Length);
+        Console.WriteLine("keyring-driver:retained-gauges-exact-files=" + retained.Length);
     }
 
     private static double ReadGauge(string metrics, string name)
@@ -51,7 +56,10 @@ internal sealed class FileEvidence(Dictionary<string, byte[]> files)
     {
         foreach (var (original, digest) in files)
         {
-            var path = File.Exists(original) ? original : original.Replace(".promote.db", ".db", StringComparison.Ordinal);
+            var canonical = original.Replace(".promote.db", ".db", StringComparison.Ordinal);
+            var moved = !files.ContainsKey(canonical)
+                && (original.EndsWith(".promote.db", StringComparison.Ordinal) || original.Contains(".promote.db-", StringComparison.Ordinal));
+            var path = !File.Exists(original) && moved ? canonical : original;
             if (!File.Exists(path))
             {
                 throw new InvalidDataException("recovery lost file " + Path.GetFileName(original));

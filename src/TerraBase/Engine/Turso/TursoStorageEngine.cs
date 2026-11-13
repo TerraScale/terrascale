@@ -333,12 +333,14 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         meter.CreateObservableCounter("terrabase.storage.detached_recovery_failures", () => Interlocked.Read(ref _detachedRecoveryFailures),
             description: "Detached database recovery refusals; remaining copies are preserved.");
         meter.CreateObservableGauge("terrabase.keys.local.wrapped", ObserveLocalKeys,
-            description: "Local persisted wrappers by key id; zero on every node permits retiring an id.");
+            description: "Local persisted wrappers by key id; -1 is unknown and forbids retirement; zero on every node permits retiring an id.");
+        meter.CreateObservableGauge("terrabase.keys.weak_in_use", ObserveWeakKeys,
+            description: "Weak master key referenced locally by id; 1 means rotate away, -1 means unknown.");
         meter.CreateObservableGauge("terrabase.keys.refused", () => _keyRefusals.Count,
             description: "Databases refused because a configured key cannot authenticate a local wrapper.");
-        meter.CreateObservableGauge("terrabase.storage.retained_files", () => RetainedFiles().LongCount(), "{file}",
+        meter.CreateObservableGauge("terrabase.storage.retained_files", () => RetainedFiles().Files, "{file}",
             "Files retained after detached recovery, awaiting separate reclamation.");
-        meter.CreateObservableGauge("terrabase.storage.retained_bytes", () => RetainedFiles().Select(path => new FileInfo(path)).Where(file => file.Exists).Sum(file => file.Length), "By",
+        meter.CreateObservableGauge("terrabase.storage.retained_bytes", () => RetainedFiles().Bytes, "By",
             "Bytes retained after detached recovery, awaiting separate reclamation.");
         _ownership = Own(configured.DataDirectory);
         try

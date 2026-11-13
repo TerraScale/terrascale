@@ -14,7 +14,7 @@ internal static class WrappedKeyFile
         foreach (var file in Directory.EnumerateFiles(directory))
         {
             if (file.EndsWith(".key", StringComparison.Ordinal) || file.Contains(".key.rewrapping", StringComparison.Ordinal)
-                || file.EndsWith(".key.tmp", StringComparison.Ordinal))
+                || file.Contains(".key.tmp", StringComparison.Ordinal))
             {
                 yield return file;
             }

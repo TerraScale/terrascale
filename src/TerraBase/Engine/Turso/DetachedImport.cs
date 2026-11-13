@@ -43,7 +43,7 @@ internal sealed record DetachedImport(
         DirectorySync.Sync(Path.GetDirectoryName(path)!);
     }
 
-    internal static SqliteConnection Open(string path, byte[] key)
+    private static SqliteConnection Open(string path, byte[] key)
     {
         DatabaseKeys.RejectLink(path);
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -66,7 +66,33 @@ internal sealed record DetachedImport(
         }
     }
 
-    internal static (string Incarnation, long Position) Inspect(SqliteConnection connection)
+    internal static (string Incarnation, long Position) Inspect(string path, byte[] key)
+    {
+        DatabaseKeys.RejectLink(path);
+        var scratch = Directory.CreateTempSubdirectory("terrabase-inspection-");
+        try
+        {
+            var name = Path.GetFileName(path);
+            foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(path)!, name + "*"))
+            {
+                if (file != path && !file.StartsWith(path + "-", StringComparison.Ordinal)
+                    && !file.StartsWith(path + ".", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                DatabaseKeys.RejectLink(file);
+                File.Copy(file, Path.Combine(scratch.FullName, Path.GetFileName(file)));
+            }
+            using var connection = Open(Path.Combine(scratch.FullName, name), key);
+            return Inspect(connection);
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
+    private static (string Incarnation, long Position) Inspect(SqliteConnection connection)
     {
         using var transaction = connection.BeginTransaction(deferred: true);
         using var command = connection.CreateCommand();
@@ -96,8 +122,7 @@ internal sealed record DetachedImport(
 
     internal void Verify(string path, byte[] key)
     {
-        using var connection = Open(path, key);
-        var observed = Inspect(connection);
+        var observed = Inspect(path, key);
         if (observed.Incarnation != Incarnation || observed.Position < Position)
         {
             throw new InvalidDataException("the detached import database incarnation or position does not match its intent");

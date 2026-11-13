@@ -380,7 +380,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
           expect(existsSync(detached(published.id))).toBe(true);
           expect(existsSync(detached(published.id) + '.key')).toBe(true);
           expect(JSON.parse(readFileSync(detached(published.id) + '.importing', 'utf8')).published).toBe(true);
-          await checkpoint('keyring-driver:retained-gauges-cover-files=');
+          await checkpoint('keyring-driver:retained-gauges-exact-files=');
           await stop(second);
           console.log('crash after publication: home stopped; destination opened once with row=42; restart retained the detached source; missing catalog registration preserved the destination after its grace period');
 

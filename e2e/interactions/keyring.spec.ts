@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import { production, stateDir } from '../support/stack';
@@ -34,14 +34,14 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     child = undefined;
   }
 
-  async function start(active: string, keys: Record<string, string>, binary = candidate, operation?: string): Promise<void> {
+  async function start(active: string, keys: Record<string, string>, binary = candidate, operation?: string | string[], dataDirectory = data): Promise<void> {
     writeFileSync(ringFile, JSON.stringify({ active, keys }), { mode: 0o600 });
     log = join(directory, `node-${++run}.log`);
     const output = openSync(log, 'w', 0o600);
     const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
       !name.startsWith('TERRABASE_') && !name.startsWith('TS_') && !name.startsWith('AWS_') && name !== 'BUCKET_NAME'));
     child = spawn('dotnet', operation ? ['exec', '--depsfile', join(process.env.E2E_BUILD!, 'terrabase/terrabase.deps.json'),
-      '--runtimeconfig', join(process.env.E2E_BUILD!, 'terrabase/terrabase.runtimeconfig.json'), process.env.E2E_KEYRING_DRIVER!, operation] : [binary], {
+      '--runtimeconfig', join(process.env.E2E_BUILD!, 'terrabase/terrabase.runtimeconfig.json'), process.env.E2E_KEYRING_DRIVER!, ...(Array.isArray(operation) ? operation : [operation])] : [binary], {
       env: {
         ...environment,
         DOTNET_ROOT: process.env.DOTNET_ROOT,
@@ -49,7 +49,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
         DOTNET_ENVIRONMENT: 'Development',
         TERRABASE_MASTER_KEYS_FILE: ringFile,
         TERRABASE_PEER_SECRET: peer,
-        TERRABASE_DATA_DIRECTORY: data,
+        TERRABASE_DATA_DIRECTORY: dataDirectory,
         TERRABASE_MEMORY_BUDGET: '67108864',
         TERRABASE_STORAGE_THREADS: '1',
         TERRABASE_PORT: '18380',
@@ -192,13 +192,69 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await rotated(paths.length + 2);
     await stop();
+    const allFiles = (path: string): string[] => readdirSync(path, { withFileTypes: true }).flatMap(entry =>
+      entry.isDirectory() ? allFiles(join(path, entry.name)) : [join(path, entry.name)]);
+    const baselineRetained = allFiles(data).filter(path => path.includes('.creating'));
+    const baselineBytes = baselineRetained.reduce((sum, path) => sum + readFileSync(path).length, 0);
+    const partialCatalog = catalogKey + '.rewrapping.interrupted';
+    const partialTenant = tenant + '.key.rewrapping.interrupted';
+    writeFileSync(partialCatalog, 'TERRABASE-DB-KEY-2\nv2.k1.partial');
+    writeFileSync(partialTenant, 'TERRABASE-DB-KEY-2\nv2.k1.partial');
+    writeFileSync(requestFile, JSON.stringify({ organization, project, database, mode: 'temporary', files: baselineRetained.length + 2,
+      bytes: baselineBytes + readFileSync(partialCatalog).length + readFileSync(partialTenant).length }), { mode: 0o600 });
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, requestFile);
+    await expect.poll(() => child?.exitCode).toBe(0);
+    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:partial-temporaries catalog-started tenant=42 unknown=k1 retained=' + (baselineRetained.length + 2));
+    await stop();
+    expect(existsSync(partialCatalog)).toBe(true);
+    expect(existsSync(partialTenant)).toBe(true);
+    rmSync(partialCatalog);
+    rmSync(partialTenant);
+    const unauthentic = tenant + '.key.rewrapping.unauthentic';
+    const wrapper = readFileSync(tenant + '.key', 'ascii').trim().split('\n')[1].split('.');
+    const badTag = Buffer.from(wrapper[2], 'base64');
+    badTag[badTag.length - 1] ^= 1;
+    writeFileSync(unauthentic, 'TERRABASE-DB-KEY-2\nv2.k1.' + badTag.toString('base64') + '\n');
+    writeFileSync(requestFile, JSON.stringify({ organization, project, database, mode: 'temporary',
+      files: baselineRetained.length + 1, bytes: baselineBytes + readFileSync(unauthentic).length }), { mode: 0o600 });
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, requestFile);
+    await expect.poll(() => child?.exitCode).toBe(0);
+    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:partial-temporaries catalog-started tenant=42 unknown=k1 retained=' + (baselineRetained.length + 1));
+    await stop();
+    expect(existsSync(unauthentic)).toBe(true);
+    rmSync(unauthentic);
+    const intent = tenant.replace('.db', '.promote.db') + '.importing';
+    writeFileSync(intent, '{}');
+    chmodSync(intent, 0);
+    try {
+      writeFileSync(requestFile, JSON.stringify({ organization, project, database, healthy, mode: 'key-refused' }), { mode: 0o600 });
+      await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, requestFile);
+      await expect.poll(() => child?.exitCode).toBe(0);
+      expect(readFileSync(log, 'utf8')).toContain('keyring-driver:key-refused counted=1 healthy=42');
+      expect(existsSync(intent)).toBe(true);
+      await stop();
+    } finally {
+      chmodSync(intent, 0o600);
+      rmSync(intent);
+    }
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, 'inventory-import');
+    await expect.poll(() => child?.exitCode).toBe(0);
+    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:import absent=whole-refusal k0=0->1');
+    await stop();
+    await start('k1', { k1: k1.toString('base64'), k2: randomBytes(32).toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k0' is required by 1 local wrappers");
+    await stop();
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+    await rotated(paths.length + 2);
+    await stop();
     const catalogBytes = readFileSync(catalogKey);
     await start('k1', { k0: k0.toString('base64'), k1: randomBytes(32).toString('base64') });
     await expect.poll(() => child?.exitCode).toBe(2);
     expect(readFileSync(log, 'utf8')).toContain("catalog wrapper is not authentic under key id 'k1'");
     expect(readFileSync(catalogKey).equals(catalogBytes)).toBe(true);
     await stop();
-    for (const material of [Buffer.alloc(31).toString('base64'), Buffer.alloc(32, 7).toString('base64')]) {
+    for (const material of [Buffer.alloc(31).toString('base64')]) {
       await start('k0', { k0: material });
       await expect.poll(() => child?.exitCode).toBe(2);
       expect(readFileSync(log, 'utf8')).toContain('master-key must');
@@ -220,7 +276,26 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await ready();
     await stop();
     await rows('rows', 'k1');
-    console.log('keyring: restored disk missing k1 refused before readiness; configured k1 starts; wrong tenant material counted and healthy row=42; catalog wrong material refuses node; local k0 gauge reaches zero and permits removal; exact length, constant and duplicate material refused');
+    k0.fill(7);
+    for (const path of files(data)) wrap(path, 'k0');
+    await start('k0', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+    await ready();
+    const weakMetrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+    expect(weakMetrics).toMatch(/terrabase_keys_weak_in_use[^\n]*key_id="k0"[^\n]* 1(?:\n|$)/);
+    expect(readFileSync(log, 'utf8').split('Weak master key in use').length - 1).toBe(1);
+    expect(readFileSync(log, 'utf8')).toContain('k0');
+    await stop();
+    await start('k0', { k0: k0.toString('base64') }, candidate, undefined, join(directory, 'empty-weak'));
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain("active master key id 'k0' consists of one repeated byte and has no local wrappers");
+    await stop();
+    const inspection = join(directory, 'inspection.json');
+    writeFileSync(inspection, JSON.stringify({ path: join(data, 'inspection', 'proof.promote.db'), key: randomBytes(32).toString('base64') }), { mode: 0o600 });
+    await start('k0', { k0: k0.toString('base64') }, candidate, ['inspection', inspection]);
+    await expect.poll(() => child?.exitCode).toBe(0);
+    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:inspection nonempty-wal bytes-identical success+failure; removed-duplicate=refused');
+    await stop();
+    console.log('keyring: partial catalog and tenant temporaries start and serve, unknown retirement count; unreadable tenant intent isolated; imports validate atomically and immediately count old credentials; weak existing key warns, empty weak node refuses; inspection preserves nonempty WAL and removed duplicate fails evidence');
   } finally {
     await stop();
     k0.fill(0);

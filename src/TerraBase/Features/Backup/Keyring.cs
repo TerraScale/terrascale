@@ -10,6 +10,8 @@ internal interface IKeyring
 
     IReadOnlyCollection<string> KeyIds { get; }
 
+    bool IsWeak(string id);
+
     bool NeedsRewrap(string wrapped);
 
     string KeyId(string wrapped);
@@ -34,6 +36,8 @@ internal sealed class Keyring(KeyringSettings settings, KeyRewrapFaults faults) 
     public string ActiveId => settings.Active;
 
     public IReadOnlyCollection<string> KeyIds => settings.Keys.Keys;
+
+    public bool IsWeak(string id) => settings.Keys[id].AsSpan().IndexOfAnyExcept(settings.Keys[id][0]) < 0;
 
     public Task<(byte[] Key, string Wrapped)> GenerateDataKeyAsync(CancellationToken cancellationToken)
     {

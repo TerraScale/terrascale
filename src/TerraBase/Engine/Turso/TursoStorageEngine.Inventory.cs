@@ -4,8 +4,8 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Features.Backup;
-using TerraBase.Features.Management;
 using TerraBase.Primitives;
+using Turso.Data.Sqlite;
 using ZLogger;
 
 namespace TerraBase.Engine.Turso;
@@ -13,84 +13,159 @@ namespace TerraBase.Engine.Turso;
 internal sealed partial class TursoStorageEngine
 {
     private readonly ConcurrentDictionary<string, string> _keyRefusals = new(StringComparer.Ordinal);
-    private IReadOnlyDictionary<string, string> _credentialKeys = new Dictionary<string, string>(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _weakWarnings = new(StringComparer.Ordinal);
 
-    private IEnumerable<(string Path, string Wrapped)> LocalWrappers(bool refuse = true)
+    private static IEnumerable<(string Path, bool Failed)> InventoryPaths(string directory)
     {
-        foreach (var path in WrappedKeyFile.Paths(_dataDirectory))
+        string[] entries;
+        var failed = false;
+        try
         {
-            string wrapped;
-            try
-            {
-                wrapped = WrappedKeyFile.Read(path);
-            }
-            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
-            {
-                if (!refuse)
-                {
-                    throw;
-                }
-                RefuseKey(path, "unknown");
-                continue;
-            }
-            yield return (path, wrapped);
+            DatabaseKeys.RejectLink(directory);
+            entries = Directory.GetFileSystemEntries(directory);
         }
-        foreach (var path in Directory.EnumerateFiles(_dataDirectory, "*.promote.db.importing*", SearchOption.AllDirectories))
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
         {
-            DetachedImport intent;
-            try
+            entries = [];
+            failed = true;
+        }
+        if (failed)
+        {
+            yield return (directory, true);
+        }
+        foreach (var entry in entries)
+        {
+            if (Directory.Exists(entry))
             {
-                var detached = path[..path.IndexOf(".importing", StringComparison.Ordinal)];
-                intent = DetachedImport.Read(path, Path.GetFileName(detached)[..^".promote.db".Length]);
-            }
-            catch (Exception error) when (error is IOException or InvalidDataException or JsonException)
-            {
-                if (!refuse)
+                foreach (var path in InventoryPaths(entry))
                 {
-                    throw;
+                    yield return path;
                 }
-                continue;
             }
-            yield return (path, intent.SourceKey);
-            if (intent.DestinationKey is { } wrapped)
+            else
             {
-                yield return (path, wrapped);
+                yield return (entry, false);
             }
         }
     }
 
-    private Dictionary<string, long> InventoryLocalKeys()
+    private Dictionary<string, long> NewKeyCounts() =>
+        Encryption.Keyring.KeyIds.ToDictionary(id => id, _ => 0L, StringComparer.Ordinal);
+
+    private static void Unknown(Dictionary<string, long> counts, string? id = null)
     {
-        var wrappers = LocalWrappers().ToArray();
-        var missing = new Dictionary<string, long>(StringComparer.Ordinal);
-        foreach (var (path, wrapped) in wrappers)
+        if (id is not null)
         {
-            string id;
-            try
-            {
-                id = Encryption.Keyring.KeyId(wrapped);
-            }
-            catch (InvalidDataException)
+            counts[id] = -1;
+            return;
+        }
+        foreach (var key in counts.Keys)
+        {
+            counts[key] = -1;
+        }
+        counts["unattributed"] = -1;
+    }
+
+    private void CountWrapper(string path, string wrapped, bool authoritative, bool startup,
+        Dictionary<string, long> counts, Dictionary<string, long> missing)
+    {
+        string id;
+        try
+        {
+            id = Encryption.Keyring.KeyId(wrapped);
+        }
+        catch (InvalidDataException)
+        {
+            Unknown(counts);
+            if (startup && authoritative)
             {
                 RefuseKey(path, "unknown");
-                continue;
             }
-            if (!Encryption.Keyring.KeyIds.Contains(id))
+            return;
+        }
+        if (!Encryption.Keyring.KeyIds.Contains(id))
+        {
+            Unknown(counts, id);
+            if (startup && authoritative)
             {
                 missing[id] = missing.GetValueOrDefault(id) + 1;
-                continue;
             }
-            try
+            return;
+        }
+        try
+        {
+            var key = Encryption.Keyring.Unwrap(wrapped);
+            CryptographicOperations.ZeroMemory(key);
+            if (counts[id] >= 0)
             {
-                var key = Encryption.Keyring.Unwrap(wrapped);
-                CryptographicOperations.ZeroMemory(key);
+                counts[id]++;
             }
-            catch (InvalidDataException)
+        }
+        catch (InvalidDataException)
+        {
+            Unknown(counts, id);
+            if (startup && authoritative)
             {
                 RefuseKey(path, id);
             }
+            else if (startup)
+            {
+                _logger.ZLogWarning($"Retained key artifact {Path.GetRelativePath(_dataDirectory, path):@Artifact} is not authentic under key id {id:@KeyId}; retirement counts are unknown");
+            }
         }
-        return missing;
+    }
+
+    private Dictionary<string, long> InventoryLocalKeys(bool startup, Dictionary<string, long> missing)
+    {
+        var counts = NewKeyCounts();
+        foreach (var (path, failed) in InventoryPaths(_dataDirectory))
+        {
+            if (failed)
+            {
+                Unknown(counts);
+                continue;
+            }
+            var wrapper = path.EndsWith(".key", StringComparison.Ordinal) || path.Contains(".key.rewrapping", StringComparison.Ordinal)
+                || path.Contains(".key.tmp", StringComparison.Ordinal);
+            var intent = path.Contains(".promote.db.importing", StringComparison.Ordinal);
+            var authoritativeIntent = path.EndsWith(".promote.db.importing", StringComparison.Ordinal);
+            if (!wrapper && !intent)
+            {
+                continue;
+            }
+            var authoritative = wrapper && path.EndsWith(".db.key", StringComparison.Ordinal)
+                && !path.Contains(".creating", StringComparison.Ordinal);
+            try
+            {
+                if (wrapper)
+                {
+                    CountWrapper(path, WrappedKeyFile.Read(path), authoritative, startup, counts, missing);
+                }
+                else
+                {
+                    var detached = path[..path.IndexOf(".importing", StringComparison.Ordinal)];
+                    var record = DetachedImport.Read(path, Path.GetFileName(detached)[..^".promote.db".Length]);
+                    CountWrapper(path, record.SourceKey, authoritativeIntent, startup, counts, missing);
+                    if (record.DestinationKey is { } destination)
+                    {
+                        CountWrapper(path, destination, authoritativeIntent, startup, counts, missing);
+                    }
+                }
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
+            {
+                Unknown(counts);
+                if (startup && !authoritative && wrapper)
+                {
+                    _logger.ZLogWarning($"Retained in-progress key artifact {Path.GetRelativePath(_dataDirectory, path):@Artifact} cannot be inventoried; retirement counts are unknown");
+                }
+                if (startup && (authoritative || authoritativeIntent))
+                {
+                    RefuseKey(path, "unknown");
+                }
+            }
+        }
+        return counts;
     }
 
     private void RefuseKey(string wrapper, string id)
@@ -104,7 +179,7 @@ internal sealed partial class TursoStorageEngine
         {
             database = Path.Combine(_dataDirectory, Path.GetRelativePath(replicaRoot, database));
         }
-        if (database == LocateSystem() || database == Path.Combine(_dataDirectory, IntentFile))
+        if (database == LocateSystem() && wrapper == LocateSystem() + DatabaseKeys.Suffix)
         {
             throw new TerraBaseConfigurationException($"catalog wrapper is not authentic under key id '{id}'");
         }
@@ -114,74 +189,87 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
+    private void CountCredential(string kind, string id, ReadOnlyMemory<byte> json, bool startup,
+        Dictionary<string, long> counts, Dictionary<string, long> missing)
+    {
+        try
+        {
+            var record = EntityPayload.Read(new StoredRecord(id, 0, json), BackupJsonContext.Default.ProjectBackupDestinationRecord)
+                ?? throw new InvalidDataException("sealed credential record is malformed");
+            CountWrapper(kind + "/" + id, record.Credentials.WrappedKey, false, false, counts, missing);
+            var keyId = Encryption.Keyring.KeyId(record.Credentials.WrappedKey);
+            if (startup && !Encryption.Keyring.KeyIds.Contains(keyId))
+            {
+                missing[keyId] = missing.GetValueOrDefault(keyId) + 1;
+            }
+
+        }
+        catch (Exception error) when (error is InvalidDataException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            Unknown(counts);
+            if (startup && _keyRefusals.TryAdd(kind + "/" + id, "unknown"))
+            {
+                _logger.ZLogError($"Local sealed credential {kind + "/" + id:@Database} is refused; its stored wrapper is retained");
+            }
+        }
+    }
+
     public async ValueTask InventoryKeysAsync(CancellationToken cancellationToken)
     {
-        var missing = InventoryLocalKeys();
-        if (!SystemDatabaseExists)
+        var missing = new Dictionary<string, long>(StringComparer.Ordinal);
+        var counts = InventoryLocalKeys(startup: true, missing);
+        RequireConfigured(missing);
+        if (SystemDatabaseExists)
         {
-            RequireConfigured(missing);
-            return;
-        }
-        var catalogId = Encryption.Keyring.KeyId(DatabaseKeys.ReadWrapped(LocateSystem()));
-        if (!Encryption.Keyring.KeyIds.Contains(catalogId))
-        {
-            RequireConfigured(missing);
-        }
-        var store = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-        await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        var credentials = new Dictionary<string, string>(StringComparer.Ordinal);
-        string? afterKind = null;
-        while (true)
-        {
-            var kinds = await transaction.ListKindsAsync(afterKind, 100, cancellationToken).ConfigureAwait(false);
-            foreach (var kind in kinds.Kinds.Where(kind => kind.Name.StartsWith("backup_destination_history/", StringComparison.Ordinal)
-                || kind.Name.StartsWith("projects/", StringComparison.Ordinal) && kind.Name.EndsWith("/backup_destination", StringComparison.Ordinal)))
+            try
             {
-                string? after = null;
+                var store = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+                await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+                string? afterKind = null;
                 while (true)
                 {
-                    var page = await transaction.ListAsync(kind.Name, after, 100, 1024 * 1024, cancellationToken).ConfigureAwait(false);
-                    foreach (var stored in page.Records)
+                    var kinds = await transaction.ListKindsAsync(afterKind, 100, cancellationToken).ConfigureAwait(false);
+                    foreach (var kind in kinds.Kinds.Where(kind => TursoStorageTransaction.CredentialKind(kind.Name)))
                     {
-                        var record = EntityPayload.Read(stored, BackupJsonContext.Default.ProjectBackupDestinationRecord)
-                            ?? throw new TerraBaseConfigurationException("catalog credential wrapper is malformed");
-                        var wrapped = record.Credentials.WrappedKey;
-                        var id = Encryption.Keyring.KeyId(wrapped);
-                        credentials[kind.Name + "/" + stored.Id] = id;
-                        if (!Encryption.Keyring.KeyIds.Contains(id))
+                        string? after = null;
+                        while (true)
                         {
-                            missing[id] = missing.GetValueOrDefault(id) + 1;
-                            continue;
-                        }
-                        try
-                        {
-                            var key = Encryption.Keyring.Unwrap(wrapped);
-                            CryptographicOperations.ZeroMemory(key);
-                        }
-                        catch (InvalidDataException)
-                        {
-                            var item = kind.Name + "/" + stored.Id;
-                            if (_keyRefusals.TryAdd(item, id))
+                            var page = await transaction.ListAsync(kind.Name, after, 100, 1024 * 1024, cancellationToken).ConfigureAwait(false);
+                            foreach (var stored in page.Records)
                             {
-                                _logger.ZLogError($"Local sealed credential {item:@Database} is refused under key id {id:@KeyId}; its stored wrapper is retained");
+                                CountCredential(kind.Name, stored.Id, stored.Json, true, counts, missing);
                             }
+                            if (!page.HasMore)
+                            {
+                                break;
+                            }
+                            after = page.Records[^1].Id;
                         }
                     }
-                    if (!page.HasMore)
+                    if (!kinds.HasMore)
                     {
                         break;
                     }
-                    after = page.Records[^1].Id;
+                    afterKind = kinds.Kinds[^1].Name;
                 }
             }
-            if (!kinds.HasMore)
+            catch (Exception error) when (error is IOException or InvalidDataException or SqliteException or UnauthorizedAccessException)
             {
-                break;
+                Unknown(counts);
             }
-            afterKind = kinds.Kinds[^1].Name;
         }
         RequireConfigured(missing);
-        Volatile.Write(ref _credentialKeys, credentials);
+        foreach (var id in Encryption.Keyring.KeyIds.Where(Encryption.Keyring.IsWeak))
+        {
+            if (counts[id] == 0 && id == Encryption.Keyring.ActiveId)
+            {
+                throw new TerraBaseConfigurationException($"active master key id '{id}' consists of one repeated byte and has no local wrappers; use a random key");
+            }
+            if (counts[id] != 0 && _weakWarnings.TryAdd(id, 0))
+            {
+                _logger.ZLogWarning($"Weak master key in use under key id {id:@KeyId}; rotate away using the normal master-key rotation procedure");
+            }
+        }
     }
 
     private static void RequireConfigured(Dictionary<string, long> missing)
@@ -193,32 +281,93 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
-    private IEnumerable<Measurement<long>> ObserveLocalKeys()
+    private Dictionary<string, long> StoredKeyCounts()
     {
-        var counts = Encryption.Keyring.KeyIds.ToDictionary(id => id, _ => 0L, StringComparer.Ordinal);
+        var missing = new Dictionary<string, long>(StringComparer.Ordinal);
+        var counts = InventoryLocalKeys(startup: false, missing);
         try
         {
-            foreach (var (_, wrapped) in LocalWrappers(refuse: false))
+            if (!SystemDatabaseExists)
             {
-                var id = Encryption.Keyring.KeyId(wrapped);
-                counts[id] = counts.GetValueOrDefault(id) + 1;
+                return counts;
+            }
+            var key = Encryption.Keyring.Unwrap(DatabaseKeys.ReadWrapped(LocateSystem()));
+            try
+            {
+                using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = LocateSystem(),
+                    Mode = SqliteOpenMode.ReadOnly,
+                    Pooling = false,
+                    EncryptionCipher = "aegis256",
+                    EncryptionKey = Convert.ToHexString(key),
+                }.ToString());
+                TursoSession.OpenExisting(connection, LocateSystem());
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT kind, id, body FROM _tb_records
+                    WHERE kind GLOB 'backup_destination_history/*' OR kind GLOB 'projects/*/backup_destination'
+                    """;
+                using var rows = command.ExecuteReader();
+                while (rows.Read())
+                {
+                    CountCredential(rows.GetString(0), rows.GetString(1), TursoSession.Bytes(rows, 2), false, counts, missing);
+                }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(key);
             }
         }
-        catch (Exception error) when (error is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
+        catch (Exception error) when (error is IOException or InvalidDataException or JsonException or SqliteException or UnauthorizedAccessException)
         {
-            return counts.Select(pair => new Measurement<long>(-1, new KeyValuePair<string, object?>("key_id", pair.Key)));
+            Unknown(counts);
         }
-        foreach (var id in Volatile.Read(ref _credentialKeys).Values)
-        {
-            counts[id] = counts.GetValueOrDefault(id) + 1;
-        }
-        return counts.Select(pair => new Measurement<long>(pair.Value, new KeyValuePair<string, object?>("key_id", pair.Key)));
+        return counts;
     }
 
-    private IEnumerable<string> RetainedFiles() => Directory.EnumerateFiles(_dataDirectory, "*", SearchOption.AllDirectories)
-        .Where(path => path.Contains(".promote.db", StringComparison.Ordinal)
-            || path.Contains(".key.rewrapping", StringComparison.Ordinal) || path.Contains(".creating", StringComparison.Ordinal)
-            || path.EndsWith(".key.tmp", StringComparison.Ordinal)
-            || path.EndsWith(".key", StringComparison.Ordinal) && !File.Exists(path[..^4]));
+    private IEnumerable<Measurement<long>> ObserveLocalKeys() => StoredKeyCounts()
+        .Select(pair => new Measurement<long>(pair.Value, new KeyValuePair<string, object?>("key_id", pair.Key)));
 
+    private IEnumerable<Measurement<long>> ObserveWeakKeys()
+    {
+        var weak = Encryption.Keyring.KeyIds.Where(Encryption.Keyring.IsWeak).ToArray();
+        if (weak.Length == 0)
+        {
+            return [];
+        }
+        var counts = StoredKeyCounts();
+        return weak.Select(id =>
+            new Measurement<long>(counts[id] < 0 ? -1 : counts[id] > 0 ? 1 : 0, new KeyValuePair<string, object?>("key_id", id)));
+    }
+
+    private (long Files, long Bytes) RetainedFiles()
+    {
+        long count = 0;
+        long bytes = 0;
+        foreach (var (path, failed) in InventoryPaths(_dataDirectory))
+        {
+            if (failed)
+            {
+                return (-1, -1);
+            }
+            if (!path.Contains(".promote.db", StringComparison.Ordinal)
+                && !path.Contains(".key.rewrapping", StringComparison.Ordinal) && !path.Contains(".creating", StringComparison.Ordinal)
+                && !path.Contains(".key.tmp", StringComparison.Ordinal)
+                && !(path.EndsWith(".key", StringComparison.Ordinal) && !File.Exists(path[..^4])))
+            {
+                continue;
+            }
+            try
+            {
+                bytes += new FileInfo(path).Length;
+                count++;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return (-1, -1);
+            }
+        }
+        return (count, bytes);
+    }
 }
