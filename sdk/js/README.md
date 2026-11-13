@@ -59,7 +59,10 @@ commits when the function resolves and rolls back when it throws.
 
 A refused statement throws `SqlError` with `code` (a `SqlErrorCode` such as `unique_violation`), `sqlstate`
 (`23505`), `statement` (its zero-based index) and `retryable` (true for `serialization_conflict`, `tenant_busy` and
-`unavailable`). A closed socket rejects pending requests with `SqlSocketClosedError` and its `closeCode`.
+`unavailable`). A lost committing reply rejects with `SqlError` code `write_outcome_unknown` (08007);
+every later call rejects with the same error and the session stays closed. A lost open transaction with no
+committing request sent rejects with `transaction_rolled_back` (40000). Other closed sockets reject with
+`SqlSocketClosedError` and its `closeCode`.
 Values are `null`, numbers, strings and `Uint8Array` blobs; integers beyond 2^53 arrive as `ExactDecimal`
 (`BigInt(String(value))`) and go out as `bigint`.
 
@@ -479,3 +482,16 @@ are available in the source SDK. See [user profiles](../../docs/auth/user-profil
 for fields, scope requirements, hash encodings and the next-release API names.
 Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
 User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+
+### SQL session outcome rule
+
+An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
+open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
+autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.
+The SDK returns `write_outcome_unknown` (SQLSTATE `08007`) or its existing commit-uncertain error, retains that
+failure for every later call on the session, and closes the connection. It never reconnects or automatically
+retries an uncertain request. If the client cannot prove no request byte left, it treats the request as sent.
+An execute outside a confirmed transaction, or behind unanswered transaction control, is potentially committing.
+A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
+Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
+through another session before deciding whether to repeat it.

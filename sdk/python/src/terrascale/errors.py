@@ -173,7 +173,7 @@ class SqlErrorCodes:
 
 
 class SqlError(APIError):
-    """A refused SQL statement; the whole request rolled back. ``code`` is one of
+    """A SQL statement error; write_outcome_unknown requires reconciliation. ``code`` is one of
     :class:`SqlErrorCodes`, ``statement`` the zero-based failing statement and
     ``sqlstate`` its PostgreSQL SQLSTATE."""
 
