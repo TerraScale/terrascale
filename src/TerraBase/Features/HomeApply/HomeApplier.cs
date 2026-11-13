@@ -169,22 +169,27 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         return true;
     }
 
-    public async ValueTask StampHomeWritesAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
+    public async ValueTask<bool> StampHomeWritesAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transaction);
         var stamped = await transaction.RunAsync("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_ts_rows'", cancellationToken).ConfigureAwait(false);
         if (stamped.Rows.Count == 0)
         {
-            return;
+            return true;
         }
 
         var changes = await transaction.ReadCapturedChangesAsync(cancellationToken).ConfigureAwait(false);
         if (changes.Count == 0)
         {
-            return;
+            return true;
         }
 
-        var stamp = new Writer(await clock.NextAsync(cancellationToken).ConfigureAwait(false), options.Region, EntityIds.New(time).ToString());
+        if (await clock.IssueAsync(cancellationToken).ConfigureAwait(false) is not { } issued)
+        {
+            return false;
+        }
+
+        var stamp = new Writer(issued, options.Region, EntityIds.New(time).ToString());
         var shapes = new Dictionary<string, TableShape?>(StringComparer.OrdinalIgnoreCase);
         foreach (var change in changes)
         {
@@ -225,6 +230,8 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             stamps.Deleted = null;
             await ApplySql.WriteStampsAsync(transaction, shape.Name, after, stamps, cancellationToken).ConfigureAwait(false);
         }
+
+        return true;
     }
 
     private static string? KeyOf(TableShape shape, IReadOnlyList<string> columns, object?[] image)

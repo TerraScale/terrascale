@@ -7,40 +7,53 @@ using ZLogger;
 
 namespace TerraBase.Features.Clock;
 
-internal interface IHlcState
-{
-    long HighWater { get; }
-    ValueTask RefreshAsync(CancellationToken cancellationToken);
-}
-
-internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions options, TimeProvider time, IMeterFactory meters, ILogger<NodeHlcClock> logger) : IHlcClock, IHlcState, IDisposable
+internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions options, TimeProvider time, ClockTrust trust, IMeterFactory meters, ILogger<NodeHlcClock> logger) : IHlcClock, IDisposable
 {
     private const long ReservationMilliseconds = 5_000;
+    private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private readonly Counter<long> _capped = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.clock.observe_capped", "{observation}");
+    private readonly Counter<long> _stamps = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.clock.stamps", "{stamp}",
+        "Stamps this node was asked to issue for its own writes, by outcome (issued or refused).");
     private readonly SemaphoreSlim _gate = new(1, 1);
     private HlcTimestamp _previous;
     private HlcTimestamp _reserved;
     private bool _initialized;
     private long _highWater;
 
-    public long HighWater => Volatile.Read(ref _highWater);
+    private long HighWater => Volatile.Read(ref _highWater);
 
-    public async ValueTask RefreshAsync(CancellationToken cancellationToken)
+    public void Dispose() => _gate.Dispose();
+
+    public async ValueTask<HlcTimestamp?> IssueAsync(CancellationToken cancellationToken)
     {
+        if (!trust.Trusted)
+        {
+            return Refused();
+        }
+
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await InitializeAsync(cancellationToken).ConfigureAwait(false);
+            if (_previous.PhysicalMilliseconds > time.GetUtcNow().ToUnixTimeMilliseconds() + ClockTrust.BudgetMilliseconds)
+            {
+                return Refused();
+            }
+
+            var stamp = await AdvanceLockedAsync(default, cancellationToken).ConfigureAwait(false);
+            if (!trust.Trusted || stamp.PhysicalMilliseconds > time.GetUtcNow().ToUnixTimeMilliseconds() + ClockTrust.BudgetMilliseconds)
+            {
+                return Refused();
+            }
+
+            _stamps.Add(1, new KeyValuePair<string, object?>("outcome", "issued"));
+            return stamp;
         }
         finally
         {
             _gate.Release();
         }
     }
-
-    public void Dispose() => _gate.Dispose();
-
-    public ValueTask<HlcTimestamp> NextAsync(CancellationToken cancellationToken) => AdvanceAsync(default, cancellationToken);
 
     public ValueTask<HlcTimestamp> ObserveAsync(HlcTimestamp remote, CancellationToken cancellationToken)
     {
@@ -79,13 +92,14 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
         var record = await transaction.GetAsync("node_clocks", options.MachineId, cancellationToken).ConfigureAwait(false);
         _previous = _reserved = ReadState(record?.Json);
         Remember(_previous.PhysicalMilliseconds);
+        _ = _meter.CreateObservableGauge("terrabase.clock.hlc_ahead", () => Math.Max(0, HighWater - time.GetUtcNow().ToUnixTimeMilliseconds()), "ms");
         _initialized = true;
     }
 
     private async ValueTask<HlcTimestamp> AdvanceLockedAsync(HlcTimestamp remote, CancellationToken cancellationToken)
     {
         var utc = time.GetUtcNow().ToUnixTimeMilliseconds();
-        var ceiling = checked(utc + ClockGuard.LimitMilliseconds);
+        var ceiling = checked(utc + ClockTrust.BudgetMilliseconds);
         if (remote.PhysicalMilliseconds > ceiling)
         {
             _capped.Add(1);
@@ -119,6 +133,12 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
         _previous = timestamp;
         Remember(timestamp.PhysicalMilliseconds);
         return timestamp;
+    }
+
+    private HlcTimestamp? Refused()
+    {
+        _stamps.Add(1, new KeyValuePair<string, object?>("outcome", "refused"));
+        return null;
     }
 
     private HlcTimestamp ReadState(ReadOnlyMemory<byte>? json)

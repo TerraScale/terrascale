@@ -1,25 +1,11 @@
-using TerraBase.Hosting;
-
 namespace TerraBase.Features.Clock;
 
 internal static class ClockExtensions
 {
     public static IServiceCollection AddTerraBaseClock(this IServiceCollection services)
     {
-        services.AddGrpc().AddServiceOptions<NodeClockService>(options =>
-        {
-            options.CompressionProviders = [new ClockCompression()];
-            options.ResponseCompressionAlgorithm = "lz4";
-            options.MaxReceiveMessageSize = 4096;
-            options.MaxSendMessageSize = 4096;
-        });
-        services.AddSingleton<IClockErrorSource, ChronyClock>();
-        services.AddSingleton<ClockGuard>();
-        services.AddSingleton<ILocalWriteClock>(provider => provider.GetRequiredService<ClockGuard>());
-        services.AddHostedService(provider => provider.GetRequiredService<ClockGuard>());
+        services.AddSingleton<ClockTrust>();
+        services.AddHostedService(provider => provider.GetRequiredService<ClockTrust>());
         return services;
     }
-
-    public static void MapTerraBaseClock(this WebApplication app) =>
-        app.MapGrpcService<NodeClockService>().WithMetadata(ListenerMetadata.Internal);
 }

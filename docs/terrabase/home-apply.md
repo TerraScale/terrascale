@@ -19,11 +19,18 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
   [`HlcTimestamp`](hlc-clock.md), ordered by milliseconds, logical counter, then node id (ordinal) as the tie-breaker. A change to a column applies only when its stamp is greater.
   A losing column is not applied and is recorded in `terrascale.conflicts` as `superseded`, with its value.
 - **Delete tombstones.** A delete keeps a tombstone with its stamp, so an older insert or update of that row cannot
-  bring it back (`superseded`). A delete older than a column write of the row loses (`superseded`), and the row stays.
+  bring it back (`superseded`). An update newer than the tombstone is not superseded: the row is missing, so it reverts
+  as `missing_row` like any update of a row the home does not have. A delete older than a column write of the row loses
+  (`superseded`), and the row stays.
 - **Inserts never overwrite.** An insert of a key that exists at the home is a `primary_key` conflict and reverts its
   transaction (D12: tables that take local writes use ULID keys). An update of a row that the home never had reverts
   as `missing_row`.
-- **Clock admission.** Local commits check clock health before publishing. Receiving an otherwise valid transaction with a future timestamp does not cause a clock conflict. Observation limits the remote contribution to local UTC plus 50 ms and emits a warning and counter when it clips a timestamp; the effect retains its original stamp.
+- **Clock trust.** A node issues a stamp for its own write only while its clock is [trusted](hlc-clock.md#clock-trust):
+  a replica that is refused forwards the write home, and a home that is refused answers `503 unavailable` (retry) and
+  commits nothing. Applying a received transaction uses the stamp it carries and works whatever the receiver's clock.
+  Receiving an otherwise valid transaction with a future timestamp does not cause a clock conflict. Observation limits
+  the remote contribution to local UTC plus 50 ms and emits a warning and counter when it clips a timestamp; the
+  effect retains its original stamp.
 - **Triggers do not fire for applied changes.** The origin region already ran them and their writes are part of the
   transaction. See [triggers](#triggers).
 - **Foreign keys are re-checked at the end of the transaction.** Foreign-key actions (`CASCADE`, `SET NULL`) do not run
@@ -32,7 +39,10 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 - **Home writes take part.** A write that commits at the home (home-region clients, forwarded transactions) stamps the
   columns it changed with the home's HLC, so a staler change from another region cannot overwrite it.
 
-Upgrade origins before receivers; origins reserve their measured offset bound inside the 50 ms timestamp budget so receivers still using the prior clock rule can accept their writes.
+Mixed versions: the 50 ms budget bounds a stamp against its origin's clock only. A receiver's own clock can be off
+by up to the same budget in the other direction, so a receiver can see a valid stamp up to about 100 ms ahead of its
+clock; it clips only its observation of that stamp, never the stamp the effect keeps. A receiver on a build older than
+this rule can still revert such a write for its timestamp. Roll every region to this build without a long hold.
 
 A committed transaction with any superseded changes increments `terrabase_home_apply_superseded_total{region}` once, labelled only by its origin region; duplicate delivery does not increment it.
 

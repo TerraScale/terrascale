@@ -1,7 +1,7 @@
 # HLC and clock admission (PIVOT R12 / D21)
 
 `TerraBase.Features.Clock.IHlcClock` is the timestamp source shared by local
-capture and R6 home apply. `NextAsync(CancellationToken)` issues a timestamp;
+capture and R6 home apply. `IssueAsync(CancellationToken)` issues a timestamp for a local write (see below);
 `ObserveAsync(HlcTimestamp, CancellationToken)` incorporates remote
 time, limiting its contribution to local UTC plus 50 ms. Both return `ValueTask<HlcTimestamp>`.
 
@@ -19,15 +19,11 @@ Node IDs follow the existing 1–63-character lowercase letter/digit/hyphen rule
 This encoding preserves the full node tie-breaker without hashing or truncation;
 unsigned bytewise comparison has the same order as `HlcTimestamp.CompareTo`.
 
-`ILocalWriteClock.Allowed` is the R4 routing fact: false means forward the whole
-transaction to home instead of taking a local write. `SkewMilliseconds` is the
-current clock error budget, including the HLC lead; positive infinity means unknown or stale.
-`ClockSkewException` means timestamp issuance must be refused or forwarded home.
-
-The implementation must durably advance before returning a stamp, preserve
-monotonic order across restarts and backward wall-clock changes, refuse unknown
-or over-50-ms local skew, and export the node's skew and admission state. These
-contracts land separately so R6 and R4 can compile against the same source.
+`IssueAsync(CancellationToken)` is the only way to get a new stamp for a write that originates on this node. It
+returns no stamp while the node's clock is not trusted (below) or while the node's own HLC is ahead of its wall clock
+by more than 50 ms. Callers decide what a refusal means: a replica-local commit forwards the whole transaction to the
+home; a commit at the home answers `503 unavailable` (retry) and commits nothing. No caller reads the trust state
+itself. `terrabase_clock_stamps_total{outcome="issued"|"refused"}` counts the answers.
 
 `NodeHlcClock` is the singleton timestamp issuer. A semaphore serializes issuance,
 observation and initialization. It loads the versioned `node_clocks` record once
@@ -40,62 +36,65 @@ This removes per-stamp system commits and their catalog-cache invalidations.
 
 On restart, the persisted upper bound becomes the previous timestamp. Every new
 stamp exceeds all stamps the former process could have issued, including after
-an abrupt stop. The guard includes that recovered bound in its high-water mark:
-local writes stay closed until the recovered lead plus measured offset bound fits within 50 ms
-and chrony reports a reference strictly newer than the first one read after startup.
-With a roughly 64-second measurement interval, a normal restart therefore forwards
-writes home for about a minute. A larger backward clock jump remains closed until recovery.
-Invalid persisted state fails closed. Within the running process, admission
-tracks issued and observed time, not the unused reservation. Remote observations cannot introduce an arbitrarily distant high-water mark. A warning and `terrabase_clock_observe_capped_total` counter identify clipped observations; `terrabase_clock_hlc_ahead_milliseconds` reports the current high-water distance from UTC. Existing recovered reservations and backward clock jumps still close local admission.
+an abrupt stop. Until the wall clock passes that recovered bound minus 50 ms, `IssueAsync` refuses, so a restart within
+five seconds of the last stamp waits for its own reservation. Invalid persisted state fails closed. Remote observations
+cannot introduce an arbitrarily distant high-water mark. A warning and `terrabase_clock_observe_capped_total` counter
+identify clipped observations; `terrabase_clock_hlc_ahead_milliseconds` reports the current high-water distance from
+UTC once the HLC has been loaded.
 
-Local capture and the internal `Next` method retain their checks before and after
-issuance. The router still forwards refused local transactions home. Apply observes remote time within the bound and does not reject a transaction because of its timestamp.
+Apply observes remote time within the bound and does not reject a transaction because of its timestamp. Applying a
+received transaction uses the stamps it carries, so it keeps working on a node whose clock is not trusted.
 
-The guard samples every five seconds. Each pass ensures persisted state was
-loaded without issuing a stamp, so sampling an untrusted clock cannot persist a
-false future timestamp. Once initialized it reads the shared in-memory high-water
-mark. Unknown/stale time and the 50 ms admission limit remain unchanged.
-It reads the local chrony daemon's tracking report over UDP on `127.0.0.1:323`,
-using the same version-6 monitoring protocol and signed `current_correction`
-field as `chronyc tracking`'s System time value. No chronyc executable or daemon
-socket mount is needed inside the container; it must share the host's network.
-The daemon reports NTP-minus-system time, so the guard subtracts this correction
-from the application's offset relative to system UTC, then takes the absolute
-value. This also detects an injected application clock offset.
-Missing, malformed, unsynchronized or timed-out tracking replies fail closed.
-Peer round-trip time and WAN reachability never enter local write admission.
-Samples expire after 15 seconds, measured with monotonic time. Admission also
-compares the current wall clock with elapsed monotonic time on every read, so a
-clock jump immediately closes admission between samples. The baseline belongs to
-chrony’s reference timestamp and survives five-second samples until chrony measures
-again. The error bound includes root dispersion and half the root delay. A separate
-read-only Linux `adjtimex` call on every admission read refuses unsynchronized
-kernel state or a maximum/estimated error above the limit on both arm64 and x64.
-The HLC lead and the origin's error bound share the 50 ms budget: the stamp's lead
-over origin UTC plus the maximum of its tracking/jump and kernel error bounds must
-be at most 50 ms. This does not bound a receiver's own clock error. Until every
-region runs this build, a receiver on the previous build can still revert a write
-for its timestamp as it does today, so roll the regions without a long hold.
-The wall/monotonic comparison alone cannot detect clocks stopped or moved together
-by the host platform; detection then depends on kernel state and the next daemon measurement.
+## Clock trust
 
-Production TerraBase hosts need a synchronized chrony daemon with its loopback
-monitoring port available, provisioned by ts-orch. The runtime does not change
-the clock or require clock-setting privileges. `IClockErrorSource` isolates the
-tracking measurement.
+A node's clock is trusted when three checks hold. Closing is immediate on the first failing check; opening after
+start, after a step, or after any untrusted period needs two consecutive agreeing peer rounds, both begun after the
+node closed. A measurement taken before the close never counts.
 
-The `Next` gRPC method issues a durable timestamp only when local admission is
-open. Peer sampling itself is read-only and never advances the HLC. Both methods
-are internal-listener only and require the existing peer credential. The mesh
-listener's existing transport and authentication contract still applies.
+| Check | What it catches | How |
+| --- | --- | --- |
+| Kernel | small drift, an unsynchronised clock | Linux `adjtimex` (read-only) reports the clock synchronised and its maximum and estimated error at most 50 ms, on every read. |
+| Peers | gross errors the kernel cannot see: a clock stepped by minutes, a virtual machine resumed with a stale clock, a restart with a wrong clock | Each round asks every reachable peer for its wall clock (below). At least one peer answered in the last 15 s, and the agreeing peers plus this node are a strict majority of the answering peers plus this node. |
+| No local step | a step between two reads | Between consecutive checks, the wall clock and the monotonic clock advanced by the same amount within 50 ms. A step closes the node at once and latches: only rounds begun after it can reopen it. |
 
-Admin `/metrics` exports `terrabase_clock_skew_milliseconds`,
-`terrabase_clock_local_writes_allowed` and `terrabase_clock_reported`.
-Unknown skew is positive infinity; admission is zero. `reported` is one only
-when the most recent NATS report was acknowledged as stored. Reports go to
-`terrabase.clock.report`; ts-orch stores them in `tb-clock-skew` with three
-replicas and a 15-second TTL. Admission continues to depend on local measurement
-if JetStream or the report bridge is unavailable.
+Peer rounds run every second. A round asks the in-region partners every time and the other regions' nodes every fifth
+round; while the node is closed it asks every peer each round. The peers are every other node of the peers file.
+A request is `GET /v1/sync/clock` on the peer's internal listener with the peer credential; the peer answers its wall
+clock in Unix milliseconds. The node records the wall clock when it sends and the monotonic round trip: offset is the
+peer's time minus the send time plus half the round trip, and uncertainty is half the round trip plus 1 ms. A peer
+agrees when the absolute offset is at most 50 ms plus that uncertainty. A peer that does not answer within 2 s, or
+answers an error or `404` (an older build without the route), did not answer: it neither agrees nor disagrees. A node
+with no peers file has nobody to compare with and no replication to protect; only the kernel and step checks apply.
+
+Consequences:
+
+- A healthy node opens about OPEN_AFTER_RESTART after it starts (two rounds), instead of waiting for the time daemon.
+- One node with a wrong clock among three closes alone: the other two each count one agreeing peer plus themselves.
+- Two nodes that disagree with nobody else answering both close; neither can tell which clock is wrong.
+- During a rollout, the first node on this build has no answering peer: as a replica it forwards its writes home, and
+  as a home it answers `503` for writes to its replicated databases, until a second node runs this build.
+- The model cannot detect every node being wrong by the same amount (the peers then agree with each other); a drift
+  below 50 ms plus the round-trip uncertainty that the kernel does not report; or a step that the wall/monotonic check
+  misses because the host moved both clocks together, until the next peer round.
+
+| State or event | Trusted | Time to change |
+| --- | --- | --- |
+| Start | no | opens after two agreeing rounds, about two seconds |
+| Kernel unsynchronised or error over 50 ms | no | closes on the next read; reopens two rounds after the kernel is good again |
+| Step detected | no | closes on the read that sees it; reopens two rounds begun after the step |
+| A round where peers do not agree, or nobody answers | no | closes at the end of that round |
+| No agreeing round for 15 s | no | closes on the next read |
+| Two consecutive agreeing rounds after a close | yes | opens at the end of the second round |
+
+`terrabase_clock_local_writes_allowed` is one while the clock is trusted. `terrabase_clock_agreeing_rounds` counts the
+consecutive agreeing rounds since the last close, `terrabase_clock_peers_answering` and
+`terrabase_clock_peers_agreeing` describe the last round, `terrabase_clock_steps_total` counts detected steps, and
+`terrabase_clock_skew_milliseconds` is the largest kernel error or agreeing-peer offset plus uncertainty (positive
+infinity while untrusted). Every fifth round the node reports this to `terrabase.clock.report` over NATS; ts-orch
+stores the reports in `tb-clock-skew` with three replicas and a 15-second TTL, and `terrabase_clock_reported` is one
+when the last report was stored. Trust never depends on that report.
+
+The runtime does not change the clock or require clock-setting privileges, and it needs no time-daemon socket.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 

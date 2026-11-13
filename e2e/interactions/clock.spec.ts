@@ -102,6 +102,22 @@ test('future remote stamps apply once without advancing the local clock beyond i
       return ahead && capped && Number(capped[1]) >= 1 && Number(ahead[1]) <= 50;
     }, { message: 'the receiver reports capped observations and a bounded HLC' }).toBe(true);
     expect(await supersededCount()).toBe(baseline + 1);
+    const at = Date.now() - 5_000;
+    const change = (row: number, physicalMilliseconds: number, op: string, values?: Record<string, unknown>) => ({
+      id: id(), region: 'fra', hlc: { physicalMilliseconds, logical: 0, nodeId: 'clock-remote' },
+      changes: [op === 'insert' ? { op, table: 'clock_rows', values: { id: row, ...values } } : { op, table: 'clock_rows', key: { id: row }, ...(values ? { values } : {}) }],
+    });
+    for (const row of [4, 5]) {
+      expect(await json('POST', applyPath, change(row, at, 'insert', { value: 'inserted' }))).toMatchObject({ state: 'confirmed', conflicts: [] });
+    }
+    expect(await json('POST', applyPath, change(4, at + 200, 'delete'))).toMatchObject({ state: 'confirmed', conflicts: [] });
+    expect(await json('POST', applyPath, change(4, at + 100, 'update', { value: 'older than the delete' })))
+      .toMatchObject({ state: 'confirmed', conflicts: [{ kind: 'superseded' }] });
+    await expect.poll(supersededCount, { message: 'an update older than the tombstone is superseded and counted' }).toBe(baseline + 2);
+    expect(await json('POST', applyPath, change(5, at + 100, 'delete'))).toMatchObject({ state: 'confirmed', conflicts: [] });
+    expect(await json('POST', applyPath, change(5, at + 200, 'update', { value: 'newer than the delete' })))
+      .toMatchObject({ state: 'reverted', conflicts: [{ kind: 'missing_row' }] });
+    expect(await supersededCount()).toBe(baseline + 2);
     await sql("INSERT INTO clock_rows VALUES (2, 'origin still writes')");
     expect((await sql('SELECT id, value FROM clock_rows ORDER BY id')).results[0].rows).toEqual([[1, 'delivered'], [2, 'origin still writes'], [3, 'current']]);
   } finally {

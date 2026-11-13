@@ -109,7 +109,7 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
             case "update" when row is not null:
                 await MergeAsync(shape, key, row, rowKey, values, stamps).ConfigureAwait(false);
                 break;
-            case "update" when stamps.Deleted is { } tombstone:
+            case "update" when stamps.Deleted is { } tombstone && tombstone.Stamp > _stamp:
                 Supersede(shape, rowKey, null, tombstone, null, ApplySql.Shown(ValuesJson(values)), "the row was deleted at the home");
                 return;
             case "update":

@@ -1,4 +1,3 @@
-#include <arpa/inet.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -53,18 +52,4 @@ int adjtimex(struct timex *value)
     value->maxerror = error;
     value->esterror = error;
     return (status & STA_UNSYNC) ? TIME_ERROR : TIME_OK;
-}
-
-int connect(int socket, const struct sockaddr *address, socklen_t length)
-{
-    int (*original)(int, const struct sockaddr *, socklen_t) = dlsym(RTLD_NEXT, "connect");
-    if (address->sa_family == AF_INET && length == sizeof(struct sockaddr_in)) {
-        struct sockaddr_in destination;
-        memcpy(&destination, address, sizeof(destination));
-        if (destination.sin_addr.s_addr == htonl(INADDR_LOOPBACK) && destination.sin_port == htons(323)) {
-            destination.sin_port = htons(13233);
-            return original(socket, (const struct sockaddr *)&destination, sizeof(destination));
-        }
-    }
-    return original(socket, address, length);
 }

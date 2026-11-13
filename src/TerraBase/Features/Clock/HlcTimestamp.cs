@@ -43,14 +43,6 @@ public readonly record struct HlcTimestamp(long PhysicalMilliseconds, uint Logic
 
 public interface IHlcClock
 {
-    ValueTask<HlcTimestamp> NextAsync(CancellationToken cancellationToken);
+    ValueTask<HlcTimestamp?> IssueAsync(CancellationToken cancellationToken);
     ValueTask<HlcTimestamp> ObserveAsync(HlcTimestamp remote, CancellationToken cancellationToken);
 }
-
-public interface ILocalWriteClock
-{
-    bool Allowed { get; }
-    double SkewMilliseconds { get; }
-}
-
-public sealed class ClockSkewException() : InvalidOperationException("clock skew prevents local writes; forward to the database home");
