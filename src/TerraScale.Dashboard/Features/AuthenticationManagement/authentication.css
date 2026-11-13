@@ -24,18 +24,28 @@
 
 .ts-idp-nav {
   --ts-nav-inset: var(--ts-s2);
-  --ts-nav-row: var(--ts-control-h-sm);
+  --ts-nav-row: 28px;
   --ts-nav-icon: var(--ts-s4);
   position: sticky;
   top: var(--ts-s6);
   display: grid;
   align-content: start;
-  gap: var(--ts-s4);
+  gap: var(--ts-s3);
   max-height: calc(100dvh - var(--ts-s6) * 2);
-  padding: var(--ts-s1);
+  padding: 0;
+  margin-inline-start: calc(-1 * var(--ts-nav-inset));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+}
+
+.ts-idp-nav .ts-nav-group,
+.ts-idp-nav .ts-nav {
+  gap: 2px;
+}
+
+.ts-idp-nav .ts-nav-group-label {
+  height: var(--ts-s4);
 }
 
 .ts-idp-nav .ts-nav-link {
