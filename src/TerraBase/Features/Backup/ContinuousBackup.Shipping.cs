@@ -44,15 +44,29 @@ internal sealed partial class ContinuousBackup
                 file.LastError = null;
                 return;
             }
-            if (file.Tap is ICdcBackupRetention retention && await retention.RetainedBytesAsync(cancellationToken).ConfigureAwait(false) > MaxPendingBytes)
+            if (file.Tap is ICdcBackupRetention retention)
             {
-                if (file.Generation is not null)
+                var bytes = await retention.RetainedBytesAsync(cancellationToken).ConfigureAwait(false);
+                var limit = MaxPendingBytes;
+                try
                 {
-                    Drop(file, "disk");
+                    using var claim = _disk.Reserve(bytes);
+                }
+                catch (DiskCapacityException)
+                {
+                    limit = 0;
                 }
 
-                await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
-                return;
+                if (bytes > limit)
+                {
+                    if (file.Generation is not null)
+                    {
+                        Drop(file, "disk");
+                    }
+
+                    await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
             }
 
             var due = _time.GetUtcNow() >= file.RetryAt;

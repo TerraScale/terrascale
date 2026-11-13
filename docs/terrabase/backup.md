@@ -231,7 +231,7 @@ is due, the failed segment is sent again before anything more is read. Between a
 the native capture table stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
 stays in the native capture table, where the backup's durable anchor keeps it. Each shipping pass checks a per-file cap of
 256 MiB of unacknowledged capture payload and row overhead, using the existing pending-log budget. A pass over
-that cap records a `disk` hole, discards and acknowledges the log through its read position to allow trimming,
+that cap, or one whose retained bytes cannot pass shared disk admission with protected headroom, records a `disk` hole, discards and acknowledges the log through its read position to allow trimming,
 and requires a fresh stored snapshot before shipping resumes. An outage never ends a generation
 just because it reaches the longest backoff. Buffered segments and their disk reservations stay until upload succeeds;
 a refused disk reservation stops further reads without clearing the existing buffer. Transient customer destination
