@@ -168,6 +168,7 @@ button.ts-region-node {
 
 .ts-region-callout-body {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--ts-s2);
   min-width: 0;
@@ -288,11 +289,12 @@ label.ts-region-callout-body {
   display: inline;
 }
 
+.ts-region-map-ping-actions {
+  padding: var(--ts-s2);
+}
+
 .ts-region-map-ping-refresh {
-  position: absolute;
-  bottom: var(--ts-s2);
-  left: var(--ts-s2);
-  z-index: 1;
+  position: relative;
   display: grid;
   place-items: center;
   width: 28px;

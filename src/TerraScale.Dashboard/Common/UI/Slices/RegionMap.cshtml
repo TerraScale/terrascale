@@ -44,6 +44,6 @@
     </ul>
     @if (Model.Selects && Model.OrderField.Length > 0) { <input type="hidden" name="@Model.OrderField" value="@Model.Order" data-region-order /> }
     @if (Model.Selects && !Model.Exclusive && Model.Minimum.Length > 0) { <p class="ts-region-map-status" role="status" data-region-status data-message="@Model.Minimum"></p> }
-    @if (pings && regions.Any(region => region.PingUrl.Length > 0)) { <button class="ts-region-map-ping-refresh" type="button" data-ping-refresh aria-label="Measure ping again">@Icons.Render("RefreshCw", 14)</button> }
+    @if (pings && regions.Any(region => region.PingUrl.Length > 0)) { <div class="ts-region-map-ping-actions"><button class="ts-region-map-ping-refresh" type="button" data-ping-refresh aria-label="Measure ping again">@Icons.Render("RefreshCw", 14)</button></div> }
 </div>
 <script type="module" src="@Assets.Url("js/region-map.js")"></script>
