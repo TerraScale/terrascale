@@ -21,6 +21,6 @@ public sealed class WebhookOutbox(TimeProvider clock)
         string? sessionId = null, string? endpointId = null, string? organizationId = null, string? organizationRole = null)
     {
         var occurredAt = clock.GetUtcNow();
-        return new(projectId, projectId, eventType, AuthIds.New(), occurredAt, userId, email, provider, PendingStatus, 0, occurredAt, sessionId, endpointId, organizationId, organizationRole);
+        return new(projectId, projectId, eventType, AuthIds.New(), occurredAt, userId, email, provider, PendingStatus, 0, occurredAt, sessionId, endpointId, OrganizationId: organizationId, OrganizationRole: organizationRole);
     }
 }

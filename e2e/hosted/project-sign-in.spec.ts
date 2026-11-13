@@ -206,7 +206,7 @@ test('project usernames and browser-bound magic links share single-use email ver
 
 test('social provider responses enforce identity, verification, PKCE and state bindings', async () => {
   await onLocalStack(async () => {
-    const { stdout } = await promisify(execFile)('dotnet', ['run', '--project', resolve(__dirname, '../social/Journey.Social.csproj'), '-c', 'Release'], { maxBuffer: 1024 * 1024 });
+    const { stdout } = await promisify(execFile)('dotnet', [resolve(process.env.E2E_BUILD!, 'social/Journey.Social.dll')], { maxBuffer: 1024 * 1024 });
     expect(stdout).toContain('8 providers: token/userinfo, verification, PKCE, state and configuration binding passed.');
   });
 });

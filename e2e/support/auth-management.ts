@@ -346,6 +346,12 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
     headers: { Authorization: `Bearer ${writeKey}` }, data: { client_id: current.projectId, password: current.password },
   });
   expect(stepUp.status()).toBe(401);
+  const signedIn = await page.request.post(auth + '/ui/' + current.projectId + '/sign-in/password', {
+    headers: { Origin: auth }, form: { email, password: current.password },
+  });
+  expect(signedIn.status()).toBe(200);
+  const activeSessions = await page.request.get(root + '/sessions', { headers: { Authorization: 'Bearer ' + readKey } });
+  expect((await activeSessions.json()).items.some((session: { user_id: string }) => session.user_id === user)).toBe(true);
   const management = { user, readKey, writeKey, csrf, ownerToken };
   if (sdk === 'dotnet') await checkSignupManagement(page, management);
   return management;
