@@ -38,13 +38,10 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
+    private int? _unreadableFormat;
+
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (HttpContext.Request.Headers[StorageFormat.Header] != StorageFormat.Id)
-        {
-            return ErrorResponse.From(new Unavailable("page copy waits until both nodes use the same storage format", "storage_format_mismatch"));
-        }
-
         if (!string.Equals(HttpContext.Request.ContentType, MediaType, StringComparison.OrdinalIgnoreCase))
         {
             return ErrorResponse.From(new UnsupportedMediaType($"the body is {MediaType}"));
@@ -140,6 +137,12 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
             return ErrorResponse.From(new NotFound("the database is not stored on this node"));
         }
 
+        if (_unreadableFormat is { } format)
+        {
+            return ErrorResponse.From(new Unavailable(
+                $"this node holds the database in storage format {StorageFormat.Name(format)}, which the requesting node does not support yet", "storage_format_unsupported"));
+        }
+
         await FlushAsync(HttpContext.Response.BodyWriter, cancellationToken).ConfigureAwait(false);
         if (peer is not null)
         {
@@ -151,11 +154,20 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
 
     async ValueTask<bool> IRevisionPullSink.StartAsync(RevisionPullStart start, CancellationToken cancellationToken)
     {
+        if (!StorageFormat.Accepts(HttpContext.Request.Headers.TryGetValue(StorageFormat.AcceptHeader, out var accepted) ? accepted.ToString() : null, start.Format))
+        {
+            _unreadableFormat = start.Format;
+            return false;
+        }
+
         var response = HttpContext.Response;
         response.StatusCode = StatusCodes.Status200OK;
         response.ContentType = MediaType;
         response.Headers.CacheControl = "no-store";
-        response.Headers[StorageFormat.Header] = StorageFormat.Id;
+        if (StorageFormat.Marker(start.Format) is { } marker)
+        {
+            response.Headers[StorageFormat.Header] = marker;
+        }
         response.Headers[DatabaseRevision.Header] = start.Revision.ToString();
         response.Headers[RevisionPullStart.CdcHeader] = start.CdcPosition.ToString(CultureInfo.InvariantCulture);
         PullAnswer.WriteHeader(response.BodyWriter, start);

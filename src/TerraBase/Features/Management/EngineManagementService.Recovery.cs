@@ -9,13 +9,13 @@ using ZLogger;
 
 namespace TerraBase.Features.Management;
 
-internal sealed partial class EngineManagementService
+internal sealed partial class EngineManagementService : IDisposable
 {
     private readonly Meter _recoveryMeter = meters.Create(Telemetry.MeterName);
     private long _unknownDatabaseFiles;
     private long _unknownDatabaseBytes;
-    private readonly TaskCompletionSource _recoveryStopping = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private Task? _deferredRecovery;
+    private readonly CancellationTokenSource _recoveryStopping = new();
+    private Task? _recovery;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -27,32 +27,63 @@ internal sealed partial class EngineManagementService
             unit: "By", description: "Bytes in unowned files preserved for operator recovery.");
         if (catalogGate.Value.IsOpen)
         {
-            if (await RecoverAsync(only: null, cancellationToken).ConfigureAwait(false))
+            var recovered = await RecoverAsync(only: null, cancellationToken).ConfigureAwait(false);
+            if (recovered)
             {
-                await engine.MigrateDatabasesAsync(cancellationToken).ConfigureAwait(false);
+                engine.CompleteRecovery();
             }
+
+            _recovery = RecoverUntilDoneAsync(only: null, recovered, _recoveryStopping.Token);
             return;
         }
 
         HashSet<string> local = [.. engine.EnumerateDatabaseFiles(cancellationToken).Select(file => file.Database?.DatabaseId).OfType<string>()];
-        _deferredRecovery = RecoverOnceOpenAsync(local);
+        _recovery = RecoverUntilDoneAsync(local, recovered: false, _recoveryStopping.Token);
     }
 
-    private async Task RecoverOnceOpenAsync(IReadOnlySet<string> local)
+    private async Task RecoverUntilDoneAsync(IReadOnlySet<string>? only, bool recovered, CancellationToken cancellationToken)
     {
         try
         {
-            if (await Task.WhenAny(catalogGate.Value.Opened, _recoveryStopping.Task).ConfigureAwait(false) == catalogGate.Value.Opened)
+            if (!recovered)
             {
-                if (await RecoverAsync(local, CancellationToken.None).ConfigureAwait(false))
-                {
-                    await engine.MigrateDatabasesAsync(CancellationToken.None).ConfigureAwait(false);
-                }
+                await catalogGate.Value.Opened.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await UntilDoneAsync("Recovering database cleanup intents", async () => await RecoverAsync(only, cancellationToken).ConfigureAwait(false), cancellationToken)
+                    .ConfigureAwait(false);
+                engine.CompleteRecovery();
             }
+
+            await UntilDoneAsync("Migrating database files to the target storage format", async () =>
+            {
+                await engine.MigrateDatabasesAsync(cancellationToken).ConfigureAwait(false);
+                return true;
+            }, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception error)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            logger.ZLogError(error, $"Recovering database cleanup intents after the catalog gate opened failed; the next start tries again");
+            logger.ZLogInformation($"Startup recovery stopped with the node; the next start resumes it");
+        }
+    }
+
+    private async Task UntilDoneAsync(string work, Func<Task<bool>> attempt, CancellationToken cancellationToken)
+    {
+        for (var failures = 0; ; failures++)
+        {
+            try
+            {
+                if (await attempt().ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                logger.ZLogWarning($"{work} found a dependency unavailable; it is tried again");
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogWarning(error, $"{work} failed; it is tried again");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(Math.Min(60, 1 << Math.Min(failures, 6))), time, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -107,12 +138,14 @@ internal sealed partial class EngineManagementService
         return true;
     }
 
+    public void Dispose() => _recoveryStopping.Dispose();
+
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _recoveryStopping.TrySetResult();
-        if (_deferredRecovery is { } deferred)
+        await _recoveryStopping.CancelAsync().ConfigureAwait(false);
+        if (_recovery is { } recovery)
         {
-            await deferred.ConfigureAwait(false);
+            await recovery.ConfigureAwait(false);
         }
     }
 

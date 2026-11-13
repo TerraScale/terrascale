@@ -18,6 +18,8 @@ internal readonly record struct RevisionPlan(FullReason? Full, IReadOnlySet<uint
 internal sealed record RevisionPullResult(DatabaseRevision Revision, FullReason? Full, int Pages, uint DatabaseSize)
 {
     public long CdcPosition { get; init; }
+
+    public required int Format { get; init; }
 }
 
 internal readonly record struct RevisionPullStart(DatabaseRevision Revision, FullReason? Full, uint DatabaseSize, int Pages, int PageSize)
@@ -25,6 +27,8 @@ internal readonly record struct RevisionPullStart(DatabaseRevision Revision, Ful
     internal const string CdcHeader = "TerraBase-Cdc-Position";
 
     public long CdcPosition { get; init; }
+
+    public required int Format { get; init; }
 }
 
 internal readonly record struct RevisionPageBatch(ReadOnlyMemory<uint> Numbers, ReadOnlyMemory<byte> Pages, int PageSize);

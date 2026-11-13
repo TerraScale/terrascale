@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.IO.Enumeration;
 using System.Text;
 using TerraBase.Configuration;
@@ -48,7 +47,7 @@ internal sealed partial class TursoStorageEngine
         var recorded = ownership.Length > 0;
         if (recorded)
         {
-            _ = DirectoryVersion(dataDirectory, ownership);
+            _ = ReadDirectoryFormat(ownership);
         }
 
         var entries = Directory.EnumerateFileSystemEntries(dataDirectory)
@@ -66,42 +65,46 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
-    private const string MigrationFile = ".terrabase.migration";
+    private const string MigratingPrefix = "migrating:";
 
-    private static int DirectoryVersion(string directory, FileStream ownership)
+    private readonly record struct DirectoryFormat(int Format, int? MigratingFrom)
     {
-        var journal = Path.Combine(directory, MigrationFile);
-        RejectLink(journal);
-        var text = File.Exists(journal) ? File.ReadAllText(journal) : RecordedFormat(ownership);
-        var from = text;
-        if (text.StartsWith("migrating:", StringComparison.Ordinal))
-        {
-            var parts = text["migrating:".Length..].Split("->", StringSplitOptions.None);
-            if (parts.Length != 2 || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var target))
-            {
-                throw new TerraBaseConfigurationException("the storage migration record is malformed");
-            }
-            StorageMigrations.RequirePath(target);
-            from = parts[0];
-        }
-        else if (text == StorageMigrations.PreviousId)
-        {
-            from = "23";
-        }
+        public bool NeedsMigration => MigratingFrom is null ? Format < StorageFormat.Target : Format <= StorageFormat.Target;
 
-        if (!int.TryParse(from, NumberStyles.None, CultureInfo.InvariantCulture, out var version))
-        {
-            throw new TerraBaseConfigurationException("the data directory has an unrecognized storage format; no migration path exists");
-        }
-        StorageMigrations.RequirePath(version);
-        return version;
+        public string Journal => $"{MigratingPrefix}{StorageFormat.Name(MigratingFrom ?? Format)}->{StorageFormat.Name(StorageFormat.Target)}";
     }
 
-    private static byte[] EncodingBytes(string value) => Encoding.ASCII.GetBytes(value);
+    private static DirectoryFormat ReadDirectoryFormat(FileStream ownership)
+    {
+        var text = RecordedFormat(ownership);
+        var format = text.StartsWith(MigratingPrefix, StringComparison.Ordinal)
+            ? text[MigratingPrefix.Length..].Split("->", StringSplitOptions.None) switch
+            {
+                [var from, var to] when StorageFormat.Parse(from) is { } start && StorageFormat.Parse(to) is { } end && start < end
+                    => new DirectoryFormat(end, start),
+                _ => (DirectoryFormat?)null,
+            }
+            : StorageFormat.Parse(text) is { } recorded ? new DirectoryFormat(recorded, null) : null;
+        if (format is not { } known)
+        {
+            throw new TerraBaseConfigurationException(
+                $"the data directory's storage format record is not recognised; this build supports storage formats {StorageFormat.SupportedFrom} to {StorageFormat.SupportedTo}");
+        }
+
+        foreach (var held in (int[])[known.MigratingFrom ?? known.Format, known.Format])
+        {
+            if (!StorageFormat.IsSupported(held))
+            {
+                throw new TerraBaseConfigurationException(StorageFormat.Refusal("the data directory", held));
+            }
+        }
+
+        return known;
+    }
 
     private static void WriteFormat(FileStream ownership, string value)
     {
-        var bytes = EncodingBytes(value);
+        var bytes = Encoding.ASCII.GetBytes(value);
         ownership.Position = 0;
         ownership.Write(bytes);
         ownership.SetLength(bytes.Length);
@@ -112,7 +115,7 @@ internal sealed partial class TursoStorageEngine
     {
         if (ownership.Length > 64)
         {
-            return "unversioned";
+            return string.Empty;
         }
 
         Span<byte> record = stackalloc byte[(int)ownership.Length];

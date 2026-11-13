@@ -1,48 +1,70 @@
 #!/usr/bin/env bash
 set -euo pipefail
-python3 - "${1:-HEAD^1}" <<'PY'
+labels="" body=""
+if [[ $# -eq 3 ]]; then
+  labels=$(gh pr view "$3" -R "$2" --json labels --jq '.labels[].name')
+  body=$(gh pr view "$3" -R "$2" --json body --jq '.body')
+elif [[ $# -ne 1 ]]; then
+  echo "usage: $0 <base revision> [<owner/repo> <pull request number>]" >&2
+  exit 2
+fi
+LABELS=$labels BODY=$body python3 - "$1" <<'PY'
 import datetime
 import hashlib
-import pathlib
+import os
 import re
 import subprocess
 import sys
 
-root = str(next(pathlib.Path("src/TerraBase/Engine").glob("*/storage-format.lock")).parent) + "/"
-store = next(pathlib.Path(root).glob("*DatabaseStore.cs")).name
+root = "src/TerraBase/Engine/Turso/"
 base = sys.argv[1]
+storage = re.compile("|".join([
+    r"^src/TerraBase/Engine/Turso/",
+    r"^src/TerraBase/Engine/StoredDatabaseFile\.cs$",
+    r"^src/TerraBase/Engine/Revisions/RevisionManifest(File)?\.cs$",
+    r"^src/TerraBase/Features/Backup/SnapshotBundle\.cs$",
+    r"^src/vendor/Turso\.Data\.Sqlite/",
+    r"^benchmark/turso-sync-host/turso-pin\.env$",
+]))
+step_pattern = re.compile(r'new\((\d+),\s*(\d+),\s*"([0-9-]+)",\s*("""\n?(.*?)"""|"((?:[^"\\]|\\.)*)")\)', re.S)
 
 
 def fail(message):
     sys.exit("storage-format: " + message)
 
 
-def previous(name):
-    result = subprocess.run(["git", "show", base + ":" + name], capture_output=True, text=True)
+def show(revision, name):
+    result = subprocess.run(["git", "show", revision + ":" + name], capture_output=True, text=True)
     return result.stdout if result.returncode == 0 else None
 
 
 def schema(source):
     values = {}
     pattern = r'private const string (\w+SchemaSql) = (\w+SchemaSql \+ )?"""\n(.*?)\n( *)""";'
-    for name, prefix, body, indent in re.findall(pattern, source, re.S):
+    for name, prefix, text, indent in re.findall(pattern, source, re.S):
         values[name] = (values[prefix.split()[0]] if prefix else "") + "\n".join(
-            line[len(indent):] if line else "" for line in body.split("\n"))
+            line[len(indent):] if line else "" for line in text.split("\n"))
     if not {"SystemSchemaSql", "ClientSchemaSql"} <= values.keys():
         fail("schema constants could not be read")
     return hashlib.sha256((values["SystemSchemaSql"] + values["ClientSchemaSql"]).encode()).hexdigest()
 
 
-def version(source):
-    match = re.search(r"public const int Version = (\d+);", source)
-    if not match:
-        fail("storage version is missing")
-    return int(match[1])
+def formats(source):
+    def constant(name):
+        match = re.search(r"public const int " + name + r" = (\d+);", source)
+        return int(match[1]) if match else None
+    if constant("Version") is not None:
+        version = constant("Version")
+        return version, version, version
+    found = constant("SupportedFrom"), constant("SupportedTo"), constant("Target")
+    if None in found:
+        fail("StorageFormat must declare SupportedFrom, SupportedTo and Target")
+    return found
 
 
 def lock(source):
     rows = {}
-    for row in source.splitlines():
+    for row in (source or "").splitlines():
         number, digest = row.split()
         if not re.fullmatch(r"[0-9a-f]{64}", digest) or int(number) in rows:
             fail("invalid schema lock")
@@ -50,46 +72,64 @@ def lock(source):
     return rows
 
 
-current = version(pathlib.Path(root + "StorageFormat.cs").read_text())
-digest = schema(pathlib.Path(root + store).read_text())
-locked = lock(pathlib.Path(root + "storage-format.lock").read_text())
-if locked.get(current) != digest:
-    fail("schema text changed without a new locked version and migration step")
-old_version = previous(root + "StorageFormat.cs")
-if old_version is None:
+def steps(source):
+    return [(int(start), int(end), released, (raw if raw else plain).strip())
+            for start, end, released, _, raw, plain in step_pattern.findall(source or "")]
+
+
+current = open(root + "StorageFormat.cs").read()
+low, high, target = formats(current)
+if not low <= target <= high:
+    fail(f"Target {target} must lie inside Supported {low} to {high}")
+digest = schema(open(root + "TursoDatabaseStore.cs").read())
+locked = lock(open(root + "storage-format.lock").read())
+for number in range(low, high + 1):
+    if number not in locked:
+        fail(f"supported format {number} has no schema lock entry")
+if locked[target] != digest:
+    fail(f"the schema text no longer matches the lock entry of Target {target}: add a format step instead")
+
+declared = steps(open(root + "StorageMigrations.cs").read())
+for start, end, released, sql in declared:
+    datetime.date.fromisoformat(released)
+    if end != start + 1 or start not in locked or end not in locked or not sql:
+        fail(f"step {start} to {end} must advance one locked format and carry SQL")
+for number in range(low, high):
+    if not any(start == number for start, _, _, _ in declared):
+        fail(f"supported formats {number} and {number + 1} need a migration step")
+
+base_format = show(base, root + "StorageFormat.cs")
+if base_format is None:
     fail("comparison base is missing")
-old = version(old_version)
-old_lock = previous(root + "storage-format.lock")
-baseline = lock(old_lock) if old_lock is not None else {
-    old: schema(previous(root + store))}
-if current < old:
-    fail("storage versions only move forward")
-for number, expected in baseline.items():
+base_low, base_high, base_target = formats(base_format)
+for number, expected in lock(show(base, root + "storage-format.lock")).items():
     if locked.get(number) != expected:
         fail("existing schema lock entries must remain unchanged")
-if old == current and baseline[old] != digest:
-    fail("schema text changed without a version increment")
+if target < base_target:
+    fail(f"Target only moves forward ({base_target} to {target})")
+if target != base_target and not base_low <= target <= base_high:
+    fail(f"Target {target} is not supported by the base build ({base_low} to {base_high}): first ship a build that supports it, then raise Target")
+if not low <= base_target <= high:
+    fail(f"this build must open the base build's Target {base_target}")
+if high < base_high:
+    fail(f"a supported format was dropped from the top ({base_high} to {high})")
+today = datetime.date.today()
+for step in steps(show(base, root + "StorageMigrations.cs")):
+    if (today - datetime.date.fromisoformat(step[2])).days < 60 and step not in declared:
+        fail("migration steps must be retained unchanged for at least 60 days")
 
-migration = pathlib.Path(root + "StorageMigrations.cs").read_text()
-pattern = r'new\((\d+),\s*(\d+),\s*"([0-9-]+)",\s*(.*?)\)\s*[,\]]'
-steps = re.findall(pattern, migration, re.S)
-numbers = []
-for start, end, released, sql in steps:
-    start, end = int(start), int(end)
-    datetime.date.fromisoformat(released)
-    if end != start + 1 or start not in locked or end not in locked or not sql.strip():
-        fail("each step must advance one locked version")
-    numbers.append(start)
-if not numbers or numbers != list(range(numbers[0], current)):
-    fail("migration steps must be ordered and reach the current version")
-for number in range(old, current):
-    if number not in numbers:
-        fail("a version increment needs its migration step")
-old_migration = previous(root + "StorageMigrations.cs")
-if old_migration:
-    today = datetime.date.today()
-    for start, end, released, sql in re.findall(pattern, old_migration, re.S):
-        if (today - datetime.date.fromisoformat(released)).days < 60 and (start, end, released, sql) not in steps:
-            fail("migration steps must be retained unchanged for at least 60 days")
-print("storage-format: ok (format " + str(current) + ", schema locked, forward path present)")
+labels = set(os.environ["LABELS"].split())
+pending = "storage-format" in labels and "Needs format bump" in os.environ["BODY"]
+changed = [name for name in subprocess.run(["git", "diff", "--name-only", base, "HEAD"], capture_output=True, text=True, check=True).stdout.split()
+           if storage.search(name)]
+introduced = high > base_high
+if {"storage-format", "storage-format-unchanged"} <= labels:
+    fail("the labels storage-format and storage-format-unchanged contradict each other")
+if target != base_target and "storage-format" not in labels:
+    fail(f"Target moves from {base_target} to {target}: label the pull request storage-format after the release rehearsal")
+if "storage-format" in labels and target == base_target and not introduced and not pending:
+    fail("labelled storage-format: add a format step, raise Target, or state Needs format bump")
+if changed and not introduced and "storage-format-unchanged" not in labels and not pending:
+    fail("on-disk format files changed (" + " ".join(changed) + "): add a format step, or label storage-format-unchanged once a reviewer confirms the bytes on disk stay the same")
+print(f"storage-format: ok (Supported {low} to {high}, Target {target}; base Supported {base_low} to {base_high}, Target {base_target})")
 PY

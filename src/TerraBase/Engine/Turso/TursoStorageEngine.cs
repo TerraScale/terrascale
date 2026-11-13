@@ -27,7 +27,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal const string SystemName = "_system";
 
     private static readonly byte[] LayoutRecord = Encoding.ASCII.GetBytes(StorageFormat.Id);
-    private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
+    private static readonly string PreTenancyLayout =
+        $"data directory uses the pre-tenancy layout, older than storage format {StorageFormat.SupportedFrom}; this build supports storage formats {StorageFormat.SupportedFrom} to {StorageFormat.SupportedTo} and cannot open it";
 
     internal const string LockFileName = ".terrabase.lock";
     private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix, RevisionManifestFile.Suffix, RevisionManifestFile.StagedSuffix];
@@ -225,7 +226,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         TimeSpan remaining;
         lock (_readinessGate)
         {
-            if (!Volatile.Read(ref _migrated) || Volatile.Read(ref _disposed) || Ledger.FailedClosed is not null)
+            if (!Volatile.Read(ref _recovered) || Volatile.Read(ref _disposed) || Ledger.FailedClosed is not null)
             {
                 return false;
             }
@@ -1445,10 +1446,12 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _awaitingRelease.Add(release);
+        var migration = _migrating.GetValueOrDefault(key) ?? Task.CompletedTask;
         initialization = Task.Run(
             async () =>
             {
                 await release.Task.ConfigureAwait(false);
+                await migration.ConfigureAwait(false);
                 return await Io.WithAdmissionAsync(() => InitializeStoreAsync(key, path, cancellationToken)).ConfigureAwait(false);
             },
             CancellationToken.None);

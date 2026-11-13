@@ -26,6 +26,8 @@ public interface IStorageEngine : IAsyncDisposable
 
     ValueTask MigrateDatabasesAsync(CancellationToken cancellationToken);
 
+    void CompleteRecovery();
+
     ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken);
 
     event EventHandler<IDatabaseStore>? DatabaseDeleted;

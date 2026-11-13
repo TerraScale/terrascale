@@ -264,9 +264,10 @@ internal sealed partial class TursoReplicas(
         var observed = new HttpClient(observer) { Timeout = Timeout.InfiniteTimeSpan };
         if (hexKey is not null && File.Exists(path) && File.Exists(path + "-info"))
         {
+            int? format = null;
             try
             {
-                var currentFormat = await Task.Run(() =>
+                format = await Task.Run(() =>
                 {
                     using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
                     {
@@ -277,16 +278,29 @@ internal sealed partial class TursoReplicas(
                         EncryptionKey = hexKey,
                     }.ToString());
                     TursoSession.OpenExisting(connection, path);
-                    return StorageMigrations.FileVersion(connection) == StorageFormat.Version;
+                    return StorageMigrations.FileFormat(connection);
                 }).ConfigureAwait(false);
-                if (currentFormat)
+            }
+            catch (SqliteException error)
+            {
+                logger.ZLogWarning($"A replica could not be read and is started again: {error.GetType().Name:@Error}");
+            }
+
+            if (format is { } held && !StorageFormat.IsSupported(held))
+            {
+                throw new InvalidOperationException(StorageFormat.Refusal("the replica cache", held));
+            }
+
+            if (format is not null)
+            {
+                try
                 {
                     return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: true);
                 }
-            }
-            catch (Exception error) when (error is TursoException or SqliteException)
-            {
-                logger.ZLogWarning($"A replica could not be reopened and is started again: {error.GetType().Name:@Error}");
+                catch (TursoException error)
+                {
+                    logger.ZLogWarning($"A replica could not be reopened and is started again: {error.GetType().Name:@Error}");
+                }
             }
         }
 
@@ -305,6 +319,10 @@ internal sealed partial class TursoReplicas(
             throw;
         }
     }
+
+    private static bool Readable(HttpResponseMessage response) =>
+        StorageFormat.FromMarker(response.Headers.TryGetValues(StorageFormat.Header, out var formats) ? formats.SingleOrDefault() ?? string.Empty : null) is { } format
+        && StorageFormat.IsSupported(format);
 
     private static TursoSyncDatabaseOptions Options(string path, string hexKey, Uri source, HttpClient http) => new(path, source)
     {
@@ -482,10 +500,9 @@ internal sealed partial class TursoReplicas(
                 Content = new ByteArrayContent(new PullUpdatesRequest { ClientRevision = held.ToString(), Encoding = PageEncoding.Raw, StreamKind = StreamKind.Pages }.ToByteArray()),
             };
             request.Content.Headers.ContentType = new MediaTypeHeaderValue(PullAnswer.MediaType);
-            _ = request.Headers.TryAddWithoutValidation(StorageFormat.Header, StorageFormat.Id);
+            _ = request.Headers.TryAddWithoutValidation(StorageFormat.AcceptHeader, StorageFormat.Supported);
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode || !response.Headers.TryGetValues(StorageFormat.Header, out var formats)
-                || formats.SingleOrDefault() != StorageFormat.Id || !response.Headers.TryGetValues(DatabaseRevision.Header, out var values)
+            if (!response.IsSuccessStatusCode || !Readable(response) || !response.Headers.TryGetValues(DatabaseRevision.Header, out var values)
                 || !DatabaseRevision.TryParse(values.FirstOrDefault(), out var to) || to.Incarnation != held.Incarnation || response.Content.Headers.ContentLength > MaxPrefetchBytes)
             {
                 return null;
@@ -611,15 +628,15 @@ internal sealed partial class TursoReplicas(
                 _ = copy.Headers.TryAddWithoutValidation(name, values);
             }
 
-            _ = copy.Headers.TryAddWithoutValidation(StorageFormat.Header, StorageFormat.Id);
+            _ = copy.Headers.Remove(StorageFormat.AcceptHeader);
+            _ = copy.Headers.TryAddWithoutValidation(StorageFormat.AcceptHeader, StorageFormat.Supported);
             try
             {
                 var response = await http.SendAsync(copy, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-                if (response.IsSuccessStatusCode && (!response.Headers.TryGetValues(StorageFormat.Header, out var formats)
-                    || formats.SingleOrDefault() != StorageFormat.Id))
+                if (response.IsSuccessStatusCode && !Readable(response))
                 {
                     response.Dispose();
-                    throw new HttpRequestException("page copy waits until both nodes use the same storage format");
+                    throw new HttpRequestException("the source sent pages in a storage format this build does not support; the copy waits for a build that does");
                 }
                 if (response.IsSuccessStatusCode && response.Headers.TryGetValues(DatabaseRevision.Header, out var values))
                 {

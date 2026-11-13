@@ -51,7 +51,7 @@ def check(code, error):
 def stamp(path):
     lines = pathlib.Path(str(path) + ".key").read_text().splitlines()
     if len(lines) != 2 or lines[0] not in ("TERRABASE-DB-KEY-1", "TERRABASE-REPLICA-KEY-1"):
-        raise ValueError("unknown key record: " + str(path))
+        raise ValueError("unknown key record")
     unwrap = (
         "const c = require('node:crypto'), fs = require('node:fs');"
         "const {master, wrapped} = JSON.parse(fs.readFileSync(0, 'utf8'));"
@@ -63,6 +63,7 @@ def stamp(path):
     key = subprocess.check_output(
         ["node", "-e", unwrap],
         input=json.dumps({"master": os.environ["TERRABASE_MASTER_KEY"], "wrapped": lines[1]}).encode(),
+        stderr=subprocess.DEVNULL,
     )
     config = Config(0, str(path.resolve()).encode(), b"index_method,encryption", None, b"aegis256", key, None, 0)
     db, connection, error = P(), P(), P()
@@ -70,27 +71,17 @@ def stamp(path):
     try:
         check(open_db(db, c.byref(error)), error)
         check(connect(db, c.byref(connection), c.byref(error)), error)
-        for sql in ["PRAGMA user_version;", "PRAGMA synchronous=FULL;", "PRAGMA user_version=1;", "PRAGMA wal_checkpoint(TRUNCATE);"]:
-            statement = P()
-            check(prepare(connection, sql.encode(), c.byref(statement), c.byref(error)), error)
-            rows = []
-            try:
-                while True:
-                    code = step(statement, c.byref(error))
-                    check(code, error)
-                    if code == 1:
-                        break
-                    if code == 3:
-                        check(run_io(statement, c.byref(error)), error)
-                    elif code == 2:
-                        rows.append([integer(statement, n) for n in range(columns(statement))])
-            finally:
-                check(finalize(statement, c.byref(error)), error)
-                free_statement(statement)
-            if sql == "PRAGMA user_version;" and rows not in ([[1]], [[24]]):
-                raise ValueError("only file versions 1 and 24 can be undone")
-            if sql == "PRAGMA wal_checkpoint(TRUNCATE);" and (not rows or rows[0][0] != 0):
-                raise OSError("database checkpoint did not complete")
+        version = run(connection, "PRAGMA user_version;")
+        if version == [[1]]:
+            return "already 23"
+        if version != [[24]]:
+            raise ValueError("user_version " + str(version) + " is not format 24")
+        run(connection, "PRAGMA synchronous=FULL;")
+        run(connection, "PRAGMA user_version=1;")
+        checkpoint = run(connection, "PRAGMA wal_checkpoint(TRUNCATE);")
+        if not checkpoint or checkpoint[0][0] != 0:
+            raise OSError("database checkpoint did not complete")
+        return "stamped 23"
     finally:
         if connection:
             check(close(connection, c.byref(error)), error)
@@ -98,25 +89,57 @@ def stamp(path):
         free_database(db)
 
 
-with (root / ".terrabase.lock").open("r+b") as ownership:
-    fcntl.flock(ownership, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    if ownership.read() not in (b"24", b"23-41a88901325a", b"migrating:23->24"):
-        raise ValueError("only the version-only 23 to 24 step can be undone")
-    ownership.seek(0)
-    ownership.write(b"23-41a88901325a")
-    ownership.truncate()
-    ownership.flush()
-    os.fsync(ownership.fileno())
-    print("directory format: 23-41a88901325a", flush=True)
-    for path in sorted(root.rglob("*.db")):
-        if path.is_symlink():
-            raise OSError("database paths must not be symbolic links")
-        stamp(path)
-        print(str(path.relative_to(root)) + ": user_version=1", flush=True)
-    (root / ".terrabase.migration").unlink(missing_ok=True)
-    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+def run(connection, sql):
+    error, statement = P(), P()
+    check(prepare(connection, sql.encode(), c.byref(statement), c.byref(error)), error)
+    rows = []
+    try:
+        while True:
+            code = step(statement, c.byref(error))
+            check(code, error)
+            if code == 1:
+                return rows
+            if code == 3:
+                check(run_io(statement, c.byref(error)), error)
+            elif code == 2:
+                rows.append([integer(statement, n) for n in range(columns(statement))])
+    finally:
+        check(finalize(statement, c.byref(error)), error)
+        free_statement(statement)
+
+
+def sync(directory):
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-print("undo complete; start the previous image")
+
+
+previous = b"23-41a88901325a"
+with (root / ".terrabase.lock").open("r+b") as ownership:
+    fcntl.flock(ownership, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    recorded = ownership.read()
+    if recorded not in (b"24", previous, b"migrating:" + previous + b"->24"):
+        sys.exit("the directory records storage format " + recorded.decode(errors="replace") + "; only format 24 can be undone to 23")
+    failed = []
+    for path in sorted(root.rglob("*.db")):
+        name = str(path.relative_to(root))
+        try:
+            if path.is_symlink():
+                raise OSError("database paths must not be symbolic links")
+            print(name + ": " + stamp(path), flush=True)
+        except Exception as error:
+            failed.append(name)
+            print(name + ": NOT STAMPED: " + type(error).__name__ + ": " + str(error), flush=True)
+    if failed:
+        print(str(len(failed)) + " file(s) still at format 24; the directory keeps its record " + recorded.decode()
+              + "; fix them and run this again (stamped files are skipped)", flush=True)
+        sys.exit(1)
+    ownership.seek(0)
+    ownership.write(previous)
+    ownership.truncate()
+    ownership.flush()
+    os.fsync(ownership.fileno())
+    sync(root)
+print("undo complete: directory format 23-41a88901325a; start the previous image")
