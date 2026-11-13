@@ -44,7 +44,7 @@
   border-bottom: 1px solid var(--ts-line);
 }
 
-.ts-audit-filters > div {
+.ts-audit-filters > div:not(.ts-audit-export) {
   flex: 0 1 140px;
   min-width: 0;
 }
@@ -156,7 +156,7 @@
     padding-inline: var(--ts-s4);
   }
 
-  .ts-audit-filters > div,
+  .ts-audit-filters > div:not(.ts-audit-export),
   .ts-audit-filters > .ts-audit-search {
     flex: 1 1 100%;
     max-width: none;
