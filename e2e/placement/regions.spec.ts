@@ -374,38 +374,29 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     }
     const peers = join(stateDir, 'peers');
     const original = readFileSync(peers, 'utf8');
-    try {
-      writeFileSync(peers, original.replace(/^(journey-\d+ fra) \S+$/gm, '$1 127.0.0.1'));
-      await meteredOnce(cells, created.id, 'terminal placement refusal', async () => {
-        await answer(await cells.post(home + database(created.id) + '/sql/execute', { data: { statements: [{ sql: 'SELECT 1' }] } }), 503, 'unavailable');
-      }, 'gru');
-    } finally {
-      writeFileSync(peers, original);
-    }
-
-    try {
-      writeFileSync(peers, original.split('\n').filter(line => !line.includes(' fra ')).join('\n'));
-      await meteredOnce(cells, created.id, 'no destination', async () => {
-        const missing = await cells.post(home + database(created.id) + '/sql/execute', { data: { statements: [{ sql: 'SELECT 1' }] } });
+    await meteredOnce(cells, created.id, 'no destination', async () => {
+      writeFileSync(peers, original.replace(/^(journey-\d+ fra) \S+$/gm, '$1 127.0.0.9'));
+      try {
+        const missing = await cells.get(home + database(created.id) + '/regions');
         await answer(missing, 503, 'unavailable');
         expect(missing.headers()['retry-after']).toBe('1');
-      }, 'gru');
-      const refused = await page.evaluate(({ url, token }) => new Promise<{ code: string; message: string }>((resolve, reject) => {
-        const socket = new WebSocket(url, 'terrascale.sql.v1');
-        socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'auth', token }));
-        socket.onerror = () => reject(new Error('unknown-writer auth-frame session failed'));
-        socket.onmessage = message => {
-          const answer = JSON.parse(String(message.data));
-          socket.close();
-          if (answer.type === 'error') resolve(answer.error);
-          else reject(new Error('unknown writer unexpectedly accepted the session'));
-        };
-      }), { url: `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`, token: grant.access_token });
-      expect(refused).toMatchObject({ code: 'unavailable', message: 'the database region fra could not be reached' });
-      console.log('R3 unknown writer: REST 503 unavailable, auth-frame socket unavailable with the same message');
-    } finally {
-      writeFileSync(peers, original);
-    }
+        const refused = await page.evaluate(({ url, token }) => new Promise<{ code: string; message: string }>((resolve, reject) => {
+          const socket = new WebSocket(url, 'terrascale.sql.v1');
+          socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'auth', token }));
+          socket.onerror = () => reject(new Error('unknown-writer auth-frame session failed'));
+          socket.onmessage = message => {
+            const answer = JSON.parse(String(message.data));
+            socket.close();
+            if (answer.type === 'error') resolve(answer.error);
+            else reject(new Error('unknown writer unexpectedly accepted the session'));
+          };
+        }), { url: `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`, token: grant.access_token });
+        expect(refused).toMatchObject({ code: 'unavailable', message: 'the database region fra could not be reached' });
+      } finally {
+        writeFileSync(peers, original);
+      }
+      console.log('R3 unreachable writer: REST 503 unavailable and auth-frame socket unavailable');
+    }, 'gru');
     await sql(cells, replica, created.id, 'CREATE TABLE relay_outcomes (value INTEGER)');
     await unanswered(cells, page, created.id, grant.access_token);
     const paused = Number(readFileSync(join(stateDir, 'pids', 'terrabase-fra.pid'), 'utf8').trim());
@@ -1304,68 +1295,108 @@ test('R21 five-region writer moves retain every acknowledged write and refresh s
   }
 });
 
-test('R3 replace: a refused stale attempt is metered only at its final destination', async ({ cells }) => {
+type RawUsage = { lifetime: { meters?: Record<string, { dimension: { meter: string; kind: string; region: string }; count: number }> } };
+
+async function observationCounts(id: string): Promise<Record<string, Meter>> {
+  const current = journey();
+  const stores = ['http://127.0.0.1:8081', 'http://127.0.0.2:8081', 'http://10.228.0.2:8081'];
+  const result: Record<string, Meter> = {};
+  for (const region of ['gru', 'fra', 'sjc']) {
+    const counts = await Promise.all(stores.map(async address => {
+      const session = connect(address);
+      const source = address.includes('127.0.0.1') ? 'fra' : 'gru';
+      const query = new URLSearchParams({ organization: current.organizationId, project: current.projectId, database: id, region, source, range: '1h' });
+      const stream = session.request({ ':path': '/v1/internal/usage/observations?' + query,
+        'x-terrabase-peer-credential': readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0] });
+      session.on('error', error => stream.destroy(error));
+      try {
+        const response = once(stream, 'response');
+        stream.end();
+        const [headers] = await response;
+        let body = '';
+        for await (const chunk of stream) body += chunk;
+        expect(Number(headers[':status']), address + ' observations: ' + body).toBe(200);
+        const observed = JSON.parse(body) as RawUsage;
+        return Object.values(observed.lifetime.meters ?? {}).reduce((sum, reading) => ({
+          requests: sum.requests + (reading.dimension.meter === 'requests' ? reading.count : 0),
+          operations: sum.operations + (reading.dimension.meter === 'ops' ? reading.count : 0),
+          received: sum.received + (reading.dimension.meter === 'client_bytes' && reading.dimension.kind === 'received' ? reading.count : 0),
+          sent: sum.sent + (reading.dimension.meter === 'client_bytes' && reading.dimension.kind === 'sent' ? reading.count : 0),
+        }), { requests: 0, operations: 0, received: 0, sent: 0 });
+      } finally {
+        session.close();
+      }
+    }));
+    result[region] = counts.reduce((sum, value) => ({ requests: sum.requests + value.requests, operations: sum.operations + value.operations,
+      received: sum.received + value.received, sent: sum.sent + value.sent }), { requests: 0, operations: 0, received: 0, sent: 0 });
+  }
+  return result;
+}
+
+test('R3 replace: stale refusals are metered once at the source or final destination', async ({ cells }) => {
   const restore = extendPeers(['sjc']);
   let node: RegionProcess | undefined;
-  let created: Database | undefined;
   try {
     node = await startRegion('sjc', 0);
-    created = await create(cells, ['gru', 'fra', 'sjc']);
-    await seed(cells, created.id);
-    for (const region of ['fra', 'sjc']) {
-      await expect.poll(async () => (await progress(cells, created!.id)).regions.find(row => row.region === region),
-        { message: region + ' has received the database before promotion', timeout: 45_000, intervals: [250, 500, 1000] })
-        .toMatchObject({ revision: expect.any(String), lastPulledAt: expect.any(String) });
+    await publishPlacementPlan(journey().organizationId);
+    for (const terminal of [true, false]) {
+      let created: Database | undefined;
+      let writer = replica;
+      try {
+        created = await named(cells, replica, name('stale-route'), ['fra', 'sjc'], journey().projectId);
+        await sql(cells, replica, created.id, 'CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
+        await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (1), (2), (3)');
+        await expect.poll(async () => (await progress(cells, created!.id, replica)).regions.find(row => row.region === 'sjc'),
+          { message: 'the next writer has received every row', timeout: 45_000, intervals: [250, 500, 1000] })
+          .toMatchObject({ revision: expect.any(String), lastPulledAt: expect.any(String) });
+        await expect.poll(async () => {
+          await sql(cells, home, created!.id, 'SELECT value FROM placement_rows');
+          const response = await cells.patch(replica + database(created!.id), { data: { regions: ['sjc'] } });
+          if (response.status() === 503) { await answer(response, 503, 'replica_not_ready'); return false; }
+          await answer(response, 200, '200 the source cached fra before promotion');
+          return true;
+        }, { message: 'the final writer is ready while the source cache names fra', timeout: 45_000, intervals: [1000] }).toBe(true);
+        writer = node.endpoint;
+        const before = await observationCounts(created.id);
+        const peers = join(stateDir, 'peers');
+        const complete = readFileSync(peers, 'utf8');
+        if (terminal) writeFileSync(peers, complete.replace(/^(journey-extra-sjc sjc) \S+$/gm, '$1 127.0.0.9'));
+        try {
+          const response = await cells.post(home + database(created.id) + '/sql/execute', {
+            data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
+          });
+          if (terminal) {
+            await answer(response, 503, 'unavailable');
+            expect(response.headers()['retry-after']).toBe('1');
+            expect((response.headers()['server-timing']?.match(/home;dur=/g) ?? []).length, 'one refused attempt and no reachable fresh destination').toBe(1);
+          } else {
+            await answer(response, 200, '200 after a refused stale attempt');
+            expect((await response.json()).results[0].rows).toEqual([[1], [2], [3]]);
+            expect((response.headers()['server-timing']?.match(/home;dur=/g) ?? []).length, 'a refusal and exactly one refreshed attempt').toBe(2);
+          }
+        } finally {
+          writeFileSync(peers, complete);
+        }
+        const after = await observationCounts(created.id);
+        const deltas = Object.fromEntries(['gru', 'fra', 'sjc'].map(region => [region, after[region].requests - before[region].requests]));
+        expect(deltas, 'one final request owner across all stored observations').toEqual(terminal ? { gru: 1, fra: 0, sjc: 0 } : { gru: 0, fra: 0, sjc: 1 });
+        const owner = terminal ? 'gru' : 'sjc';
+        expect(after[owner].sent - before[owner].sent).toBeGreaterThan(0);
+        expect(after[owner].received - before[owner].received).toBeGreaterThan(0);
+        for (const region of ['gru', 'fra', 'sjc'].filter(region => region !== owner)) {
+          expect(after[region].sent - before[region].sent, region + ' has no intermediate sent bytes').toBe(0);
+          expect(after[region].received - before[region].received, region + ' has no intermediate received bytes').toBe(0);
+        }
+        console.log('R3 stale refusal: ' + JSON.stringify(deltas) + ', owner ' + owner + ' received and sent bytes >0; other bytes +0');
+      } finally {
+        if (created) await answer(await cells.delete(writer + database(created.id)), 204, '204 writer deletes its fixture');
+      }
     }
-    await expect.poll(async () => {
-      const response = await cells.patch(home + database(created!.id), { data: { regions: ['fra', 'sjc'] } });
-      if (response.status() === 503) { await answer(response, 503, 'replica_not_ready'); return false; }
-      await answer(response, 200, '200 first writer move');
-      return true;
-    }, { message: 'the first replacement is ready to commit', timeout: 45_000, intervals: [1000] }).toBe(true);
-    await sql(cells, home, created.id, 'SELECT value FROM placement_rows');
-    await expect.poll(async () => (await progress(cells, created!.id, replica)).regions.find(row => row.region === 'sjc'),
-      { message: 'the next writer has received the first promotion', timeout: 45_000, intervals: [250, 500, 1000] })
-      .toMatchObject({ revision: expect.any(String), lastPulledAt: expect.any(String) });
-    await expect.poll(async () => {
-      await sql(cells, home, created!.id, 'SELECT value FROM placement_rows');
-      const response = await cells.patch(replica + database(created!.id), { data: { regions: ['sjc'] } });
-      if (response.status() === 503) { await answer(response, 503, 'replica_not_ready'); return false; }
-      await answer(response, 200, '200 second writer move');
-      return true;
-    }, { message: 'the final writer is ready while the source route names fra', timeout: 45_000, intervals: [1000] }).toBe(true);
-    const endpoints = [home, replica, node.endpoint];
-    const counts = async () => {
-      const readings = await Promise.all(endpoints.map(async endpoint =>
-        json<Usage>(await cells.get(endpoint + project() + '/analytics?database=' + created!.id + '&range=1h'))));
-      return Object.fromEntries(['gru', 'fra', 'sjc'].map(region => [region, readings.flatMap(reading => reading.items)
-        .filter(item => item.region === region).flatMap(item => item.series)
-        .reduce((total, point) => total + Object.values(point.requests).reduce((sum, count) => sum + count, 0), 0)]));
-    };
-    const before = await counts();
-    const response = await cells.post(home + database(created.id) + '/sql/execute', {
-      data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
-    });
-    await answer(response, 200, '200 after a refused stale attempt');
-    expect((await response.json()).results[0].rows).toEqual([[1], [2], [3]]);
-    expect((response.headers()['server-timing']?.match(/home;dur=/g) ?? []).length, 'a refusal and exactly one refreshed attempt').toBe(2);
-    await expect.poll(async () => {
-      const after = await counts();
-      return Object.fromEntries(['gru', 'fra', 'sjc'].map(region => [region, after[region] - before[region]]));
-    }, { message: 'only the final destination owns the customer request' }).toEqual({ gru: 0, fra: 0, sjc: 1 });
-    console.log('R3 stale refusal then success: gru +0, refused fra +0, final sjc +1');
-  } catch (error) {
-    console.log('R3 retry primary failure:', error);
-    throw error;
   } finally {
     try {
-      if (created) await removeDatabase(cells, created.id);
+      if (node) await node.stop();
     } finally {
-      try {
-        if (node) await node.stop();
-      } finally {
-        restore();
-      }
+      restore();
     }
   }
 });

@@ -10,7 +10,7 @@ internal sealed class RelayMutation
     internal bool MayMutate => _dirty || _mayMutate;
 
     internal static bool IsRead(string? sql) => sql is not null && SqlRouteParser.Parse(sql) is
-        [{ Kind: "select", Ddl: false, Flags.Unknown: false }];
+        [{ Kind: "select", Ddl: false }];
 
     internal static bool MayMutateStatement(string? sql) =>
         sql is null || !(SqlScript.CountAtMost(sql) == 1 && SqlScript.Classify(sql) is SqlStatementPlan { IsControl: true })

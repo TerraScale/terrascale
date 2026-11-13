@@ -45,6 +45,7 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
             {
                 while (!stop.IsCancellationRequested)
                 {
+                    await turn.WaitAsync(stop.Token).ConfigureAwait(false);
                     using var frame = await ReceiveAsync(client, tenant, stop.Token).ConfigureAwait(false);
                     if (frame.Type == WebSocketMessageType.Close)
                     {
@@ -54,7 +55,6 @@ internal sealed class SocketRequestRelay(IQosAdmission admission, IMemoryBudget 
                         return;
                     }
 
-                    await turn.WaitAsync(stop.Token).ConfigureAwait(false);
                     var parsed = RequestJson.Read<SqlSocketRequest>(frame.Bytes.Span, SqlErrors.InvalidRequest);
                     var id = parsed is SqlSocketRequest request ? request.Id : null;
                     var lease = admission.TryEnter(tenant, out var retryAfter);

@@ -94,7 +94,7 @@ export async function sourceRefusals(cells: Cells, request: Cells, page: Page, i
         process.stdin.end('SELECT 1;\n');
         const [status] = await ended;
         expect.soft(status, restriction).not.toBe(0);
-        expect.soft(errors, restriction + ' PostgreSQL refuses before discovery').toContain('28000');
+        expect.soft(errors, restriction + ' PostgreSQL returns the local startup refusal').toContain('FATAL:  password authentication failed');
       }
       const after = await destinationTraffic(request);
       console.log('R3 ' + restriction + ' ' + protocol + ': destination deltas ' + JSON.stringify({ discovery: after.discovery - before.discovery, connections: after.connections - before.connections, requests: after.requests - before.requests }));
