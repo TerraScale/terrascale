@@ -342,10 +342,6 @@ internal static class Lifecycle
 
     private static async Task PreserveUnregisteredAsync(IServiceProvider services, TenantContext database, CancellationToken cancellationToken)
     {
-        foreach (var background in services.GetServices<IHostedService>().OfType<BackgroundService>().Reverse())
-        {
-            await background.StopAsync(cancellationToken);
-        }
         await services.GetRequiredService<EngineManagementService>().StopAsync(cancellationToken);
         var system = await services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
         var options = services.GetRequiredService<TerraBaseOptions>();
@@ -364,7 +360,7 @@ internal static class Lifecycle
         await using var read = await system.BeginTransactionAsync(write: false, cancellationToken);
         var observed = await SystemCatalog.GetAsync(read, kind, id, ManagementJsonContext.Default.OrphanDatabaseFile, cancellationToken);
         Require(observed is not null && observed.Seen != record.Seen && observed.FirstSeen == record.FirstSeen,
-            "file audit did not preserve the aged unregistered database");
+            $"file audit did not preserve the aged unregistered database: present={observed is not null}, unchanged={observed?.Seen == record.Seen}, first={observed?.FirstSeen == record.FirstSeen}");
     }
 
     private static async Task RunPassAsync(IServiceProvider services, IEnumerable<IWrappedKeyFiles> files, RegionalOwners owners,
