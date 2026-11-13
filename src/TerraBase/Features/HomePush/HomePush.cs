@@ -514,7 +514,11 @@ internal partial class HomePush(
             _runs[origin] = run;
         }
 
-        await foreach (var message in consumer.ConsumeAsync<byte[]>(opts: new NatsJSConsumeOpts { MaxMsgs = 256 }, cancellationToken: run.Token)
+        await foreach (var message in consumer.ConsumeAsync<byte[]>(opts: new NatsJSConsumeOpts
+        {
+            MaxMsgs = 256,
+            IdleHeartbeat = TimeSpan.FromSeconds(5),
+        }, cancellationToken: run.Token)
             .ConfigureAwait(false))
         {
             if (!RegionWriter)
