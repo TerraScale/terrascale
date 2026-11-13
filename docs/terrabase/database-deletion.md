@@ -95,8 +95,9 @@ preserve writes arriving during retention. This blocks release of retention-prod
 deletion. The consumer change must remove the missing-registration acknowledgement,
 use only positive `DatabasePurge.IsPermanentlyPurgedAsync` authority to acknowledge
 without applying, and leave missing or retained registrations in its existing durable
-progress-and-backoff loop until restoration or permanent purge. The replication
-consumer is outside this change; retained-record presence must never authorize an
+progress-and-backoff loop until restoration or permanent purge. That admission
+check must run before decode or park, and recheck permanent authority while waiting.
+The replication consumer is outside this change; retained-record presence must never authorize an
 acknowledgement.
 
 Release order, with every node upgraded before the next step: handoff-import
