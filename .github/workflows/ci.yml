@@ -677,7 +677,8 @@ jobs:
           exit "$status"
 
   main-auth:
-    if: github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && github.ref == 'refs/heads/main'
+    needs: [all-green]
+    if: github.ref == 'refs/heads/main' && needs.all-green.result == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' && inputs.reconcile_auth)
     concurrency:
       group: production-auth
       cancel-in-progress: false
@@ -928,3 +929,15 @@ jobs:
       - run: |
           test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false
           test "${{ needs.changes.outputs.engine != 'true' || needs.journey.result == 'success' }}" = true
+
+  main-dashboard:
+    needs: [all-green, main-auth]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.all-green.result == 'success' && needs.main-auth.result == 'success'
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      issues: write
+      packages: write
+    uses: ./.github/workflows/images-ghcr.yml

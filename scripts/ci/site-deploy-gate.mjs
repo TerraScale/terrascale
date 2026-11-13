@@ -73,7 +73,8 @@ async function target() {
   for (const revision of git('rev-list', '--first-parent', '-10', 'origin/main').split('\n')) {
     const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=1`);
     const run = runs[0];
-    if (!run || run.status !== 'completed' || run.conclusion !== 'success') continue;
+    const signing = revision === process.env.GITHUB_SHA && run && String(run.id) === process.env.GITHUB_RUN_ID && run.status === 'in_progress';
+    if (!run || (!signing && (run.status !== 'completed' || run.conclusion !== 'success'))) continue;
     assert.ok(run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository.full_name === repo, 'Unexpected CI identity');
     const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
     assert.ok(count <= 100, 'CI jobs exceed the qualification read bound');
@@ -292,6 +293,8 @@ if (args[0] === '--prove') {
       if (deployed === revision) {
         if (!healthy(alert, revision)) await writeState(alert, name, revision, 0, false);
         report(`${name}: live ${deployed}, target ${revision}: already live; state healthy`);
+      } else if (revision !== process.env.GITHUB_SHA) {
+        report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: signed run ${process.env.GITHUB_SHA} cannot release it`);
       } else {
         const attempt = next(alert, revision);
         if (typeof attempt !== 'number') {
