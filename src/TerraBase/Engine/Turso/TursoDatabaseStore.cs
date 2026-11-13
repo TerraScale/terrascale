@@ -268,8 +268,24 @@ internal sealed partial class TursoDatabaseStore(
         }
     }
 
+    internal IDisposable? EnterMutation()
+    {
+        var lease = !IsSystem && Tenant is { } database ? Ledger?.Mutations(database).Enter() : null;
+        try
+        {
+            ThrowIfUnavailable();
+            return lease;
+        }
+        catch
+        {
+            lease?.Dispose();
+            throw;
+        }
+    }
+
     internal void NoteCopyFault(string reason)
     {
+        using var mutation = !IsSystem && Tenant is { } database ? Ledger?.Mutations(database).Enter() : null;
         CopyFault = reason;
         if (IsSystem)
         {
@@ -300,14 +316,7 @@ internal sealed partial class TursoDatabaseStore(
             return;
         }
 
-        try
-        {
-            await ledger.RecordAsync(tenant, Incarnation, reason).ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            ledger.FailClosed($"a copy fault could not be recorded: {error.GetType().Name}");
-        }
+        await ledger.RecordAsync(tenant, Incarnation, reason).ConfigureAwait(false);
     }
 
     private async ValueTask<TursoStorageTransaction> BeginAsync(
@@ -372,6 +381,7 @@ internal sealed partial class TursoDatabaseStore(
                 {
                     ThrowIfUnavailable();
                 }
+                using var mutation = write ? EnterMutation() : null;
                 beginStarted = true;
 
                 session.Settings(queryOnly: !write, full: durable);
@@ -612,6 +622,7 @@ internal sealed partial class TursoDatabaseStore(
                     ThrowIfUnavailable();
                     using var refused = ReadCancellation(cancellationToken);
                     using var interrupted = refused.Token.Register(() => TursoBindings.Interrupt(session.Native));
+                    using var mutation = EnterMutation();
                     Revisions.Attach(session.Connection);
                     return true;
                 }, cancellationToken).ConfigureAwait(false);
@@ -774,7 +785,10 @@ internal sealed partial class TursoDatabaseStore(
                     Checkpoint?.Invoke("copy.source.opening", tenant);
                 }
                 ThrowIfUnavailable();
-                TursoSession.OpenExisting(source, FilePath);
+                using (EnterMutation())
+                {
+                    TursoSession.OpenExisting(source, FilePath);
+                }
                 using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(TursoSession.Handle(source)));
                 using var begin = source.CreateCommand();
                 begin.CommandText = "BEGIN;";
@@ -882,7 +896,11 @@ internal sealed partial class TursoDatabaseStore(
             using var interrupted = Refused.Register(() => TursoBindings.Interrupt(writer.Native));
             using var failed = Ledger?.Refused.Register(() => TursoBindings.Interrupt(writer.Native));
             ThrowIfUnavailable();
-            var result = await writer.ExecuteAsync(WriteLane, () => call(writer), cancellationToken).ConfigureAwait(false);
+            var result = await writer.ExecuteAsync(WriteLane, () =>
+            {
+                using var mutation = EnterMutation();
+                return call(writer);
+            }, cancellationToken).ConfigureAwait(false);
             ThrowIfUnavailable();
             operation?.Complete();
             return result;
@@ -1263,6 +1281,7 @@ internal sealed partial class TursoDatabaseStore(
                 cancellationToken.ThrowIfCancellationRequested();
                 session.Settings(queryOnly: false, full: false);
 
+                using var mutation = EnterMutation();
                 Format = Bootstrap(name, session.Connection, cancellationToken);
                 _incarnation = new(Ulid.Parse(
                     (string)(Scalar(session.Connection, null, TursoStatements.Incarnation)

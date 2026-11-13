@@ -287,7 +287,10 @@ internal sealed partial class TursoDatabaseStore
                     }
                     cancellationToken.ThrowIfCancellationRequested();
                     ThrowIfUnavailable();
-                    TursoSession.OpenExisting(source, FilePath);
+                    using (EnterMutation())
+                    {
+                        TursoSession.OpenExisting(source, FilePath);
+                    }
                     using var interrupted = cancellationToken.Register(() => TursoBindings.Interrupt(TursoSession.Handle(source)));
                     Execute(source, "BEGIN;");
                     if (Ulid.Parse((string)Scalar(source, TursoStatements.Incarnation)!) != Incarnation || Closed)
@@ -416,7 +419,7 @@ internal sealed partial class TursoDatabaseStore
 
                     if (finalPass)
                     {
-                        ThrowIfUnavailable();
+                        using var mutation = EnterMutation();
                         cancellationToken.ThrowIfCancellationRequested();
                         using var measured = MeasureRewrite("source_checkpoint");
 

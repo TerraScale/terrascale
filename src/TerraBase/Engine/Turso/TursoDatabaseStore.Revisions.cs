@@ -24,7 +24,7 @@ internal sealed partial class TursoDatabaseStore
         {
             if (await WriteLane.RunAsync(() =>
             {
-                ThrowIfUnavailable();
+                using var mutation = EnterMutation();
                 if (Captures && BackupAnchor is null && Volatile.Read(ref BackupTaps) == 0)
                 {
                     _ = TursoStorageTransaction.Trim(writer.Connection, null, long.MaxValue, IsSystem);

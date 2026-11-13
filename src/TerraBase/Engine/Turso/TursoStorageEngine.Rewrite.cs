@@ -132,7 +132,8 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                     catch (Exception error) when (renamed)
                     {
                         store.Rewritten(target);
-                        Ledger.FailClosed("a healthy rewrite's rename may not be durable");
+                        store.NoteCopyFault("a healthy rewrite's rename may not be durable");
+                        await store.RecordCopyFaultAsync(store.CopyFault!).ConfigureAwait(false);
                         throw new RewriteUncertainException(error);
                     }
 
@@ -211,7 +212,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         }
 
         token.ThrowIfCancellationRequested();
-        store.ThrowIfUnavailable();
+        using var mutation = store.EnterMutation();
         DeleteSidecars(path, keepKey: true);
         _checkpoint("rewrite.old_log_removed", step);
         using (store.MeasureRewrite("directory_fsync_before"))

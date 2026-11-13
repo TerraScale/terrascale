@@ -84,25 +84,37 @@ jobs:
               - src/TerraBase/Engine/**/!(AGENTS.md|CLAUDE.md)
               - src/vendor/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraBase/Features/Backup/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Hosting/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Features/Health/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Configuration/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Features/Memory/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Features/Qos/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Tenancy/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Hosting/Shutdown.cs
+              - src/TerraBase/Hosting/ApplicationRunCompletion.cs
+              - src/TerraBase/Hosting/DatabaseRoute.cs
+              - src/TerraBase/Hosting/DatabaseLifecycleCheckpoint.cs
+              - src/TerraBase/Hosting/BadRequests.cs
+              - src/TerraBase/Hosting/Listeners.cs
+              - src/TerraBase/Features/Health/NodeReadiness.cs
+              - src/TerraBase/Features/Health/ReadyzEndpoint.cs
+              - src/TerraBase/Configuration/TerraBaseOptions.cs
+              - src/TerraBase/Features/Memory/MemoryBudget.cs
+              - src/TerraBase/Features/Memory/IMemoryBudget.cs
+              - src/TerraBase/Features/Qos/QosAdmission.cs
+              - src/TerraBase/Features/Qos/IQosAdmission.cs
+              - src/TerraBase/Features/Qos/QosContext.cs
+              - src/TerraBase/Features/Qos/QosPolicy.cs
+              - src/TerraBase/Features/Qos/QosRequestLease.cs
+              - src/TerraBase/Tenancy/TenantContext.cs
+              - src/TerraBase/Tenancy/PlanTierExtensions.cs
               - src/TerraBase/Program.cs
               - src/TerraBase/TerraBase.csproj
-              - src/TerraBase/Features/Sql/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Features/Postgres/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Features/Shapes/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Features/Sync/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Features/Replicas/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Sql/SqlErrors.cs
+              - src/TerraBase/Features/Sql/SqlService.cs
+              - src/TerraBase/Features/Sql/SqlSocket.cs
+              - src/TerraBase/Features/Postgres/PostgresConnectionHandler.cs
               - e2e/env/engine-crash*
               - e2e/env/build.sh
               - scripts/terrabase/**
               - scripts/vendor/download-turso-native.sh
               - scripts/vendor/verify-turso-native.sh
               - benchmark/turso-sync-host/turso-pin.env
+              - Makefile
               - Directory.*
               - global.json
               - NuGet.config

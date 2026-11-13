@@ -85,11 +85,6 @@ internal sealed partial class TursoDatabaseStore
                 }
             }
         }
-        catch (Exception error)
-        {
-            Ledger!.FailClosed($"a storage operation's intent could not be retired: {error.GetType().Name}");
-            throw;
-        }
         finally
         {
             _operations.Release();
@@ -107,7 +102,7 @@ internal sealed partial class TursoDatabaseStore
 
     private void CheckpointWriter(TursoSession writer)
     {
-        ThrowIfUnavailable();
+        using var mutation = EnterMutation();
         if (Revisions.IsAttachedTo(writer.Connection))
         {
             Revisions.Checkpoint(writer.Connection);

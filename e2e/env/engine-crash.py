@@ -67,6 +67,7 @@ proof_finished = threading.Condition()
 proof_events = 0
 rollback_count = 0
 proof_held = threading.Event()
+proof_reads = 0
 
 
 def request(method, path, body=None, actor=True):
@@ -98,9 +99,10 @@ def request(method, path, body=None, actor=True):
     return json.loads(text) if text else None
 
 
-def start(point=None, failure=None, binary=None, directory=None, proof_target=None, integrity=False):
-    global node, generation, reader, proof_events
+def start(point=None, failure=None, binary=None, directory=None, proof_target=None, integrity=False, checkpoint_target=None):
+    global node, generation, reader, proof_events, proof_reads
     generation += 1
+    proof_reads = 0
     current = dict(env)
     if directory is not None:
         current["TERRABASE_DATA_DIRECTORY"] = str(directory) + "/"
@@ -109,6 +111,12 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
             LD_PRELOAD=str(state / "crash.so"),
             ENGINE_PROOF_TARGET=proof_target,
             ENGINE_PROOF_CONTROL=str(state / "proof-control"),
+        )
+    if checkpoint_target:
+        current.update(
+            LD_PRELOAD=str(state / "crash.so"),
+            ENGINE_CHECKPOINT_TARGET=checkpoint_target,
+            ENGINE_CHECKPOINT_CONTROL=str(state / "checkpoint-control"),
         )
     if integrity:
         current.update(
@@ -132,7 +140,7 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
     process = node
 
     def drain():
-        global proof_events
+        global proof_events, proof_reads
         with log.open("wb") as output:
             while line := process.stdout.readline():
                 output.write(line)
@@ -150,6 +158,10 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
                     idle_observed.append(retained_rows)
                     if retained_rows < 32:
                         idle_drained.set()
+                if b"open latency:" in line:
+                    print(line.decode().strip(), flush=True)
+                if b"proof tenant file read" in line:
+                    proof_reads += 1
                 if b"proof file claim held" in line:
                     proof_held.set()
                 if b"engine crash hook ready" in line:
@@ -355,7 +367,170 @@ def recovered(identities):
             assert client.query("SELECT 1;") == {}
 
 
+def crash_recording(identity, operation="fault"):
+    hook("arm-recording", identity)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        pending = executor.submit(hook, operation, identity)
+
+        def expired(signum, frame):
+            raise TimeoutError("fault recording did not reach the flushed marker")
+
+        previous = signal.signal(signal.SIGALRM, expired)
+        signal.alarm(40)
+        try:
+            _, status = os.waitpid(node.pid, os.WUNTRACED)
+            assert os.WIFSTOPPED(status), "node exited before the fault marker boundary"
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+            end(hard=True, rollback=False)
+        try:
+            pending.result(timeout=5)
+            raise AssertionError("fault recording returned before its killed commit")
+        except RuntimeError as error:
+            assert str(error).startswith("hook interrupted"), str(error)
+
+
 def boundary_cases(selected=None):
+    global proof_reads
+    if selected == "c67":
+        for case in ("latency", "native", "native-timeout", "opened-key", "key-retry", "unknown-key", "creation", "checkpoints"):
+            boundary_cases(case)
+        return
+    if selected in (None, "latency"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "open-latency"})["id"]
+        for _ in range(3):
+            hook("latency", identity)
+        end()
+
+    if selected in (None, "native"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "native-barrier"})["id"]
+        end()
+        release = state / "checkpoint-control.release"
+        os.mkfifo(release)
+        start(checkpoint_target=identity + ".db")
+        sql(project, identity, [
+            "CREATE TABLE native_evidence(id INTEGER PRIMARY KEY);", "INSERT INTO native_evidence VALUES (1);",
+        ])
+        hook("native-race", identity)
+        assert hook("ledger", identity) == [1, 0]
+        unavailable(identity, "copy_faulted")
+        end()
+        release.unlink()
+        print("native checkpoint barrier: publication waited for backfill; no later mutation", flush=True)
+
+    if selected in (None, "native-timeout"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "native-deadline"})["id"]
+        end()
+        release = state / "checkpoint-control.release"
+        os.mkfifo(release)
+        start(checkpoint_target=identity + ".db")
+        sql(project, identity, [
+            "CREATE TABLE native_deadline(id INTEGER PRIMARY KEY);", "INSERT INTO native_deadline VALUES (1);",
+        ])
+        began = time.perf_counter()
+        try:
+            hook("native-race", identity, "timeout")
+            raise AssertionError("a stalled checkpoint returned successfully")
+        except RuntimeError as error:
+            assert "process exit" in str(error), error
+        assert node.wait(timeout=5) != 0
+        elapsed = time.perf_counter() - began
+        assert 29 <= elapsed < 40, elapsed
+        log = state / ("node-" + str(generation) + ".log")
+        reader.join(timeout=5)
+        assert "A copy mutation exceeded 30 seconds" in log.read_text()
+        end()
+        release.unlink()
+        assert (state / "data" / organization / project / (identity + ".db")).is_file()
+        start()
+        hook("check", identity)
+        end()
+        print(f"stalled native checkpoint: fail-stop in {elapsed:.3f}s; files retained and restart proof completed", flush=True)
+
+    if selected in (None, "recreate"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "ordinary-recreate"})["id"]
+        hook("fault", identity)
+        hook("recreate", identity)
+        assert hook("ledger", identity) == [0, 0]
+        assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+        with Postgres(identity) as client:
+            assert client.query("SELECT 1;") == {}
+        end()
+        print(
+            "ordinary explicit deletion: new creation at the same path healthy over HTTP and PostgreSQL immediately", flush=True,
+        )
+
+    if selected in (None, "opened-key"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "opened-key"})["id"]
+        healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "healthy-key"})["id"]
+        hook("check", identity)
+        key = state / "data" / organization / project / (identity + ".db.key")
+        key.chmod(0)
+        try:
+            hook("fault", identity)
+            assert hook("ledger", identity) == [1, 0]
+            assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+            with Postgres(healthy) as client:
+                assert client.query("SELECT 1;") == {}
+            assert request("GET", "/readyz", actor=False) is not None
+        finally:
+            key.chmod(0o600)
+        hook("recreate", identity)
+        assert hook("ledger", identity) == [0, 0]
+        assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+        with Postgres(identity) as client:
+            assert client.query("SELECT 1;") == {}
+        end()
+        print(
+            "opened unreadable key: fault persisted, healthy HTTP/PostgreSQL and readiness served; "
+            "explicit deletion and same-location recreation served immediately", flush=True,
+        )
+
+    if selected in (None, "key-retry"):
+        start(integrity=True)
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "key-retry"})["id"]
+        healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "key-retry-healthy"})["id"]
+        lease = request("POST", f"/v1/projects/{project}/databases", {"name": "key-retry-lease"})["id"]
+        hook("first-open", identity, 11)
+        end(hard=True, rollback=False)
+        control = state / "proof-control"
+        control.write_text("io")
+        start(proof_target=identity + ".db.key")
+        assert hook("ledger", identity) == [0, 1]
+        release = pathlib.Path(str(control) + ".release")
+        os.mkfifo(release)
+        proof_held.clear()
+        proof_reads = 0
+        control.write_text("keyhold")
+        assert proof_held.wait(15), "the fault binding retry did not enter its key read"
+        try:
+            began = time.perf_counter()
+            hook("migration-lease", lease)
+            hook("fault", healthy)
+            elapsed = time.perf_counter() - began
+            assert elapsed < 5, elapsed
+            assert hook("ledger", healthy) == [1, 0]
+        finally:
+            control.write_text("pass")
+            descriptor = os.open(release, os.O_WRONLY | os.O_NONBLOCK)
+            os.write(descriptor, b"x")
+            os.close(descriptor)
+        wait_for_proofs()
+        assert proof_reads == 1, ("creation evidence was read again during commit", proof_reads)
+        assert hook("ledger", identity) == [1, 0]
+        control.unlink()
+        end()
+        print(
+            f"held fault-binding key: independent fault and migration lease {elapsed:.3f}s; "
+            "exactly one evidence read outside commit", flush=True,
+        )
+
     if selected in (None, "first-open"):
         for code in (10, 11, 26):
             start(integrity=True)
@@ -373,6 +548,9 @@ def boundary_cases(selected=None):
             hook("migration-refused", identity)
             assert hook("ledger", identity) == [1, 0]
             assert files(identity) == before
+            healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "healthy-after-" + str(code)})["id"]
+            assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+            assert request("GET", "/readyz", actor=False) is not None
             end()
             print(
                 f"first session {code}: durable identity-free marker refused reopen, migration and overwrite; "
@@ -491,31 +669,40 @@ def boundary_cases(selected=None):
         end()
         print("faulted unopened copy: direct migration refused without reading or changing its files", flush=True)
 
+    if selected in (None, "unknown-key"):
+        start()
+        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "unknown-key"})["id"]
+        healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "unknown-key-healthy"})["id"]
+        key = state / "data" / organization / project / (identity + ".db.key")
+        key.chmod(0)
+        try:
+            crash_recording(identity, "unopened-fault")
+        finally:
+            key.chmod(0o600)
+        before = files(identity)
+        for _ in range(2):
+            start()
+            assert hook("ledger", identity) == [0, 1]
+            unavailable(identity, "recovery_pending")
+            assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+            assert request("GET", "/readyz", actor=False) is not None
+            assert files(identity) == before
+            end()
+        start()
+        hook("recreate", identity)
+        assert hook("ledger", identity) == [0, 0]
+        assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+        end()
+        print(
+            "unopened unreadable key: unavailable binding survived two restarts; "
+            "only that copy pending until explicit deletion", flush=True,
+        )
+
     if selected in (None, "marker"):
         start()
         identity = request("POST", f"/v1/projects/{project}/databases", {"name": "recording-marker"})["id"]
         sql(project, identity, ["CREATE TABLE intact(id INTEGER PRIMARY KEY);", "INSERT INTO intact VALUES (1);"])
-        hook("arm-recording", identity)
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            pending = executor.submit(hook, "fault", identity)
-
-            def expired(signum, frame):
-                raise TimeoutError("fault recording did not reach the flushed marker")
-
-            previous = signal.signal(signal.SIGALRM, expired)
-            signal.alarm(40)
-            try:
-                _, status = os.waitpid(node.pid, os.WUNTRACED)
-                assert os.WIFSTOPPED(status), "node exited before the fault marker boundary"
-            finally:
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, previous)
-                end(hard=True, rollback=False)
-            try:
-                pending.result(timeout=5)
-                raise AssertionError("fault recording returned before its killed commit")
-            except RuntimeError as error:
-                assert str(error).startswith("hook interrupted"), str(error)
+        crash_recording(identity)
         before = files(identity)
         start()
         assert hook("ledger", identity) == [1, 0], "fault marker was discarded"
@@ -721,7 +908,7 @@ subprocess.run(
 subprocess.run(
     ["cc", "-shared", "-fPIC", str(root / "e2e/env/engine-crash-integrity.c"),
      "-o", str(state / "integrity.so"), "-Wl,--no-as-needed", str(build / "libturso_sdk_kit.so"),
-     "-Wl,-rpath," + str(build), "-ldl"], check=True
+     "-Wl,-rpath," + str(build), "-ldl", "-pthread"], check=True
 )
 
 try:

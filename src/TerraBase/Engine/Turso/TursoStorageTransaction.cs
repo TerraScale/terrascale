@@ -488,6 +488,13 @@ internal sealed partial class TursoStorageTransaction(
         {
             await runner.RunAsync(() =>
             {
+                using var mutation = write && !store.IsSystem && store.Tenant is { } database
+                    ? store.Ledger?.Mutations(database).Enter() : null;
+                if (write && store.CloseRefusal is not null)
+                {
+                    store.Discard(session);
+                    return;
+                }
                 try
                 {
                     try
@@ -647,6 +654,7 @@ internal sealed partial class TursoStorageTransaction(
             {
                 return await session.ExecuteAsync(runner, () =>
                 {
+                    using var modifying = write ? store.EnterMutation() : null;
                     RunPendingSavepoint();
                     return Guarded(call);
                 }, cancellationToken).ConfigureAwait(false);
@@ -655,6 +663,7 @@ internal sealed partial class TursoStorageTransaction(
             return await runner.RunAsync(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                using var modifying = write ? store.EnterMutation() : null;
                 RunPendingSavepoint();
 
                 var result = Guarded(call);

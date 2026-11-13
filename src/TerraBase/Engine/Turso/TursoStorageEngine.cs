@@ -738,14 +738,16 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     {
 
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        await Ledger.ThrowIfUnavailableAsync(database, cancellationToken).ConfigureAwait(false);
         if (_stores.TryGetValue(Key(database), out var open))
         {
+            await Ledger.SettleAsync(open, cancellationToken).ConfigureAwait(false);
             open.ThrowIfUnavailable();
             return open.FilePresent(Volatile.Read(ref _fileEpoch)) ? open : null;
         }
 
+        await Ledger.ThrowIfUnavailableAsync(database, cancellationToken).ConfigureAwait(false);
         var (key, path) = Place(database);
         RejectDatabaseLinks(path);
         return File.Exists(path) ? await OpenStoreAsync(key, path, cancellationToken).ConfigureAwait(false) : null;
@@ -1058,6 +1060,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
                 foreach (var store in files)
                 {
+                    using var mutation = store.Tenant is { } database ? Ledger.Mutations(database).Enter() : null;
                     if (store.CloseRefusal is null && new FileInfo(store.FilePath + "-wal") is { Exists: true, Length: 0 } log)
                     {
                         log.Delete();
@@ -1289,6 +1292,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         string name, string path, Func<string, Task> initialize, (string Organization, string Project, string Database)? key = null)
     {
         var temporary = Path.Combine(Path.GetDirectoryName(path)!, $".{name}.{EntityIds.New()}.creating");
+        var database = key is { } location ? new TenantContext(location.Organization, PlanTier.Hobby, location.Project, location.Database) : null;
         var published = false;
         var keyPublished = false;
         try
@@ -1298,6 +1302,11 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RejectDatabaseLinks(temporary);
             RejectDatabaseLinks(path);
             await ThrowIfPurgeFencedAsync(name, CancellationToken.None).ConfigureAwait(false);
+            using var mutation = database is null ? null : Ledger.Mutations(database).TryPublish();
+            if (database is not null)
+            {
+                await Ledger.ThrowIfUnavailableAsync(database, CancellationToken.None).ConfigureAwait(false);
+            }
             await Io.RunAsync(() =>
             {
                 foreach (var file in new[] { temporary, temporary + DatabaseKeys.Suffix })
@@ -1324,12 +1333,24 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             await Io.RunAsync(() =>
             {
                 DeleteFiles(temporary);
-                if (keyPublished && !File.Exists(path) && !File.Exists(path + "-wal"))
-                {
-                    DeleteFileIfPresent(path + DatabaseKeys.Suffix);
-                }
                 DirectorySync(Path.GetDirectoryName(path)!);
             }, CancellationToken.None).ConfigureAwait(false);
+            if (!published && keyPublished)
+            {
+                using var mutation = database is null ? null : Ledger.Mutations(database).TryPublish();
+                if (database is not null)
+                {
+                    await Ledger.ThrowIfUnavailableAsync(database, CancellationToken.None).ConfigureAwait(false);
+                }
+                await Io.RunAsync(() =>
+                {
+                    if (!File.Exists(path) && !File.Exists(path + "-wal"))
+                    {
+                        DeleteFileIfPresent(path + DatabaseKeys.Suffix);
+                        DirectorySync(Path.GetDirectoryName(path)!);
+                    }
+                }, CancellationToken.None).ConfigureAwait(false);
+            }
         }
     }
 

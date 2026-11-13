@@ -121,12 +121,12 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
     {
         var stores = (IDictionary)engine.GetType().GetField("_stores", Hidden)!.GetValue(engine)!;
         var key = (tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!);
+        File.WriteAllText(Environment.GetEnvironmentVariable("ENGINE_INTEGRITY_CONTROL")!, "open" + code + " " + tenant.DatabaseId);
         if (stores[key] is IDisposable previous)
         {
             previous.Dispose();
             stores.Remove(key);
         }
-        File.WriteAllText(Environment.GetEnvironmentVariable("ENGINE_INTEGRITY_CONTROL")!, "open" + code);
         try
         {
             _ = await engine.OpenDatabaseAsync(tenant, cancellationToken);
@@ -209,6 +209,92 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         Console.WriteLine((close ? "close" : "eviction") + " race: WAL byte-identical after concurrent fault");
     }
 
+    private static async Task LatencyAsync(IStorageEngine engine, TenantContext tenant, CancellationToken cancellationToken)
+    {
+        var stores = (IDictionary)engine.GetType().GetField("_stores", Hidden)!.GetValue(engine)!;
+        var key = (tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!);
+        if (stores[key] is IDisposable previous)
+        {
+            previous.Dispose();
+            stores.Remove(key);
+        }
+        var started = Stopwatch.GetTimestamp();
+        var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+        var cold = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        started = Stopwatch.GetTimestamp();
+        for (var index = 0; index < 1000; index++)
+        {
+            _ = await engine.OpenDatabaseAsync(tenant, cancellationToken);
+        }
+        var opens = Stopwatch.GetElapsedTime(started).TotalMilliseconds / 1000;
+        started = Stopwatch.GetTimestamp();
+        var ledger = engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
+        var refused = ledger.GetType().GetMethod("RefusedAsync")!.CreateDelegate<Func<TenantContext, Ulid, CancellationToken, ValueTask<bool>>>(ledger);
+        for (var index = 0; index < 1000; index++)
+        {
+            if (await refused(tenant, store.Incarnation, cancellationToken))
+            {
+                throw new InvalidOperationException("a healthy repeated open was refused");
+            }
+        }
+        Console.WriteLine(FormattableString.Invariant($"open latency: cold {cold:F4} ms; cached {opens:F4} ms/open; admission {Stopwatch.GetElapsedTime(started).TotalMilliseconds / 1000:F4} ms/open; 1000 repetitions"));
+    }
+
+    private static async Task NativeCheckpointRaceAsync(IStorageEngine engine, TenantContext tenant, bool timeout, CancellationToken cancellationToken)
+    {
+        var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+        var preparation = store.GetType().GetMethod("PrepareCopyAsync", Hidden)!.Invoke(store, [cancellationToken])!;
+        var preparing = (Task)preparation.GetType().GetMethod("AsTask")!.Invoke(preparation, null)!;
+        await preparing;
+        var operation = (IAsyncDisposable)preparing.GetType().GetProperty("Result")!.GetValue(preparing)!;
+        var control = Environment.GetEnvironmentVariable("ENGINE_CHECKPOINT_CONTROL")!;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watcher = new FileSystemWatcher(Path.GetDirectoryName(control)!);
+        watcher.Created += (_, change) =>
+        {
+            if (change.FullPath == control + ".entered") entered.TrySetResult();
+        };
+        watcher.EnableRaisingEvents = true;
+        File.WriteAllText(control, "checkpoint");
+        var checkpoint = (Task)store.GetType().GetMethod("CheckpointOnCloseAsync", Hidden)!.Invoke(store, null)!;
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        var ledger = engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
+        var fault = ((ValueTask)ledger.GetType().GetMethod("RecordAsync", Hidden)!.Invoke(ledger,
+            [tenant, store.Incarnation, "another reader detected damage during checkpoint backfill"])!).AsTask();
+        if (timeout)
+        {
+            Console.WriteLine("native checkpoint held until fail-stop deadline");
+            await checkpoint;
+            throw new InvalidOperationException("the stalled checkpoint escaped its fail-stop deadline");
+        }
+        try
+        {
+            if (fault.IsCompleted || store.Refused.IsCancellationRequested)
+            {
+                throw new InvalidOperationException("fault publication overtook native checkpoint backfill");
+            }
+            Console.WriteLine("fault publication waits inside native checkpoint backfill");
+        }
+        finally
+        {
+            using var release = new FileStream(control + ".release", FileMode.Open, FileAccess.Write);
+            release.WriteByte(1);
+        }
+        await checkpoint;
+        await fault;
+        operation.GetType().GetMethod("Complete")!.Invoke(operation, null);
+        await operation.DisposeAsync();
+        var path = (string)store.GetType().GetProperty("FilePath", Hidden)!.GetValue(store)!;
+        var main = File.ReadAllBytes(path);
+        var log = File.ReadAllBytes(path + "-wal");
+        await (Task)store.GetType().GetMethod("CheckpointOnCloseAsync", Hidden)!.Invoke(store, null)!;
+        if (!main.AsSpan().SequenceEqual(File.ReadAllBytes(path)) || !log.AsSpan().SequenceEqual(File.ReadAllBytes(path + "-wal")))
+        {
+            throw new InvalidOperationException("a later checkpoint modified the recorded fault");
+        }
+        Console.WriteLine("native checkpoint finished before fault publication; later checkpoint never started");
+    }
+
     public void OnNext(DiagnosticListener listener)
     {
         if (listener.Name == "Microsoft.Extensions.Hosting")
@@ -254,6 +340,40 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                 {
                     var engine = services.GetRequiredService<IStorageEngine>();
                     var tenant = new TenantContext(parts[1], PlanTier.Hobby, parts[2], parts[3]);
+                    if (parts[0] == "latency")
+                    {
+                        await LatencyAsync(engine, tenant, cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "native-race")
+                    {
+                        await NativeCheckpointRaceAsync(engine, tenant, parts.Length > 4 && parts[4] == "timeout", cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "migration-lease")
+                    {
+                        var ledger = engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
+                        var pending = (Task)ledger.GetType().GetMethod("BeginReadAsync", Hidden)!.Invoke(ledger, [tenant, cancellationToken])!;
+                        await pending;
+                        await ((IAsyncDisposable)pending.GetType().GetProperty("Result")!.GetValue(pending)!).DisposeAsync();
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "recreate")
+                    {
+                        if (!await engine.DeleteDatabaseAsync(tenant, cancellationToken))
+                        {
+                            throw new InvalidOperationException("the faulted copy was not explicitly deleted");
+                        }
+                        _ = await engine.CreateDatabaseAsync(tenant, cancellationToken);
+                        var recreated = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+                        await using var read = await recreated.BeginTransactionAsync(false, cancellationToken);
+                        _ = await read.GetOffsetAsync(cancellationToken);
+                        await writer.WriteLineAsync("ok".AsMemory(), cancellationToken);
+                        continue;
+                    }
                     if (parts[0] == "first-open")
                     {
                         await FirstOpenAsync(engine, tenant, parts[4], cancellationToken);
@@ -322,9 +442,15 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                         await writer.WriteLineAsync(string.Join(" ", counts).AsMemory(), cancellationToken);
                         continue;
                     }
-                    if (parts[0] == "fault")
+                    if (parts[0] is "fault" or "unopened-fault")
                     {
                         var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+                        if (parts[0] == "unopened-fault")
+                        {
+                            ((IDisposable)store).Dispose();
+                            var stores = (IDictionary)engine.GetType().GetField("_stores", Hidden)!.GetValue(engine)!;
+                            stores.Remove((tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!));
+                        }
                         var ledger = engine.GetType().GetProperty("Ledger", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
                         IAsyncDisposable? read = null;
                         if (ledger.GetType().GetMethod("BeginReadAsync", BindingFlags.Instance | BindingFlags.NonPublic) is { } begin)

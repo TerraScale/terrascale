@@ -135,6 +135,8 @@ internal sealed partial class TursoStorageEngine
 
         try
         {
+            using var mutation = await Ledger.Mutations(database).EnterAsync(cancellationToken).ConfigureAwait(false);
+            await Ledger.ThrowIfUnavailableAsync(database, cancellationToken).ConfigureAwait(false);
             var result = await MigrateFileAsync(database.DatabaseId!, path, cancellationToken).ConfigureAwait(false);
             await Ledger.ThrowIfUnavailableAsync(database, cancellationToken).ConfigureAwait(false);
             return result;
