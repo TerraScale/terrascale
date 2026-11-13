@@ -171,9 +171,11 @@ rewrite of the owner record is refused: the named node logs `Regional writer ref
 (`terrabase.home.refusals{scope="writer",reason="unproven"}`).
 
 On every activation, including a first writer at epoch 1, a node refuses to become writer while any database homed in
-the region has a local replica newer than its primary file, or a replica and no primary file
-(`reason="replica_newer"`, `reason="primary_missing"`). Before comparing, it catches up each replica that is not open
-through its follower (up to 5 s); a replica that still reports no position is not compared. A refusal is logged and
+the region, and whose home lease (when there is one) names this region, has a local replica newer than its primary file,
+or a replica and no primary file (`reason="replica_newer"`, `reason="primary_missing"`). A database whose lease names
+another region is not served by this region's writer, so it does not block the role. Before comparing, it catches up the
+replicas that are not open through their followers, together and once per page of homed databases, within 1 s, so the
+check ends inside one 2 s activation attempt; a replica that still reports no position is not compared. A refusal is logged and
 counted once per database and position, and the check runs again from the start every 15 s, so the node becomes writer
 as soon as the cause clears. A missing owner key with existing data is therefore not a new region. A genuinely new region
 has no homed databases, so its first node in name order becomes writer at epoch 1; a restarted writer whose primary files

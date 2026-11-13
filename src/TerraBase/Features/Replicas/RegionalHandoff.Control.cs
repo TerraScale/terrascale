@@ -327,6 +327,7 @@ internal sealed partial class RegionalHandoff
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
         var revisions = services.GetRequiredService<IDatabaseRevisions>();
         var replication = services.GetRequiredService<RegionReplication>();
+        var leases = services.GetRequiredService<HomeLeases>();
         do
         {
             if (await catalog.ListHomedAsync(options.Region, _checkedAfter, token).ConfigureAwait(false) is not TenantDatabasePage page)
@@ -336,13 +337,13 @@ internal sealed partial class RegionalHandoff
             if (!_pageCaughtUp)
             {
                 _pageCaughtUp = true;
-                await CatchUpAsync([.. page.Databases.Where(database => !PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && replicas.HeldRevision(database) is null)])
+                await CatchUpAsync([.. page.Databases.Where(database => Compared(database) && replicas.HeldRevision(database) is null)])
                     .ConfigureAwait(false);
             }
 
             foreach (var database in page.Databases)
             {
-                if (!PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && replicas.HeldRevision(database) is { } replica)
+                if (Compared(database) && replicas.HeldRevision(database) is { } replica)
                 {
                     var primary = await revisions.CurrentRevisionAsync(database, token).ConfigureAwait(false);
                     if (primary is not { } held || held.Incarnation != replica.Incarnation || DatabaseRevision.Compare(replica, held) > 0)
@@ -362,6 +363,9 @@ internal sealed partial class RegionalHandoff
         _checked = true;
         _refusal = null;
         return true;
+
+        bool Compared(TenantContext database) => !PlatformDatabases.IsPlatformDatabase(database.DatabaseId)
+            && (leases.Find(database.DatabaseId!) is not { } lease || lease.Home == options.Region);
 
         async Task CatchUpAsync(IReadOnlyList<TenantContext> unheld)
         {

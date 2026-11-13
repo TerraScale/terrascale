@@ -319,7 +319,7 @@ test('a lease that names a node that cannot serve leaves the database unserved, 
     const [ledger] = await createLedgers(cells, 1, 'home-unserved');
     const before = await homeLease(kv, ledger.id);
     const gru = node('journey-1');
-    const restart = restartAfterKill(gru);
+    const restart = restartAfterKill(gru, true, { token, path: `${project()}/databases` });
     try {
       await expect.poll(async () => await kv.get(homes, 'node.journey-1'), { message: 'journey-1 node lease expires', timeout: 30_000, intervals: [500] }).toBeNull();
       await kv.put(homes, `home.${ledger.id}`, { ...before.value, home: 'fra', node: 'journey-4', epoch: before.value.epoch + 1 }, before.seq);
