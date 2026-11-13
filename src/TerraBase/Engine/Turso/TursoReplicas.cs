@@ -177,7 +177,7 @@ internal sealed partial class TursoReplicas(
                     var sourceKey = master.Unwrap(wrapped);
                     try
                     {
-                        var evidence = DetachedImport.Inspect(path, sourceKey);
+                        var evidence = DetachedImport.Inspect(path, sourceKey, options.DataDirectory, ((TursoStorageEngine)storage).Disk);
                         new DetachedImport(1, key.Database, evidence.Incarnation, evidence.Position, wrapped, null).Write(detached + ".importing", create: true);
                     }
                     finally
@@ -225,7 +225,7 @@ internal sealed partial class TursoReplicas(
         lock (KeyRecords)
         {
             ActiveDetached.Remove(detached);
-            TryRecoverDetached(detached);
+            TryRecoverDetached(detached, rethrow: true, finalizing: true);
         }
     }
 

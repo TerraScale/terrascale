@@ -11,7 +11,8 @@ internal sealed partial class NativeTemporaryStorage(TerraBaseOptions options) :
     public void Initialize()
     {
         var root = Path.GetFullPath(options.DataDirectory);
-        var path = Path.Combine(root, ".tmp");
+        var temporary = Path.Combine(root, ".tmp");
+        var path = Path.Combine(temporary, "native");
         lock (Gate)
         {
             if (_path is not null)
@@ -33,6 +34,12 @@ internal sealed partial class NativeTemporaryStorage(TerraBaseOptions options) :
             if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
             {
                 throw new TerraBaseConfigurationException("native temporary storage data-directory must not be a symbolic link");
+            }
+
+            Directory.CreateDirectory(temporary);
+            if ((File.GetAttributes(temporary) & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new TerraBaseConfigurationException("native temporary storage parent must not be a symbolic link");
             }
 
             if (Directory.Exists(path))

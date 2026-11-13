@@ -333,19 +333,22 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         meter.CreateObservableCounter("terrabase.storage.detached_recovery_failures", () => Interlocked.Read(ref _detachedRecoveryFailures),
             description: "Detached database recovery refusals; remaining copies are preserved.");
         meter.CreateObservableGauge("terrabase.keys.local.wrapped", ObserveLocalKeys,
-            description: "Local persisted wrappers by key id; -1 is unknown and forbids retirement; zero on every node permits retiring an id.");
+            description: "Local persisted wrappers by key id; -1 is unknown and forbids retirement; zero covers this node only; retained remote backups may still require an id.");
         meter.CreateObservableGauge("terrabase.keys.weak_in_use", ObserveWeakKeys,
             description: "Weak master key referenced locally by id; 1 means rotate away, -1 means unknown.");
+        meter.CreateObservableCounter("terrabase.keys.malformed", () => Interlocked.Read(ref _malformedKeys),
+            description: "Malformed sealed records or retained images encountered by local inventory; records are preserved.");
         meter.CreateObservableGauge("terrabase.keys.refused", () => _keyRefusals.Count,
             description: "Databases refused because a configured key cannot authenticate a local wrapper.");
-        meter.CreateObservableGauge("terrabase.storage.retained_files", () => RetainedFiles().Files, "{file}",
+        meter.CreateObservableGauge("terrabase.storage.retained_files", () => Volatile.Read(ref _retainedInventory).Files, "{file}",
             "Files retained after detached recovery, awaiting separate reclamation.");
-        meter.CreateObservableGauge("terrabase.storage.retained_bytes", () => RetainedFiles().Bytes, "By",
+        meter.CreateObservableGauge("terrabase.storage.retained_bytes", () => Volatile.Read(ref _retainedInventory).Bytes, "By",
             "Bytes retained after detached recovery, awaiting separate reclamation.");
         _ownership = Own(configured.DataDirectory);
         try
         {
             nativeTemporaryStorage?.Initialize();
+            DetachedImport.CleanScratch(configured.DataDirectory);
             CheckIntentJournal();
             DeleteRewriteScratch();
             Ledger = new StorageFaultLedger(this, logger, schemaMemory);

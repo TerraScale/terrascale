@@ -58,13 +58,13 @@ internal sealed partial class TursoReplicas
         }
     }
 
-    private void TryRecoverDetached(string detached, bool rethrow = false)
+    private void TryRecoverDetached(string detached, bool rethrow = false, bool finalizing = false)
     {
         try
         {
-            RecoverDetached(detached);
+            RecoverDetached(detached, finalizing);
         }
-        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or SqliteException or JsonException)
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or SqliteException or JsonException or DiskCapacityException)
         {
             var database = Path.GetRelativePath(Root, detached[..^".promote.db".Length] + ".db");
             if (storage is TursoStorageEngine engine)
@@ -79,7 +79,7 @@ internal sealed partial class TursoReplicas
         }
     }
 
-    internal static void PrepareImport(string source, string temporary, IKeyring master)
+    internal static void PrepareImport(string source, string temporary, IKeyring master, string dataDirectory, IDiskBudget disk)
     {
         if (!source.EndsWith(".promote.db", StringComparison.Ordinal))
         {
@@ -95,7 +95,7 @@ internal sealed partial class TursoReplicas
             var sourceKey = master.Unwrap(intent.SourceKey);
             try
             {
-                intent.Verify(source, sourceKey);
+                intent.Verify(source, sourceKey, dataDirectory, disk);
             }
             finally
             {
@@ -105,7 +105,7 @@ internal sealed partial class TursoReplicas
         }
     }
 
-    internal static void SealImport(string source, string temporary, string targetConnection, IKeyring master)
+    internal static void SealImport(string source, string temporary, string targetConnection, IKeyring master, string dataDirectory, IDiskBudget disk)
     {
         if (!source.EndsWith(".promote.db", StringComparison.Ordinal))
         {
@@ -126,7 +126,7 @@ internal sealed partial class TursoReplicas
         var key = master.Unwrap(DatabaseKeys.ReadWrapped(temporary));
         try
         {
-            intent.Verify(temporary, key);
+            intent.Verify(temporary, key, dataDirectory, disk);
         }
         finally
         {
@@ -136,7 +136,20 @@ internal sealed partial class TursoReplicas
         RandomAccess.FlushToDisk(handle);
     }
 
-    private void RecoverDetached(string detached)
+    internal static void PublishImport(string source)
+    {
+        if (!source.EndsWith(".promote.db", StringComparison.Ordinal))
+        {
+            return;
+        }
+        lock (KeyRecords)
+        {
+            var intent = DetachedImport.Read(source + ".importing", Path.GetFileName(source)[..^".promote.db".Length]);
+            (intent with { Published = true }).Write(source + ".importing", create: false);
+        }
+    }
+
+    private void RecoverDetached(string detached, bool finalizing)
     {
         if (ActiveDetached.Contains(detached))
         {
@@ -169,7 +182,10 @@ internal sealed partial class TursoReplicas
             try
             {
                 VerifyKey(DatabaseKeys.ReadWrapped(destination), key);
-                intent.Verify(destination, key);
+                if (!finalizing || !intent.Published)
+                {
+                    intent.Verify(destination, key, options.DataDirectory, ((TursoStorageEngine)storage).Disk);
+                }
                 if (!intent.Published)
                 {
                     (intent with { Published = true }).Write(detached + ".importing", create: false);
@@ -202,7 +218,7 @@ internal sealed partial class TursoReplicas
                 DatabaseKeys.RejectLink(file);
                 File.Move(file, replica + file[detached.Length..], overwrite: false);
             }
-            intent.Verify(replica, sourceKey);
+            intent.Verify(replica, sourceKey, options.DataDirectory, ((TursoStorageEngine)storage).Disk);
             if (DataKeyRecord(replica) is { } restored)
             {
                 VerifyKey(restored, sourceKey);

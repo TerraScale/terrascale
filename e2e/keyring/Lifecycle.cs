@@ -46,9 +46,20 @@ internal static class Lifecycle
             InventoryProof.Inspection(inspection);
             return;
         }
+        if (args is ["inventory-trim"])
+        {
+            InventoryProof.TrimStored();
+            return;
+        }
+        if (args is ["inventory-seed", var storedMode])
+        {
+            await InventoryProof.SeedStoredAsync(storedMode, CancellationToken.None);
+            return;
+        }
         if (args is ["inventory-cost"])
         {
             InventoryProof.SeedCost();
+            await InventoryProof.SeedStoredAsync("cost", CancellationToken.None);
         }
         await RunAsync(args);
     }
@@ -143,6 +154,15 @@ internal static class Lifecycle
                     var metrics = await metricsClient.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
                     Require(metrics.Split('\n').Any(line => line.StartsWith("terrabase_keys_refused", StringComparison.Ordinal)
                         && line.EndsWith(" 1", StringComparison.Ordinal)), "key refusal was not counted");
+                    if (root.TryGetProperty("unreadable", out _))
+                    {
+                        foreach (var id in new[] { "k0", "k1", "unattributed" })
+                        {
+                            Require(metrics.Split('\n').Any(line => line.StartsWith("terrabase_keys_local_wrapped", StringComparison.Ordinal)
+                                && line.Contains("key_id=\"" + id + "\"", StringComparison.Ordinal) && line.EndsWith(" -1", StringComparison.Ordinal)),
+                                "unreadable intent did not report unknown for " + id);
+                        }
+                    }
                     if (root.TryGetProperty("files", out var count))
                     {
                         await FileEvidence.VerifyMetricsAsync(count.GetInt64(), root.GetProperty("bytes").GetInt64(), cancellationToken);

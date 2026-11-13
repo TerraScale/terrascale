@@ -94,7 +94,7 @@ internal sealed partial class TursoStorageEngine
         ArgumentException.ThrowIfNullOrEmpty(file);
 
         var (key, path) = Locate(database);
-        Task<TursoDatabaseStore> initialization;
+        Task initialization;
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -112,7 +112,7 @@ internal sealed partial class TursoStorageEngine
             {
                 var sourceConnection = await Encryption.ExistingAsync(file, Io, cancellationToken).ConfigureAwait(false);
                 var targetConnection = await Encryption.CreateAsync(temporary, Io, cancellationToken).ConfigureAwait(false);
-                TursoReplicas.PrepareImport(file, temporary, Encryption.Keyring);
+                TursoReplicas.PrepareImport(file, temporary, Encryption.Keyring, _dataDirectory, Disk);
                 await Io.RunAsync(() =>
                 {
                     using var source = new TursoConnection(sourceConnection);
@@ -126,12 +126,14 @@ internal sealed partial class TursoStorageEngine
                 await TursoDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, Encryption, cancellationToken).ConfigureAwait(false);
                 await Io.RunAsync(() =>
                 {
-                    TursoReplicas.SealImport(file, temporary, targetConnection, Encryption.Keyring);
+                    TursoReplicas.SealImport(file, temporary, targetConnection, Encryption.Keyring, _dataDirectory, Disk);
                     return true;
                 }, cancellationToken).ConfigureAwait(false);
             }).ConfigureAwait(false);
+            TursoReplicas.PublishImport(file);
             _checkpoint("create.published", database);
-            initialization = GetInitializationLocked(key, path, cancellationToken, out _);
+            initialization = file.EndsWith(".promote.db", StringComparison.Ordinal)
+                ? Task.CompletedTask : GetInitializationLocked(key, path, cancellationToken, out _);
         }
         finally
         {

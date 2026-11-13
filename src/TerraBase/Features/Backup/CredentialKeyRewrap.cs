@@ -44,11 +44,7 @@ internal sealed class CredentialKeyRewrap(SystemCatalog catalog, IKeyring keyrin
             {
                 try
                 {
-                    var record = EntityPayload.Read(stored, BackupJsonContext.Default.ProjectBackupDestinationRecord);
-                    if (record is not { Version: 1, Credentials.WrappedKey.Length: > 0 })
-                    {
-                        throw new InvalidDataException("backup destination credentials are malformed");
-                    }
+                    var record = CustomerCredentials.ReadRecord(stored.Json);
                     var wrapped = record.Credentials.WrappedKey;
                     var key = keyring.Unwrap(wrapped);
                     try
@@ -58,12 +54,12 @@ internal sealed class CredentialKeyRewrap(SystemCatalog catalog, IKeyring keyrin
                         {
                             id = await catalog.WriteDurableAsync(async transaction =>
                             {
-                                var current = await GetAsync(transaction, kind, stored.Id, BackupJsonContext.Default.ProjectBackupDestinationRecord,
-                                    cancellationToken).ConfigureAwait(false);
-                                if (current is null)
+                                var latest = await transaction.GetAsync(kind, stored.Id, cancellationToken).ConfigureAwait(false);
+                                if (latest is null)
                                 {
                                     return null;
                                 }
+                                var current = CustomerCredentials.ReadRecord(latest.Json);
                                 if (current.Credentials.WrappedKey != wrapped)
                                 {
                                     var currentKey = keyring.Unwrap(current.Credentials.WrappedKey);

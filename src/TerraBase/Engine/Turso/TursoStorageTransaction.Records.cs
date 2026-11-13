@@ -56,8 +56,7 @@ internal sealed partial class TursoStorageTransaction
             var body = StrictJson.Read(json, requireObject: false);
             if (CredentialKind(kind))
             {
-                var record = EntityPayload.Read(new StoredRecord(id, 0, json), BackupJsonContext.Default.ProjectBackupDestinationRecord)
-                    ?? throw new InvalidDataException("sealed credential record is malformed");
+                var record = CustomerCredentials.ReadRecord(json);
                 var key = store.Encryption.Keyring.Unwrap(record.Credentials.WrappedKey);
                 CryptographicOperations.ZeroMemory(key);
             }

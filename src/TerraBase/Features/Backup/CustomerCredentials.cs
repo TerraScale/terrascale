@@ -14,6 +14,26 @@ internal static class CustomerCredentials
     private const int NonceBytes = 12;
     private const int TagBytes = 16;
 
+    internal static ProjectBackupDestinationRecord ReadRecord(ReadOnlyMemory<byte> json)
+    {
+        var record = JsonSerializer.Deserialize(json.Span, BackupJsonContext.Default.ProjectBackupDestinationRecord);
+        if (record is not
+            {
+                Version: 1, Revision.Length: > 0, Destination: not null,
+                Credentials: { WrappedKey.Length: > 0, Ciphertext.Length: > 0 }
+            })
+        {
+            throw new InvalidDataException("sealed credential record is malformed");
+        }
+        var ciphertext = record.Credentials.Ciphertext;
+        var buffer = new byte[ciphertext.Length * 3 / 4];
+        if (!Convert.TryFromBase64String(ciphertext, buffer, out var written) || written < NonceBytes + TagBytes)
+        {
+            throw new InvalidDataException("sealed credential envelope is malformed");
+        }
+        return record;
+    }
+
     public static async Task<SealedCredentials> SealAsync(IKeyring master, string accessKeyId, string secretKey, CancellationToken cancellationToken)
     {
         var (key, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);

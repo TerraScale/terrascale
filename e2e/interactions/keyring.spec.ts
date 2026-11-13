@@ -249,6 +249,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
       expect(readFileSync(log, 'utf8')).toContain('keyring-driver:key-refused counted=1 healthy=42');
       expect(readFileSync(log, 'utf8')).toContain('keyring-driver:intent permission-denied');
       expect(existsSync(intent)).toBe(true);
+      chmodSync(intent, 0o600);
       expect(readFileSync(intent).equals(intentBytes)).toBe(true);
       await stop();
     } finally {
@@ -257,11 +258,19 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     }
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, 'inventory-import');
     await expect.poll(() => child?.exitCode).toBe(0);
-    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:import absent=whole-refusal k0=0->1');
+    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:import absent=whole-refusal k0=0->2');
     await stop();
     await start('k1', { k1: k1.toString('base64'), k2: randomBytes(32).toString('base64') });
     await expect.poll(() => child?.exitCode).toBe(2);
-    expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k0' is required by 1 local wrappers");
+    expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k0' is required by 2 local wrappers");
+    await stop();
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+    await ready();
+    await expect.poll(async () => (await (await fetch('http://127.0.0.1:18383/metrics')).text())
+      .match(/terrabase_keys_last_complete[^\n]* ([1-9]\d*)/)?.[1]).toBeTruthy();
+    await stop();
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, 'inventory-trim');
+    await expect.poll(() => child?.exitCode).toBe(0);
     await stop();
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await rotated(paths.length + 2, 1);
@@ -329,3 +338,113 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     k1.fill(0);
   }
 });
+
+for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'number', 'empty', 'base64', 'version', 'authority-parent', 'artifact-decoy', 'scratch', 'cost-1', 'cost-2', 'cost-3']) {
+  test('inventory contains persisted ' + mode, async () => {
+    mkdirSync(stateDir, { recursive: true });
+    const directory = mkdtempSync(join(stateDir, 'inventory-' + mode + '-'));
+    const data = join(directory, mode === 'authority-parent' ? 'parent.creating' : 'data');
+    const ring = join(directory, 'ring.json');
+    const k0 = randomBytes(32).toString('base64');
+    const k1 = randomBytes(32).toString('base64');
+    const peer = randomBytes(32).toString('hex');
+    for (const [name, value] of Object.entries({ k0, k1, peer })) saveSecret('inventory-' + mode + '-' + name, value);
+    let child: ChildProcess | undefined;
+    let log = '';
+    let sequence = 0;
+    const candidate = join(process.env.E2E_BUILD!, 'terrabase/terrabase.dll');
+    const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
+      !name.startsWith('TERRABASE_') && !name.startsWith('TS_') && !name.startsWith('AWS_') && name !== 'BUCKET_NAME'));
+    async function stop(): Promise<void> {
+      if (child?.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGTERM');
+        await exited;
+      }
+      child = undefined;
+    }
+    function start(operation?: string, withoutOld = false): void {
+      writeFileSync(ring, JSON.stringify({ active: mode.startsWith('cost-') ? 'k0' : 'k1', keys: withoutOld ? { k1, k2: randomBytes(32).toString('base64') } : { k0, k1 } }), { mode: 0o600 });
+      log = join(directory, 'node-' + (++sequence) + '.log');
+      const output = openSync(log, 'w', 0o600);
+      child = spawn('dotnet', operation ? ['exec', '--depsfile', join(process.env.E2E_BUILD!, 'terrabase/terrabase.deps.json'),
+        '--runtimeconfig', join(process.env.E2E_BUILD!, 'terrabase/terrabase.runtimeconfig.json'), process.env.E2E_KEYRING_DRIVER!,
+        ...(operation === 'cost' ? ['inventory-cost'] : operation === 'trim' ? ['inventory-trim'] : ['inventory-seed', operation])] : [candidate], {
+        env: { ...environment, DOTNET_PROCESSOR_COUNT: '4', DOTNET_ENVIRONMENT: 'Development',
+          TERRABASE_MASTER_KEYS_FILE: ring, TERRABASE_PEER_SECRET: peer, TERRABASE_DATA_DIRECTORY: data,
+          TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
+          TERRABASE_PORT: '18380', TERRABASE_INTERNAL_PORT: '18381', TERRABASE_POSTGRES_PORT: '18382', TERRABASE_METRICS_PORT: '18383' },
+        stdio: ['ignore', output, output],
+      });
+      closeSync(output);
+    }
+    async function ready(): Promise<void> {
+      await expect.poll(async () => {
+        expect(child?.exitCode, log + '\n' + readFileSync(log, 'utf8').slice(-1500)).toBeNull();
+        try { return (await fetch('http://127.0.0.1:18380/readyz')).status; } catch { return 0; }
+      }).toBe(200);
+    }
+    try {
+      start();
+      await ready();
+      await stop();
+      if (mode.startsWith('cost-')) {
+        start('cost');
+        await expect.poll(() => child?.exitCode).toBe(0);
+        const measured = readFileSync(log, 'utf8').split('\n').find(line => line.startsWith('keyring-driver:10000 '));
+        expect(measured).toBeTruthy();
+        console.log(mode + ': ' + measured);
+        const references = Number(measured?.match(/first_reference=(-?\d+)/)?.[1]);
+        expect(references === -1 || references >= 20_000).toBe(true);
+        return;
+      }
+      if (mode === 'scratch') {
+        mkdirSync(join(data, '.tmp/inspection/abandoned'), { recursive: true });
+        writeFileSync(join(data, '.tmp/inspection/abandoned/copy.db'), 'private scratch');
+        writeFileSync(join(data, 'outside-inspection'), 'keep');
+        writeFileSync(join(data, '.tmp/outside-inspection'), 'keep sibling');
+      } else if (mode === 'authority-parent' || mode === 'artifact-decoy') {
+        const nonce = randomBytes(12);
+        const cipher = createCipheriv('aes-256-gcm', Buffer.from(k0, 'base64'), nonce);
+        const wrapped = Buffer.concat([nonce, cipher.update(randomBytes(32)), cipher.final(), cipher.getAuthTag()]).toString('base64');
+        const name = mode === 'authority-parent' ? '01J00000000000000000000077.db.key' : 'artifact.db.key';
+        const artifactDirectory = join(data, '01J00000000000000000000071', '01J00000000000000000000072');
+        mkdirSync(artifactDirectory, { recursive: true });
+        writeFileSync(join(artifactDirectory, name), 'TERRABASE-DB-KEY-1\n' + wrapped + '\n');
+      } else {
+        start(mode === 'missing-key' ? 'retained' : mode);
+        await expect.poll(() => child?.exitCode, log).toBe(0);
+        await stop();
+      }
+      start(undefined, ['missing-key', 'authority-parent', 'artifact-decoy'].includes(mode));
+      if (mode === 'missing-key' || mode === 'authority-parent') {
+        await expect.poll(() => child?.exitCode, log).toBe(2);
+        expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k0'");
+      } else {
+        await ready();
+        const metrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+        if (mode === 'scratch') {
+          expect(existsSync(join(data, '.tmp/inspection/abandoned'))).toBe(false);
+          expect(readFileSync(join(data, 'outside-inspection'), 'utf8')).toBe('keep');
+          expect(readFileSync(join(data, '.tmp/outside-inspection'), 'utf8')).toBe('keep sibling');
+        } else if (mode === 'retained') {
+          expect(metrics).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} [1-9]\d*(?:\n|$)/);
+          await stop();
+          start('trim');
+          await expect.poll(() => child?.exitCode).toBe(0);
+          await stop();
+          start();
+          await ready();
+          const trimmed = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+          expect(trimmed).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} 0(?:\n|$)/);
+        } else {
+          expect(metrics).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} -1(?:\n|$)/);
+          if (mode !== 'artifact-decoy') expect(metrics).toMatch(/terrabase_keys_malformed(?:_total)?(?:\{[^\n]*\})? [1-9]\d*(?:\n|$)/);
+        }
+      }
+      console.log('inventory actual: ' + mode + ' passed');
+    } finally {
+      await stop();
+    }
+  });
+}

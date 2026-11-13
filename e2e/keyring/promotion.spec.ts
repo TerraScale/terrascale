@@ -220,10 +220,32 @@ const test = base.extend<{}, { promotion: Promotion }>({
       const secondPlacement = await request(home, 'GET', syncPath(two.id) + '/placement', undefined, false);
       const secondObserved = observePromotion(organization.id, project.id, two.id);
       await request(replica, 'POST', syncPath(two.id) + '/catch-up', undefined, false);
-      await request(replica, 'POST', syncPath(two.id) + '/promote', {
-        moveId: '01J00000000000000000000002', fromRegion: 'gru', version: Number(secondPlacement.placementVersion) + 1,
-        replicaRegions: ['gru'], allRegions: false, name: secondPlacement.name, identity: secondPlacement.identity,
-      }, false);
+      let promoting = true;
+      let concurrentWrites = 0;
+      let writesBeforeReply = 0;
+      const writer = (async () => {
+        do {
+          const placement = await request(replica, 'GET', syncPath(two.id) + '/placement', undefined, false);
+          if (placement.homeRegion === 'fra') {
+            if (promoting) writesBeforeReply++;
+            await request(replica, 'POST', projectPath + '/databases/' + String(two.id) + '/sql/execute', {
+              statements: [{ sql: 'UPDATE keyring_rows SET value = 42' }],
+            }, false);
+            concurrentWrites++;
+          }
+        } while (promoting || concurrentWrites === 0);
+      })();
+      try {
+        await request(replica, 'POST', syncPath(two.id) + '/promote', {
+          moveId: '01J00000000000000000000002', fromRegion: 'gru', version: Number(secondPlacement.placementVersion) + 1,
+          replicaRegions: ['gru'], allRegions: false, name: secondPlacement.name, identity: secondPlacement.identity,
+        }, false);
+      } finally {
+        promoting = false;
+        await writer;
+      }
+      expect(concurrentWrites).toBeGreaterThan(0);
+      console.log('home move concurrent writer: ' + concurrentWrites + ' writes, ' + writesBeforeReply + ' started before promotion reply; healthy destination served');
       expect(readFileSync(promotedKey(two.id), 'ascii').startsWith('TERRABASE-DB-KEY-2\nv2.k1.')).toBe(true);
       expect(existsSync(secondObserved)).toBe(true);
       expect(readFileSync(secondObserved, 'ascii').startsWith('TERRABASE-DB-KEY-2\nv2.k1.')).toBe(true);
@@ -351,6 +373,9 @@ const test = base.extend<{}, { promotion: Promotion }>({
             writeFileSync(destination, databaseBytes);
             writeFileSync(destination + '.key', keyBytes);
             if (state === 'before-key' || state === 'after-key') {
+              const intentPath = detached(published.id) + '.importing';
+              const intent = JSON.parse(readFileSync(intentPath, 'utf8')) as Record<string, unknown>;
+              writeFileSync(intentPath, JSON.stringify({ ...intent, published: false }), { mode: 0o600 });
               rmSync(destination);
               if (state === 'before-key') rmSync(destination + '.key');
               await runRecovery(published, 'recovered');

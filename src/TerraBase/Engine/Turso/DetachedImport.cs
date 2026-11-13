@@ -19,7 +19,7 @@ internal sealed record DetachedImport(
         }
         var result = JsonSerializer.Deserialize(file, DetachedImportJsonContext.Default.DetachedImport)
             ?? throw new InvalidDataException("the detached import intent is missing");
-        if (result.Version != 1 || result.Database != database || !Ulid.TryParse(result.Incarnation, out _)
+        if (result.Version != 1 || result.Database != database || string.IsNullOrEmpty(result.Incarnation) || !Ulid.TryParse(result.Incarnation, out _)
             || result.Position < 0 || string.IsNullOrEmpty(result.SourceKey) || result.Published && result.Restored)
         {
             throw new InvalidDataException("the detached import intent does not bind this database");
@@ -66,21 +66,45 @@ internal sealed record DetachedImport(
         }
     }
 
-    internal static (string Incarnation, long Position) Inspect(string path, byte[] key)
+    private static string ScratchRoot(string dataDirectory)
+    {
+        var root = Path.GetFullPath(dataDirectory);
+        DatabaseKeys.RejectLink(root);
+        var temporary = Path.Combine(root, ".tmp");
+        DatabaseKeys.RejectLink(temporary);
+        var inspection = Path.Combine(temporary, "inspection");
+        DatabaseKeys.RejectLink(inspection);
+        return inspection;
+    }
+
+    internal static void CleanScratch(string dataDirectory)
+    {
+        var root = ScratchRoot(dataDirectory);
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    internal static (string Incarnation, long Position) Inspect(string path, byte[] key, string dataDirectory, IDiskBudget disk)
     {
         DatabaseKeys.RejectLink(path);
-        var scratch = Directory.CreateTempSubdirectory("terrabase-inspection-");
+        var name = Path.GetFileName(path);
+        var files = Directory.EnumerateFiles(Path.GetDirectoryName(path)!, name + "*")
+            .Where(file => file == path || file.StartsWith(path + "-", StringComparison.Ordinal)
+                || file.StartsWith(path + ".", StringComparison.Ordinal)).ToArray();
+        long bytes = 0;
+        foreach (var file in files)
+        {
+            DatabaseKeys.RejectLink(file);
+            bytes = checked(bytes + new FileInfo(file).Length);
+        }
+        using var claim = disk.Reserve(DiskBudget.WorkspaceBytes(bytes));
+        var scratch = Directory.CreateDirectory(Path.Combine(ScratchRoot(dataDirectory), EntityIds.New().ToString()));
         try
         {
-            var name = Path.GetFileName(path);
-            foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(path)!, name + "*"))
+            foreach (var file in files)
             {
-                if (file != path && !file.StartsWith(path + "-", StringComparison.Ordinal)
-                    && !file.StartsWith(path + ".", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                DatabaseKeys.RejectLink(file);
                 File.Copy(file, Path.Combine(scratch.FullName, Path.GetFileName(file)));
             }
             using var connection = Open(Path.Combine(scratch.FullName, name), key);
@@ -114,15 +138,20 @@ internal sealed record DetachedImport(
             {
                 throw new InvalidDataException("the detached import database has no identity");
             }
-            incarnation = rows.GetString(0);
-            position = rows.GetInt64(1);
+            if (rows.IsDBNull(0) || rows.GetValue(0) is not string identity || !Ulid.TryParse(identity, out _)
+                || rows.IsDBNull(1) || rows.GetValue(1) is not long offset || offset < 0)
+            {
+                throw new InvalidDataException("the detached import database identity is malformed");
+            }
+            incarnation = identity;
+            position = offset;
         }
         return (incarnation, position);
     }
 
-    internal void Verify(string path, byte[] key)
+    internal void Verify(string path, byte[] key, string dataDirectory, IDiskBudget disk)
     {
-        var observed = Inspect(path, key);
+        var observed = Inspect(path, key, dataDirectory, disk);
         if (observed.Incarnation != Incarnation || observed.Position < Position)
         {
             throw new InvalidDataException("the detached import database incarnation or position does not match its intent");

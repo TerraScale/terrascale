@@ -93,15 +93,28 @@ internal sealed class Keyring(KeyringSettings settings, KeyRewrapFaults faults) 
 
     public string KeyId(string wrapped)
     {
-        if (!wrapped.Contains('.', StringComparison.Ordinal))
+        if (string.IsNullOrEmpty(wrapped) || wrapped.Length > 148)
         {
-            return "k0";
+            throw new InvalidDataException("wrapped data key is malformed");
         }
-
-        var parts = wrapped.Split('.');
-        return parts is ["v2", var id, { Length: > 0 }] && KeyringSettings.ValidId(id)
-            ? id
-            : throw new InvalidDataException("wrapped data key version or key id is malformed");
+        var id = "k0";
+        var body = wrapped;
+        if (wrapped.Contains('.', StringComparison.Ordinal))
+        {
+            var parts = wrapped.Split('.');
+            if (parts is not ["v2", var named, { Length: > 0 }] || !KeyringSettings.ValidId(named))
+            {
+                throw new InvalidDataException("wrapped data key version or key id is malformed");
+            }
+            id = named;
+            body = parts[2];
+        }
+        Span<byte> bytes = stackalloc byte[NonceBytes + KeyBytes + TagBytes];
+        if (!Convert.TryFromBase64String(body, bytes, out var written) || written != bytes.Length)
+        {
+            throw new InvalidDataException("wrapped data key is malformed");
+        }
+        return id;
     }
 
     public bool NeedsRewrap(string wrapped) => KeyId(wrapped) != ActiveId;

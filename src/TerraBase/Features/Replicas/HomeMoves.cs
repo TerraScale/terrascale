@@ -405,6 +405,10 @@ internal sealed class HomeMoves(
                 return new Conflict("another region holds the database's home lease", "move_aborted");
             }
 
+            var completing = detached;
+            detached = null;
+            replicas.CompleteDetach(completing);
+
             if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None, name, identity).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
             {
                 logger.ZLogError($"A new home's catalog did not take its placement; it keeps the database file and its lease");

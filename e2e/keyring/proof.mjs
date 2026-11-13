@@ -42,8 +42,17 @@ async function stop(child) {
 }
 let standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store', { ...clean, E2E_REGIONS: '2' });
 const requests = [];
+let stalledUploads = false;
+let refusedUploads = 0;
 const proxy = createServer({ key: readFileSync(join(profile, 'tls.key')), cert: readFileSync(join(profile, 'tls.pem')) }, (request, response) => {
   requests.push({ method: request.method, path: request.url, range: request.headers.range, match: request.headers['if-match'], absent: request.headers['if-none-match'] });
+  if (stalledUploads && request.method === 'PUT' && /\/(snapshots|wal)\//.test(request.url)) {
+    refusedUploads++;
+    request.resume();
+    response.writeHead(503, { 'content-type': 'application/xml' });
+    response.end('<Error><Code>ServiceUnavailable</Code></Error>');
+    return;
+  }
   const upstream = httpRequest({ hostname: '127.0.0.1', port: 8028, method: request.method, path: request.url, headers: request.headers }, answer => {
     response.writeHead(answer.statusCode, answer.headers);
     answer.pipe(response);
@@ -222,12 +231,33 @@ try {
   console.log('rollback: origin/main opened the same directory after the single-key upgrade');
   const leftover = join(data, '_system.db.key.rewrapping');
   writeFileSync(leftover, readFileSync(join(data, '_system.db.key')), { mode: 0o600 });
+  stalledUploads = true;
   child = node(candidate, 'k1');
   await ready(child);
   await until('rotation and local inventory', child, async () => {
     const current = await metrics();
     return value(current, 'terrabase_keys_last_complete') > 0 && value(current, 'terrabase_keys_wrapped', 'key_id="k0"') === 0;
   });
+  await until('backup acknowledgement stalled', child, async () => refusedUploads > 0);
+  const stalled = value(await metrics(), 'terrabase_keys_local_wrapped', 'key_id="k0"');
+  assert.notEqual(stalled, 0, 'stalled backup retained an old-key dependency');
+  console.log('retained images: upload outage old_key=' + stalled + ' (opaque staging is unknown)');
+  await stop(child);
+  const disabledBackups = { AWS_ENDPOINT_URL_S3: undefined, AWS_REGION: undefined, BUCKET_NAME: undefined,
+    AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_ACCESS_KEY_ID: undefined,
+    TERRABASE_SHAPES_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_CDN_API_TOKEN: undefined };
+  child = node(candidate, 'k1', disabledBackups);
+  await ready(child);
+  const retained = value(await metrics(), 'terrabase_keys_local_wrapped', 'key_id="k0"');
+  assert.ok(retained > 0, 'disabled backups retain old-key credential images after rewrap');
+  console.log('retained images: backups disabled old_key=' + retained);
+  await stop(child);
+  stalledUploads = false;
+  child = node(candidate, 'k1');
+  await ready(child);
+  await until('backup acknowledgement trims old images', child, async () =>
+    value(await metrics(), 'terrabase_keys_local_wrapped', 'key_id="k0"') === 0);
+  console.log('retained images: upload resumed, acknowledged and trimmed old_key=0');
   const current = await metrics();
   assert.equal(value(current, 'terrabase_keys_wrapped', 'status="unreadable"'), 0);
   assert.equal(existsSync(leftover), true);
@@ -275,23 +305,6 @@ try {
     assert.deepEqual(rotated, { ...original, KeyId: 'k1' }, 'reopened credential plaintext and ciphertext match for ' + original.Id);
   }
   console.log('startup read row=42 from every database; reopened both current and historical credentials, compared plaintext and unchanged ciphertext');
-  for (let sample = 0; sample < 3; sample++) {
-    const directory = join(profile, 'inventory-cost-' + sample);
-    const local = { TERRABASE_DATA_DIRECTORY: directory, AWS_ENDPOINT_URL_S3: undefined, AWS_REGION: undefined,
-      BUCKET_NAME: undefined, AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined,
-      TERRABASE_SHAPES_ACCESS_KEY_ID: undefined, TERRABASE_SHAPES_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_CDN_API_TOKEN: undefined };
-    const initialized = node(candidate, 'k0', local);
-    await ready(initialized);
-    await stop(initialized);
-    const measured = node(process.env.E2E_KEYRING_DRIVER, 'k0', local, ['inventory-cost']);
-    const log = join(profile, 'node-' + sequence + '.log');
-    const [code] = await once(measured, 'exit');
-    children.delete(measured);
-    assert.equal(code, 0, '10000-wrapper measurement');
-    const result = readFileSync(log, 'utf8').split('\n').find(line => line.startsWith('keyring-driver:10000 '));
-    assert.ok(result, 'startup and scrape timings are present');
-    console.log(result);
-  }
   const firstLog = await (await fetch('http://127.0.0.1:8028/log')).json();
   assert.deepEqual(firstLog.unexpected, [], 'first scenario had no unexpected object-store requests');
   await stop(standin);
