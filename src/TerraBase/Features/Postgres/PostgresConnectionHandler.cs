@@ -438,7 +438,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until),
+            TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until, key.ValidTo),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
             NotFound => await UnheldAsync(found, key.ProjectId, database[(slash + 1)..], restriction, cancellationToken).ConfigureAwait(false),
             _ => Denied,
@@ -1022,6 +1022,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         IDatabaseStore? store = null;
         try
         {
+            if (session.TokenExpiry is { } until && Time.GetUtcNow() >= until)
+            {
+                return Denied;
+            }
+
             var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false);
             if (access is not Authorized { Database: var database })
             {
