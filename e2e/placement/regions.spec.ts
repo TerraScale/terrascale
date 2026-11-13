@@ -1204,7 +1204,10 @@ test('R21 five-region writer moves retain every acknowledged write and refresh s
     for (const region of selected.slice(1)) {
       await expect.poll(async () => {
         const response = await cells.post(`${endpoints.get(region)!}${database(created!.id)}/sql/execute`, { data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] } });
-        return { status: response.status(), region: response.headers()['x-terrabase-region'], body: await response.json() };
+        const text = await response.text();
+        let body: unknown;
+        try { body = JSON.parse(text); } catch { throw new Error(`${region} readiness ${response.status()}: ${text}`); }
+        return { status: response.status(), region: response.headers()['x-terrabase-region'], body };
       }, { message: `${region} holds all acknowledged rows`, timeout: 45_000, intervals: [250, 500, 1000] }).toMatchObject({ status: 200, region, body: { results: [{ rows: [[1], [2], [3]] }] } });
     }
     let writer = 'gru';
