@@ -49,7 +49,7 @@ test('clock admission stays closed across stale tracking samples after a wall-cl
     observations.push(`${label}: local_writes_allowed=${value}, tracking_samples=${samples}`);
   };
   try {
-    set(0);
+    set(600_000);
     const compiler = spawn('cc', ['-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', join(e2eRoot, 'clock/replay.c'), '-o', library, '-ldl']);
     let compileErrors = '';
     compiler.stderr.on('data', (chunk: Buffer) => { compileErrors += chunk.toString(); });
@@ -90,7 +90,23 @@ test('clock admission stays closed across stale tracking samples after a wall-cl
       expect(node?.exitCode, readFileSync(join(root, 'node.log'), 'utf8')).toBeNull();
       return request.get('http://127.0.0.1:18080/readyz').then((response) => response.status(), () => 0);
     }).toBe(200);
-    await allowed(1, 'initial synchronized reading');
+    await allowed(0, 'start during a step with the first unchanged daemon reference');
+    expect(samples).toBe(1);
+    const atStart = samples;
+    await expect.poll(async () => {
+      expect(await gauge()).toBe(0);
+      return samples - atStart;
+    }, { message: 'startup remains closed through two unchanged-reference replies' }).toBeGreaterThanOrEqual(2);
+    observations.push('startup with unchanged reference after two more samples: local_writes_allowed=0');
+    reference++;
+    correction = -600_000;
+    const beforeStartupMeasurement = samples;
+    await expect.poll(() => samples).toBeGreaterThan(beforeStartupMeasurement);
+    await allowed(0, 'new startup measurement reports the existing step offset');
+    set(0);
+    reference++;
+    correction = 0;
+    await allowed(1, 'startup clock corrected with a strictly newer reference');
     set(600_000);
     await allowed(0, 'step detected between samples');
     const afterStep = samples;

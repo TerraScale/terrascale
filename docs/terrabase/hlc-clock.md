@@ -41,9 +41,10 @@ This removes per-stamp system commits and their catalog-cache invalidations.
 On restart, the persisted upper bound becomes the previous timestamp. Every new
 stamp exceeds all stamps the former process could have issued, including after
 an abrupt stop. The guard includes that recovered bound in its high-water mark:
-local writes stay closed until the recovered lead plus measured offset bound fits within 50 ms. A normal
-restart can therefore delay local admission by up to five seconds; requests can
-still forward home. A larger backward clock jump remains closed until recovery.
+local writes stay closed until the recovered lead plus measured offset bound fits within 50 ms
+and chrony reports a reference strictly newer than the first one read after startup.
+With a roughly 64-second measurement interval, a normal restart therefore forwards
+writes home for about a minute. A larger backward clock jump remains closed until recovery.
 Invalid persisted state fails closed. Within the running process, admission
 tracks issued and observed time, not the unused reservation. Remote observations cannot introduce an arbitrarily distant high-water mark. A warning and `terrabase_clock_observe_capped_total` counter identify clipped observations; `terrabase_clock_hlc_ahead_milliseconds` reports the current high-water distance from UTC. Existing recovered reservations and backward clock jumps still close local admission.
 
@@ -70,9 +71,13 @@ chrony’s reference timestamp and survives five-second samples until chrony mea
 again. The error bound includes root dispersion and half the root delay. A separate
 read-only Linux `adjtimex` call on every admission read refuses unsynchronized
 kernel state or a maximum/estimated error above the limit on both arm64 and x64.
-The HLC lead and measured offset bound share the 50 ms budget: if a stamp leads
-its origin by H and a receiver trails it by at most B, H + B must be at most 50 ms.
-This margin protects receivers using the previous clock rule during rollout.
+The HLC lead and the origin's error bound share the 50 ms budget: the stamp's lead
+over origin UTC plus the maximum of its tracking/jump and kernel error bounds must
+be at most 50 ms. This does not bound a receiver's own clock error. Until every
+region runs this build, a receiver on the previous build can still revert a write
+for its timestamp as it does today, so roll the regions without a long hold.
+The wall/monotonic comparison alone cannot detect clocks stopped or moved together
+by the host platform; detection then depends on kernel state and the next daemon measurement.
 
 Production TerraBase hosts need a synchronized chrony daemon with its loopback
 monitoring port available, provisioned by ts-orch. The runtime does not change

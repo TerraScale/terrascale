@@ -16,6 +16,7 @@ internal sealed class ClockGuard(
     private Reading? _reading;
     private int _reported;
     private Baseline? _baseline;
+    private DateTimeOffset? _initialReference;
 
     public bool Allowed => SkewMilliseconds <= LimitMilliseconds;
 
@@ -60,6 +61,7 @@ internal sealed class ClockGuard(
                 var tracking = await errors.ReadAsync(stoppingToken).ConfigureAwait(false);
                 if (tracking is not null)
                 {
+                    _initialReference ??= tracking.ReferenceTime;
                     if (_baseline is null || tracking.ReferenceTime > _baseline.ReferenceTime)
                     {
                         _baseline = new Baseline(tracking.ReferenceTime, sampleAt, sampleAfter, sampleUtc);
@@ -71,7 +73,7 @@ internal sealed class ClockGuard(
                     var after = _elapsed.GetUtcNow();
                     skew = Math.Max(Math.Abs((application - before).TotalMilliseconds - correction),
                         Math.Abs((application - after).TotalMilliseconds - correction)) + tracking.ErrorMilliseconds;
-                    if (tracking.ReferenceTime != _baseline.ReferenceTime)
+                    if (tracking.ReferenceTime <= _initialReference || tracking.ReferenceTime != _baseline.ReferenceTime)
                     {
                         skew = double.PositiveInfinity;
                     }
