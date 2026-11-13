@@ -80,6 +80,10 @@ jobs:
             exit 1
           fi
           echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/qualified-main
+        if: steps.gate.outputs.deploy == 'true'
+        with:
+          revision: ${{ github.sha }}
   test:
     if: github.event_name != 'workflow_run'
     uses: ./.github/workflows/dashboard-ci.yml
@@ -146,6 +150,9 @@ jobs:
           docker buildx imagetools inspect "${IMAGE}@${arm64}" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/qualified-main
+        with:
+          revision: ${{ github.sha }}
       - name: Release to every region
         id: release
         env:

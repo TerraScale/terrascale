@@ -1,25 +1,22 @@
 name: Sites
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - 'docs-site/**'
-      - 'Makefile'
-      - 'landing-site/**'
-      - 'status-site/**'
-      - 'scripts/ci/prove-worker-deploy.mjs'
-      - '.github/workflows/sites.yml'
-      - '!**/AGENTS.md'
-      - '!**/CLAUDE.md'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   changes:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch'
+      || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -27,17 +24,32 @@ jobs:
       landing: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.landing == 'true' }}
       status: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.status == 'true' }}
     steps:
-      - if: github.event_name == 'push'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-          ref: ${{ github.sha }}
-      - id: filter
-        if: github.event_name == 'push'
-        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: ./.github/actions/qualified-main
         with:
-          base: ${{ github.event.before }}
-          ref: ${{ github.sha }}
+          revision: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: github.event_name == 'workflow_run'
+        with:
+          name: push-range
+          path: ${{ runner.temp }}/push-range
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - id: range
+        if: github.event_name == 'workflow_run'
+        run: |
+          before=$(cat "$RUNNER_TEMP/push-range/push-before.txt")
+          [[ "$before" =~ ^[0-9a-f]{40}$ ]]
+          echo "before=$before" >> "$GITHUB_OUTPUT"
+      - id: filter
+        if: github.event_name == 'workflow_run'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad
+        with:
+          base: ${{ steps.range.outputs.before }}
+          ref: ${{ github.event.workflow_run.head_sha }}
           filters: |
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
@@ -67,7 +79,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Record the checked-out revision
         run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -107,7 +119,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Record the checked-out revision
         run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -148,7 +160,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Record the checked-out revision
         run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0

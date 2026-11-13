@@ -166,17 +166,20 @@ jobs:
   report:
     needs: [release, journey]
     if: >-
-      always() && needs.journey.result != 'skipped'
-      && (needs.journey.result != 'cancelled' || needs.journey.outputs.report == 'true')
+      always() && (needs.release.result == 'failure' || (needs.journey.result != 'skipped'
+      && (needs.journey.result != 'cancelled' || needs.journey.outputs.report == 'true')))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       issues: write
+    concurrency:
+      group: production-journey-alert
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TITLE: Production journey failure
-      RESULT: ${{ needs.journey.result }}
+      RESULT: ${{ needs.release.result == 'failure' && 'failure' || needs.journey.result }}
       TRIGGER: ${{ github.event_name == 'workflow_run' && format('{0} run {1}', github.event.workflow_run.name, github.event.workflow_run.id) || github.event_name }}
       COMMIT: ${{ needs.release.outputs.commit }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -188,6 +191,7 @@ jobs:
           path: production-report
       - id: text
         name: Write the issue text
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           report=production-report
@@ -265,7 +269,7 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Open, update or close the issue
-        if: steps.text.outputs.changed != 'true'
+        if: ${{ !cancelled() && steps.text.outcome == 'success' && steps.text.outputs.changed != 'true' }}
         run: |
           set -euo pipefail
           export LC_ALL=C

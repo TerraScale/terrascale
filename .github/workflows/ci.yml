@@ -196,6 +196,19 @@ jobs:
               - '!benchmark/**/!(turso-pin.env)'
               - '!{aspire,ops}/**'
               - '!{.dockerignore,.gitignore,.legacy-scan-mode,.mcp.json,Dockerfile,TerraScale.slnx,*.slnf,dotnet-tools.json}'
+      - name: Record the main push range
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: echo "$BEFORE" > "$RUNNER_TEMP/push-before.txt"
+      - name: Share the main push range with site deployments
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: push-range
+          path: ${{ runner.temp }}/push-before.txt
+          if-no-files-found: error
+          retention-days: 30
       - id: areas
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
@@ -425,9 +438,10 @@ jobs:
           scripts/ci/release-only.sh
 
   main:
-    needs: [changes, terrabase, test]
+    needs: [changes, terrabase, test, journey]
     if: >-
       !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
+      && needs.journey.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
@@ -546,6 +560,7 @@ jobs:
   # Each region separately: a fenced founder retains the candidate only from a release it serves itself. No build,
   # no other service, and a failure never dispatches another run.
   release-only:
+    needs: [checks, journey]
     if: github.event_name == 'workflow_dispatch' && inputs.publication == 'release-only' && github.ref == 'refs/heads/main'
     concurrency:
       group: production-terrabase
@@ -596,9 +611,10 @@ jobs:
   # ts-auth releases in parallel with TerraBase, except after it when one push changes both TerraBase's server and
   # what ts-auth calls it with (changes.outputs.ordered): shared scope and contract changes reach TerraBase first.
   main-auth:
-    needs: [changes, auth, test]
+    needs: [changes, auth, test, journey]
     if: >-
       !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
+      && needs.journey.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered != 'true'
     concurrency:
@@ -617,9 +633,10 @@ jobs:
     steps: *production-steps
 
   main-auth-ordered:
-    needs: [changes, auth, test, main]
+    needs: [changes, auth, test, main, journey]
     if: >-
       !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
+      && needs.journey.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered == 'true'
       && (!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')
@@ -766,7 +783,10 @@ jobs:
 
   journey:
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true'
+    if: >-
+      (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
+      || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
+      || (github.event_name == 'workflow_dispatch' && !inputs.native_artifacts)))
     uses: ./.github/workflows/journey.yml
 
   all-green:
