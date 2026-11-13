@@ -94,7 +94,7 @@ public static class BackupExtensions
 
         public bool Healthy => false;
 
-        public Task<IReadOnlyList<BackupHole>> HolesAsync(TenantContext database, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<BackupHole>>([]);
+        public Task<BackupHoles> HolesAsync(TenantContext database, CancellationToken cancellationToken) => Task.FromResult(new BackupHoles([], null));
 
         public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) => null;
 

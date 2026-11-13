@@ -206,7 +206,11 @@ opens a read transaction; then writers go on, and the database is copied row by 
 transaction. The copy leaves out the engine's own tables (the native capture table, `sqlite_stat1`).
 An intact generation resumes after a process restart or a lease handoff. A new generation starts for a file that has no
 account yet, after a hole, for a new lineage (below), when a generation key is unavailable, or when the log cannot express
-a schema change. Before a generation's snapshot holds
+a schema change. The account is new with this build, so on the first start after the upgrade every existing file has none
+and its first pass takes one full snapshot, as every start of the previous build did for every file; history before
+that snapshot stays readable in the previous build's generations. Passes run as at most four jobs per node, so at most
+four of these first snapshots (and their uploads) run at once, and the rest wait for a free job in the same pass order
+as any other work. Before a generation's snapshot holds
 writers, the tap reads any backlog to discard it, so the gate covers only what commits meanwhile. Within a generation a
 snapshot is taken daily, but not while a backlog remains, because the snapshot reads what is left while it holds
 writers. The log read in one pass becomes one **segment**. A backlog, such as the writes committed during a long
@@ -248,7 +252,10 @@ file's bucket directory), replaced whole on every write. It holds:
   kept for comparison but never resumed;
 - the upload intent: the object key and sealed-content hash of an upload that has not been confirmed yet;
 - the hole history: the number of holes and the last 32 holes, each with its incarnation, its range (from the stored
-  cursor to the history start) with their times, and whether it is still open.
+  cursor to the history start) with their times, and whether it is still open; when a 33rd hole is recorded, the oldest
+  closed hole already written to the bucket is dropped and its end raises the account's **unavailable-before** time, so
+  a restore to any time before it is refused by this node even though the range itself is no longer listed;
+- the hole objects already written to the bucket (below).
 
 The rule: the last durably stored position is never discarded until a newer durable position replaces it. A generation
 restart keeps it; only a destination change empties it, because the new destination's history starts with its own base
@@ -288,6 +295,14 @@ makes the same decision) or the new one (the open hole is found and only extende
 Until this change, a generation restart emptied the stored cursor before its replacement was stored, so history trimmed
 while that replacement could not be stored was lost without a hole.
 
+The bytes read from the log and the cursor that describes them are one unit. The tap keeps its cursor (position,
+incarnation and the schema map as of that position) in memory beside its read position, changed by the same assignment,
+so taking it cannot fail on its own. Every read site (a pass's read and a daily snapshot's read) notes the tap's cursor
+and the buffer's length before it reads; on any failure after that (an error, a cancelled pass, a shutdown) it cuts the
+buffer back to that length and returns the tap to that cursor. When the tap cannot be returned (it was closed), the
+file drops every unstored byte and resumes from the stored cursor on its next pass, where the decision below runs; so a
+later pass never stores changes after a gap the buffer does not hold.
+
 No event records a hole. Shutdown, a cancelled or failed capture or read, a lease or epoch change, a lost upload
 acknowledgement and buffered log waiting in scratch stop the pass or retry it, nothing more. Whatever they cost shows up
 in the two positions, and the next pass finds it. A SIGKILL with the engine's history intact finds the anchor at or
@@ -297,10 +312,40 @@ A destination change, a restore or a fork gives the file a new lineage (another 
 account's). It starts a new generation with a base snapshot and is not a hole, because nothing of the file's history
 was lost; `terrabase_backup_generation_restarts_total{reason="lineage"}` counts it, beside `key_lost` (the
 generation's data key is gone) and `log_unplaceable` (step 3 above). The hole history is kept across lineages. When the
-incarnation changes, a hole still open in the old incarnation is closed with its own bounds before anything is recorded
-for the new one: what was lost stays reported as lost (from, to, incarnation), and positions of the new incarnation are
-never compared with or written into it. A restore asks by time, so a time inside that hole is refused with its times
-after the change exactly as before it.
+incarnation changes, a hole still open in the old incarnation stays open: nothing after it is stored until the new
+lineage's first snapshot, so it keeps refusing every later time, and storing that snapshot closes it with the snapshot's
+time as its end (its positions stay those of its own incarnation; positions of the new incarnation are never compared
+with or written into it). A hole's end time only moves later: when the newest reading or the closing snapshot carries an
+earlier time than the hole already has (a clock that went backwards), the hole keeps the later one, and a reading whose
+anchor has no time (a cursor beyond the newest retained change) leaves the end unknown, which refuses every time after
+the hole's start until a snapshot closes it.
+
+### Hole records in the bucket
+
+What a backup cannot restore is recorded with the backup. Every state of every hole (recorded, extended, closed) is one
+object under the file's own directory, written once and never rewritten:
+
+```text
+<file>/holes/<incarnation>-<from position>-<to position>-<from unix ms>-<to unix ms or "unknown">-<open|closed>
+```
+
+The name carries the whole state, so a restore only lists the prefix; the body repeats it as JSON for people. The hole
+is durable in the node's account first. Before the bucket receives any later object of that file (a snapshot, a segment,
+a generation proof), the pass writes the hole's object and then notes it in the account; a store that is unreachable
+when the hole is recorded (which is when holes happen) fails that pass, and the object is written on the first pass the
+store answers, before anything else. An upload of a file whose holes are not all in the bucket is refused, so the
+bucket never holds a change after a hole without that hole's object. The states of one hole merge by taking the widest
+range: the earliest start, the latest end, open unless a closed state exists, and an unknown end refuses every later
+time. A listing that misses the newest state therefore shows an older, still-refusing state, never less.
+
+A restore reads the hole objects of the backup it restores from, on whatever node runs it, and joins them with the
+node's own account when the node has one: a node whose system database was lost or recovered from an older copy, or
+that never recorded the hole, still refuses a time inside it. When the hole objects cannot be listed, the restore is
+refused with 503 `pitr_plan_unavailable`: an unknown record is not a complete one. A backup written by the previous
+build has no hole objects; for it the restore assumes only what the bucket proves itself (contiguous segment positions
+within a generation, a read mark or later object proving the time, and a generation that ends where the next one's
+snapshot begins), so history before the upgrade is never called complete beyond those checks, and a loss the previous
+build did not detect is not known.
 
 The hole total of each file is published from its account: `terrabase_backup_holes` is the sum over the files this node
 has loaded, so after a restart it equals the durable total again, and `GET /v1/backup` (internal listener, peer
@@ -430,6 +475,7 @@ and in-place migration work follows separately.
 ```text
 v1/<organization>/<project>/<database>/snapshots/<unix ms>-<generation>-<log position>
 v1/<organization>/<project>/<database>/wal/<generation>/<first log position>-<unix ms>
+v1/<organization>/<project>/<database>/nodes/<node>/holes/<incarnation>-<from>-<to>-<from ms>-<to ms>-<open|closed>
 v1/_system/…                                  the same for _system.db
 v1/keys/<organization>/<project>/<database>/<data key id> wrapped data keys (v1/keys/_system/… for _system.db)
 ```
@@ -549,7 +595,8 @@ time by itself.
 - Nothing after the replayed log proves T: an unshipped or missing final segment, a generation that ended (a hole or a
   new generation; the next generation's snapshot time restores), or a quiet period not yet closed by a later write or
   snapshot.
-- T inside a recorded hole of the file (any of the last 32): after its last proven time and before the snapshot that
+- T inside a recorded hole of the file (any hole object in the bucket, any of the last 32 in the node's account, or
+  before the account's unavailable-before time): after its last proven time and before the snapshot that
   followed the hole, or, while the hole is still open, any time after its last proven time (the range then ends at the
   current history start, and the message says no recovery point after it is stored yet). The 409 `backup_history_incomplete` names that interval in its message and in `unavailableFrom` and
   `unavailableTo`; it is not retryable. A restore request is refused at admission, before any work starts.
@@ -696,7 +743,9 @@ At least once a day, when it stores a snapshot, the shipper checks it: it rebuil
 generation's previous snapshot, or the new one at generation start, rolled forward through the segments up to the new
 snapshot's exact log position), then compares a SHA-256 of the schema and every row of every table with the local copy
 the snapshot was made from, which is the live file at that position. A drill exercises download, decryption, contiguity,
-roll-forward and `integrity_check`. Every start snapshots every file, so every start also drills each file.
+roll-forward and `integrity_check`. A drill never spans a hole and needs no hole check: a hole always ends the
+generation, and a drill rebuilds only within one generation, from an earlier snapshot of it to a later one, so the log it
+replays is the contiguous log of that generation, and a gap in it fails the drill.
 
 The checksum of the local copy is taken before the snapshot is uploaded, so the copy is deleted with the pass and no
 copy waits for a drill. The drill itself then runs beside shipping: the file's segments keep shipping while it

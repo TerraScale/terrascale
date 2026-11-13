@@ -20,7 +20,7 @@ public interface IContinuousBackup
 {
     BackupStatus Status { get; }
     bool Healthy { get; }
-    Task<IReadOnlyList<BackupHole>> HolesAsync(TenantContext database, CancellationToken cancellationToken);
+    Task<BackupHoles> HolesAsync(TenantContext database, CancellationToken cancellationToken);
     DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null);
     Task RunOnceAsync(CancellationToken cancellationToken);
 }

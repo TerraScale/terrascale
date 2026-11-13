@@ -8,6 +8,7 @@ namespace TerraBase.Features.Backup;
 [JsonSerializable(typeof(BackupStatus))]
 [JsonSerializable(typeof(BackupStatusRecord))]
 [JsonSerializable(typeof(BackupAccount))]
+[JsonSerializable(typeof(BackupHole))]
 [JsonSerializable(typeof(PointInTimePlan))]
 [JsonSerializable(typeof(ProjectBackupDestination))]
 [JsonSerializable(typeof(ProjectBackupDestinationRecord))]

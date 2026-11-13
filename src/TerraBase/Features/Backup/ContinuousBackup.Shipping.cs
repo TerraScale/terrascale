@@ -339,6 +339,11 @@ internal sealed partial class ContinuousBackup
 
     private async Task PutAsync(ShippedFile file, string key, FileStream sealedObject, string kind, CancellationToken cancellationToken)
     {
+        if (Unrecorded(file))
+        {
+            throw new InvalidOperationException("history lost before it was stored is not recorded with the backup yet; nothing after it is uploaded first");
+        }
+
         sealedObject.Position = 0;
         await file.Target.Store.PutAsync(key, sealedObject, cancellationToken).ConfigureAwait(false);
         _uploaded.Add(sealedObject.Length, new KeyValuePair<string, object?>("kind", kind));

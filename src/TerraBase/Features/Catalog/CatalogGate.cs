@@ -60,6 +60,8 @@ internal sealed class CatalogGate(
     private static readonly TimeSpan AnchorTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AnchorInterval = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan StoreRetry = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan StoreRetryCeiling = TimeSpan.FromSeconds(5);
+    private const int PromptRetries = 3;
     private static readonly CatalogGateState[] ClosedReasons =
     [
         CatalogGateState.Unverified, CatalogGateState.BucketMissing, CatalogGateState.StoreUnavailable,
@@ -73,6 +75,7 @@ internal sealed class CatalogGate(
     private string? _closure;
     private (string Operation, string Key) _step;
     private bool _started;
+    private int _retries;
     private bool _fresh;
     private Ulid _startIncarnation;
     private long _startOffset;
@@ -109,7 +112,7 @@ internal sealed class CatalogGate(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(NextCheck, time);
+        using var timer = new PeriodicTimer(NextCheck(), time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
             if (!IsOpen)
@@ -121,17 +124,26 @@ internal sealed class CatalogGate(
                 _ = await TryAnchorAsync(stoppingToken).ConfigureAwait(false);
             }
 
-            timer.Period = NextCheck;
+            timer.Period = NextCheck();
         }
     }
 
-    private TimeSpan NextCheck => State switch
+    private TimeSpan NextCheck()
     {
-        CatalogGateState.Unverified or CatalogGateState.StoreUnavailable => StoreRetry,
-        CatalogGateState.Open or CatalogGateState.BucketMissing or CatalogGateState.AnchorAhead
-            or CatalogGateState.AnchorMissing or CatalogGateState.AnchoringUnavailable => AnchorInterval,
-        _ => throw new UnreachableException(),
-    };
+        switch (State)
+        {
+            case CatalogGateState.Unverified or CatalogGateState.StoreUnavailable:
+                var retry = ++_retries <= PromptRetries ? StoreRetry
+                    : TimeSpan.FromTicks(Math.Min(StoreRetryCeiling.Ticks, StoreRetry.Ticks << Math.Min(_retries - PromptRetries, 8)));
+                return retry * (0.8 + Random.Shared.NextDouble() * 0.4);
+            case CatalogGateState.Open or CatalogGateState.BucketMissing or CatalogGateState.AnchorAhead
+                or CatalogGateState.AnchorMissing or CatalogGateState.AnchoringUnavailable:
+                _retries = 0;
+                return AnchorInterval;
+            default:
+                throw new UnreachableException();
+        }
+    }
 
     private async Task VerifyAsync(CancellationToken cancellationToken)
     {

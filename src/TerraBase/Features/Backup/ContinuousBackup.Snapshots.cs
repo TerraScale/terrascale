@@ -61,6 +61,7 @@ internal sealed partial class ContinuousBackup
     private async Task StartGenerationAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         _ = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
+        await RecordHolesAsync(file, cancellationToken).ConfigureAwait(false);
         var claim = _disk.Reserve(await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false));
         var generation = EntityIds.New(_time);
         var snapshot = ScratchFile(".db");

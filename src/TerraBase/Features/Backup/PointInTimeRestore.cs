@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using Amazon.Runtime;
 using Amazon.S3;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -48,15 +49,18 @@ internal sealed class PointInTimeRestore(
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
-            if (await LostAsync(database, at, deadline.Token).ConfigureAwait(false) is { } lost)
-            {
-                return lost;
-            }
-
             using var backup = await targets.RestoreAsync(database, destination, deadline.Token).ConfigureAwait(false);
             if (backup is null)
             {
                 return new NotFound("continuous backup holds nothing of this database");
+            }
+
+            switch (await LostAsync(database, at, backup, deadline.Token).ConfigureAwait(false))
+            {
+                case Conflict lost:
+                    return lost;
+                case Unavailable unknown:
+                    return unknown;
             }
 
             var file = BackupLayout.File(database, options.MachineId);
@@ -272,16 +276,19 @@ internal sealed class PointInTimeRestore(
             return new Conflict("platform database historical recovery is fenced by erasure requirements", "recovery_erasure_fenced");
         }
 
-        if (await LostAsync(source, at, cancellationToken).ConfigureAwait(false) is { } lost)
-        {
-            return lost;
-        }
-
         var now = time.GetUtcNow();
         using var backup = await targets.RestoreAsync(source, destination, cancellationToken).ConfigureAwait(false);
         if (backup is null)
         {
             return new NotFound("continuous backup holds nothing of this database");
+        }
+
+        switch (await LostAsync(source, at, backup, cancellationToken).ConfigureAwait(false))
+        {
+            case Conflict lost:
+                return lost;
+            case Unavailable unknown:
+                return unknown;
         }
 
         if (await backup.Keys.ShreddedAsync(BackupLayout.KeyScope(source), cancellationToken).ConfigureAwait(false) is { } shredded)
@@ -388,14 +395,43 @@ internal sealed class PointInTimeRestore(
     private static Conflict HistoryIncomplete() =>
         new("continuous backup cannot prove this database's history complete up to pointInTime", "backup_history_incomplete");
 
-    private async Task<Conflict?> LostAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken) =>
-        (await shipper.HolesAsync(database, cancellationToken).ConfigureAwait(false))
-            .LastOrDefault(hole => hole is { FromAt: { } from, ToAt: { } to } && at > from && (hole.Open || at < to)) is { FromAt: { } lostFrom, ToAt: { } lostTo } lost
-            ? new(string.Create(CultureInfo.InvariantCulture,
-                    $"continuous backup cannot prove this database's history complete up to pointInTime: its history from {lostFrom:O} to {lostTo:O} was lost before it was stored")
-                + (lost.Open ? ", and no recovery point after it is stored yet" : ""),
-                "backup_history_incomplete", new HistoryGap(lostFrom, lostTo))
-            : null;
+    private readonly union HoleAdmission(Admitted, Conflict, Unavailable);
+
+    private sealed record Admitted;
+
+    private async Task<HoleAdmission> LostAsync(TenantContext database, DateTimeOffset at, BackupTarget backup, CancellationToken cancellationToken)
+    {
+        var local = await shipper.HolesAsync(database, cancellationToken).ConfigureAwait(false);
+        if (local.UnavailableBefore is { } floor && at < floor)
+        {
+            return Lost(null, floor, open: false);
+        }
+
+        List<BackupHole> recorded = [];
+        try
+        {
+            await foreach (var item in backup.Store.ListAsync(BackupLayout.Holes(BackupLayout.File(database, options.MachineId)), null, cancellationToken)
+                .ConfigureAwait(false))
+            {
+                recorded.Add(BackupLayout.ParseHole(item.Key) ?? throw new InvalidDataException("a lost-history record of the backup has an unreadable name"));
+            }
+        }
+        catch (Exception error) when (error is AmazonServiceException or AmazonClientException or HttpRequestException or IOException or InvalidDataException && !cancellationToken.IsCancellationRequested)
+        {
+            return new Unavailable("continuous backup's record of lost history could not be read; a restore is refused while it is unknown", "pitr_plan_unavailable");
+        }
+
+        return new BackupHoles([.. local.Lost, .. recorded.Merged()], null).Covering(at).OrderBy(hole => hole.FromAt ?? DateTimeOffset.MinValue).LastOrDefault() is { } hole
+            ? Lost(hole.FromAt, hole.ToAt, hole.Open)
+            : new Admitted();
+    }
+
+    private static Conflict Lost(DateTimeOffset? from, DateTimeOffset? to, bool open) => new(string.Create(CultureInfo.InvariantCulture,
+            $"continuous backup cannot prove this database's history complete up to pointInTime: its history from {Bound(from)} to {Bound(to)} was lost before it was stored")
+        + (open ? ", and no recovery point after it is stored yet" : ""),
+        "backup_history_incomplete", new HistoryGap(from, to));
+
+    private static string Bound(DateTimeOffset? at) => at is { } known ? known.ToString("O", CultureInfo.InvariantCulture) : "an unknown time";
 
     internal static bool Covers(DateTimeOffset readAt, DateTimeOffset at) => at.ToUnixTimeMilliseconds() <= readAt.ToUnixTimeMilliseconds();
 
