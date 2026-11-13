@@ -1058,7 +1058,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             using var statement = CancellationTokenSource.CreateLinkedTokenSource(running.Token, store?.Refused ?? CancellationToken.None);
             var outcome = await run(database, statement.Token).ConfigureAwait(false);
             _ = await engine.OpenDatabaseAsync(database, running.Token).ConfigureAwait(false);
-            return session.Sql.TransactionDeadline.Expired ? Expired : outcome;
+            return outcome;
         }
         catch (OperationCanceledException) when (store?.Refused.IsCancellationRequested == true)
         {
