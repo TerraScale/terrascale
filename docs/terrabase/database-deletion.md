@@ -54,7 +54,10 @@ database position, before promotion. Retained records commit by page before file
 imports, protecting staged files; at most four databases import concurrently.
 A 10,000-database transfer requires at least
 100 pages; elapsed time depends on file sizes and catch-up I/O, and has not yet
-been measured. The existing 30-second drain budget still fails closed if exhausted.
+been measured. The existing 30-second drain budget still fails closed if exhausted. A cold
+300-database transfer currently exceeds that budget, so the protocol bound is
+not a validated runtime capacity. Transfer preparation must leave the critical
+drain window before this can ship.
 The incoming writer imports their files before completing the handoff. Retained page
 pulls require the internal listener, a valid peer credential and a known peer in the
 same region. Clients and other regions cannot pull a retained database.
