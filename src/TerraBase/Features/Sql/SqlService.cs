@@ -34,11 +34,23 @@ internal sealed class SqlService(
         owners.Writer && await placements.FindAsync(database, cancellationToken).ConfigureAwait(false)
             is TenantDatabaseRecord { Placement.Home: var home } && home == options.Region;
 
-    public ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
+    public async ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
         TenantContext database, IReplicaReader reader, IReadOnlyList<SqlPlannedCommand> statements, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(reader);
-        return ExecuteOnCopyAsync(database, statement => reader.ExecuteAsync(statement, cancellationToken), statements, write: false, cancellationToken);
+        var store = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+        using var running = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, store?.Refused ?? CancellationToken.None);
+        try
+        {
+            var result = await ExecuteOnCopyAsync(database, statement => reader.ExecuteAsync(statement, running.Token),
+                statements, write: false, running.Token).ConfigureAwait(false);
+            _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        catch (OperationCanceledException) when (store?.Refused.IsCancellationRequested == true)
+        {
+            throw new StorageCopyFaultedException("Storage requires recovery.");
+        }
     }
 
     public void RecordLocalWrites(TenantContext database, long rows)
@@ -114,6 +126,7 @@ internal sealed class SqlService(
             results.Add(result);
         }
 
+        _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
         timing?.Invoke("local_allowance", allowanceMs);
         timing?.Invoke("local_native", nativeMs);
         if (units > 0)
@@ -243,6 +256,7 @@ internal sealed class SqlSession(
     public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -336,6 +350,7 @@ internal sealed class SqlSession(
     public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -1123,6 +1138,8 @@ internal sealed class SqlSession(
 
     private static SqlError? Failure(Exception error) => error switch
     {
+        StorageCopyFaultedException => new SqlError(SqlErrors.CopyFaulted, "copy_faulted: Storage requires recovery."),
+        StorageProofPendingException => new SqlError(SqlErrors.RecoveryPending, "recovery_pending: Storage recovery proof is pending; retry."),
         StorageBusyException => SqlErrors.Busy("the database is busy; retry"),
         DatabaseMovedException moved => SqlErrors.Moved(moved),
         QueryCapacityException => SqlErrors.Interrupt,

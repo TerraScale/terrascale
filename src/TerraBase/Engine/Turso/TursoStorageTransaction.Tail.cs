@@ -10,7 +10,7 @@ internal sealed partial class TursoStorageTransaction
 
     private void TrimCdc()
     {
-        var backup = store.BackupAnchor ?? 0;
+        var backup = store.BackupAnchor ?? (Volatile.Read(ref store.BackupTaps) == 0 ? long.MaxValue : 0);
         var rewrite = store.RewriteAnchor;
         _ = Trim(session.Connection, transaction, rewrite < 0 ? backup : Math.Min(backup, rewrite), store.IsSystem);
         store.ObserveCdcSize(session.Connection, transaction);

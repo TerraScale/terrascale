@@ -12,6 +12,7 @@ internal sealed partial class TursoDatabaseStore
         {
             using var from = new TursoConnection(source);
             TursoSession.OpenExisting(from, sourcePath);
+            writer.Settings(queryOnly: false, full: true);
             Rewind(writer.Connection, from, cancellationToken);
             return true;
         }, "a point-in-time rewind", cancellationToken);

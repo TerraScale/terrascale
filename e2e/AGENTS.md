@@ -162,6 +162,12 @@ row/byte-limit rejection. Only the journey copy sends receipts; the product
 importer and handoff refusal path are unchanged in the driver. It adds no runtime
 product setting.
 
+Alongside the journey shards, the separately selected `engine crash recovery` job runs `env/engine-crash.py` against the shared PR service artifact
+and a separate build of the PR base revision. It checks rollback startup on each crash directory, stale rewrite
+intents at both rename boundaries, idle retained-history draining, missing root stores and three large-file
+recovery samples. It requires 24 GB of disk headroom below 80% use and removes its data and baseline source.
+Local runs pass the rollback DLL as the script's only argument, with DOTNET_ROOT and DOTNET_PROCESSOR_COUNT=4.
+
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
 8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
 under the run state. Four-node mode starts a checksum-pinned NATS server with JetStream and a generated credential
