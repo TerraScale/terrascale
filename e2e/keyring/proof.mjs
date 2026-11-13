@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:https';
 import { join, resolve } from 'node:path';
@@ -152,7 +152,6 @@ try {
   const skipped = await metrics();
   assert.equal(value(skipped, 'terrabase_keys_last_complete'), 0);
   assert.equal(value(skipped, 'terrabase_keys_wrapped', 'key_id="k0"'), -1);
-  assert.equal(value(skipped, 'terrabase_keys_oldest_snapshot_age', 'key_id="k0"'), -1);
   const passRequests = requests.slice(readsBefore);
   const rootListings = passRequests.filter(request => {
     const query = new URL(request.path, 'https://standin').searchParams;
@@ -187,7 +186,7 @@ try {
     assert.equal(response.status, 200);
     assert.equal(sha(Buffer.from(await response.arrayBuffer())), hash, 'custody byte identity');
   }
-  console.log('one key: maintenance skipped; extra custody root listings=0 (shred sweep=1), snapshot range reads=0; wrapped=-1 last_complete=0 snapshot_age=-1; existing wrappers byte-identical');
+  console.log('one key: maintenance skipped; extra custody root listings=0 (shred sweep=1), snapshot range reads=0; maintenance wrapped=-1 last_complete=0; existing wrappers byte-identical');
   child = node(baseline, 'k0');
   await ready(child);
   const opened = await internal(peer, 'http://127.0.0.1:18381', 'POST', sqlPath, { statements: [{ sql: 'SELECT value FROM compatibility' }] }, false);
@@ -218,14 +217,13 @@ try {
   writeFileSync(leftover, readFileSync(join(data, '_system.db.key')), { mode: 0o600 });
   child = node(candidate, 'k1');
   await ready(child);
-  await until('rotation and snapshot inventory', child, async () => {
+  await until('rotation and local inventory', child, async () => {
     const current = await metrics();
     return value(current, 'terrabase_keys_last_complete') > 0 && value(current, 'terrabase_keys_wrapped', 'key_id="k0"') === 0;
   });
   const current = await metrics();
   assert.equal(value(current, 'terrabase_keys_wrapped', 'status="unreadable"'), 0);
-  assert.ok(value(current, 'terrabase_keys_oldest_snapshot_age', 'key_id="k0"') > 0, 'embedded k0 snapshot still needs k0');
-  assert.equal(existsSync(leftover), false);
+  assert.equal(existsSync(leftover), true);
   for (const path of files(data)) {
     const wrapped = readFileSync(path, 'ascii').trim().split('\n')[1];
     assert.ok(wrapped.startsWith('v2.k1.'));
@@ -259,8 +257,8 @@ try {
   assert.equal(existsSync(promoteKey), false);
   assert.equal(existsSync(unrelatedPromote), true, 'deletion retained another database detached key');
   rmSync(unrelatedPromote);
-  console.log('two keys: local files, custody and current/historical credentials rewrapped and authenticated; retained k0 snapshot age>0');
-  console.log('leftovers: next multi-key pass removed .rewrapping; database deletion removed only its own .rewrapping and .promote.db.key');
+  console.log('two keys: local files, custody and current/historical credentials rewrapped and authenticated; local reference inventory');
+  console.log('leftovers: multi-key pass retained and rewrapped .rewrapping; database deletion removed only its own .rewrapping and .promote.db.key');
   await stop(child);
   await records('rows', 'k1');
   const rotatedCredentials = await records('credentials', 'k1', join(profile, 'rotated-credentials.json'));
@@ -269,40 +267,6 @@ try {
     const rotated = rotatedCredentials.find(record => record.Id === original.Id);
     assert.deepEqual(rotated, { ...original, KeyId: 'k1' }, 'reopened credential plaintext and ciphertext match for ' + original.Id);
   }
-  const restored = join(profile, 'restored-without-cache');
-  cpSync(data, restored, { recursive: true });
-  rmSync(join(restored, '.master-key-history'));
-  const restoredRing = join(profile, 'restored-ring.json');
-  writeFileSync(restoredRing, JSON.stringify({ active: 'k1', keys: { k1: next, k2: next } }), { mode: 0o600 });
-  const refusal = node(candidate, 'k1', { TERRABASE_DATA_DIRECTORY: restored, TERRABASE_MASTER_KEYS_FILE: restoredRing });
-  const [refusalCode] = await once(refusal, 'exit', { signal: AbortSignal.timeout(30_000) });
-  children.delete(refusal);
-  assert.equal(refusalCode, 2, 'restored node refuses a fleet key missing from configuration');
-  assert.ok(readFileSync(join(profile, 'node-' + sequence + '.log'), 'utf8').includes("configured master key id 'k0' cannot be removed"));
-  assert.equal(existsSync(join(restored, '.master-key-history')), false, 'refusal does not invent local history');
-  console.log('re-provisioned empty disk plus restored data without cache: shared history refused and named missing inactive k0 while active k1 opens every restored file');
-  const historyResponse = await object('GET', 'journey-backups', 'v1/master-key-history');
-  assert.equal(historyResponse.status, 200);
-  const historyRecord = await historyResponse.text();
-  for (const [id, material] of [['k0', master], ['k1', next]]) {
-    const fingerprint = createHmac('sha256', Buffer.from(material, 'base64')).update('TerraBase/master-key-history/v1').digest('hex').toUpperCase();
-    assert.ok(historyRecord.includes(id + ' ' + fingerprint + '\n'), 'shared history binds ' + id + ' to its material');
-  }
-  const historyWrites = requests.filter(request => request.method === 'PUT' && request.path.endsWith('/v1/master-key-history'));
-  assert.ok(historyWrites.some(request => request.absent === '*'), 'shared history creation is conditional');
-  assert.ok(historyWrites.some(request => typeof request.match === 'string'), 'shared history extension is conditional');
-  assert.ok(historyWrites.every(request => request.absent === '*' || typeof request.match === 'string'), 'no unconditional product history writes');
-  const malformed = await object('PUT', 'journey-backups', 'v1/master-key-history', '', Buffer.from('unreadable'), { 'if-match': historyResponse.headers.get('etag') });
-  assert.equal(malformed.status, 200);
-  const badHistory = node(candidate, 'k1', { TERRABASE_DATA_DIRECTORY: restored });
-  const [badHistoryCode] = await once(badHistory, 'exit');
-  children.delete(badHistory);
-  assert.equal(badHistoryCode, 2, 'unreadable shared history refuses even a complete configured ring');
-  assert.ok(readFileSync(join(profile, 'node-' + sequence + '.log'), 'utf8').includes('master key history cannot be read'));
-  const repaired = await object('PUT', 'journey-backups', 'v1/master-key-history', '', Buffer.from(historyRecord), { 'if-match': malformed.headers.get('etag') });
-  assert.equal(repaired.status, 200);
-  const conflict = await object('PUT', 'journey-backups', 'v1/master-key-history', '', Buffer.from('shorter'), { 'if-match': malformed.headers.get('etag') });
-  assert.equal(conflict.status, 412, 'stale conditional writes cannot shorten shared history');
   console.log('startup read row=42 from every database; reopened both current and historical credentials, compared plaintext and unchanged ciphertext');
   const firstLog = await (await fetch('http://127.0.0.1:8028/log')).json();
   assert.deepEqual(firstLog.unexpected, [], 'first scenario had no unexpected object-store requests');

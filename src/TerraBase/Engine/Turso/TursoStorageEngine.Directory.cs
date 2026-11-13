@@ -52,8 +52,7 @@ internal sealed partial class TursoStorageEngine
 
         var entries = Directory.EnumerateFileSystemEntries(dataDirectory)
             .Select(entry => Path.GetFileName(entry))
-            .Where(name => !string.Equals(name, LockFileName, StringComparison.Ordinal)
-                && name is not (".master-key-history" or ".master-key-history.writing"));
+            .Where(name => !string.Equals(name, LockFileName, StringComparison.Ordinal));
         if (recorded ? entries.Any(IsFlatDatabaseFile) : entries.Any())
         {
             throw new TerraBaseConfigurationException(PreTenancyLayout);

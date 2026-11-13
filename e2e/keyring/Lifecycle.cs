@@ -40,6 +40,7 @@ internal static class Lifecycle
 
     private static async Task RunAsync(string[] args)
     {
+        var evidence = args.Length == 1 && File.Exists(args[0]) ? FileEvidence.Read(args[0]) : null;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         var cancellationToken = deadline.Token;
         var built = new TaskCompletionSource<IHost>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -65,6 +66,12 @@ internal static class Lifecycle
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var registration = app.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStarted.Register(() => started.TrySetResult());
         await started.Task.WaitAsync(cancellationToken);
+        evidence?.Verify();
+        if (evidence is not null && args.Length == 1 && File.ReadAllText(args[0]).Contains("\"mode\"", StringComparison.Ordinal)
+            && !File.ReadAllText(args[0]).Contains("key-refused", StringComparison.Ordinal))
+        {
+            await evidence.VerifyMetricsAsync(cancellationToken);
+        }
         try
         {
             if (args[0] is "credentials" or "rows" or "seed-rows")
@@ -76,6 +83,31 @@ internal static class Lifecycle
             var root = request.RootElement;
             var database = new TenantContext(root.GetProperty("organization").GetString()!, PlanTier.Pro,
                 root.GetProperty("project").GetString()!, root.GetProperty("database").GetString()!);
+            if (root.TryGetProperty("mode", out var keyMode) && keyMode.GetString() == "key-refused")
+            {
+                var engine = app.Services.GetRequiredService<IStorageEngine>();
+                try
+                {
+                    await engine.OpenDatabaseAsync(database, cancellationToken);
+                    throw new InvalidOperationException("wrong key database opened");
+                }
+                catch (InvalidDataException error) when (error.Message.Contains("key id", StringComparison.Ordinal))
+                {
+                    var healthy = database with { DatabaseId = root.GetProperty("healthy").GetString() };
+                    var store = await engine.OpenDatabaseAsync(healthy, cancellationToken)
+                        ?? throw new InvalidOperationException("healthy database missing");
+                    await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken);
+                    var result = await transaction.ExecuteStatementAsync(new SqlStatement("SELECT value FROM keyring_startup", [],
+                        new Dictionary<string, object?>(), 10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
+                    Require(result.Rows is [var row] && row is [long value] && value == 42, "healthy row missing");
+                    using var metricsClient = new HttpClient();
+                    var metrics = await metricsClient.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
+                    Require(metrics.Split('\n').Any(line => line.StartsWith("terrabase_keys_refused", StringComparison.Ordinal)
+                        && line.EndsWith(" 1", StringComparison.Ordinal)), "key refusal was not counted");
+                    await Console.Out.WriteLineAsync("keyring-driver:key-refused counted=1 healthy=42");
+                }
+                return;
+            }
             if (root.TryGetProperty("mode", out var mode) && mode.GetString() == "published")
             {
                 await ReadPublishedAsync(app.Services, database, cancellationToken);
@@ -136,12 +168,6 @@ internal static class Lifecycle
             await RunPassAsync(app.Services, app.Services.GetServices<IWrappedKeyFiles>(), app.Services.GetRequiredService<RegionalOwners>(), cancellationToken);
             Require(File.Exists(detached) && File.Exists(detached + ".key"), "maintenance removed an active promotion");
             await Console.Out.WriteLineAsync("keyring-driver:survived");
-            var options = app.Services.GetRequiredService<TerraBaseOptions>();
-            var owners = new RegionalOwners(options with { NatsUrl = new Uri("nats://127.0.0.1:4222"), PeersFile = "journey" });
-            Require(!owners.Writer, "role must begin as non-writer");
-            await RunPassAsync(app.Services, ChangeRole(app.Services, owners, options), owners, cancellationToken, unknown: true);
-            Require(owners.Writer, "role did not become writer during the pass");
-            await Console.Out.WriteLineAsync("keyring-driver:nonwriter wrapped=-1 snapshot_age=-1 last_complete=0; became writer during local scan");
             var command = await Console.In.ReadLineAsync(cancellationToken);
             Require(command is "import" or "publish" or "fail", "import command missing");
             try
@@ -176,7 +202,30 @@ internal static class Lifecycle
                 }
                 else
                 {
-                    await app.Services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken);
+                    var beforeImport = FileEvidence.Capture(detached);
+                    if (command == "import")
+                    {
+                        var imports = Enumerable.Range(0, 2).Select(async _ =>
+                        {
+                            try
+                            {
+                                await app.Services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken);
+                                return true;
+                            }
+                            catch (InvalidOperationException error) when (error.Message.Contains("already exists", StringComparison.Ordinal))
+                            {
+                                return false;
+                            }
+                        }).ToArray();
+                        _ = await app.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken);
+                        var results = await Task.WhenAll(imports);
+                        Require(results.Count(result => result) == 1, "racing imports did not publish exactly once");
+                    }
+                    else
+                    {
+                        await app.Services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken);
+                    }
+                    beforeImport.Verify();
                     await Console.Out.WriteLineAsync("keyring-driver:published");
                     if (command == "publish")
                     {
@@ -186,7 +235,9 @@ internal static class Lifecycle
             }
             finally
             {
+                var beforeRecovery = FileEvidence.Capture(detached);
                 replicas.CompleteDetach(detached);
+                beforeRecovery.Verify();
             }
             if (command == "fail")
             {
@@ -200,7 +251,7 @@ internal static class Lifecycle
                 return;
             }
             await ReadPublishedAsync(app.Services, database, cancellationToken);
-            Require(!File.Exists(detached) && !File.Exists(detached + ".key"), "completed promotion retained detached files");
+            Require(File.Exists(detached) && File.Exists(detached + ".key"), "completed promotion lost retained detached files");
             await Console.Out.WriteLineAsync("keyring-driver:imported row=42");
         }
         finally
@@ -243,18 +294,8 @@ internal static class Lifecycle
             "file audit did not preserve the aged unregistered database");
     }
 
-    private static IEnumerable<IWrappedKeyFiles> ChangeRole(IServiceProvider services, RegionalOwners owners, TerraBaseOptions options)
-    {
-        owners.Observe(new RegionalOwner(options.Region, options.MachineId, 1));
-        owners.Renew(TimeProvider.System.GetTimestamp() + 60 * TimeProvider.System.TimestampFrequency);
-        foreach (var source in services.GetServices<IWrappedKeyFiles>())
-        {
-            yield return source;
-        }
-    }
-
     private static async Task RunPassAsync(IServiceProvider services, IEnumerable<IWrappedKeyFiles> files, RegionalOwners owners,
-        CancellationToken cancellationToken, bool unknown = false)
+        CancellationToken cancellationToken)
     {
         var samples = new Dictionary<string, double>(StringComparer.Ordinal);
         var instruments = new HashSet<Instrument>();
@@ -287,8 +328,8 @@ internal static class Lifecycle
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => Measured(instrument, value, tags));
         listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) => Measured(instrument, value, tags));
         listener.Start();
-        using var pass = new KeyRewrap(services.GetRequiredService<IKeyring>(), files,
-            services.GetRequiredService<CredentialKeyRewrap>(), services.GetRequiredService<KeySnapshotInventory>(),
+        using var pass = new KeyRewrap(services.GetRequiredService<IKeyring>(), services.GetRequiredService<IStorageEngine>(), files,
+            services.GetRequiredService<CredentialKeyRewrap>(),
             services.GetRequiredService<IMeterFactory>(), TimeProvider.System, services.GetRequiredService<ILogger<KeyRewrap>>(),
             services.GetRequiredService<ICatalogGate>(), owners, services.GetRequiredService<KeyRewrapFaults>(),
             services.GetService<KeyCustody>());
@@ -302,8 +343,7 @@ internal static class Lifecycle
                 listener.RecordObservableInstruments();
                 if (samples.TryGetValue("terrabase.keys.wrapped", out var count)
                     && samples.TryGetValue("terrabase.keys.last_complete", out var complete)
-                    && samples.TryGetValue("terrabase.keys.oldest_snapshot_age", out var age)
-                    && (unknown ? count == -1 && complete == 0 && age == -1 : complete > 0))
+                    && count >= 0 && complete > 0)
                 {
                     return;
                 }

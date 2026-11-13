@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import { production, stateDir } from '../support/stack';
@@ -92,35 +92,16 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     return Buffer.concat([decipher.update(wrapped.subarray(12, -16)), decipher.final()]);
   }
 
-  function legacy(path: string): Buffer {
-    const key = dataKey(path);
-    const nonce = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', k0, nonce);
-    const body = Buffer.concat([nonce, cipher.update(key), cipher.final(), cipher.getAuthTag()]);
-    writeFileSync(path, `TERRABASE-DB-KEY-1\n${body.toString('base64')}\n`, { mode: 0o600 });
-    return key;
-  }
-
-  async function refused(): Promise<void> {
-    await expect.poll(async () => {
-      try {
-        return (await fetch('http://127.0.0.1:18380/readyz')).status;
-      } catch {
-        return 0;
-      }
-    }).not.toBe(200);
-  }
-
   async function rotated(expected: number): Promise<void> {
     await ready();
     await expect.poll(async () => {
       const metrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
-      return metrics.match(/terrabase_keys_wrapped(?:_\w+)?\{[^\n]*key_id="k0"[^\n]*\} (\d+)/)?.[1];
+      return metrics.match(/terrabase_keys_local_wrapped(?:_\w+)?\{[^\n]*key_id="k0"[^\n]*\} (\d+)/)?.[1];
     }).toBe('0');
     for (const path of files(data)) expect(readFileSync(path, 'ascii').startsWith('TERRABASE-DB-KEY-2\nv2.k1.')).toBe(true);
     expect(files(data)).toHaveLength(expected);
     const metrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
-    expect(metrics).toMatch(new RegExp(`terrabase_keys_wrapped(?:_\\w+)?\\{[^\\n]*key_id="k1"[^\\n]*\\} ${expected}(?:\\n|$)`));
+    expect(metrics).toMatch(new RegExp(`terrabase_keys_local_wrapped(?:_\\w+)?\\{[^\\n]*key_id="k1"[^\\n]*\\} ${expected}(?:\\n|$)`));
   }
 
   try {
@@ -159,96 +140,87 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     const originalBytes = paths.map(path => readFileSync(path));
     await start('k0', { k0: k0.toString('base64') });
     await ready();
-    const skipped = await (await fetch('http://127.0.0.1:18383/metrics')).text();
-    expect(skipped).toMatch(/terrabase_keys_last_complete[^\n]* 0(?:\n|$)/);
-    expect(skipped).toMatch(/terrabase_keys_wrapped[^\n]*key_id="k0"[^\n]*\} -1(?:\n|$)/);
+    const initial = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+    expect(initial).toMatch(new RegExp('terrabase_keys_local_wrapped[^\\n]*key_id="k0"[^\\n]*} ' + paths.length + '(?:\\n|$)'));
     await stop();
     for (const [index, path] of paths.entries()) expect(readFileSync(path).equals(originalBytes[index])).toBe(true);
-    const leftover = paths[0] + '.rewrapping';
-    writeFileSync(leftover, originalBytes[0], { mode: 0o600 });
-    const originalKeys = paths.map(path => createHash('sha256').update(process.env.E2E_KEYRING_BASELINE ? dataKey(path) : legacy(path)).digest('hex'));
-    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await rotated(paths.length);
-    expect(existsSync(leftover)).toBe(false);
-    await stop();
-    await rows('rows', 'k1');
-    expect(createHash('sha256').update(legacy(paths[0])).digest('hex')).toBe(originalKeys[0]);
-    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await rotated(paths.length);
-    await stop();
-    const replicaDirectory = join(data, '.replicas', 'inventory');
-    mkdirSync(replicaDirectory, { recursive: true });
-    const orphan = join(replicaDirectory, 'orphan.promote.db.key.rewrapping');
-    const malformed = join(replicaDirectory, 'aaa.key');
-    const later = join(replicaDirectory, 'zzz.key');
-    writeFileSync(orphan, 'interrupted promote', { mode: 0o600 });
-    writeFileSync(malformed, 'malformed replica key', { mode: 0o600 });
-    legacy(paths[0]);
-    const existingWrapped = readFileSync(paths[0], 'ascii').split('\n')[1];
-    writeFileSync(later, `TERRABASE-REPLICA-KEY-1\n${existingWrapped}\n`, { mode: 0o600 });
-    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await ready();
-    await expect.poll(async () => (await (await fetch('http://127.0.0.1:18383/metrics')).text())
-      .match(/terrabase_keys_wrapped[^\n]*status="unreadable"[^\n]*\} (\d+)/)?.[1]).toBe('1');
-    expect(readFileSync(later, 'ascii').startsWith('TERRABASE-REPLICA-KEY-2\nv2.k1.')).toBe(true);
-    expect(existsSync(orphan)).toBe(false);
-    expect(readFileSync(log, 'utf8').split('\n').filter(line =>
-      line.includes('"component":"TerraBase.Features.Backup.KeyRewrap"') && line.includes(malformed))).toHaveLength(1);
-    await stop();
-    rmSync(replicaDirectory, { recursive: true });
-    await start('k1', { k1: k1.toString('base64') });
-    await expect.poll(() => child?.exitCode).toBe(2);
-    expect(readFileSync(log, 'utf8')).toContain("single master key must use the original id 'k0'");
-    await stop();
+    const organization = '01J00000000000000000000011';
+    const project = '01J00000000000000000000012';
+    const database = '01J00000000000000000000013';
+    const healthy = '01J00000000000000000000014';
+    const parent = join(data, organization, project);
+    mkdirSync(parent, { recursive: true });
+    const tenant = join(parent, database + '.db');
+    for (const id of [database, healthy]) {
+      const source = paths[1].slice(0, -4);
+      const sourceName = source.slice(source.lastIndexOf('/') + 1);
+      for (const name of readdirSync(join(source, '..')).filter(name => name === sourceName || name.startsWith(sourceName + '-') || name === sourceName + '.key')) {
+        copyFileSync(join(source, '..', name), join(parent, id + '.db' + name.slice(sourceName.length)));
+      }
+    }
+    function wrap(path: string, id: 'k0' | 'k1'): void {
+      const key = dataKey(path);
+      const nonce = randomBytes(12);
+      const cipher = createCipheriv('aes-256-gcm', id === 'k0' ? k0 : k1, nonce);
+      if (id !== 'k0') cipher.setAAD(Buffer.from('v2.' + id));
+      const body = Buffer.concat([nonce, cipher.update(key), cipher.final(), cipher.getAuthTag()]).toString('base64');
+      writeFileSync(path, id === 'k0' ? 'TERRABASE-DB-KEY-1\n' + body + '\n' : 'TERRABASE-DB-KEY-2\nv2.' + id + '.' + body + '\n', { mode: 0o600 });
+      key.fill(0);
+    }
+    wrap(tenant + '.key', 'k1');
+    const tenantBytes = readFileSync(tenant);
+    const tenantKey = readFileSync(tenant + '.key');
     await start('k0', { k0: k0.toString('base64') });
     await expect.poll(() => child?.exitCode).toBe(2);
-    expect(readFileSync(log, 'utf8')).toContain("configured master key id 'k1' cannot be removed");
-    await stop();
-    await start('k1', { k0: randomBytes(32).toString('base64'), k1: k1.toString('base64') });
-    await expect.poll(() => child?.exitCode).toBe(2);
-    expect(readFileSync(log, 'utf8')).toContain("configured master key id 'k0' has different material");
+    expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k1' is required by 1 local wrappers");
+    expect(readFileSync(tenant).equals(tenantBytes)).toBe(true);
+    expect(readFileSync(tenant + '.key').equals(tenantKey)).toBe(true);
     await stop();
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+    await rotated(paths.length + 2);
+    await stop();
+    const requestFile = join(directory, 'refused.json');
+    writeFileSync(requestFile, JSON.stringify({ organization, project, database, healthy, mode: 'key-refused' }), { mode: 0o600 });
+    wrap(tenant + '.key', 'k0');
+    const wrongKeyFile = readFileSync(tenant + '.key');
+    await start('k1', { k0: randomBytes(32).toString('base64'), k1: k1.toString('base64') }, candidate, requestFile);
+    await expect.poll(() => child?.exitCode).toBe(0);
+    expect(readFileSync(log, 'utf8')).toContain('keyring-driver:key-refused counted=1 healthy=42');
+    expect(readFileSync(tenant).equals(tenantBytes)).toBe(true);
+    expect(readFileSync(tenant + '.key').equals(wrongKeyFile)).toBe(true);
+    await stop();
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+    await rotated(paths.length + 2);
+    await stop();
+    const catalogBytes = readFileSync(catalogKey);
+    await start('k1', { k0: k0.toString('base64'), k1: randomBytes(32).toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain("catalog wrapper is not authentic under key id 'k1'");
+    expect(readFileSync(catalogKey).equals(catalogBytes)).toBe(true);
+    await stop();
+    for (const material of [Buffer.alloc(31).toString('base64'), Buffer.alloc(32, 7).toString('base64')]) {
+      await start('k0', { k0: material });
+      await expect.poll(() => child?.exitCode).toBe(2);
+      expect(readFileSync(log, 'utf8')).toContain('master-key must');
+      await stop();
+    }
+    await start('k0', { k0: k0.toString('base64'), k1: k0.toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain('duplicates another configured');
+    await stop();
+    wrap(tenant + '.key', 'k0');
+    await start('k1', { k1: k1.toString('base64'), k2: randomBytes(32).toString('base64') });
+    await expect.poll(() => child?.exitCode).toBe(2);
+    expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k0' is required by 1 local wrappers");
+    await stop();
+    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
+    await rotated(paths.length + 2);
+    await stop();
+    await start('k1', { k1: k1.toString('base64'), k2: randomBytes(32).toString('base64') });
     await ready();
     await stop();
-    const history = join(data, '.master-key-history');
-    const recorded = readFileSync(history);
-    writeFileSync(history, 'k0');
-    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await expect.poll(() => child?.exitCode).toBe(2);
-    expect(readFileSync(log, 'utf8')).toContain('master key history cannot be read');
-    await stop();
-    writeFileSync(history, recorded);
-    renameSync(history, history + '.saved');
-    mkdirSync(history);
-    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await expect.poll(() => child?.exitCode).toBe(2);
-    expect(readFileSync(log, 'utf8')).toContain('master key history cannot be read');
-    await stop();
-    rmSync(history, { recursive: true });
-    renameSync(history + '.saved', history);
     await rows('rows', 'k1');
-    legacy(paths[0]);
-    const record = readFileSync(paths[0], 'ascii');
-    writeFileSync(paths[0], record.replace('TERRABASE-DB-KEY-1\n', 'TERRABASE-DB-KEY-2\nv2.k1.'));
-    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await expect.poll(() => existsSync(log) && readFileSync(log, 'utf8').includes("not authentic under key id 'k1'")).toBe(true);
-    await refused();
-    await stop();
-    writeFileSync(paths[0], record.replace('TERRABASE-DB-KEY-1\n', 'TERRABASE-DB-KEY-2\nv2.unknown.'));
-    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await expect.poll(() => existsSync(log) && readFileSync(log, 'utf8').includes("unconfigured key id 'unknown'")).toBe(true);
-    await refused();
-    await stop();
-    writeFileSync(paths[0], record.replace('TERRABASE-DB-KEY-1\n', 'TERRABASE-DB-KEY-2\nv2..'));
-    await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await expect.poll(() => existsSync(log) && readFileSync(log, 'utf8').includes('version or key id is malformed')).toBe(true);
-    await refused();
-    await stop();
-    await start('absent', { k0: k0.toString('base64'), k1: k1.toString('base64') });
-    await expect.poll(() => child?.exitCode).toBe(2);
-    expect(readFileSync(log, 'utf8').includes('configured active key')).toBe(true);
-    console.log(`keyring: ${paths.length} existing encrypted databases opened; mixed k0/k1 sidecars resumed; k0=0 k1=${paths.length}; unchanged k0 upgrade; malformed item counted and later replica rotated; rewrapping temporaries removed; key removal and unreadable history refused; key restored; missing, wrong and unknown ids refused; missing active key rejected`);
+    console.log('keyring: restored disk missing k1 refused before readiness; configured k1 starts; wrong tenant material counted and healthy row=42; catalog wrong material refuses node; local k0 gauge reaches zero and permits removal; exact length, constant and duplicate material refused');
   } finally {
     await stop();
     k0.fill(0);

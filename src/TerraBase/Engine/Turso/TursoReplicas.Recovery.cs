@@ -58,7 +58,7 @@ internal sealed partial class TursoReplicas
         }
     }
 
-    private void TryRecoverDetached(string detached)
+    private void TryRecoverDetached(string detached, bool rethrow = false)
     {
         try
         {
@@ -71,7 +71,11 @@ internal sealed partial class TursoReplicas
             {
                 engine.RefuseDetached(database);
             }
-            logger.ZLogError($"Detached import recovery refused database {database:@Database}; all remaining copies are preserved: {error.GetType().Name:@Error}");
+            logger.ZLogError($"Detached import recovery refused database {database:@Database}; all remaining copies are preserved: {error.Message:@Error}");
+            if (rethrow)
+            {
+                throw;
+            }
         }
     }
 
@@ -87,7 +91,7 @@ internal sealed partial class TursoReplicas
             {
                 throw new IOException("a detached import must hold its registration");
             }
-            var intent = DetachedImport.Read(source, Path.GetFileName(source)[..^".promote.db".Length]);
+            var intent = DetachedImport.Read(source + ".importing", Path.GetFileName(source)[..^".promote.db".Length]);
             var sourceKey = master.Unwrap(intent.SourceKey);
             try
             {
@@ -97,7 +101,7 @@ internal sealed partial class TursoReplicas
             {
                 CryptographicOperations.ZeroMemory(sourceKey);
             }
-            (intent with { DestinationKey = DatabaseKeys.ReadWrapped(temporary) }).Write(source, create: false);
+            (intent with { DestinationKey = DatabaseKeys.ReadWrapped(temporary) }).Write(source + ".importing", create: false);
         }
     }
 
@@ -107,7 +111,7 @@ internal sealed partial class TursoReplicas
         {
             return;
         }
-        var intent = DetachedImport.Read(source, Path.GetFileName(source)[..^".promote.db".Length]);
+        var intent = DetachedImport.Read(source + ".importing", Path.GetFileName(source)[..^".promote.db".Length]);
         using (var connection = new SqliteConnection(targetConnection))
         {
             connection.Open();
@@ -116,7 +120,7 @@ internal sealed partial class TursoReplicas
             command.Parameters.AddWithValue("$incarnation", intent.Incarnation);
             command.ExecuteNonQuery();
             command.Parameters.Clear();
-            command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            command.CommandText = "PRAGMA wal_checkpoint(FULL);";
             command.ExecuteScalar();
         }
         var key = master.Unwrap(DatabaseKeys.ReadWrapped(temporary));
@@ -150,61 +154,40 @@ internal sealed partial class TursoReplicas
             DatabaseKeys.RejectLink(path);
             DatabaseKeys.RejectLink(path + DatabaseKeys.Suffix);
         }
-        var intent = DetachedImport.Read(detached, Path.GetFileName(replica)[..^3]);
+        var intent = DetachedImport.Read(detached + ".importing", Path.GetFileName(replica)[..^3]);
+        if (File.Exists(destination))
+        {
+            if (File.Exists(replica))
+            {
+                throw new InvalidDataException("an independent replica conflicts with a published detached import");
+            }
+            if (intent.DestinationKey is not { } wrapped)
+            {
+                throw new InvalidDataException("a destination exists without publication evidence");
+            }
+            var key = master.Unwrap(wrapped);
+            try
+            {
+                VerifyKey(DatabaseKeys.ReadWrapped(destination), key);
+                intent.Verify(destination, key);
+                if (!intent.Published)
+                {
+                    (intent with { Published = true }).Write(detached + ".importing", create: false);
+                }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(key);
+            }
+            return;
+        }
+        if (intent.Published)
+        {
+            throw new InvalidDataException("a published destination is missing; the detached source is retained");
+        }
         var sourceKey = master.Unwrap(intent.SourceKey);
-        byte[]? destinationKey = null;
         try
         {
-            destinationKey = intent.DestinationKey is { } wrapped ? master.Unwrap(wrapped) : null;
-            if (File.Exists(destination))
-            {
-                if (destinationKey is null)
-                {
-                    throw new InvalidDataException("a destination exists without publication evidence");
-                }
-                VerifyKey(DatabaseKeys.ReadWrapped(destination), destinationKey);
-                intent.Verify(destination, destinationKey);
-                if (DataKeyRecord(replica) is { } replicaKey)
-                {
-                    VerifyKey(replicaKey, sourceKey);
-                }
-                if (File.Exists(replica))
-                {
-                    if (DataKeyRecord(replica) is null)
-                    {
-                        throw new InvalidDataException("an existing replica has no key");
-                    }
-                    intent.Verify(replica, sourceKey);
-                }
-                if (File.Exists(detached))
-                {
-                    VerifyKey(DatabaseKeys.ReadWrapped(detached), sourceKey);
-                    intent.Verify(detached, sourceKey);
-                }
-                SyncDatabase(destination);
-                var publishedDirectory = Path.GetDirectoryName(destination)!;
-                while (true)
-                {
-                    DirectorySync.Sync(publishedDirectory);
-                    if (publishedDirectory == options.DataDirectory)
-                    {
-                        break;
-                    }
-                    publishedDirectory = Path.GetDirectoryName(publishedDirectory) ?? throw new InvalidDataException("publication escaped the data directory");
-                }
-                DeleteFiles(replica, keepDetached: true);
-                DirectorySync.Sync(directory);
-                DeleteDetachedFiles(detached);
-                return;
-            }
-            if (File.Exists(destination + DatabaseKeys.Suffix))
-            {
-                if (destinationKey is null)
-                {
-                    throw new InvalidDataException("an unpublished destination key has no intent");
-                }
-                VerifyKey(DatabaseKeys.ReadWrapped(destination), destinationKey);
-            }
             if (File.Exists(detached) && File.Exists(replica))
             {
                 throw new InvalidDataException("an independent replica conflicts with the detached source");
@@ -230,35 +213,15 @@ internal sealed partial class TursoReplicas
                 file.Write(Encoding.ASCII.GetBytes((intent.SourceKey.StartsWith("v2.", StringComparison.Ordinal) ? KeyHeader : PreviousKeyHeader) + intent.SourceKey + "\n"));
                 file.Flush(flushToDisk: true);
             }
-            SyncDatabase(replica);
             DirectorySync.Sync(directory);
-            if (File.Exists(destination + DatabaseKeys.Suffix))
+            if (!intent.Restored)
             {
-                File.Delete(destination + DatabaseKeys.Suffix);
-                DirectorySync.Sync(Path.GetDirectoryName(destination)!);
+                (intent with { Restored = true }).Write(detached + ".importing", create: false);
             }
-            DeleteDetachedFiles(detached);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(sourceKey);
-            if (destinationKey is not null)
-            {
-                CryptographicOperations.ZeroMemory(destinationKey);
-            }
-        }
-    }
-
-    private static void SyncDatabase(string database)
-    {
-        foreach (var path in (string[])[database, database + "-wal"])
-        {
-            DatabaseKeys.RejectLink(path);
-            if (File.Exists(path))
-            {
-                using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read);
-                RandomAccess.FlushToDisk(handle);
-            }
         }
     }
 

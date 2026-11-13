@@ -157,7 +157,7 @@ internal sealed partial class TursoReplicas(
             lock (KeyRecords)
             {
                 var detached = path[..^3] + ".promote.db";
-                RecoverDetached(detached);
+                TryRecoverDetached(detached, rethrow: true);
                 var wrapped = DataKeyRecord(path) ?? throw new InvalidDataException("the replica's data key record is missing");
                 if (master.NeedsRewrap(wrapped))
                 {
@@ -179,8 +179,7 @@ internal sealed partial class TursoReplicas(
                     {
                         using var source = DetachedImport.Open(path, sourceKey);
                         var evidence = DetachedImport.Inspect(source);
-                        new DetachedImport(1, key.Database, evidence.Incarnation, evidence.Position, new FileInfo(path).Length,
-                            evidence.Rows, evidence.Bytes, evidence.Digest, wrapped, null).Write(detached, create: true);
+                        new DetachedImport(1, key.Database, evidence.Incarnation, evidence.Position, wrapped, null).Write(detached + ".importing", create: true);
                     }
                     finally
                     {
@@ -204,7 +203,7 @@ internal sealed partial class TursoReplicas(
                 }
                 catch
                 {
-                    RecoverDetached(detached);
+                    TryRecoverDetached(detached, rethrow: true);
                     throw;
                 }
             }
@@ -346,7 +345,7 @@ internal sealed partial class TursoReplicas(
         }
         lock (KeyRecords)
         {
-            RecoverDetached(path[..^3] + ".promote.db");
+            TryRecoverDetached(path[..^3] + ".promote.db", rethrow: true);
         }
         var hexKey = await Task.Run(() => DataKeyRecord(path)).ConfigureAwait(false) switch
         {
@@ -464,13 +463,14 @@ internal sealed partial class TursoReplicas(
                     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                     DatabaseKeys.RejectLink(path + DatabaseKeys.Suffix);
                     var temporary = path + DatabaseKeys.Suffix + ".tmp";
-                    using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+                    DatabaseKeys.RejectLink(temporary);
+                    using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                     {
                         file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? KeyHeader : PreviousKeyHeader) + wrapped + "\n"));
                         file.Flush(flushToDisk: true);
                     }
 
-                    File.Move(temporary, path + DatabaseKeys.Suffix, overwrite: true);
+                    File.Move(temporary, path + DatabaseKeys.Suffix, overwrite: false);
                 }
             }).ConfigureAwait(false);
             return Convert.ToHexString(key);

@@ -130,10 +130,6 @@ internal sealed partial class TursoStorageEngine
                     return true;
                 }, cancellationToken).ConfigureAwait(false);
             }).ConfigureAwait(false);
-            if (!file.EndsWith(".promote.db", StringComparison.Ordinal))
-            {
-                await Io.RunAsync(() => DeleteFiles(file), CancellationToken.None).ConfigureAwait(false);
-            }
             _checkpoint("create.published", database);
             initialization = GetInitializationLocked(key, path, cancellationToken, out _);
         }

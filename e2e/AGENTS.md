@@ -485,7 +485,7 @@ to the journey workflow select it; main runs select it too. It builds a pinned s
 interaction and promotion specs itself, including process kills before publication and after durable
 publication, reconstructed states at every intermediate detach and publication rename, conflicting
 replicas and destinations, corrupt destinations with valid keys, mid-copy cancellation and put-back,
-fleet key-removal refusal after restoration without a local cache, key material changes, record-store
+local key-removal refusal after restoration, key material changes, record-store
 refusal, reverse credential compatibility and row reads from every persisted database.
 Intermediate states are reconstructed from real detached/published files after a process kill;
 the journey does not claim to inject power failure at every individual system call. The extra lane runs alongside the normal shards.

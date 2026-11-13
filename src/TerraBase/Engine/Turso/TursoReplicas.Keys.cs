@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using TerraBase.Features.Backup;
 
 namespace TerraBase.Engine.Turso;
@@ -10,7 +12,7 @@ internal sealed partial class TursoReplicas : IWrappedKeyFiles
         {
             return Task.CompletedTask;
         }
-        foreach (var file in ReplicaKeyFiles(Root, inventory))
+        foreach (var file in WrappedKeyFile.Paths(Root))
         {
             cancellationToken.ThrowIfCancellationRequested();
             lock (KeyRecords)
@@ -22,15 +24,13 @@ internal sealed partial class TursoReplicas : IWrappedKeyFiles
                     {
                         continue;
                     }
-                    WrappedKeyFile.RemoveLeftover(file);
                     DatabaseKeys.RejectLink(file);
                     if (!File.Exists(file))
                     {
                         continue;
                     }
-                    var detached = file.EndsWith(".promote.db.key", StringComparison.Ordinal);
-                    var wrapped = detached ? DatabaseKeys.ReadWrapped(file[..^DatabaseKeys.Suffix.Length])
-                        : DataKeyRecord(file[..^DatabaseKeys.Suffix.Length]) ?? throw new InvalidDataException("the replica wrapped key record is missing");
+                    var detached = file.Contains(".promote.db.key", StringComparison.Ordinal);
+                    var wrapped = WrappedKeyFile.Read(file);
                     var header = detached ? (master.ActiveId == "k0" ? DatabaseKeys.PreviousHeader : DatabaseKeys.Header)
                         : master.ActiveId == "k0" ? PreviousKeyHeader : KeyHeader;
                     inventory.Count(WrappedKeyFile.Rewrap(file, header, wrapped, master, cancellationToken));
@@ -41,36 +41,47 @@ internal sealed partial class TursoReplicas : IWrappedKeyFiles
                 }
             }
         }
+        foreach (var path in Directory.EnumerateFiles(Root, "*.promote.db.importing*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (KeyRecords)
+            {
+                var detached = path[..path.IndexOf(".importing", StringComparison.Ordinal)];
+                if (ActiveDetached.Contains(detached))
+                {
+                    continue;
+                }
+                try
+                {
+                    var intent = DetachedImport.Read(path, Path.GetFileName(detached)[..^".promote.db".Length]);
+                    var source = RewrapIntent(intent.SourceKey, path, inventory);
+                    var destination = intent.DestinationKey is { } wrapped ? RewrapIntent(wrapped, path, inventory) : null;
+                    if (source != intent.SourceKey || destination != intent.DestinationKey)
+                    {
+                        (intent with { SourceKey = source, DestinationKey = destination }).Write(path, create: false);
+                    }
+                }
+                catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+                {
+                    inventory.Unreadable(path);
+                }
+            }
+        }
         return Task.CompletedTask;
     }
 
-    private static IEnumerable<string> ReplicaKeyFiles(string directory, KeyInventory inventory)
+    private string RewrapIntent(string wrapped, string item, KeyInventory inventory)
     {
-        string[] files;
-        string[] children;
+        var key = master.Unwrap(wrapped);
         try
         {
-            DatabaseKeys.RejectLink(directory);
-            files = Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix)
-                .Concat(Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix + ".rewrapping").Select(path => path[..^11]))
-                .Distinct(StringComparer.Ordinal).ToArray();
-            children = Directory.GetDirectories(directory);
+            var replacement = master.NeedsRewrap(wrapped) ? master.Rewrap(key, item) : wrapped;
+            inventory.Count(master.KeyId(replacement));
+            return replacement;
         }
-        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+        finally
         {
-            inventory.Unreadable(directory);
-            yield break;
-        }
-        foreach (var file in files)
-        {
-            yield return file;
-        }
-        foreach (var child in children)
-        {
-            foreach (var file in ReplicaKeyFiles(child, inventory))
-            {
-                yield return file;
-            }
+            CryptographicOperations.ZeroMemory(key);
         }
     }
 }

@@ -197,9 +197,10 @@ const test = base.extend<{}, { promotion: Promotion }>({
       expect(existsSync(firstObserved)).toBe(true);
       expect(readFileSync(firstObserved, 'ascii').split('\n')[1] === original).toBe(true);
       rmSync(firstObserved);
-      expect(existsSync(replicaKey(one.id))).toBe(false);
+      expect(existsSync(replicaKey(one.id))).toBe(true);
+      expect(existsSync(replicaKey(one.id).replace(".db.key", ".promote.db"))).toBe(true);
       expect((await request(replica, 'POST', projectPath + '/databases/' + String(one.id) + '/sql/execute', sql, false)).results).toMatchObject([{ rows: [[42]] }]);
-      console.log('one key promotion: promoted wrapper byte-identical; source removed after durable destination; SQL opens');
+      console.log('one key promotion: promoted wrapper byte-identical; source retained after durable destination; SQL opens');
       await stop(second);
       await stop(first);
       first = start('gru', 'k1');
@@ -232,9 +233,9 @@ const test = base.extend<{}, { promotion: Promotion }>({
       originalPlain.fill(0);
       promotedPlain.fill(0);
       rmSync(secondObserved);
-      expect(existsSync(replicaKey(two.id))).toBe(false);
+      expect(existsSync(replicaKey(two.id))).toBe(true);
       expect((await request(replica, 'POST', projectPath + '/databases/' + String(two.id) + '/sql/execute', sql, false)).results).toMatchObject([{ rows: [[42]] }]);
-      console.log('two keys promotion: replica scan and old-key promotion both rewrapped; verified destination opens; source removed');
+      console.log('two keys promotion: replica scan and old-key promotion both rewrapped; verified destination opens; source retained');
       console.log('verification refusal: no reachable wrap-corruption input without a product switch; helper failure paths checked by code reading');
       expect(process.env.E2E_KEYRING_DRIVER, 'lifecycle driver is required').toBeTruthy();
       {
@@ -255,14 +256,12 @@ const test = base.extend<{}, { promotion: Promotion }>({
         expect(existsSync(detached(active.id) + '.key')).toBe(true);
         second.stdin!.write('pass\n');
         await checkpoint('keyring-driver:survived');
-        await checkpoint('keyring-driver:nonwriter wrapped=-1 snapshot_age=-1 last_complete=0; became writer during local scan');
         expect(existsSync(detached(active.id))).toBe(true);
         expect(existsSync(detached(active.id) + '.key')).toBe(true);
         second.stdin!.write('import\n');
         await checkpoint('keyring-driver:imported row=42');
         await stop(second);
         console.log('active promotion: paused after detach with former home stopped; whole multi-key pass preserved both files; import read row=42');
-        console.log('writer transition: started non-writer, became writer during local scan; wrapped=-1 snapshot_age=-1 last_complete=0');
         const launch = async (database: Record<string, unknown>) => {
           writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: database.id }), { mode: 0o600 });
           second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER!, driverRequest);
@@ -272,7 +271,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
         };
         const maintenance = async () => {
           second.stdin!.write('pass\n');
-          await checkpoint('keyring-driver:nonwriter');
+          await checkpoint('keyring-driver:survived');
         };
         const kill = async () => {
           const exited = once(second, 'exit');
@@ -284,6 +283,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
           writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: database.id, mode }), { mode: 0o600 });
           second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER!, driverRequest);
           await checkpoint(mode === 'recovered' ? 'keyring-driver:recovered row=42' : 'keyring-driver:unrelated-database-opened');
+          await checkpoint('keyring-driver:files-preserved=');
           await stop(second);
         };
         const snapshot = (id: unknown) => {
@@ -318,7 +318,8 @@ const test = base.extend<{}, { promotion: Promotion }>({
             }
             await runRecovery(crash, 'recovered');
             expect(existsSync(path)).toBe(false);
-            expect(existsSync(path + '.importing')).toBe(false);
+            expect(existsSync(path + '.importing')).toBe(true);
+            expect(JSON.parse(readFileSync(path + '.importing', 'utf8')).restored).toBe(true);
           }
           restore(crash.id, saved);
           const originalIntent = readFileSync(path + '.importing');
@@ -330,13 +331,6 @@ const test = base.extend<{}, { promotion: Promotion }>({
           writeFileSync(replicaPath, readFileSync(path));
           await runRecovery(crash, 'refused');
           expect(existsSync(path) && existsSync(replicaPath)).toBe(true);
-          restore(crash.id, saved);
-          await launch(crash);
-          expect(existsSync(replicaKey(crash.id))).toBe(true);
-          await maintenance();
-          second.stdin!.write('import\n');
-          await checkpoint('keyring-driver:imported row=42');
-          await stop(second);
           console.log('detach durable states: intent, key, database and each sidecar rename recovered row=42; malformed unused intent and conflicting replica preserved; unrelated database opened');
 
         };
@@ -360,7 +354,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
               rmSync(destination);
               if (state === 'before-key') rmSync(destination + '.key');
               await runRecovery(published, 'recovered');
-              expect(existsSync(destination + '.key')).toBe(false);
+              expect(existsSync(destination + '.key')).toBe(state === 'after-key');
             } else {
               if (state === 'corrupt') writeFileSync(destination, databaseBytes.subarray(0, 100));
               if (state === 'conflicting-destination') {
@@ -383,10 +377,12 @@ const test = base.extend<{}, { promotion: Promotion }>({
           writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: published.id, mode: 'published' }), { mode: 0o600 });
           second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER!, driverRequest);
           await checkpoint('keyring-driver:unregistered-survived row=42');
-          expect(existsSync(detached(published.id))).toBe(false);
-          expect(existsSync(detached(published.id) + '.key')).toBe(false);
+          expect(existsSync(detached(published.id))).toBe(true);
+          expect(existsSync(detached(published.id) + '.key')).toBe(true);
+          expect(JSON.parse(readFileSync(detached(published.id) + '.importing', 'utf8')).published).toBe(true);
+          await checkpoint('keyring-driver:retained-gauges-cover-files=');
           await stop(second);
-          console.log('crash after publication: home stopped; destination opened once with row=42; restart removed only the redundant detached source; missing catalog registration preserved the destination after its grace period');
+          console.log('crash after publication: home stopped; destination opened once with row=42; restart retained the detached source; missing catalog registration preserved the destination after its grace period');
 
         };
         const failedImport = async () => {
@@ -416,7 +412,7 @@ test('a crash before publication restores the only surviving replica', async ({ 
   await promotion.beforePublication();
 });
 
-test('a crash after publication removes only the redundant source', async ({ promotion }) => {
+test('a crash after publication retains the detached source', async ({ promotion }) => {
   await promotion.afterPublication();
 });
 

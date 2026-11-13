@@ -1,7 +1,3 @@
-using System.Buffers.Binary;
-using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraBase.Primitives;
@@ -10,13 +6,13 @@ using Turso.Data.Sqlite;
 namespace TerraBase.Engine.Turso;
 
 internal sealed record DetachedImport(
-    int Version, string Database, string Incarnation, long Position, long SourceBytes, long Rows, long ImportedBytes, string Digest,
-    string SourceKey, string? DestinationKey)
+    int Version, string Database, string Incarnation, long Position, string SourceKey, string? DestinationKey,
+    bool Published = false, bool Restored = false)
 {
-    internal static DetachedImport Read(string detached, string database)
+    internal static DetachedImport Read(string path, string database)
     {
-        DatabaseKeys.RejectLink(detached + ".importing");
-        using var file = new FileStream(detached + ".importing", FileMode.Open, FileAccess.Read, FileShare.Read);
+        DatabaseKeys.RejectLink(path);
+        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         if (file.Length is <= 0 or > 16384)
         {
             throw new InvalidDataException("the detached import intent is malformed");
@@ -24,20 +20,18 @@ internal sealed record DetachedImport(
         var result = JsonSerializer.Deserialize(file, DetachedImportJsonContext.Default.DetachedImport)
             ?? throw new InvalidDataException("the detached import intent is missing");
         if (result.Version != 1 || result.Database != database || !Ulid.TryParse(result.Incarnation, out _)
-            || result.Position < 0 || result.SourceBytes <= 0 || result.Rows < 0 || result.ImportedBytes <= 0 || result.Digest.Length != 64
-            || !result.Digest.All(character => character is >= '0' and <= '9' or >= 'A' and <= 'F'))
+            || result.Position < 0 || string.IsNullOrEmpty(result.SourceKey) || result.Published && result.Restored)
         {
             throw new InvalidDataException("the detached import intent does not bind this database");
         }
         return result;
     }
 
-    internal void Write(string detached, bool create)
+    internal void Write(string path, bool create)
     {
-        var path = detached + ".importing";
-        var writing = create ? path : path + ".writing";
+        var writing = create ? path : path + ".writing." + EntityIds.New();
         DatabaseKeys.RejectLink(writing);
-        using (var file = new FileStream(writing, create ? FileMode.CreateNew : FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var file = new FileStream(writing, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
             JsonSerializer.Serialize(file, this, DetachedImportJsonContext.Default.DetachedImport);
             file.Flush(flushToDisk: true);
@@ -46,7 +40,7 @@ internal sealed record DetachedImport(
         {
             File.Move(writing, path, overwrite: true);
         }
-        DirectorySync.Sync(Path.GetDirectoryName(detached)!);
+        DirectorySync.Sync(Path.GetDirectoryName(path)!);
     }
 
     internal static SqliteConnection Open(string path, byte[] key)
@@ -72,7 +66,7 @@ internal sealed record DetachedImport(
         }
     }
 
-    internal static (string Incarnation, long Position, long Rows, long Bytes, string Digest) Inspect(SqliteConnection connection)
+    internal static (string Incarnation, long Position) Inspect(SqliteConnection connection)
     {
         using var transaction = connection.BeginTransaction(deferred: true);
         using var command = connection.CreateCommand();
@@ -97,102 +91,19 @@ internal sealed record DetachedImport(
             incarnation = rows.GetString(0);
             position = rows.GetInt64(1);
         }
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var tables = new List<string>();
-        var bytes = 0L;
-        command.CommandText = "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type, name;";
-        using (var rows = command.ExecuteReader())
-        {
-            while (rows.Read())
-            {
-                if (!ChangeLog.EngineTable(rows.GetString(2)))
-                {
-                    bytes += Append(hash, rows);
-                    if (rows.GetString(0) == "table")
-                    {
-                        tables.Add(rows.GetString(1));
-                    }
-                }
-            }
-        }
-        var count = 0L;
-        foreach (var table in tables.Where(table => table != "_tb_shape_snapshot"))
-        {
-            var projection = table == "commit_offset" ? "id, value" : "*";
-            var filter = table == "_tb_shape_chunk" ? " WHERE handle >= '~grant:' AND handle < '~grant;' AND offset = 0" : "";
-            command.CommandText = $"SELECT {projection} FROM {TableShape.Quote(table)} LIMIT 0;";
-            int columns;
-            using (var shape = command.ExecuteReader())
-            {
-                columns = shape.FieldCount;
-            }
-            command.CommandText = $"SELECT {projection} FROM {TableShape.Quote(table)}{filter} ORDER BY {string.Join(", ", Enumerable.Range(1, columns).Select(column => column.ToString(CultureInfo.InvariantCulture)))};";
-            hash.AppendData(Encoding.UTF8.GetBytes(table + "\0"));
-            using var rows = command.ExecuteReader();
-            while (rows.Read())
-            {
-                bytes += Append(hash, rows);
-                count++;
-            }
-        }
-        return (incarnation, position, count, bytes, Convert.ToHexString(hash.GetHashAndReset()));
+        return (incarnation, position);
     }
 
     internal void Verify(string path, byte[] key)
     {
         using var connection = Open(path, key);
         var observed = Inspect(connection);
-        if (observed.Incarnation != Incarnation || observed.Position < Position || observed.Rows != Rows || observed.Bytes < ImportedBytes || observed.Digest != Digest)
+        if (observed.Incarnation != Incarnation || observed.Position < Position)
         {
-            throw new InvalidDataException("the detached import database content does not match its source evidence");
+            throw new InvalidDataException("the detached import database incarnation or position does not match its intent");
         }
     }
 
-    private static long Append(IncrementalHash hash, SqliteDataReader row)
-    {
-        var length = 0L;
-        Span<byte> scalar = stackalloc byte[9];
-        for (var i = 0; i < row.FieldCount; i++)
-        {
-            switch (row.IsDBNull(i) ? null : row.GetValue(i))
-            {
-                case null:
-                    hash.AppendData([0]);
-                    length++;
-                    break;
-                case long integer:
-                    scalar[0] = 1;
-                    BinaryPrimitives.WriteInt64BigEndian(scalar[1..], integer);
-                    hash.AppendData(scalar);
-                    length += scalar.Length;
-                    break;
-                case double real:
-                    scalar[0] = 2;
-                    BinaryPrimitives.WriteDoubleBigEndian(scalar[1..], real);
-                    hash.AppendData(scalar);
-                    length += scalar.Length;
-                    break;
-                case string text:
-                    var bytes = Encoding.UTF8.GetBytes(text);
-                    scalar[0] = 3;
-                    BinaryPrimitives.WriteInt64BigEndian(scalar[1..], bytes.Length);
-                    hash.AppendData(scalar);
-                    hash.AppendData(bytes);
-                    length += scalar.Length + bytes.Length;
-                    break;
-                case byte[] blob:
-                    scalar[0] = 4;
-                    BinaryPrimitives.WriteInt64BigEndian(scalar[1..], blob.Length);
-                    hash.AppendData(scalar);
-                    hash.AppendData(blob);
-                    length += scalar.Length + blob.Length;
-                    break;
-                default:
-                    throw new InvalidDataException("the detached import has an unsupported value");
-            }
-        }
-        return length;
-    }
 }
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,

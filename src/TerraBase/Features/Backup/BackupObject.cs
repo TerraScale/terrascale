@@ -6,7 +6,7 @@ using NativeCompressions;
 
 namespace TerraBase.Features.Backup;
 
-internal static partial class BackupObject
+internal static class BackupObject
 {
     private const int KeyIdBytes = 26;
     private const int SaltBytes = 32;

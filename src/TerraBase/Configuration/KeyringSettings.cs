@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -47,7 +48,15 @@ public sealed class KeyringSettings
                 throw new TerraBaseConfigurationException("a single master key must use the original id 'k0' for byte compatibility");
             }
 
-            return new(configuration.Active, configuration.Keys.ToFrozenDictionary(pair => pair.Key, pair => BackupSettings.ParseMasterKey(pair.Value), StringComparer.Ordinal));
+            var keys = configuration.Keys.ToFrozenDictionary(pair => pair.Key, pair => BackupSettings.ParseMasterKey(pair.Value), StringComparer.Ordinal);
+            foreach (var (id, material) in keys)
+            {
+                if (keys.Any(pair => pair.Key != id && CryptographicOperations.FixedTimeEquals(pair.Value, material)))
+                {
+                    throw new TerraBaseConfigurationException($"master key id '{id}' duplicates another configured id's material");
+                }
+            }
+            return new(configuration.Active, keys);
         }
         catch (JsonException)
         {

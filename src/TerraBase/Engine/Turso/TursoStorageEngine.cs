@@ -332,10 +332,17 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         meter.CreateObservableGauge("terrabase.storage.open_writers", () => Pool.OpenWriters, description: "Client databases holding an open writer connection.");
         meter.CreateObservableCounter("terrabase.storage.detached_recovery_failures", () => Interlocked.Read(ref _detachedRecoveryFailures),
             description: "Detached database recovery refusals; remaining copies are preserved.");
+        meter.CreateObservableGauge("terrabase.keys.local.wrapped", ObserveLocalKeys,
+            description: "Local persisted wrappers by key id; zero on every node permits retiring an id.");
+        meter.CreateObservableGauge("terrabase.keys.refused", () => _keyRefusals.Count,
+            description: "Databases refused because a configured key cannot authenticate a local wrapper.");
+        meter.CreateObservableGauge("terrabase.storage.retained_files", () => RetainedFiles().LongCount(), "{file}",
+            "Files retained after detached recovery, awaiting separate reclamation.");
+        meter.CreateObservableGauge("terrabase.storage.retained_bytes", () => RetainedFiles().Select(path => new FileInfo(path)).Where(file => file.Exists).Sum(file => file.Length), "By",
+            "Bytes retained after detached recovery, awaiting separate reclamation.");
         _ownership = Own(configured.DataDirectory);
         try
         {
-            KeyringHistory.Record(_dataDirectory, masterKey.Fingerprints);
             nativeTemporaryStorage?.Initialize();
             CheckIntentJournal();
             DeleteRewriteScratch();
@@ -630,6 +637,11 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         DeleteSidecars(path);
                         if (eraseDetached)
                         {
+                            foreach (var retainedKey in Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".key.rewrapping*"))
+                            {
+                                DatabaseKeys.RejectLink(retainedKey);
+                                File.Delete(retainedKey);
+                            }
                             TursoReplicas.DeleteDetached(Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db"));
                             TursoReplicas.DeleteDetached(Path.Combine(_dataDirectory, TursoReplicas.DirectoryName, key.Organization, key.Project, key.Database + ".promote.db"));
                         }
@@ -1304,15 +1316,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RejectDatabaseLinks(path);
             await ThrowIfPurgeFencedAsync(name, CancellationToken.None).ConfigureAwait(false);
             File.Move(temporary + DatabaseKeys.Suffix, path + DatabaseKeys.Suffix, overwrite: false);
-            try
-            {
-                File.Move(temporary, path, overwrite: false);
-            }
-            catch
-            {
-                File.Move(path + DatabaseKeys.Suffix, temporary + DatabaseKeys.Suffix, overwrite: false);
-                throw;
-            }
+            File.Move(temporary, path, overwrite: false);
             var directory = Path.GetDirectoryName(path)!;
             while (true)
             {
@@ -1331,8 +1335,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             {
                 _ = _publishing.TryRemove(publication, out _);
             }
-
-            DeleteFiles(temporary);
         }
     }
 
@@ -1346,7 +1348,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private void DeleteSidecars(string path, bool keepKey = false)
     {
         RejectDatabaseLinks(path);
-        WrappedKeyFile.RemoveLeftover(path + DatabaseKeys.Suffix);
         foreach (var sidecar in Sidecars.Where(sidecar => !keepKey || sidecar != DatabaseKeys.Suffix))
         {
             RejectLink(path + sidecar);

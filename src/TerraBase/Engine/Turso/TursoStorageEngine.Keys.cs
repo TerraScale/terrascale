@@ -23,6 +23,10 @@ internal sealed partial class TursoStorageEngine : IWrappedKeyFiles
 
     internal void ThrowIfDetachedRefused(string path)
     {
+        if (_keyRefusals.TryGetValue(path, out var id))
+        {
+            throw new InvalidDataException($"database '{Path.GetFileNameWithoutExtension(path)}' is refused under key id '{id}'");
+        }
         if (_detachedRefusals.ContainsKey(path) || _detachedRefusalScopes.Keys.Any(scope => Path.GetFullPath(path).StartsWith(scope, StringComparison.Ordinal)))
         {
             throw new InvalidDataException("database '" + Path.GetFileNameWithoutExtension(path) + "' has an unresolved detached import");
@@ -37,7 +41,6 @@ internal sealed partial class TursoStorageEngine : IWrappedKeyFiles
             await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                WrappedKeyFile.RemoveLeftover(path);
                 DatabaseKeys.RejectLink(path);
                 if (!File.Exists(path))
                 {
@@ -45,7 +48,7 @@ internal sealed partial class TursoStorageEngine : IWrappedKeyFiles
                 }
                 var id = await Io.RunAsync(() =>
                 {
-                    var wrapped = DatabaseKeys.ReadWrapped(path[..^DatabaseKeys.Suffix.Length]);
+                    var wrapped = WrappedKeyFile.Read(path);
                     var header = Encryption.Keyring.ActiveId == "k0" ? DatabaseKeys.PreviousHeader : DatabaseKeys.Header;
                     return WrappedKeyFile.Rewrap(path, header, wrapped, Encryption.Keyring, cancellationToken);
                 }, cancellationToken).ConfigureAwait(false);
@@ -62,36 +65,6 @@ internal sealed partial class TursoStorageEngine : IWrappedKeyFiles
         }
     }
 
-    private static IEnumerable<string> KeyFiles(string directory, KeyInventory inventory)
-    {
-        string[] files;
-        string[] children;
-        try
-        {
-            DatabaseKeys.RejectLink(directory);
-            files = Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix)
-                .Concat(Directory.GetFiles(directory, "*" + DatabaseKeys.Suffix + ".rewrapping").Select(path => path[..^11]))
-                .Distinct(StringComparer.Ordinal).ToArray();
-            children = Directory.GetDirectories(directory);
-        }
-        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
-        {
-            inventory.Unreadable(directory);
-            yield break;
-        }
-        foreach (var file in files)
-        {
-            yield return file;
-        }
-        foreach (var child in children)
-        {
-            if (Path.GetFileName(child) != TursoReplicas.DirectoryName)
-            {
-                foreach (var file in KeyFiles(child, inventory))
-                {
-                    yield return file;
-                }
-            }
-        }
-    }
+    private static IEnumerable<string> KeyFiles(string directory, KeyInventory inventory) =>
+        WrappedKeyFile.Paths(directory).Where(path => !Path.GetRelativePath(directory, path).StartsWith(TursoReplicas.DirectoryName + Path.DirectorySeparatorChar, StringComparison.Ordinal));
 }

@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using Amazon.S3;
 using TerraBase.Engine;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
@@ -9,13 +10,12 @@ using ZLogger;
 namespace TerraBase.Features.Backup;
 
 internal sealed class KeyRewrap(
-    IKeyring keyring, IEnumerable<IWrappedKeyFiles> files, CredentialKeyRewrap credentials, KeySnapshotInventory snapshots,
+    IKeyring keyring, IStorageEngine storage, IEnumerable<IWrappedKeyFiles> files, CredentialKeyRewrap credentials,
     IMeterFactory meters, TimeProvider time, ILogger<KeyRewrap> logger, ICatalogGate gate, RegionalOwners owners, KeyRewrapFaults faults, KeyCustody? custody = null) : BackgroundService
 {
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private readonly HashSet<string> _logged = new(StringComparer.Ordinal);
     private IReadOnlyDictionary<string, long>? _counts;
-    private IReadOnlyDictionary<string, double>? _snapshotAges;
     private long _lastComplete;
     private long _unreadable;
 
@@ -24,8 +24,6 @@ internal sealed class KeyRewrap(
         _meter.CreateObservableGauge("terrabase.keys.wrapped", Observe, description: "Wrapped items per key id; unreadable items block retirement.");
         _meter.CreateObservableGauge("terrabase.keys.last_complete", () => Interlocked.Read(ref _lastComplete), "s",
             "Unix time of the last complete writer inventory, including unreadable items; zero until the first writer completion.");
-        _meter.CreateObservableGauge("terrabase.keys.oldest_snapshot_age", ObserveSnapshots, "s",
-            "Age of the oldest retained platform snapshot embedding each key id; zero means none, minus one means unknown.");
         if (keyring.KeyIds.Count == 1)
         {
             Volatile.Write(ref _counts, keyring.KeyIds.ToDictionary(id => id, _ => -1L, StringComparer.Ordinal));
@@ -36,7 +34,6 @@ internal sealed class KeyRewrap(
         do
         {
             Volatile.Write(ref _counts, null);
-            Volatile.Write(ref _snapshotAges, null);
             try
             {
                 var writer = owners.Writer;
@@ -74,14 +71,15 @@ internal sealed class KeyRewrap(
                         }
                     }
                 }
-                IReadOnlyDictionary<string, double> ages = keyring.KeyIds.ToDictionary(id => id, _ => -1d, StringComparer.Ordinal);
                 if (writer)
                 {
                     await credentials.RunAsync(inventory, cancellationToken).ConfigureAwait(false);
-                    ages = await snapshots.RunAsync(inventory, cancellationToken).ConfigureAwait(false);
+                }
+                if (storage is TursoStorageEngine engine)
+                {
+                    await engine.InventoryKeysAsync(cancellationToken).ConfigureAwait(false);
                 }
                 Interlocked.Exchange(ref _unreadable, inventory.UnreadableCount);
-                Volatile.Write(ref _snapshotAges, ages);
                 Volatile.Write(ref _counts, writer ? inventory.Counts
                     : keyring.KeyIds.ToDictionary(id => id, _ => -1L, StringComparer.Ordinal));
                 if (writer)
@@ -101,10 +99,6 @@ internal sealed class KeyRewrap(
         ? counts.Select(pair => new Measurement<long>(pair.Value, new KeyValuePair<string, object?>("key_id", pair.Key)))
             .Append(new Measurement<long>(Interlocked.Read(ref _unreadable) + faults.Count, new KeyValuePair<string, object?>("status", "unreadable")))
         : [new Measurement<long>(faults.Count, new KeyValuePair<string, object?>("status", "unreadable"))];
-
-    private IEnumerable<Measurement<double>> ObserveSnapshots() => Volatile.Read(ref _snapshotAges) is { } ages
-        ? ages.Select(pair => new Measurement<double>(pair.Value, new KeyValuePair<string, object?>("key_id", pair.Key)))
-        : keyring.KeyIds.Select(id => new Measurement<double>(-1, new KeyValuePair<string, object?>("key_id", id)));
 
     public override void Dispose()
     {

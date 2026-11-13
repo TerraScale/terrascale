@@ -104,8 +104,14 @@ public sealed class BackupSettings
     internal static byte[] ParseMasterKey(string value)
     {
         var key = new byte[33];
-        return Convert.TryFromBase64String(value, key, out var written) && written == 32
-            ? key[..32]
-            : throw new TerraBaseConfigurationException("master-key must be 32 bytes, base64");
+        if (!Convert.TryFromBase64String(value, key, out var written) || written != 32)
+        {
+            throw new TerraBaseConfigurationException("master-key must be exactly 32 bytes, base64");
+        }
+        if (key.AsSpan(0, 32).IndexOfAnyExcept(key[0]) < 0)
+        {
+            throw new TerraBaseConfigurationException("master-key must not consist of one repeated byte");
+        }
+        return key[..32];
     }
 }
