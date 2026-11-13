@@ -4,12 +4,16 @@ import { request as upgrade } from 'node:http';
 import type { Socket } from 'node:net';
 import { expect } from '@playwright/test';
 
-export function frame(opcode: number, payload: Buffer): Buffer {
-  expect(payload.length).toBeLessThan(126);
+export function frame(opcode: number, payload: Buffer, final = true): Buffer {
   const mask = randomBytes(4);
   const masked = Buffer.from(payload);
   for (let i = 0; i < masked.length; i++) masked[i] ^= mask[i % 4];
-  return Buffer.concat([Buffer.from([128 | opcode, 128 | payload.length]), mask, masked]);
+  const prefix = Buffer.alloc(payload.length < 126 ? 2 : payload.length < 65536 ? 4 : 10);
+  prefix[0] = (final ? 128 : 0) | opcode;
+  prefix[1] = 128 | (prefix.length === 2 ? payload.length : prefix.length === 4 ? 126 : 127);
+  if (prefix.length === 4) prefix.writeUInt16BE(payload.length, 2);
+  if (prefix.length === 10) prefix.writeBigUInt64BE(BigInt(payload.length), 2);
+  return Buffer.concat([prefix, mask, masked]);
 }
 
 export async function rawSqlSocket(url: string, credential?: string) {
@@ -50,4 +54,39 @@ export async function rawSqlSocket(url: string, credential?: string) {
 
   if (head.length > 0) socket.unshift(head);
   return { socket: socket as Socket, closing, closed, events };
+}
+
+
+export function pacedWrite(socket: Socket, bytes: Buffer, bytesPerSecond: number, chunkBytes: number): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const started = performance.now();
+    let offset = 0;
+    let timer: NodeJS.Timeout;
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off('close', closed);
+      socket.off('error', failed);
+    };
+    const closed = () => { cleanup(); resolve(false); };
+    const failed = (error: Error) => { cleanup(); reject(error); };
+    const write = () => {
+      const next = Math.min(bytes.length, offset + chunkBytes);
+      socket.write(bytes.subarray(offset, next));
+      offset = next;
+      if (offset === bytes.length) {
+        cleanup();
+        resolve(true);
+      } else {
+        timer = setTimeout(write, Math.max(0, offset * 1000 / bytesPerSecond - (performance.now() - started)));
+      }
+    };
+    socket.once('close', closed);
+    socket.once('error', failed);
+    write();
+  });
+}
+
+export function scheduleStatement(socket: Socket, bytes: Buffer, began: number, elapsed: number): () => void {
+  const timer = setTimeout(() => socket.write(bytes), Math.max(0, began + elapsed - performance.now()));
+  return () => clearTimeout(timer);
 }

@@ -253,13 +253,12 @@ internal sealed class SqlSocket(
             return null;
         }
 
-        var partial = false;
         var transaction = _session?.TransactionRemaining;
-        using var idle = new CancellationTokenSource(transaction ?? QosSessions.IdleTimeout, time);
+        using var idle = new SessionMessageDeadline(time, transaction);
         var closing = Task.CompletedTask;
         var expired = idle.Token.Register(() => closing = ExpireAsync());
         var input = context.Features.GetRequiredFeature<SqlSocketInput>();
-        input.Started = StartMessage;
+        input.Progress = (bytes, started) => idle.Progress(bytes, started);
         using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closed.Token);
         var buffer = ArrayPool<byte>.Shared.Rent(FirstBufferBytes);
         var length = 0;
@@ -309,11 +308,6 @@ internal sealed class SqlSocket(
                 }
 
                 length += read.Count;
-                if (!read.EndOfMessage)
-                {
-                    StartMessage();
-                }
-
                 if (read.EndOfMessage)
                 {
                     return (buffer, length, reservation);
@@ -332,7 +326,7 @@ internal sealed class SqlSocket(
         }
         finally
         {
-            input.Started = null;
+            input.Progress = null;
             await expired.DisposeAsync().ConfigureAwait(false);
             await closing.ConfigureAwait(false);
         }
@@ -346,16 +340,7 @@ internal sealed class SqlSocket(
             }
 
             await CloseAsync(WebSocketCloseStatus.PolicyViolation, transaction is not null ? SqlErrors.TransactionExpired.Message
-                : partial ? "incomplete message timeout exceeded" : "session idle timeout exceeded").ConfigureAwait(false);
-        }
-
-        void StartMessage()
-        {
-            if (!partial && _session is not { IsAutocommit: false })
-            {
-                partial = true;
-                idle.CancelAfter(QosSessions.MessageTimeout);
-            }
+                : idle.IsPartial ? "incomplete message timeout exceeded" : "session idle timeout exceeded").ConfigureAwait(false);
         }
 
         void Release()
@@ -583,6 +568,9 @@ internal sealed class SqlSocket(
     private async ValueTask<long> SendAsync<T>(T frame, JsonTypeInfo<T> type, CancellationToken cancellationToken)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, type);
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(QosSessions.MessageTimeout);
+        cancellationToken = bounded.Token;
         await _send.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {

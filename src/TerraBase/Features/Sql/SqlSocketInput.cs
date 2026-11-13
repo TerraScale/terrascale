@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace TerraBase.Features.Sql;
 
-internal sealed class SqlSocketInput
+internal sealed class SqlSocketInput(TimeProvider time)
 {
     private int _header;
     private bool _invalid;
@@ -13,7 +13,11 @@ internal sealed class SqlSocketInput
     private bool _final;
     private bool _control;
 
-    public Action? Started
+    private int _received;
+    private int _maskBytes;
+    private long _started;
+
+    public Action<int, long>? Progress
     {
         get;
         set
@@ -21,7 +25,7 @@ internal sealed class SqlSocketInput
             field = value;
             if (_message)
             {
-                field?.Invoke();
+                field?.Invoke(_received, _started);
             }
         }
     }
@@ -35,7 +39,7 @@ internal sealed class SqlSocketInput
             return;
         }
 
-        var input = new SqlSocketInput();
+        var input = new SqlSocketInput(context.RequestServices.GetRequiredService<TimeProvider>());
         context.Features.Set(input);
         if (upgrade is { IsUpgradableRequest: true })
         {
@@ -58,8 +62,13 @@ internal sealed class SqlSocketInput
                 _final = (bytes[0] & 128) != 0;
                 if (!_control)
                 {
-                    _message = true;
-                    Started?.Invoke();
+                    if (!_message)
+                    {
+                        _started = time.GetTimestamp();
+                        _message = true;
+                    }
+
+                    Report(0);
                 }
 
                 _header = 1;
@@ -67,6 +76,7 @@ internal sealed class SqlSocketInput
             else if (_header == 1)
             {
                 _masked = (bytes[0] & 128) != 0;
+                _maskBytes = _masked ? 4 : 0;
                 var length = bytes[0] & 127;
                 _extended = length switch { 126 => 2, 127 => 8, _ => 0 };
                 _remaining = _extended == 0 ? (ulong)length : 0;
@@ -81,7 +91,7 @@ internal sealed class SqlSocketInput
                 if (_extended == 8 && (bytes[0] & 128) != 0)
                 {
                     _invalid = true;
-                    Started = null;
+                    Progress = null;
                     return;
                 }
 
@@ -96,6 +106,12 @@ internal sealed class SqlSocketInput
             {
                 var count = (int)Math.Min((ulong)bytes.Length, _remaining);
                 _remaining -= (ulong)count;
+                if (!_control)
+                {
+                    var mask = Math.Min(count, _maskBytes);
+                    _maskBytes -= mask;
+                    Report(count - mask);
+                }
                 bytes = bytes[count..];
                 if (_remaining == 0)
                 {
@@ -113,12 +129,19 @@ internal sealed class SqlSocketInput
         }
     }
 
+    private void Report(int bytes)
+    {
+        _received += bytes;
+        Progress?.Invoke(bytes, _started);
+    }
+
     private void Finish()
     {
         _header = 0;
         if (!_control && _final)
         {
             _message = false;
+            _received = 0;
         }
     }
 

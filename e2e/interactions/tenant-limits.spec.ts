@@ -1,12 +1,10 @@
-import { connect } from 'node:net';
-import { EventEmitter } from 'node:events';
-import type { Socket } from 'node:net';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { connect as peer } from 'node:http2';
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { frame, rawSqlSocket } from '../support/sql-socket';
+import { frame, pacedWrite, rawSqlSocket } from '../support/sql-socket';
+import { message, postgres } from '../support/postgres-wire';
 import { auth, onLocalStack, stateDir } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 
@@ -27,68 +25,6 @@ async function token(request: APIRequestContext, scope: string): Promise<string>
   const credential = (await response.json()).access_token as string;
   saveSecret('session-token', credential);
   return credential;
-}
-
-async function* messages(socket: Socket) {
-  let buffered = Buffer.alloc(0);
-  for await (const chunk of socket) {
-    buffered = Buffer.concat([buffered, chunk]);
-    while (buffered.length >= 5 && buffered.length >= 1 + buffered.readInt32BE(1)) {
-      const length = buffered.readInt32BE(1);
-      yield { type: String.fromCharCode(buffered[0]), body: buffered.subarray(5, length + 1) };
-      buffered = buffered.subarray(length + 1);
-    }
-  }
-}
-
-function message(type: string, body: Buffer): Buffer {
-  const prefix = Buffer.alloc(5);
-  prefix.write(type);
-  prefix.writeInt32BE(body.length + 4, 1);
-  return Buffer.concat([prefix, body]);
-}
-
-async function postgres() {
-  const current = journey();
-  const socket = connect(6432, '127.0.0.1');
-  await once(socket, 'connect');
-  const parameters = Buffer.from(`user\0any\0database\0${current.projectId}/${current.databaseId}\0\0`);
-  const prefix = Buffer.alloc(8);
-  prefix.writeInt32BE(parameters.length + 8);
-  prefix.writeInt32BE(196608, 4);
-  let admitted!: (value: boolean) => void;
-  const connected = new Promise<boolean>(resolve => { admitted = resolve; });
-  const errors: string[] = [];
-  const results = new EventEmitter();
-  const closed = (async () => {
-    for await (const packet of messages(socket)) {
-      if (packet.type === 'R' && packet.body.readInt32BE() === 3) {
-        socket.write(message('p', Buffer.from(current.apiKey + '\0')));
-      }
-      if (packet.type === 'Z') { admitted(true); results.emit('ready'); }
-      if (packet.type === 'D') results.emit('row', packet.body.subarray(6).toString());
-      if (packet.type === 'E') {
-        errors.push(...packet.body.toString().split('\0').filter(Boolean));
-        admitted(false);
-      }
-    }
-    admitted(false);
-    return errors;
-  })();
-  socket.write(Buffer.concat([prefix, parameters]));
-  return {
-    socket, connected, closed,
-    begin: async () => {
-      const ready = once(results, 'ready');
-      socket.write(message('Q', Buffer.from('BEGIN\0')));
-      await ready;
-    },
-    query: async () => {
-      const row = once(results, 'row');
-      socket.write(message('Q', Buffer.from('SELECT 42\0')));
-      return (await row)[0] as string;
-    },
-  };
 }
 
 async function websocket(credential: string) {
@@ -179,9 +115,11 @@ test('one serving process shares session caps and bounds incomplete messages wit
       expect(socketRefusal.reply).toMatchObject({ type: 'error', error: { code: 'tenant_busy' } });
       expect((await socketRefusal.closed).code).toBe(1008);
 
-      first.socket.write(Buffer.from('Q'));
-      fragmented.socket.write(Buffer.from([1]));
+      const pgTrickle = pacedWrite(first.socket, message('Q', Buffer.from('SELECT 42' + ' '.repeat(100) + '\0')), 1, 1);
+      const wsTrickle = pacedWrite(fragmented.socket, frame(1, Buffer.from(' '.repeat(100))), 1, 1);
       const [pgPartial, wsPartial] = await Promise.all([first.closed, fragmented.closed]);
+      expect(await pgTrickle).toBe(false);
+      expect(await wsTrickle).toBe(false);
       expect(pgPartial).toContain('C57P05');
       expect(pgPartial).toContain('Mincomplete message timeout exceeded');
       expect(wsPartial).toEqual({ code: 1008, reason: 'incomplete message timeout exceeded' });
@@ -306,6 +244,34 @@ test('a prohibited 64-bit frame length fails the connection and leaves SQL avail
     } finally {
       healthy.socket.close();
       await healthy.closed;
+    }
+  });
+});
+
+test('honest uploads that progress beyond thirty seconds finish on both protocols', async ({ request }) => {
+  await onLocalStack(async () => {
+    const credential = await token(request, 'sql:read sql:write');
+    const pg = await postgres();
+    const ws = await partialWebsocket(credential);
+    try {
+      expect(await pg.connected).toBe(true);
+      const received = once(ws.events, 'message');
+      const row = once(pg.results, 'row');
+      const padding = ' '.repeat(896 * 1024);
+      const pgBytes = message('Q', Buffer.from('SELECT 42' + padding + '\0'));
+      const wsBytes = frame(1, Buffer.from(JSON.stringify({ id: 7, type: 'execute', statements: [{ sql: 'SELECT 42' }] }) + padding));
+      const began = performance.now();
+      expect(await Promise.all([
+        pacedWrite(pg.socket, pgBytes, 24 * 1024, 4096),
+        pacedWrite(ws.socket, wsBytes, 24 * 1024, 4096),
+      ])).toEqual([true, true]);
+      expect(performance.now() - began).toBeGreaterThan(30_000);
+      expect((await row)[0]).toBe('42');
+      expect((await received)[0].results[0].rows).toEqual([[42]]);
+    } finally {
+      if (!pg.socket.destroyed) pg.socket.end(message('X', Buffer.alloc(0)));
+      ws.socket.destroy();
+      await Promise.all([pg.closed, ws.closed]);
     }
   });
 });

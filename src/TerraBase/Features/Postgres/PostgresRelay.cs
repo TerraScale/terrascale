@@ -43,27 +43,20 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
     internal async Task RunAsync(HomeNode home, byte[] startup, IPAddress? client, PipeReader input, PipeWriter output, CancellationToken closed)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(closed);
+        stop.CancelAfter(TimeSpan.FromSeconds(10));
+        using var upstream = new Upstream(startup, input, stop.Token);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Address, Path))
         {
             Version = HttpVersion.Version20,
             VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-            Content = new Upstream(startup, input),
+            Content = upstream,
         };
         credential.Sign(request.Headers);
         request.Headers.TryAddWithoutValidation(ClientHeader, (client ?? IPAddress.None).ToString());
-        HttpResponseMessage response;
         try
         {
-            response = await http.CreateClient(HomeLocator.HttpClientName).SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stop.Token).ConfigureAwait(false);
-        }
-        catch (HttpRequestException)
-        {
-            await RefuseAsync(output, home, closed).ConfigureAwait(false);
-            return;
-        }
-
-        using (response)
-        {
+            using var response = await http.CreateClient(HomeLocator.HttpClientName)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stop.Token).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 await RefuseAsync(output, home, closed).ConfigureAwait(false);
@@ -71,42 +64,41 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
             }
 
             await using var downstream = await response.Content.ReadAsStreamAsync(stop.Token).ConfigureAwait(false);
-            var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
-            try
+            var header = new byte[5];
+            var authenticating = true;
+            while (authenticating)
             {
-                var first = 0;
-                while (first < CleartextRequest.Length)
+                await downstream.ReadExactlyAsync(header, stop.Token).ConfigureAwait(false);
+                var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1));
+                if (length is < 4 or > 1024 * 1024)
                 {
-                    var read = await downstream.ReadAsync(buffer.AsMemory(first, CleartextRequest.Length - first), stop.Token).ConfigureAwait(false);
-                    if (read == 0)
-                    {
-                        break;
-                    }
-
-                    first += read;
+                    throw new InvalidDataException("invalid relay startup message length");
                 }
 
-                if (!buffer.AsSpan(0, first).SequenceEqual(CleartextRequest))
+                var body = new byte[length - 4];
+                await downstream.ReadExactlyAsync(body, stop.Token).ConfigureAwait(false);
+                if (header[0] == 'R' && body.AsSpan().SequenceEqual(CleartextRequest[5..]))
                 {
-                    await output.WriteAsync(buffer.AsMemory(0, first), stop.Token).ConfigureAwait(false);
+                    continue;
                 }
 
-                for (int read; (read = await downstream.ReadAsync(buffer, stop.Token).ConfigureAwait(false)) > 0;)
-                {
-                    if ((await output.WriteAsync(buffer.AsMemory(0, read), stop.Token).ConfigureAwait(false)).IsCompleted)
-                    {
-                        break;
-                    }
-                }
+                await output.WriteAsync(header, stop.Token).ConfigureAwait(false);
+                await output.WriteAsync(body, stop.Token).ConfigureAwait(false);
+                authenticating = header[0] is not ((byte)'Z' or (byte)'E');
             }
-            catch (Exception error) when (error is IOException or HttpRequestException)
-            {
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-                await stop.CancelAsync().ConfigureAwait(false);
-            }
+
+            stop.CancelAfter(Timeout.InfiniteTimeSpan);
+            await downstream.CopyToAsync(output.AsStream(leaveOpen: true), stop.Token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !closed.IsCancellationRequested)
+        {
+            await RefuseAsync(output, home, closed).ConfigureAwait(false);
+        }
+        finally
+        {
+            await stop.CancelAsync().ConfigureAwait(false);
+            input.CancelPendingRead();
+            await upstream.DrainAsync().ConfigureAwait(false);
         }
     }
 
@@ -123,11 +115,28 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
         writer.Write([(byte)0]);
     }
 
-    private sealed class Upstream(byte[] startup, PipeReader input) : HttpContent
+    private sealed class Upstream(byte[] startup, PipeReader input, CancellationToken stop) : HttpContent
     {
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => SerializeToStreamAsync(stream, context, CancellationToken.None);
 
-        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken)
+        private Task _forwarding = Task.CompletedTask;
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken) =>
+            _forwarding = ForwardAsync(stream, stop);
+
+        public async Task DrainAsync()
+        {
+            try
+            {
+                await _forwarding.ConfigureAwait(false);
+            }
+            catch (Exception error) when (stop.IsCancellationRequested && error is OperationCanceledException or IOException or HttpRequestException)
+            {
+                return;
+            }
+        }
+
+        private async Task ForwardAsync(Stream stream, CancellationToken cancellationToken)
         {
             await stream.WriteAsync(startup, cancellationToken).ConfigureAwait(false);
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);

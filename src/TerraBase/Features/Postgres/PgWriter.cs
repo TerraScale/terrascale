@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Text;
+using TerraBase.Features.Qos;
 
 namespace TerraBase.Features.Postgres;
 
@@ -77,7 +78,12 @@ internal sealed class PgWriter(PipeWriter pipe)
 
     public void Notice(PgError notice) => Fields('N', "WARNING", notice.Code, notice.Message, null);
 
-    public ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken) => pipe.FlushAsync(cancellationToken);
+    public async ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken)
+    {
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(QosSessions.MessageTimeout);
+        return await pipe.FlushAsync(bounded.Token).ConfigureAwait(false);
+    }
 
     private void Fields(char type, string severity, string code, string message, string? detail)
     {

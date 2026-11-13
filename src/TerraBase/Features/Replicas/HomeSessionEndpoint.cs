@@ -14,7 +14,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Replicas;
 
 internal sealed class HomeSessionEndpoint(
-    ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local)
+    ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local, QosSessions sessions)
     : EndpointWithoutRequest<IResult>
 {
     private static readonly SqlError NotHere = new(SqlErrors.WrongRegion, "this region is not the database's home for that replica region");
@@ -59,7 +59,9 @@ internal sealed class HomeSessionEndpoint(
         var output = HttpContext.Response.BodyWriter;
         try
         {
-            var open = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionOpen, memory, tenant: null, cancellationToken).ConfigureAwait(false);
+            using var opening = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            opening.CancelAfter(QosSessions.MessageTimeout);
+            var open = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionOpen, memory, tenant: null, opening.Token).ConfigureAwait(false);
             if (open is null)
             {
                 return Results.Empty;
@@ -110,16 +112,52 @@ internal sealed class HomeSessionEndpoint(
     private async Task ServeAsync(TenantContext database, string origin, bool canWrite, PipeReader input, PipeWriter output,
         CancellationToken cancellationToken)
     {
+        using var lease = sessions.TryEnter(database);
+        if (lease is null)
+        {
+            await AnswerAsync(output, new HomeSessionAnswer(true, new SqlError(SqlErrors.TenantBusy, "organization session limit exceeded")), cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
         {
-            await AnswerAsync(output, new HomeSessionAnswer(true), cancellationToken).ConfigureAwait(false);
-            while (await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionCall, memory, database, cancellationToken).ConfigureAwait(false) is { } call)
+            using (var opening = session.TransactionDeadline.Bound(SqlLimits.MaxRequestTime, cancellationToken))
             {
-                HomeSessionAnswer answer;
-                if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, cancellationToken).ConfigureAwait(false))
+                await AnswerAsync(output, new HomeSessionAnswer(true), opening.Token).ConfigureAwait(false);
+            }
+            while (true)
+            {
+                using var waiting = session.TransactionDeadline.Bound(QosSessions.IdleTimeout, cancellationToken);
+                HomeSessionCall? call;
+                try
                 {
-                    await AnswerAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), cancellationToken).ConfigureAwait(false);
+                    call = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionCall, memory, database, waiting.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    using var drain = new CancellationTokenSource(Shutdown.DrainBudget);
+                    await AnswerAsync(output, new HomeSessionAnswer(true, SqlErrors.TransactionExpired), drain.Token).ConfigureAwait(false);
+                    return;
+                }
+
+                if (call is null)
+                {
+                    return;
+                }
+
+                if (call.Remaining is { } remaining)
+                {
+                    session.TransactionDeadline.Limit(remaining);
+                }
+
+                using var running = session.TransactionDeadline.Bound(SqlLimits.MaxRequestTime, cancellationToken);
+                var requestToken = running.Token;
+                HomeSessionAnswer answer;
+                if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, requestToken).ConfigureAwait(false))
+                {
+                    await AnswerAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), requestToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -134,7 +172,7 @@ internal sealed class HomeSessionEndpoint(
                             "execute" => SqlScript.Classify(call.Sql) switch
                             {
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
-                                SqlStatementPlan plan => await session.ExecuteAsync(new SqlPlannedCommand(plan, command), cancellationToken).ConfigureAwait(false) switch
+                                SqlStatementPlan plan => await session.ExecuteAsync(new SqlPlannedCommand(plan, command), requestToken).ConfigureAwait(false) switch
                                 {
                                     SqlResult result => Answered(session, result),
                                     SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
@@ -143,13 +181,13 @@ internal sealed class HomeSessionEndpoint(
                             "describe" => SqlScript.Classify(call.Sql) switch
                             {
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
-                                SqlStatementPlan plan => await session.DescribeAsync(plan, command, cancellationToken).ConfigureAwait(false) switch
+                                SqlStatementPlan plan => await session.DescribeAsync(plan, command, requestToken).ConfigureAwait(false) switch
                                 {
                                     SqlDescription description => new HomeSessionAnswer(session.IsAutocommit, Description: description),
                                     SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
                                 },
                             },
-                            "batch" => await BatchAsync(session, call.Batch, cancellationToken).ConfigureAwait(false),
+                            "batch" => await BatchAsync(session, call.Batch, requestToken).ConfigureAwait(false),
                             _ => new HomeSessionAnswer(session.IsAutocommit, new SqlError(SqlErrors.InvalidRequest, "op is execute, describe or batch")),
                         };
                     }
@@ -163,7 +201,7 @@ internal sealed class HomeSessionEndpoint(
                     }
                 }
 
-                await AnswerAsync(output, answer, cancellationToken).ConfigureAwait(false);
+                await AnswerAsync(output, answer, requestToken).ConfigureAwait(false);
             }
         }
     }

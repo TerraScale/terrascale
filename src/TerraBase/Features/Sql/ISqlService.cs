@@ -63,6 +63,8 @@ internal interface ISqlSession : IAsyncDisposable
 
     TimeSpan? TransactionRemaining { get; }
 
+    SqlTransactionDeadline TransactionDeadline { get; set; }
+
     void BeginRequest();
 
     ValueTask<SqlOutcome> ExecuteAsync(SqlPlannedCommand planned, CancellationToken cancellationToken);
