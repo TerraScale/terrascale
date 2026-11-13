@@ -35,6 +35,7 @@ internal sealed class AtlasPlacementPublisher(
     internal const string HttpClientName = "atlas-publish";
 
     private const string Outbox = "atlas_placement_outbox";
+    private const string Published = "atlas_placement_published";
     private const int Batch = 64;
     private const int Listed = 1024;
     private static readonly TimeSpan FirstRetry = TimeSpan.FromSeconds(1);
@@ -42,22 +43,43 @@ internal sealed class AtlasPlacementPublisher(
     private static readonly TimeSpan ResyncInterval = TimeSpan.FromMinutes(10);
     private long _pending;
     private readonly Counter<long> _publishes = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.atlas.placement_publishes",
-        description: "Database placements POSTed to Atlas by result: updated, stale, retryable or refused.");
+        description: "Database placements POSTed to Atlas by result: updated, stale, retryable, refused or queue_failed.");
 
     public async Task QueueAsync(string project, string database, string? region, CancellationToken cancellationToken)
     {
-        var id = Key(project, database);
-        _ = await catalog.WriteUncheckedAsync(async transaction =>
+        try
         {
-            var previous = await transaction.GetAsync(Outbox, id, cancellationToken).ConfigureAwait(false) is { } stored
-                ? JsonSerializer.Deserialize(stored.Json.Span, AtlasPlacementsJsonContext.Default.AtlasPlacementWork)
-                : null;
-            var now = time.GetUtcNow().ToUnixTimeSeconds();
-            var updated = Math.Max(now, (previous?.Updated ?? 0) + 1);
-            _ = await transaction.PutAsync(Outbox, id, JsonSerializer.SerializeToUtf8Bytes(
-                new AtlasPlacementWork(project, database, region, updated, 0, now), AtlasPlacementsJsonContext.Default.AtlasPlacementWork), cancellationToken).ConfigureAwait(false);
-            return true;
-        }, static _ => false, cancellationToken, durable: true).ConfigureAwait(false);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10), time);
+            var queued = await catalog.WriteUncheckedAsync(async transaction =>
+            {
+                await EnqueueAsync(transaction, project, database, region, timeout.Token).ConfigureAwait(false);
+                return true;
+            }, static _ => false, timeout.Token, durable: true).ConfigureAwait(false);
+            if (!queued)
+            {
+                throw new InvalidOperationException("the system catalog is unavailable for the Atlas placement queue");
+            }
+        }
+        catch (Exception error)
+        {
+            logger.ZLogError(error, $"Queueing Atlas placement for project {project:@Project} and database {database:@Database} failed");
+            _publishes.Add(1, new KeyValuePair<string, object?>("result", "queue_failed"));
+        }
+    }
+
+    private async ValueTask EnqueueAsync(IStorageTransaction transaction, string project, string database, string? region, CancellationToken cancellationToken)
+    {
+        var id = Key(project, database);
+        var previous = await transaction.GetAsync(Outbox, id, cancellationToken).ConfigureAwait(false) is { } stored
+            ? JsonSerializer.Deserialize(stored.Json.Span, AtlasPlacementsJsonContext.Default.AtlasPlacementWork)
+            : null;
+        var published = await transaction.GetAsync(Published, id, cancellationToken).ConfigureAwait(false) is { } last
+            ? JsonSerializer.Deserialize(last.Json.Span, AtlasPlacementsJsonContext.Default.AtlasPlacementStamp)?.Updated ?? 0
+            : 0;
+        var now = time.GetUtcNow().ToUnixTimeSeconds();
+        var updated = Math.Max(now, Math.Max(published + 1, (previous?.Updated ?? 0) + 1));
+        _ = await transaction.PutAsync(Outbox, id, JsonSerializer.SerializeToUtf8Bytes(
+            new AtlasPlacementWork(project, database, region, updated, 0, now), AtlasPlacementsJsonContext.Default.AtlasPlacementWork), cancellationToken).ConfigureAwait(false);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -96,7 +118,20 @@ internal sealed class AtlasPlacementPublisher(
                 cancellationToken).ConfigureAwait(false);
             foreach (var database in page)
             {
-                await QueueAsync(database.ProjectId!, database.DatabaseId!, options.Region, cancellationToken).ConfigureAwait(false);
+                var queued = await catalog.WriteUncheckedAsync(async transaction =>
+                {
+                    var current = await CatalogTables.DatabaseAsync(transaction, database.ProjectId!, database.DatabaseId!, cancellationToken).ConfigureAwait(false);
+                    if (current is not null && current.Home(options.Region) == options.Region)
+                    {
+                        await EnqueueAsync(transaction, current.ProjectId, current.Name, current.Home(options.Region), cancellationToken).ConfigureAwait(false);
+                    }
+
+                    return true;
+                }, static _ => false, cancellationToken, durable: true).ConfigureAwait(false);
+                if (!queued)
+                {
+                    throw new InvalidOperationException("the system catalog is unavailable for the Atlas placement resync");
+                }
             }
 
             if (page.Count < Batch)
@@ -111,13 +146,29 @@ internal sealed class AtlasPlacementPublisher(
     internal async Task RunOnceAsync(CancellationToken token)
     {
         var now = time.GetUtcNow();
-        var inventory = await catalog.ReadUncheckedAsync(transaction => transaction.ListAsync(Outbox, null, Listed, Listed * 2048L, token), token).ConfigureAwait(false);
-        Interlocked.Exchange(ref _pending, inventory.Records.Count);
-        var rows = inventory.Records
-            .Select(record => (Id: record.Id, Work: JsonSerializer.Deserialize(record.Json.Span, AtlasPlacementsJsonContext.Default.AtlasPlacementWork)!))
-            .Where(item => item.Work.NextAt <= now.ToUnixTimeSeconds())
-            .OrderBy(item => item.Work.NextAt).ThenBy(item => item.Id, StringComparer.Ordinal)
-            .Take(Batch).ToArray();
+        var inventory = await catalog.ReadUncheckedAsync(async transaction =>
+        {
+            string? after = null;
+            long pending = 0;
+            (string Id, AtlasPlacementWork Work)[] due = [];
+            RecordPage page;
+            do
+            {
+                page = await transaction.ListAsync(Outbox, after, Listed, Listed * 2048L, token).ConfigureAwait(false);
+                pending += page.Records.Count;
+                due = [.. due.Concat(page.Records.Select(record =>
+                        (Id: record.Id, Work: JsonSerializer.Deserialize(record.Json.Span, AtlasPlacementsJsonContext.Default.AtlasPlacementWork)!)))
+                    .Where(item => item.Work.NextAt <= now.ToUnixTimeSeconds())
+                    .OrderBy(item => item.Work.NextAt).ThenBy(item => item.Id, StringComparer.Ordinal)
+                    .Take(Batch)];
+                after = page.Records.Count > 0 ? page.Records[^1].Id : after;
+            }
+            while (page.HasMore);
+
+            return (Pending: pending, Rows: due);
+        }, token).ConfigureAwait(false);
+        Interlocked.Exchange(ref _pending, inventory.Pending);
+        var rows = inventory.Rows;
         if (rows.Length == 0)
         {
             return;
@@ -130,7 +181,7 @@ internal sealed class AtlasPlacementPublisher(
         if (answer is AtlasRefusal refusal)
         {
             logger.ZLogError($"Atlas refused placement publish with status {refusal.Status}; dropping {rows.Length} placements that can never land");
-            await RemoveAsync(rows, token).ConfigureAwait(false);
+            await RemoveAsync(rows, published: false, token).ConfigureAwait(false);
             _publishes.Add(rows.Length, new KeyValuePair<string, object?>("result", "refused"));
             return;
         }
@@ -159,7 +210,7 @@ internal sealed class AtlasPlacementPublisher(
 
         if (settled.Count > 0)
         {
-            await RemoveAsync([.. settled], token).ConfigureAwait(false);
+            await RemoveAsync([.. settled], published: true, token).ConfigureAwait(false);
         }
 
         if (retryable.Count > 0)
@@ -206,13 +257,30 @@ internal sealed class AtlasPlacementPublisher(
             : new AtlasRetry();
     }
 
-    private async Task RemoveAsync((string Id, AtlasPlacementWork Work)[] rows, CancellationToken token)
+    private async Task RemoveAsync((string Id, AtlasPlacementWork Work)[] rows, bool published, CancellationToken token)
     {
         _ = await catalog.WriteUncheckedAsync(async transaction =>
         {
             foreach (var item in rows)
             {
-                if (Unchanged(await transaction.GetAsync(Outbox, item.Id, token).ConfigureAwait(false), item.Work.Updated))
+                var unchanged = Unchanged(await transaction.GetAsync(Outbox, item.Id, token).ConfigureAwait(false), item.Work.Updated);
+                if (published)
+                {
+                    if (item.Work.Region is null && unchanged)
+                    {
+                        _ = await transaction.DeleteAsync(Published, item.Id, token).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var previous = await transaction.GetAsync(Published, item.Id, token).ConfigureAwait(false) is { } stored
+                            ? JsonSerializer.Deserialize(stored.Json.Span, AtlasPlacementsJsonContext.Default.AtlasPlacementStamp)?.Updated ?? 0
+                            : 0;
+                        _ = await transaction.PutAsync(Published, item.Id, JsonSerializer.SerializeToUtf8Bytes(
+                            new AtlasPlacementStamp(Math.Max(previous, item.Work.Updated)), AtlasPlacementsJsonContext.Default.AtlasPlacementStamp), token).ConfigureAwait(false);
+                    }
+                }
+
+                if (unchanged)
                 {
                     _ = await transaction.DeleteAsync(Outbox, item.Id, token).ConfigureAwait(false);
                 }
@@ -272,10 +340,13 @@ internal sealed record AtlasPlacementResult(string Project, string Database, str
 
 internal sealed record AtlasPlacementWork(string Project, string Database, string? Region, long Updated, int Attempts, long NextAt);
 
+internal sealed record AtlasPlacementStamp(long Updated);
+
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(AtlasPublishRequest))]
 [JsonSerializable(typeof(AtlasPublishResponse))]
 [JsonSerializable(typeof(AtlasPlacement))]
 [JsonSerializable(typeof(AtlasPlacementResult))]
 [JsonSerializable(typeof(AtlasPlacementWork))]
+[JsonSerializable(typeof(AtlasPlacementStamp))]
 internal sealed partial class AtlasPlacementsJsonContext : JsonSerializerContext;

@@ -113,7 +113,7 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
         }, static error => error, cancellationToken).ConfigureAwait(false);
         if (moved is ManagedDatabase database)
         {
-            await atlas.QueueAsync(marker.ProjectId, marker.DatabaseId, database.Home(options.Region), cancellationToken).ConfigureAwait(false);
+            await atlas.QueueAsync(database.ProjectId, database.Name, database.Home(options.Region), CancellationToken.None).ConfigureAwait(false);
         }
 
         return moved;
@@ -138,6 +138,7 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(placement);
+        string? name = null;
         var followed = await WriteAsync<UpdatePlacementResult>(async transaction =>
         {
             if (!Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false)))
@@ -160,11 +161,12 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
                 AllRegions = placement.AllRegions,
             }, cancellationToken).ConfigureAwait(false);
             _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken).ConfigureAwait(false);
+            name = record.Name;
             return new PlacementUpdate(Updated: true);
         }, static error => error, cancellationToken).ConfigureAwait(false);
         if (followed is PlacementUpdate { Updated: true })
         {
-            await atlas.QueueAsync(database.ProjectId!, database.DatabaseId!, placement.Home, cancellationToken).ConfigureAwait(false);
+            await atlas.QueueAsync(database.ProjectId!, name!, placement.Home, CancellationToken.None).ConfigureAwait(false);
         }
 
         return followed;

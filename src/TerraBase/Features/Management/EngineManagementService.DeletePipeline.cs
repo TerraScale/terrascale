@@ -73,11 +73,6 @@ internal sealed partial class EngineManagementService
                     _ => false,
                 },
             cancellationToken).ConfigureAwait(false);
-        if (result is true)
-        {
-            await atlas.QueueAsync(deletable.Storage.ProjectId!, deletable.Storage.DatabaseId!, null, cancellationToken).ConfigureAwait(false);
-        }
-
         return result switch
         {
             bool deleted => moveRefusal is { } refused ? refused : !deleted ? ManagementErrors.NotFound
@@ -123,6 +118,7 @@ internal sealed partial class EngineManagementService
     {
         var recording = false;
         RecordedDeletion decision = false;
+        ManagedDatabase? deleted = null;
         bool recorded;
         try
         {
@@ -130,8 +126,17 @@ internal sealed partial class EngineManagementService
             {
                 recording = true;
                 checkpoint("delete.recording", storage);
-                var result = await WriteAsync<RecordedDeletion>(async transaction => await unregister(transaction, token).ConfigureAwait(false),
-                    static error => error, token).ConfigureAwait(false);
+                var result = await WriteAsync<RecordedDeletion>(async transaction =>
+                {
+                    var database = await CatalogTables.DatabaseAsync(transaction, storage.ProjectId!, storage.DatabaseId!, token).ConfigureAwait(false);
+                    var unregistered = await unregister(transaction, token).ConfigureAwait(false);
+                    if (unregistered && database is not null && database.Home(options.Region) == options.Region)
+                    {
+                        deleted = database;
+                    }
+
+                    return unregistered;
+                }, static error => error, token).ConfigureAwait(false);
                 decision = result;
                 return result switch
                 {
@@ -152,6 +157,11 @@ internal sealed partial class EngineManagementService
         if (!recorded)
         {
             return decision;
+        }
+
+        if (deleted is not null)
+        {
+            await atlas.QueueAsync(deleted.ProjectId, deleted.Name, null, CancellationToken.None).ConfigureAwait(false);
         }
 
         checkpoint("delete.intent", storage);

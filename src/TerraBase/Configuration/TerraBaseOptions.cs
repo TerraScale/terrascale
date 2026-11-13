@@ -304,9 +304,15 @@ public sealed record TerraBaseOptions
         try
         {
             key.ImportFromPem(File.ReadAllText(keyFile));
+            if (key.ExportParameters(includePrivateParameters: true).Curve.Oid.Value != "1.2.840.10045.3.1.7")
+            {
+                throw new CryptographicException("the Atlas signing key must use P-256");
+            }
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidOperationException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidOperationException or CryptographicException)
         {
+            key.Dispose();
+            key = null;
             throw new TerraBaseConfigurationException($"TERRABASE_ATLAS_PUBLISH_KEY_FILE must name a readable PKCS#8 PEM P-256 private key ({error.GetType().Name})");
         }
 
