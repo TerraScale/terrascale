@@ -65,8 +65,7 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
 
             await using var downstream = await response.Content.ReadAsStreamAsync(stop.Token).ConfigureAwait(false);
             var header = new byte[5];
-            var authenticating = true;
-            while (authenticating)
+            while (true)
             {
                 await downstream.ReadExactlyAsync(header, stop.Token).ConfigureAwait(false);
                 var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1));
@@ -84,7 +83,15 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
 
                 await output.WriteAsync(header, stop.Token).ConfigureAwait(false);
                 await output.WriteAsync(body, stop.Token).ConfigureAwait(false);
-                authenticating = header[0] is not ((byte)'Z' or (byte)'E');
+                if (header[0] == 'E')
+                {
+                    return;
+                }
+
+                if (header[0] == 'Z')
+                {
+                    break;
+                }
             }
 
             stop.CancelAfter(Timeout.InfiniteTimeSpan);
