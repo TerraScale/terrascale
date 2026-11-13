@@ -8,7 +8,7 @@ TerraBase refuses the key (fail closed).
 
 ## Where authority lives
 
-ts-auth owns API keys. Its key records live in its own store behind the GRU storage authority, and only ts-auth reads them.
+ts-auth owns API keys. Its key records live in its own store, one database homed in gru, and only ts-auth reads them.
 TerraBase never reads ts-auth storage. It asks ts-auth through its public API:
 
 - `GET /v1/terrascale/api-keys/self` with `Authorization: Bearer <access token issued for the key>`. The token is the
@@ -56,12 +56,13 @@ project, so signing out, resetting a password, or removing the creator's session
 
 ## Cost and limits
 
-ts-auth answers the status check only on the GRU authority, where revocations are written. Any other region answers
-503, so a lagging regional copy can never say yes. It admits at most 512 checks in flight per instance, and at most 20
+ts-auth answers the status check in every region: its one storage database is homed in gru, and the check's read runs
+at the home through `TerraScale-Write: home`, so a regional copy can never say yes on a lagging replica. It admits at
+most 512 checks in flight per instance, and at most 20
 storage-backed checks per second for one key, key string and project. Beyond those limits it answers 503 or 429, and
 TerraBase refuses on both. A caller hammering its own key throttles only that key.
 
-A node asks about each warm key about twice a second. From `sjc` and `fra`, that is one round trip to ts-auth in `gru`.
+A node asks about each warm key about twice a second, one round trip to the ts-auth of its region.
 Nodes keep up to 256 validated key tokens warm in the background until their signed expiry. Every 250 ms they check which answers are at least 500 ms old and join the same per-key status flight. A pause between read warmup and the first insert therefore does not move a status RTT onto that insert. Expiry and the two-second revocation deadline remain strict; failed refreshes never extend a yes. A key outside that bounded warm set, or the first request using a new key, can still wait for one round trip. A new key
 works in every region from its first request: when the first answer arrives too late to admit new work (a cold
 cross-region connection), TerraBase asks once more before it answers `503 auth_unavailable`. That second question is

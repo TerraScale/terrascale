@@ -1173,7 +1173,7 @@ paths:
       description: |
         Whether the API key a bearer access token was issued for still acts: the key exists and is unexpired, the
         token's key string still works (a rotation's grace included), and its organization and project exist. Read
-        from storage on every call and answered only by the GRU authority (503 elsewhere). TerraBase asks it in every
+        from storage on every call at the auth database's home in gru; answered in every region. TerraBase asks it in every
         region (docs/terrabase/key-revocation.md). 401 key_revoked, key_expired or invalid_token; 429 rate_limited
         past 20 checks per second for one key, key string and project.
       security:

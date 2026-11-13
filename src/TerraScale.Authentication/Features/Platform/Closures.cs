@@ -44,7 +44,6 @@ public sealed class Closures(
     internal async Task<bool> AdvanceAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(job);
-        using var home = HomeReads.Begin();
         TerraBaseProjectClosure? answer;
         try
         {

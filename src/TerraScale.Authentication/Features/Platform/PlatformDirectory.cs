@@ -1002,7 +1002,6 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
     internal async Task<T> CommitAsync<T>(Func<Task<Plan<T>>> plan, CancellationToken cancellationToken)
     {
-        using var home = HomeReads.Begin();
         for (var attempt = 0; attempt < Attempts; attempt++)
         {
             var next = await plan().ConfigureAwait(false);

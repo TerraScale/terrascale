@@ -23,10 +23,12 @@ winner. Restarts preserve account credentials, role revocations and existing ide
 incomplete existing topology fail closed and are never overwritten. Restore inconsistent records from an approved
 recovery copy; startup is not a privilege-restoration operation.
 
-The intended topology gives both databases gru as home and sjc/fra replicas.
-Regional serving and discovery/JWKS access to local replicas require deployment verification. Security decisions and conditional writes still use gru's TerraBase authority,
-with no failover, to preserve the existing uniqueness, revocation and single-use behavior. An unavailable gru authority
-makes sign-in fail closed across all regions. Authority still follows the SQL storage and credential-fence contract.
+The auth database is homed in gru with no replicas; the dashboard database keeps the same shape in its own seeding
+region. ts-auth runs in gru, sjc and fra against the one auth database: every storage request carries
+`TerraScale-Write: home`, so TerraBase runs it at the database's home. Security
+decisions and conditional writes stay on that one home writer, with no failover, to preserve the existing uniqueness,
+revocation and single-use behavior. An unavailable gru home makes sign-in fail closed across all regions. Authority still
+follows the SQL storage and credential-fence contract.
 
 ## Production proof after deployment
 
@@ -36,8 +38,8 @@ email-code sign-in in each serving region, then read `/v1/terrascale/organizatio
 and its projects as the owner. Obtain each required code from the mailbox owner
 for the exact URL and verification step; never log codes, cookies or tokens.
 
-Read the identity records written through gru directly from sjc and fra's private
-TerraBase listeners with the SDK and the orchestrator's approved private access.
-Auth responses alone do not prove replication because security reads use gru.
+Read the identity records written through gru from gru's private TerraBase listener with the SDK and the
+orchestrator's approved private access. Auth
+responses alone do not prove the storage path because security reads run at the home.
 The concrete ingress and private listener access paths must be verified during
 migration; these requirements are not evidence of a completed production run.

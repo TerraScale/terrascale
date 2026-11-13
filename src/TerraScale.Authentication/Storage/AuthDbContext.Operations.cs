@@ -4,6 +4,7 @@ using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Features.SigningKeys;
 
 namespace TerraScale.Authentication.Storage;
 
@@ -18,6 +19,8 @@ public sealed partial class AuthDbContext
     public DbSet<DeletionJob> DeletionJobs => this.Set<DeletionJob>();
 
     public DbSet<DeletionCursorRecord> DeletionCursors => this.Set<DeletionCursorRecord>();
+
+    public DbSet<RotationLeaseRecord> RotationLeases => this.Set<RotationLeaseRecord>();
 
     public DbSet<AccountDeletionReceipt> AccountDeletionReceipts => this.Set<AccountDeletionReceipt>();
 
@@ -79,6 +82,13 @@ public sealed partial class AuthDbContext
             cursor.ToTable("deletion_cursors");
             cursor.HasKey(row => row.Name);
             Versioned(cursor);
+        });
+
+        model.Entity<RotationLeaseRecord>(lease =>
+        {
+            lease.ToTable("rotation_leases");
+            lease.HasKey(row => row.Name);
+            Versioned(lease);
         });
 
         model.Entity<AccountDeletionReceipt>(receipt =>

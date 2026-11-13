@@ -70,11 +70,11 @@ capability in `X-TerraScale-Deletion-Authorization`; receipt-only status reads d
 not expose it. Continuations retain the verified primary credential lineage and
 fail closed if that ancestry loses reconciliation.
 
-Production auth has one GRU authority and one conditional storage writer for
-proof consumption; production startup rejects other auth regions independently
-of email configuration. This does not claim exclusive consumption across
-independent regional writers. Request creation is budgeted per account and
-expired proof, passcode and grant records are pruned.
+Production auth serves gru, sjc and fra with one conditional storage writer, the
+database homed in gru, for proof consumption; production startup rejects any other
+auth region independently of email configuration. This does not claim exclusive
+consumption across independent writers outside that one database. Request creation
+is budgeted per account and expired proof, passcode and grant records are pruned.
 
 A created API-key secret is bound to its creator's account authentication state
 at creation. Rotated API-key secrets and confidential OAuth-client secrets retain

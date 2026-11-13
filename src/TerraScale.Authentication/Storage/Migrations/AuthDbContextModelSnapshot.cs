@@ -2799,6 +2799,28 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.SigningKeys.RotationLeaseRecord", b =>
+                {
+                    b.Property<string>("Name")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<DateTime>("LeaseUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("lease_until");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Name");
+
+                    b.ToTable("rotation_leases", (string)null);
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.Sso.SsoConnectionRecord", b =>
                 {
                     b.Property<string>("Domain")

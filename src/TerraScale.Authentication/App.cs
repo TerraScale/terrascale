@@ -39,13 +39,14 @@ public static class App
     /// <summary>Service key for peer-only management calls to the regional TerraBase endpoint.</summary>
     public const string StorageAuthority = "terrabase-authority";
 
-    /// <summary>Single-use proofs and shared mail budgets require GRU's one TerraBase writer in production.</summary>
     public static void ValidateAuthenticationAuthority(AuthOptions options, string? region)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if ((!options.Development || options.Smtp is not null || options.CloudflareEmail is not null) && (region ?? (options.Development ? "gru" : null)) != "gru")
+        var serving = region ?? (options.Development ? "gru" : null);
+        if ((!options.Development || options.Smtp is not null || options.CloudflareEmail is not null)
+            && (serving is null || !AttemptLimiter.Regions.Contains(serving, StringComparer.Ordinal)))
         {
-            throw new AuthConfigurationException("Authentication requires the GRU authority for durable single-use proofs and email admission");
+            throw new AuthConfigurationException($"TS_REGION must be one of the serving auth regions ({string.Join(", ", AttemptLimiter.Regions)}); the auth database stays homed in gru");
         }
     }
 
@@ -216,7 +217,6 @@ public static class App
         builder.Services.AddHostedService<WebhookExpansionWorker>();
         builder.Services.AddHostedService<WebhookDeliveryWorker>();
         builder.Services.AddHostedService<SessionPruner>();
-        // Ready means this regional copy takes writes.
         builder.Services.AddSingleton<TerraBaseStorageHealth>();
         builder.Services.AddSingleton<IStorageHealth, SigningKeyReadiness>();
         builder.Services.AddSingleton<ReadinessProbe>();

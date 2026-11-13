@@ -26,7 +26,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
     // Milliseconds a token bucket's stored write time may lead this replica's clock before it counts as corrupt.
     private const long MaxClockSkew = 24 * 60 * 60 * 1000;
 
-    private static readonly string[] Regions = ["gru", "sjc", "fra"];
+    public static readonly string[] Regions = ["gru", "sjc", "fra"];
 
     private readonly int regionIndex = Array.IndexOf(Regions, region) is var index && index >= 0
         ? index : throw new ArgumentException("The auth region must be gru, sjc or fra.", nameof(region));

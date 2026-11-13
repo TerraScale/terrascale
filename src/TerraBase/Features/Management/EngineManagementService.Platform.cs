@@ -32,6 +32,11 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         Unavailable? pending = null;
         foreach (var (name, database) in PlatformDatabases.Databases)
         {
+            if (name == PlatformDatabases.Auth && options.Region != PlatformDatabases.AuthHome)
+            {
+                continue;
+            }
+
             switch (await SeedDatabaseAsync(name, database, cancellationToken).ConfigureAwait(false))
             {
                 case Done:

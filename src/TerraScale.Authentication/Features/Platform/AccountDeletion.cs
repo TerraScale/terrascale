@@ -21,7 +21,6 @@ public sealed class AccountDeletion(
     public async Task<bool> DeleteAsync(UserRecord user, CancellationToken cancellationToken, string? receiptHash = null)
     {
         ArgumentNullException.ThrowIfNull(user);
-        using var home = HomeReads.Begin();
         var intent = await platform.CommitAsync(async () =>
         {
             var current = await platform.ClosureAsync("account", user.Id, cancellationToken).ConfigureAwait(false);
@@ -150,7 +149,6 @@ public sealed class AccountDeletion(
     internal async Task<bool> AdvanceAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(job);
-        using var home = HomeReads.Begin();
         var userId = job.Value.SubjectId;
         if (await users.GetAsync(PlatformDirectory.Instance, userId, cancellationToken).ConfigureAwait(false) is not { } user)
         {

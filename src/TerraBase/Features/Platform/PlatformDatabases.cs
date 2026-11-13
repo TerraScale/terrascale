@@ -21,6 +21,8 @@ internal static class PlatformDatabases
 
     public const string Auth = "ts-auth";
 
+    public const string AuthHome = "gru";
+
     public const string Dashboard = "ts-dashboard";
 
     public static IReadOnlyDictionary<string, (string Id, string ProjectId)> Databases { get; } = new Dictionary<string, (string Id, string ProjectId)>(StringComparer.Ordinal)

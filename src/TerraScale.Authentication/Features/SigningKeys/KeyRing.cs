@@ -15,6 +15,8 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.SigningKeys;
 
+public sealed record RotationLeaseRecord(string Name, DateTimeOffset LeaseUntil);
+
 /// <summary>
 /// How long a replica serves the keys it read before reading TerraBase again, counted from when the read was sent. One
 /// minute in production, where nothing configures it, so every replica uses the same interval.
@@ -58,6 +60,10 @@ public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clo
 
     /// <summary>After a failed shared read, lookups answer 503 without asking TerraBase for this long.</summary>
     public static readonly TimeSpan FailedReadBackoff = TimeSpan.FromSeconds(5);
+
+    public const string RotationLease = "signing-key-rotation";
+
+    public static readonly TimeSpan RotationClaim = TimeSpan.FromMinutes(5);
 
     /// <summary>The error code of a platform issuer without signing keys; readiness reports its message.</summary>
     public const string NoSigningKeysCode = "no_signing_keys";
@@ -214,8 +220,30 @@ public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clo
     /// </summary>
     public async Task<bool> RotateIfDueAsync(string instanceId, CancellationToken cancellationToken)
     {
+        if (!await this.ClaimRotationAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
         using var key = await this.RotateAsync(instanceId, scheduled: true, cancellationToken).ConfigureAwait(false);
         return key is not null;
+    }
+
+    private async Task<bool> ClaimRotationAsync(CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        var current = await Guard(() => data.ReadAsync((db, token) => db.RotationLeases
+            .Where(row => row.Name == RotationLease).WithVersion().SingleOrDefaultAsync(token), cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
+        var lease = new RotationLeaseRecord(RotationLease, now + RotationClaim);
+        if (current is null)
+        {
+            return await Guard(() => data.SaveAsync(Change.Insert(lease), cancellationToken), cancellationToken).ConfigureAwait(false);
+        }
+
+        return current.Value.LeaseUntil > now
+            ? false
+            : await Guard(() => data.SaveAsync(Change.Update(current, lease), cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 
     // Every key is verified and opened first, so a rotation never adds to keys this replica cannot use.

@@ -1,8 +1,8 @@
 # Platform database placement lock
 
-The platform databases (`ts-auth` and `ts-dashboard`, [platform-databases.md](platform-databases.md)) are seeded in each
-region on their own: homed in the region that seeds them, with no replicas and placement version 1. That placement cannot
-change.
+The platform databases (`ts-auth` and `ts-dashboard`, [platform-databases.md](platform-databases.md)) are seeded on
+their own: `ts-dashboard` in each region, homed in the region that seeds it, and `ts-auth` only in gru, its home. Each
+is homed where it is seeded, with no replicas and placement version 1. That placement cannot change.
 
 ## API
 

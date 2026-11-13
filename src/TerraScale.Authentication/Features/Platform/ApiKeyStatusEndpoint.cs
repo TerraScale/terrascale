@@ -22,7 +22,7 @@ public sealed record ApiKeyStatusBody([property: JsonPropertyName("key_id")] str
 /// asks before it serves the key's tokens and statements, in every region, and refuses them when this answers 401
 /// (docs/terrabase/key-revocation.md). The token is its own credential: no other secret is needed to ask.
 /// </summary>
-public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions options, IConfiguration configuration, TimeProvider clock) : EndpointWithoutRequest<IResult>
+public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
     private const int MaxTokenLength = 8 * 1024;
 
@@ -57,11 +57,6 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
-        // Revocations are written on the GRU authority's storage; another region's copy may lag behind an acknowledged one.
-        if ((configuration["TS_REGION"] ?? (options.Development ? "gru" : null)) != "gru")
-        {
-            return Unavailable("API key status is answered by the GRU authority only.");
-        }
 
         try
         {

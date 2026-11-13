@@ -16,7 +16,6 @@ public sealed class PlatformBootstrap(AuthData data, Users users, PlatformDirect
 
     public async Task EnsureAsync(CancellationToken cancellationToken)
     {
-        using var home = HomeReads.Begin();
         var instance = PlatformDirectory.Instance;
         var owner = await users.FindByEmailAsync(instance, ownerEmail, cancellationToken).ConfigureAwait(false)
             ?? await users.CreateAsync(instance, ownerEmail, cancellationToken).ConfigureAwait(false)

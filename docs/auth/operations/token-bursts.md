@@ -58,4 +58,4 @@ that keeps lagging ends in `503` after at most 64 rounds. A region's first charg
 without that check, so in the window where the other regions create theirs, each can admit one more than the maximum;
 the count then stays for every later window. Cooldowns and token buckets still decide on the other regions'
 counts as the request read them, so a burst in several regions at once, or a lagging read, can admit more than their
-maximum. ts-auth runs only in gru today.
+maximum. ts-auth runs in gru, sjc and fra on one database homed in gru.
