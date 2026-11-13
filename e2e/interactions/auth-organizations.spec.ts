@@ -1,12 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { Audit, auditedContext, expect, test } from '../support/audit';
+import { createProjectOwner } from '../support/project-owner';
 import { signInToken } from '../support/auth-management';
 import { confirmWithPassword, hostedReady } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
 import { auth, dash, desktop, onLocalStack } from '../support/stack';
-import { journey, ownerSession, saveSecret } from '../support/state';
+import { saveSecret } from '../support/state';
 import type { TerraScaleResult } from '../../sdk/js/src/result.js';
 
 const { createTsAuthClient } = require('../../sdk/js/src/ts-auth.js') as typeof import('../../sdk/js/src/ts-auth.js');
@@ -17,19 +18,19 @@ function value<T>(result: TerraScaleResult<T>): T {
 }
 
 test('project organizations bind invitations, roles and refresh to the chosen organization', async ({ browser }, info) => {
-  const current = journey();
+  const account = await createProjectOwner(browser, info, 'Organizations owner');
+  const { current } = account;
   const sdk = createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' });
   const organizations = sdk.projects.organizations;
-  const owner = await auditedContext(browser, { viewport: desktop, storageState: ownerSession() });
   const admin = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
   const invited = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
   const outsider = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
   const outsiderPage = await outsider.newPage();
   const page = await invited.newPage();
   const adminPage = await admin.newPage();
-  const ownerPage = await owner.newPage();
+  const ownerPage = account.page;
   const audit = new Audit(page, info);
-  const ownerAudit = new Audit(ownerPage, info);
+  const ownerAudit = account.audit;
   const password = randomBytes(24).toString('base64url');
   saveSecret('organization-user-password', password);
   const adminEmail = await newAddress('org-admin-' + randomBytes(5).toString('hex'));
@@ -367,6 +368,7 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     if (other) value(await organizations.deleteOrganization(key, current.projectId, other));
     for (const extra of extraOrganizations) value(await organizations.deleteOrganization(key, current.projectId, extra));
     if (client) value(await sdk.projects.deleteClient(key, current.projectId, client));
-    await Promise.all([owner.close(), admin.close(), invited.close(), outsider.close()]);
+    await Promise.all([admin.close(), invited.close(), outsider.close()]);
+    await account.close();
   }
 });

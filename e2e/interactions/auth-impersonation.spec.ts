@@ -1,15 +1,17 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Audit, auditedContext, expect, test } from '../support/audit';
 import { prepareAuthManagement } from '../support/auth-management';
+import { createProjectOwner } from '../support/project-owner';
 import { confirmWithPassword, hostedReady } from '../support/hosted';
 import { auth, dash, desktop, onLocalStack } from '../support/stack';
-import { journey, saveCookies, saveSecret } from '../support/state';
+import { saveCookies, saveSecret } from '../support/state';
 
-test('project admin impersonates one client with an actor claim and can end it', async ({ page, browser }, info) => {
+test('project admin impersonates one client with an actor claim and can end it', async ({ browser }, info) => {
   await onLocalStack(async () => {
-    const audit = new Audit(page, info);
-    const owner = journey();
-    const management = await prepareAuthManagement(page, 'impersonation-' + randomBytes(4).toString('hex'));
+    const account = await createProjectOwner(browser, info, 'Impersonation owner');
+    const { page, audit, current: owner } = account;
+    try {
+    const management = await prepareAuthManagement(page, 'impersonation-' + randomBytes(4).toString('hex'), owner);
     const root = auth + '/v1/' + owner.projectId;
     const headers = { Authorization: 'Bearer ' + management.ownerToken };
     const actorResponse = await page.request.get(auth + '/terrascale/oauth/userinfo', { headers });
@@ -187,6 +189,9 @@ test('project admin impersonates one client with an actor claim and can end it',
     } finally {
       await saveCookies(context);
       await context.close();
+    }
+    } finally {
+      await account.close();
     }
   });
 });

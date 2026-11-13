@@ -17,7 +17,13 @@ path = Path(sys.argv[1])
 source = path.read_text()
 needle = '            settings.Property(row => row.Providers)'
 assert source.count(needle) == 1
-source = source.replace(needle, '            settings.Property(row => row.SignUp).HasColumnName("sign_up_mode").HasConversion(value => value ? "public" : "restricted", value => value == "public");\n' + needle)
+source = source.replace(needle, '            settings.Property(row => row.SignUp).HasConversion(value => value ? "public" : "restricted", value => value == "public");\n' + needle)
+path.write_text(source)
+path = path.with_name('AuthDbContext.cs')
+source = path.read_text()
+needle = 'property.SetColumnName(Snake(property.Name));'
+assert source.count(needle) == 1
+source = source.replace(needle, 'property.SetColumnName(property.Name == "SignUp" ? "sign_up_mode" : Snake(property.Name));')
 path.write_text(source)
 PYBASE
 dotnet restore "$source/src/TerraScale.Authentication/TerraScale.Authentication.csproj" --locked-mode

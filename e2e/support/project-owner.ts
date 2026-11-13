@@ -1,0 +1,48 @@
+import { randomBytes } from 'node:crypto';
+import type { Browser, TestInfo } from '@playwright/test';
+import { Audit, auditedContext, expect } from './audit';
+import { signInToken, stepUp } from './auth-management';
+import { onboard, signUp, verify } from './hosted';
+import { newAddress } from './inbox';
+import { auth, desktop } from './stack';
+import { saveCookies, saveSecret } from './state';
+
+export async function createProjectOwner(browser: Browser, info: TestInfo, label: string) {
+  const runId = randomBytes(6).toString('hex');
+  const email = await newAddress(label.toLowerCase().replaceAll(' ', '-') + '-' + runId);
+  const password = randomBytes(24).toString('base64url');
+  saveSecret(label + '-password', password);
+  const context = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
+  const page = await context.newPage();
+  const audit = new Audit(page, info);
+  await signUp(page, audit, email, password, label);
+  await verify(page, email);
+  await onboard(page, audit, label, label + ' ' + runId, label);
+  const url = new URL(page.url());
+  const projectId = url.searchParams.get('projectId')!;
+  const organizationId = url.searchParams.get('organizationId')!;
+  expect(projectId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+  expect(organizationId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+  await page.goto('/api-keys?create=key');
+  const dialog = page.locator('#create-key[open]');
+  await dialog.locator('#key-name').fill(label);
+  await dialog.getByRole('radio', { name: 'Full access', exact: true }).check();
+  await dialog.getByRole('button', { name: 'Create key', exact: true }).click();
+  const apiKey = (await page.locator('.ts-apikeys-secret-value').innerText()).trim();
+  saveSecret(label + '-api-key', apiKey);
+  const current = { runId, email, password, projectId, organizationId, apiKey };
+  const close = async () => {
+    try {
+      const token = await signInToken(page.request, label + '-cleanup');
+      const proof = await stepUp(page.request, token, 'delete_account', password);
+      const deleted = await page.request.delete(auth + '/v1/terrascale/account', {
+        headers: { Authorization: 'Bearer ' + token, 'X-TerraScale-Step-Up-Proof': proof },
+      });
+      expect(deleted.status()).toBe(204);
+    } finally {
+      await saveCookies(context);
+      await context.close();
+    }
+  };
+  return { current, context, page, audit, close };
+}

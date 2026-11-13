@@ -6,6 +6,7 @@ import { connect } from 'node:http2';
 import { request } from '@playwright/test';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { prepareAuthManagement, closeAuthManagement, stepUp } from '../support/auth-management';
+import { createProjectOwner } from '../support/project-owner';
 import { hostedReady } from '../support/hosted';
 import { auth, dash, stateDir, onLocalStack } from '../support/stack';
 import { journey, ownerSession, saveCookies, saveSecret } from '../support/state';
@@ -41,11 +42,9 @@ async function authRows(sql: string, args: string[]): Promise<unknown[][]> {
 }
 
 test('SDK profiles and imported passwords work on hosted pages and OIDC', async ({ browser }, info) => {
-  const current = journey();
-  const context = await auditedContext(browser, { storageState: ownerSession() });
-  const page = await context.newPage();
-  const audit = new Audit(page, info);
-  const management = await prepareAuthManagement(page, 'profiles');
+  const account = await createProjectOwner(browser, info, 'Profiles owner');
+  const { current, page, audit } = account;
+  const management = await prepareAuthManagement(page, 'profiles', current);
   const sdk = createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' }).projects;
   await sdk.disableUser(management.writeKey, current.projectId, management.user);
   await sdk.enableUser(management.writeKey, current.projectId, management.user);
@@ -174,7 +173,7 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
     };
     await onLocalStack(async () => { expect(await storedAlgorithm()).toBe('imported'); });
 
-    const proof = await stepUp(page.request, management.ownerToken, 'create_oauth_client');
+    const proof = await stepUp(page.request, management.ownerToken, 'create_oauth_client', current.password);
     const client = await page.request.post(root + '/clients', {
       headers: { Authorization: 'Bearer ' + management.ownerToken, 'X-TerraScale-Step-Up-Proof': proof },
       data: { name: 'Profile journey', type: 'public', redirect_uris: [dash + '/profile'] },
@@ -280,9 +279,8 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
   } finally {
     if (clientId) await sdk.deleteClient(management.ownerToken, current.projectId, clientId);
     for (const id of [createdId, importedId, ...extraIds]) if (id) await sdk.deleteUser(management.writeKey, current.projectId, id);
-    await closeAuthManagement(page, management);
-    await saveCookies(context);
-    await context.close();
+    await closeAuthManagement(page, management, current);
+    await account.close();
   }
 });
 

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
+import type { BrowserContext, Page } from '@playwright/test';
 import { test, expect, Audit, auditedContext } from '../support/audit';
 import { auth, dash, desktop, onLocalStack } from '../support/stack';
 import { confirmWithPassword, hostedReady, signUp, verify, onboard } from '../support/hosted';
@@ -9,28 +10,62 @@ import { newAddress, nextMail } from '../support/inbox';
 import { saveCookies, saveSecret } from '../support/state';
 import { enterSecret } from '../support/secret';
 
-test('project usernames and browser-bound magic links share single-use email verification', async ({ browser }, info) => {
-  const current = { runId: randomBytes(4).toString("hex") };
-  const owner = await auditedContext(browser, { viewport: desktop });
-  const customer = await auditedContext(browser, { viewport: desktop });
-  const other = await auditedContext(browser, { viewport: desktop });
-  const page = await customer.newPage();
-  const audit = new Audit(page, info);
-  const admin = await owner.newPage();
-  const adminAudit = new Audit(admin, info);
-  let projectId = "";
-  const email = await newAddress(`magic-${current.runId}-${Date.now().toString(36)}`);
-  const username = `user_${current.runId}`;
+test.describe('project usernames and browser-bound magic links', () => {
+  test.describe.configure({ mode: 'serial' });
+  const current = { runId: randomBytes(4).toString('hex') };
+  const username = 'user_' + current.runId;
   const password = randomBytes(24).toString('base64url');
-  saveSecret('project-sign-in-password', password);
-  try {
-    const ownerEmail = await newAddress(`magic-owner-${current.runId}-${Date.now().toString(36)}`);
+  const providers = [
+    ['microsoft', 'Microsoft'], ['gitlab', 'GitLab'], ['linkedin', 'LinkedIn'], ['slack', 'Slack'],
+    ['discord', 'Discord'], ['facebook', 'Facebook'], ['x', 'X'], ['oauth2', 'Custom OAuth2'],
+  ] as const;
+  let owner: BrowserContext;
+  let customer: BrowserContext;
+  let other: BrowserContext;
+  let page: Page;
+  let admin: Page;
+  let passwordPage: Page;
+  let audit: Audit;
+  let adminAudit: Audit;
+  let passwordAudit: Audit;
+  let email: string;
+  let ownerEmail: string;
+  let projectId: string;
+  let base: string;
+
+  test.beforeAll(async ({ browser }) => {
+    owner = await auditedContext(browser, { viewport: desktop });
+    customer = await auditedContext(browser, { viewport: desktop });
+    other = await auditedContext(browser, { viewport: desktop });
+    page = await customer.newPage();
+    admin = await owner.newPage();
+    email = await newAddress('magic-' + current.runId + '-' + Date.now().toString(36));
+    saveSecret('project-sign-in-password', password);
+  });
+
+  test.beforeEach(({}, info) => {
+    audit = new Audit(page, info);
+    adminAudit = new Audit(admin, info);
+    if (passwordPage) passwordAudit = new Audit(passwordPage, info);
+  });
+
+  test.afterAll(async () => {
+    await saveCookies(customer);
+    await saveCookies(other);
+    await saveCookies(owner);
+    await customer.close();
+    await other.close();
+    await owner.close();
+  });
+
+  test('configures providers and verifies a username account with mail cooldown', async () => {
+    ownerEmail = await newAddress(`magic-owner-${current.runId}-${Date.now().toString(36)}`);
     await signUp(admin, adminAudit, ownerEmail, password, 'project sign-in owner');
     await verify(admin, ownerEmail);
     await onboard(admin, adminAudit, 'Sign-in owner', `Sign-in ${current.runId}`, 'project sign-in owner');
     projectId = new URL(admin.url()).searchParams.get('projectId') ?? '';
     expect(projectId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    const base = `${auth}/ui/${projectId}`;
+    base = `${auth}/ui/${projectId}`;
     await admin.goto('/auth/sign-in');
     await admin.locator('#auth-method-magic_link').check();
     await admin.locator('#auth-method-username').check();
@@ -60,10 +95,6 @@ test('project usernames and browser-bound magic links share single-use email ver
     await audit.check('magic-link mail cooldown disables resend without claiming delivery');
 
     await admin.goto('/auth/social');
-    const providers = [
-      ['microsoft', 'Microsoft'], ['gitlab', 'GitLab'], ['linkedin', 'LinkedIn'], ['slack', 'Slack'],
-      ['discord', 'Discord'], ['facebook', 'Facebook'], ['x', 'X'], ['oauth2', 'Custom OAuth2'],
-    ] as const;
     for (const [key, label] of providers) {
       const id = `auth-provider-${key}`;
       await admin.locator(`#${id} button[command=show-modal]`).click();
@@ -88,6 +119,11 @@ test('project usernames and browser-bound magic links share single-use email ver
     }
     await adminAudit.check('all eight providers configured with write-only secrets');
 
+    await audit.finish();
+    await adminAudit.finish();
+  });
+
+  test('enforces username uniqueness and signs in case-insensitively', async ({}, info) => {
     const duplicateEmail = await newAddress(`duplicate-${current.runId}-${Date.now().toString(36)}`);
     const duplicate = await other.newPage();
     await duplicate.goto(`${base}/sign-up`);
@@ -130,8 +166,8 @@ test('project usernames and browser-bound magic links share single-use email ver
     }
     await duplicate.close();
 
-    const passwordPage = await other.newPage();
-    const passwordAudit = new Audit(passwordPage, info);
+    passwordPage = await other.newPage();
+    passwordAudit = new Audit(passwordPage, info);
     await passwordPage.goto(`${base}/sign-in`);
     for (const [key, label] of providers) {
       await expect(passwordPage.getByRole('link', { name: `Continue with ${label}`, exact: true })).toHaveAttribute('href', `/ui/${projectId}/social/${key}`);
@@ -143,6 +179,10 @@ test('project usernames and browser-bound magic links share single-use email ver
     await expect(passwordPage.locator('[data-state=success]')).toContainText('signed in');
     await passwordAudit.check('username signs in case-insensitively');
 
+    await passwordAudit.finish();
+  });
+
+  test('redeems a magic link only in its browser and rejects link and code replay', async () => {
     await admin.goto('/auth/sign-in');
     await admin.locator('#auth-method-passcode').uncheck();
     await admin.locator('#auth-method-password').uncheck();
@@ -194,14 +234,10 @@ test('project usernames and browser-bound magic links share single-use email ver
     await admin.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
     await expect(admin.locator('main')).toContainText('Account deleted');
     await adminAudit.check('project sign-in owner and project removed');
-  } finally {
-    await saveCookies(customer);
-    await saveCookies(other);
-    await saveCookies(owner);
-    await customer.close();
-    await other.close();
-    await owner.close();
-  }
+    await audit.finish();
+    await adminAudit.finish();
+    await passwordAudit.finish();
+  });
 });
 
 test('social provider responses enforce identity, verification, PKCE and state bindings', async () => {

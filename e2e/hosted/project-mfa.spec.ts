@@ -1,6 +1,6 @@
 import { createHash, createHmac, createPublicKey, randomBytes, verify as verifySignature } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import type { BrowserContext, Page } from '@playwright/test';
@@ -139,9 +139,10 @@ test.describe('project MFA and session policy', () => {
       const pid = readFileSync(join(stateDir, 'pids', 'ts-auth.pid'), 'utf8').trim();
       const environment = Object.fromEntries(readFileSync('/proc/' + pid + '/environ', 'utf8').split('\0')
         .filter(Boolean).map((entry) => [entry.slice(0, entry.indexOf('=')), entry.slice(entry.indexOf('=') + 1)]));
+      const legacyLog = openSync(join(stateDir, 'logs', 'ts-auth-upgrade.log'), 'a');
       const legacy = spawn(join(process.env.DOTNET_ROOT!, 'dotnet'), [join(process.env.E2E_BUILD!, 'ts-auth-upgrade', 'ts-auth.dll')], {
         env: { ...environment, TS_AUTH_LISTEN: 'http://127.0.0.1:8091', TS_AUTH_METRICS_LISTEN: 'http://127.0.0.1:9093' },
-        stdio: ['ignore', 'ignore', 'ignore'],
+        stdio: ['ignore', legacyLog, legacyLog],
       });
       try {
         await expect.poll(async () => {
@@ -172,6 +173,7 @@ test.describe('project MFA and session policy', () => {
           legacy.kill('SIGTERM');
           await exited;
         }
+        closeSync(legacyLog);
       }
     });
     const original = await tokens(first);

@@ -9,6 +9,8 @@ import { newAddress, nextMail } from './inbox';
 import { auth, dash, onLocalStack, stateDir } from './stack';
 import { journey, saveCookies, saveSecret } from './state';
 
+export type AuthOwner = { runId: string; password: string; organizationId: string; projectId: string };
+
 export type AuthManagement = { user: string; readKey: string; writeKey: string; csrf: string; ownerToken: string };
 
 export async function signInToken(context: APIRequestContext, label: string): Promise<string> {
@@ -30,7 +32,7 @@ export async function signInToken(context: APIRequestContext, label: string): Pr
   return token;
 }
 
-export async function stepUp(context: APIRequestContext, token: string, purpose: string): Promise<string> {
+export async function stepUp(context: APIRequestContext, token: string, purpose: string, password = journey().password): Promise<string> {
   const started = await context.post(auth + '/v1/terrascale/step-up', {
     headers: { Authorization: 'Bearer ' + token },
     data: { purpose, audience: 'ts-auth', return_uri: dash + '/auth/step-up/callback' },
@@ -39,7 +41,7 @@ export async function stepUp(context: APIRequestContext, token: string, purpose:
   const proof = await started.json();
   saveSecret('member-' + purpose + '-proof', proof.proof);
   const approved = await context.post(proof.step_up_url, {
-    headers: { Origin: auth }, form: { password: journey().password },
+    headers: { Origin: auth }, form: { password },
   });
   expect(approved.status()).toBe(200);
   return proof.proof;
@@ -185,8 +187,7 @@ async function checkSignupManagement(page: Page, management: AuthManagement): Pr
   }
 }
 
-export async function prepareAuthManagement(page: Page, sdk: string): Promise<AuthManagement> {
-  const current = journey();
+export async function prepareAuthManagement(page: Page, sdk: string, current: AuthOwner = journey()): Promise<AuthManagement> {
   const root = `${auth}/v1/${current.projectId}`;
   await page.goto('/api-keys?create=key');
   const csrf = await page.locator('#create-key input[name="_csrf"]').inputValue();
@@ -330,7 +331,6 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
   const ownRevoke = await page.request.delete(root + '/me/api-keys/' + ownKey.id, { headers: { Origin: auth } });
   expect(ownRevoke.status()).toBe(204);
   if (sdk === 'dotnet') {
-    await checkMachineClient(page, ownerToken, current.projectId);
     await checkUserKeyLifecycle(page.request, root, user, readKey, writeKey);
   }
   for (const [key, status] of [[readKey, 403], [writeKey, 204]] as const) {
@@ -357,8 +357,7 @@ export async function prepareAuthManagement(page: Page, sdk: string): Promise<Au
   return management;
 }
 
-export async function closeAuthManagement(page: Page, management: AuthManagement): Promise<void> {
-  const current = journey();
+export async function closeAuthManagement(page: Page, management: AuthManagement, current: AuthOwner = journey()): Promise<void> {
   const root = `${auth}/v1/${current.projectId}`;
   for (const action of ['disable_project_user.succeeded', 'enable_project_user.succeeded', 'sign_out_project_user.succeeded']) {
     const audit = await page.request.get('/api/v1/dashboard/audit-events', { params: { action, range: '7d' } });
@@ -490,9 +489,9 @@ async function checkUserKeyLifecycle(context: APIRequestContext, root: string, u
   expect(ended.status()).toBe(401);
 }
 
-async function checkMachineClient(page: Page, ownerToken: string, project: string): Promise<void> {
+export async function checkMachineClient(page: Page, ownerToken: string, project: string, password: string): Promise<void> {
   const context = page.request;
-  const proof = await stepUp(context, ownerToken, 'create_oauth_client');
+  const proof = await stepUp(context, ownerToken, 'create_oauth_client', password);
   const clients = auth + '/v1/' + project + '/clients';
   const created = await context.post(clients, {
     headers: { Authorization: 'Bearer ' + ownerToken, 'X-TerraScale-Step-Up-Proof': proof },
@@ -535,7 +534,7 @@ async function checkMachineClient(page: Page, ownerToken: string, project: strin
   expect(wrongAudience.status()).toBe(400);
   const crossProject = await context.post(auth + '/00000000000000000000000001/oauth/token', { form });
   expect(crossProject.status()).not.toBe(200);
-  const interactiveProof = await stepUp(context, ownerToken, 'create_oauth_client');
+  const interactiveProof = await stepUp(context, ownerToken, 'create_oauth_client', password);
   const interactive = await context.post(clients, {
     headers: { Authorization: 'Bearer ' + ownerToken, 'X-TerraScale-Step-Up-Proof': interactiveProof },
     data: { name: 'journey interactive', type: 'confidential', redirect_uris: ['https://app.example/callback'] },
