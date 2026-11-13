@@ -173,10 +173,21 @@ internal sealed partial class TursoDatabaseStore(
 
     internal DatabaseFences? Fences { get; init; }
 
+    private readonly CancellationTokenSource _refused = new();
+
+    public CancellationToken Refused => _refused.Token;
+
     internal string? CopyFault
     {
         get => Volatile.Read(ref field);
-        set => Volatile.Write(ref field, value);
+        set
+        {
+            Volatile.Write(ref field, value);
+            if (value is not null)
+            {
+                _refused.Cancel();
+            }
+        }
     }
 
     internal string? CloseRefusal => CopyFault ?? Ledger?.Refusal(this);
@@ -184,7 +195,14 @@ internal sealed partial class TursoDatabaseStore(
     internal StorageFaultLedger.Row? FaultRow
     {
         get => Volatile.Read(ref field);
-        set => Volatile.Write(ref field, value);
+        set
+        {
+            Volatile.Write(ref field, value);
+            if (value is not null)
+            {
+                _refused.Cancel();
+            }
+        }
     }
 
     internal bool Settled
@@ -225,6 +243,15 @@ internal sealed partial class TursoDatabaseStore(
         {
             Leases!.ThrowIfUnleased(database);
         }
+    }
+
+    internal void ThrowIfUnavailable()
+    {
+        if (Tenant is { } database)
+        {
+            Ledger?.ThrowIfPending(database);
+        }
+        ThrowIfRefused(maintenance: false);
     }
 
     private void ThrowIfRefused(bool maintenance)
@@ -281,14 +308,20 @@ internal sealed partial class TursoDatabaseStore(
         bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction", bool maintenance = false,
         string? file = null, int line = 0)
     {
+        if (Ledger is { } ledger && !IsSystem)
+        {
+            await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
+        }
+        if (!maintenance)
+        {
+            ThrowIfUnavailable();
+        }
+        else
+        {
+            ThrowIfRefused(maintenance);
+        }
         if (write)
         {
-            if (Ledger is { } ledger && !IsSystem)
-            {
-                await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
-            }
-
-            ThrowIfRefused(maintenance);
             if (FencedId(maintenance) is { } fenced)
             {
                 await Fences!.WaitAsync(fenced, cancellationToken).ConfigureAwait(false);
@@ -329,6 +362,10 @@ internal sealed partial class TursoDatabaseStore(
             var connection = session.Connection;
             var transaction = await session.ExecuteAsync(runner, () =>
             {
+                if (!maintenance)
+                {
+                    ThrowIfUnavailable();
+                }
                 beginStarted = true;
 
                 session.Settings(queryOnly: !write, full: durable);

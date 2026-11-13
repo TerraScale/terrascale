@@ -65,7 +65,34 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                 {
                     var engine = services.GetRequiredService<IStorageEngine>();
                     var tenant = new TenantContext(parts[1], PlanTier.Hobby, parts[2], parts[3]);
-                    if (parts[0] is "populate" or "backlog")
+                    if (parts[0] == "ledger")
+                    {
+                        var system = await engine.OpenSystemDatabaseAsync(cancellationToken);
+                        var journal = engine.GetType().GetProperty("IntentStore", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
+                        var io = engine.GetType().GetProperty("Io", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
+                        var counts = new List<long>();
+                        foreach (var (store, table) in new[] { (system, "_tb_fault"), ((IDatabaseStore)journal, "_tb_write_intent") })
+                        {
+                            var connectionString = await (Task<string>)store.GetType().GetMethod("ConnectionStringAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                                .Invoke(store, [io, cancellationToken])!;
+                            using var connection = new SqliteConnection(connectionString);
+                            connection.Open();
+                            using var command = connection.CreateCommand();
+                            command.CommandText = "SELECT count(*) FROM " + table + " WHERE database = $database OR $database = '*';";
+                            command.Parameters.AddWithValue("$database", parts[3]);
+                            counts.Add((long)command.ExecuteScalar()!);
+                        }
+                        await writer.WriteLineAsync(string.Join(" ", counts).AsMemory(), cancellationToken);
+                        continue;
+                    }
+                    if (parts[0] == "fault")
+                    {
+                        var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+                        var ledger = engine.GetType().GetProperty("Ledger", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
+                        await (ValueTask)ledger.GetType().GetMethod("RecordAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .Invoke(ledger, [tenant, store.Incarnation, "the crash probe recorded proven damage"])!;
+                    }
+                    else if (parts[0] is "populate" or "backlog")
                     {
                         _ = await engine.CreateDatabaseAsync(tenant, cancellationToken);
                         var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;

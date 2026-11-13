@@ -10,24 +10,15 @@ The storage fault ledger keeps two tables:
   a write or copy of that file starts, removed once it ends.
 - `_tb_fault`, in the SYSTEM database: one row per faulted database with a bounded reason.
 
-After an unclean exit, startup reads every remaining intent of this process's replica before admitting work. An intent
-becomes a fault ("the process exited uncleanly while this copy was written") unless its database was deleted or, on
-Linux, its file and sidecars flush to disk without error and leave no page only in memory. This deliberately refuses
-copies whose contents might have survived: a crash before the fault record must not silently restore trust. Startup then removes the intents.
+After an unclean exit, startup proves each remaining intent against an isolated copy of the database and log. It checks full integrity and the incarnation named by the intent. PASSED retires the intent; DAMAGED records a permanent fault before retirement; INCOMPLETE preserves the intent and retries with backoff. Missing keys, busy files and I/O errors are INCOMPLETE. There is no page-cache or flush-based proof. See [crash recovery](crash-recovery.md) for the outcomes, measurements and startup limits.
 
-An I/O or corruption error from an operation, a closing checkpoint, a rewrite or a session open records a fault for that
-file incarnation. Failing to record a fault, or any fault of SYSTEM itself, fails the whole node closed.
+A fault recorded before the process exited remains a fault, even if a later integrity check would pass. Failing to record a fault, or a fault of SYSTEM itself, fails the whole node closed.
 
 ## What a fault refuses
 
-A faulted copy refuses writes and refuses to be the source of a database copy. A writer checks the ledger
-before it starts and again after it takes the writer, and a commit batch that meets a fault fails every write in it.
+A faulted copy refuses session opens, read and write transaction admission, each operation in an existing transaction, and use as a copy source. Recording a fault interrupts running SQL statements. HTTP reads return `503 copy_faulted`; PostgreSQL returns SQLSTATE `57P03` with `copy_faulted`. A write whose commit outcome is unknown can instead return `503 write_outcome_unknown`; never replay it automatically. Proof-pending copies return retryable `503 recovery_pending` over HTTP or SQLSTATE `57P03` over PostgreSQL, without recording a fault.
 
-- SQL writes answer `503 write_outcome_unknown`; a durability-timeout response can follow a committed write, so
-  clients treat it as uncertain and never replay it automatically.
-- Other endpoints answer `503 copy_faulted` ("Storage requires recovery.") without exposing the fault reason.
-
-Reads are not gated. Healthy databases on the same node keep working.
+Healthy databases keep working. Recovery proof readers inspect isolated files; the backup recovery snapshot reader opens a detached backup artifact without the live-copy ledger. No internal reader serves or backs up a faulted live copy. The fault-count and pending-proof gauges include copies that have not been opened for a tenant request.
 
 ## Clearing a fault
 

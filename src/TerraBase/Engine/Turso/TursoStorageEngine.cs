@@ -31,7 +31,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         $"data directory uses the pre-tenancy layout, older than storage format {StorageFormat.SupportedFrom}; this build supports storage formats {StorageFormat.SupportedFrom} to {StorageFormat.SupportedTo} and cannot open it";
 
     internal const string LockFileName = ".terrabase.lock";
-    private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix, RevisionManifestFile.Suffix, RevisionManifestFile.StagedSuffix];
+    private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix, RevisionManifestFile.Suffix, RevisionManifestFile.StagedSuffix, ".deleting"];
 
     private static readonly string[] ReservedRootNames =
         [LockFileName, .. new[] { SystemName, IntentName }.SelectMany(database => Sidecars.Prepend(string.Empty).Select(suffix => database + FileExtension + suffix))];
@@ -337,6 +337,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             CheckIntentJournal();
             DeleteRewriteScratch();
             Ledger = new StorageFaultLedger(this, logger, schemaMemory);
+            meter.CreateObservableGauge("terrabase.storage.faulted.databases", () => Ledger.FaultCount);
+            meter.CreateObservableGauge("terrabase.storage.proof.pending", () => Ledger.PendingCount);
+            Ledger.IncompleteProofs = meter.CreateCounter<long>("terrabase.storage.proof.incomplete");
             Leases = new HomeLeaseGate(HostTime);
 
             Io = new(configured.Threads, configured.Queue, meter);
@@ -615,6 +618,12 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     await Io.RunAsync(() =>
                     {
                         RejectLink(path);
+                        if (Directory.Exists(Path.GetDirectoryName(path)!))
+                        {
+                            using var deleting = new FileStream(path + ".deleting", FileMode.Create, FileAccess.Write, FileShare.None);
+                            deleting.Flush(flushToDisk: true);
+                        }
+                        SyncExistingDirectory(Path.GetDirectoryName(path)!);
                         DeleteFileIfPresent(path);
                         SyncExistingDirectory(Path.GetDirectoryName(path)!);
                         _checkpoint("delete.main_file", database);
@@ -730,8 +739,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
 
+        await Ledger.ThrowIfUnavailableAsync(database, cancellationToken).ConfigureAwait(false);
         if (_stores.TryGetValue(Key(database), out var open))
         {
+            open.ThrowIfUnavailable();
             return open.FilePresent(Volatile.Read(ref _fileEpoch)) ? open : null;
         }
 
@@ -815,6 +826,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         return true;
                     }).ConfigureAwait(false);
                     Volatile.Write(ref _system, openingSystem);
+                    Ledger.StartRetries();
 
                 }
                 catch
@@ -931,7 +943,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     private async Task CleanupAsync()
     {
-
+        await Ledger.StopRetriesAsync().ConfigureAwait(false);
         var drained = Io.DrainAdmissionsAsync();
         if (!drained.IsCompleted)
         {
@@ -1520,16 +1532,18 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             await migration.WaitAsync(QueryBudget, Time, lifetime.Token).ConfigureAwait(false);
             RejectDatabaseLinks(path);
+            await Ledger.LoadAsync(store, lifetime.Token).ConfigureAwait(false);
+            store.Settled = true;
+            store.ThrowIfUnavailable();
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
             _ = _oldFormatPaths.TryRemove(path, out _);
-
-            await Ledger.LoadAsync(store, lifetime.Token).ConfigureAwait(false);
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);
             try
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 RejectDatabaseLinks(path);
                 await ThrowIfPurgeFencedAsync(key.Database, lifetime.Token).ConfigureAwait(false);
+                store.Settled = false;
                 _stores[key] = store;
                 published = true;
                 _initializing.Remove(key);

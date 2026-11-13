@@ -774,50 +774,53 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private async ValueTask<PgOutcome> RunAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken cancellationToken,
         Counting counting = Counting.All)
     {
-        if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.Empty)
-            && !(statement.Kind == PgKind.Savepoint && PostgresStatements.RollsBackTo(statement.Text)))
+        return await GuardAsync(session, async (database, token) =>
         {
-            return PostgresStatements.Error(SqlErrors.InFailedTransaction);
-        }
+            if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.Empty)
+                && !(statement.Kind == PgKind.Savepoint && PostgresStatements.RollsBackTo(statement.Text)))
+            {
+                return PostgresStatements.Error(SqlErrors.InFailedTransaction);
+            }
 
-        switch (statement.Kind)
-        {
-            case PgKind.Empty:
-                return new[] { new PgResult(null, [], null) };
-            case PgKind.Discard:
-                session.Statements.Clear();
-                foreach (var discarded in session.Portals.Values)
-                {
-                    ChargePending(discarded);
-                }
+            switch (statement.Kind)
+            {
+                case PgKind.Empty:
+                    return new[] { new PgResult(null, [], null) };
+                case PgKind.Discard:
+                    session.Statements.Clear();
+                    foreach (var discarded in session.Portals.Values)
+                    {
+                        ChargePending(discarded);
+                    }
 
-                session.Portals.Clear();
-                return new[] { new PgResult(null, [], "DISCARD ALL") };
-            case PgKind.Deallocate:
-                if (PostgresStatements.Deallocated(statement.Text) is { } deallocated)
-                {
-                    session.Statements.Remove(deallocated);
-                    return new[] { new PgResult(null, [], "DEALLOCATE") };
-                }
+                    session.Portals.Clear();
+                    return new[] { new PgResult(null, [], "DISCARD ALL") };
+                case PgKind.Deallocate:
+                    if (PostgresStatements.Deallocated(statement.Text) is { } deallocated)
+                    {
+                        session.Statements.Remove(deallocated);
+                        return new[] { new PgResult(null, [], "DEALLOCATE") };
+                    }
 
-                session.Statements.Clear();
-                return new[] { new PgResult(null, [], "DEALLOCATE ALL") };
-            case PgKind.Set or PgKind.Show:
-                session.Settings["terrascale.write_route"] = session.Sql.LastRoute?.Header ?? "none";
-                var answered = PostgresStatements.RunCommand(statement.Kind, statement.Text, session.Settings);
-                session.Sql.Prefer(WritePreference.Parse(session.Settings["terrascale.write"]) ?? WriteOverride.Auto);
-                return answered;
-            case PgKind.Catalog when PgCatalog.Functions(statement.Text, session.Database, session.User) is { } functions:
-                return new[] { functions };
-        }
+                    session.Statements.Clear();
+                    return new[] { new PgResult(null, [], "DEALLOCATE ALL") };
+                case PgKind.Set or PgKind.Show:
+                    session.Settings["terrascale.write_route"] = session.Sql.LastRoute?.Header ?? "none";
+                    var answered = PostgresStatements.RunCommand(statement.Kind, statement.Text, session.Settings);
+                    session.Sql.Prefer(WritePreference.Parse(session.Settings["terrascale.write"]) ?? WriteOverride.Auto);
+                    return answered;
+                case PgKind.Catalog when PgCatalog.Functions(statement.Text, session.Database, session.User) is { } functions:
+                    return new[] { functions };
+            }
 
-        return await GuardAsync(session, async (database, token) => statement.Kind switch
-        {
-            PgKind.Catalog => PgCatalog.Answer(statement.Text, session.Database, session.User,
-                await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
-            PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, statement.Text, token).ConfigureAwait(false),
-            PgKind.Savepoint => await SavepointAsync(session, statement.Text, token).ConfigureAwait(false),
-            _ => await StatementAsync(session, statement, args, token).ConfigureAwait(false),
+            return statement.Kind switch
+            {
+                PgKind.Catalog => PgCatalog.Answer(statement.Text, session.Database, session.User,
+                    await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
+                PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, statement.Text, token).ConfigureAwait(false),
+                PgKind.Savepoint => await SavepointAsync(session, statement.Text, token).ConfigureAwait(false),
+                _ => await StatementAsync(session, statement, args, token).ConfigureAwait(false),
+            };
         }, cancellationToken, counting).ConfigureAwait(false);
     }
 
@@ -918,6 +921,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         using var running = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         session.Track(running);
+        IDatabaseStore? store = null;
         try
         {
             var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, relayed: true, running.Token).ConfigureAwait(false);
@@ -927,6 +931,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             }
 
             session.Exchange?.Database = database;
+            var engine = services.GetRequiredService<IStorageEngine>();
+            store = await engine.OpenDatabaseAsync(database, running.Token).ConfigureAwait(false);
             authorized(database);
             var tenant = new TenantContext(database.OrganizationId, database.Plan);
             var admission = services.GetRequiredService<IQosAdmission>();
@@ -937,11 +943,26 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             }
 
             using var scope = QosContext.Enter(tenant, Memory, admission);
-            return await run(database, running.Token).ConfigureAwait(false);
+            using var statement = CancellationTokenSource.CreateLinkedTokenSource(running.Token, store?.Refused ?? CancellationToken.None);
+            var result = await run(database, statement.Token).ConfigureAwait(false);
+            _ = await engine.OpenDatabaseAsync(database, running.Token).ConfigureAwait(false);
+            return result;
+        }
+        catch (OperationCanceledException) when (store?.Refused.IsCancellationRequested == true)
+        {
+            return new PgError("57P03", "copy_faulted: Storage requires recovery.");
         }
         catch (OperationCanceledException) when (running.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             return new PgError("57014", "canceling statement due to user request");
+        }
+        catch (StorageCopyFaultedException)
+        {
+            return new PgError("57P03", "copy_faulted: Storage requires recovery.");
+        }
+        catch (StorageProofPendingException)
+        {
+            return new PgError("57P03", "recovery_pending: Storage recovery proof is pending; retry.");
         }
         catch (QosMemoryException)
         {

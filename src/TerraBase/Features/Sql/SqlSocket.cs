@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Net.WebSockets;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.Json;
+using TerraBase.Engine;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -190,7 +191,7 @@ internal sealed class SqlSocket(
                 _database = found;
                 break;
             case Unavailable unavailable:
-                return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable, unavailable.Message), cancellationToken).ConfigureAwait(false);
+                return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);
             default:
                 return await RefuseAsync(request.Id, UnknownDatabase, cancellationToken).ConfigureAwait(false);
         }
@@ -204,7 +205,7 @@ internal sealed class SqlSocket(
                     $"the database is served in {string.Join(", ", record.Regions(region))}, not {region}; connect through its home region {record.Home(region)}"),
                     cancellationToken).ConfigureAwait(false);
             case Unavailable unavailable:
-                return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable, unavailable.Message), cancellationToken).ConfigureAwait(false);
+                return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);
         }
 
         await SendAsync(new SqlSocketResult(request.Id, "result", [], false), SqlJsonContext.Default.SqlSocketResult, cancellationToken).ConfigureAwait(false);
@@ -325,7 +326,7 @@ internal sealed class SqlSocket(
                 await CloseAsync(WebSocketCloseStatus.PolicyViolation, refused.Message).ConfigureAwait(false);
                 return false;
             case Unavailable unavailable:
-                await SendErrorAsync(request.Id, new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, unavailable.Message), 0), cancellationToken).ConfigureAwait(false);
+                await SendErrorAsync(request.Id, new SqlBatchFailure(new SqlError(unavailable.Code, unavailable.Message), 0), cancellationToken).ConfigureAwait(false);
                 return true;
         }
 
@@ -348,6 +349,14 @@ internal sealed class SqlSocket(
             try
             {
                 outcome = await RunAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (StorageCopyFaultedException)
+            {
+                outcome = new SqlBatchFailure(new SqlError(SqlErrors.CopyFaulted, "copy_faulted: Storage requires recovery."), 0);
+            }
+            catch (StorageProofPendingException)
+            {
+                outcome = new SqlBatchFailure(new SqlError(SqlErrors.RecoveryPending, "recovery_pending: Storage recovery proof is pending; retry."), 0);
             }
             catch (QosMemoryException)
             {
@@ -399,12 +408,23 @@ internal sealed class SqlSocket(
             return CredentialRevoked;
         }
 
-        return await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false) switch
+        try
         {
-            TenantContext found when found.DatabaseId == Database.DatabaseId && found.OrganizationId == Database.OrganizationId => null,
-            Unavailable error => error,
-            _ => CredentialRevoked,
-        };
+            return await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false) switch
+            {
+                TenantContext found when found.DatabaseId == Database.DatabaseId && found.OrganizationId == Database.OrganizationId => null,
+                Unavailable error => error,
+                _ => CredentialRevoked,
+            };
+        }
+        catch (StorageCopyFaultedException)
+        {
+            return new Unavailable("Storage requires recovery.", SqlErrors.CopyFaulted);
+        }
+        catch (StorageProofPendingException)
+        {
+            return new Unavailable("Storage recovery proof is pending; retry.", SqlErrors.RecoveryPending);
+        }
     }
 
     private async ValueTask<SqlBatchOutcome> RunAsync(SqlSocketRequest request, CancellationToken cancellationToken)

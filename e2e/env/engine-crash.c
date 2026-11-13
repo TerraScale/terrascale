@@ -3,6 +3,11 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
+#include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdarg.h>
 static void stopped(const char *operation, const char *path, int result) {
     const char *point = getenv("ENGINE_CRASH_POINT");
     if (result || !point || strcmp(point, operation)) return;
@@ -31,4 +36,29 @@ int unlink(const char *path) {
     int result = real(path);
     stopped("delete", path, result);
     return result;
+}
+static int proof_failure(const char *path) {
+    const char *target = getenv("ENGINE_PROOF_TARGET");
+    const char *control = getenv("ENGINE_PROOF_CONTROL");
+    if (!target || !control || !strstr(path, target)) return 0;
+    FILE *file = fopen(control, "r");
+    if (!file) return 0;
+    char kind[8] = {0};
+    int read = fscanf(file, "%7s", kind);
+    fclose(file);
+    if (read != 1) return 0;
+    errno = !strcmp(kind, "locked") ? EWOULDBLOCK : EIO;
+    return 1;
+}
+int open64(const char *path, int flags, ...) {
+    int (*real)(const char *, int, ...) = dlsym(RTLD_NEXT, "open64");
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list args;
+        va_start(args, flags);
+        mode = va_arg(args, mode_t);
+        va_end(args);
+    }
+    if (!(flags & O_CREAT) && proof_failure(path)) return -1;
+    return real(path, flags, mode);
 }

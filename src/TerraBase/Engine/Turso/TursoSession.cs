@@ -123,6 +123,7 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
         {
             await io.RunAsync(() =>
             {
+                store?.ThrowIfUnavailable();
                 opening = true;
                 OpenExisting(connection, new SqliteConnectionStringBuilder(connectionString).DataSource);
                 if (store is not null)
@@ -161,19 +162,13 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
 
     public static void OpenExisting(DbConnection connection, string path)
     {
-        if (!File.Exists(path))
+        var file = new FileInfo(path);
+        if (!file.Exists || file.Length == 0)
         {
-            throw new SqliteException("unable to open database file: it does not exist", 14);
+            throw new InvalidDataException("the existing database main file is missing or empty");
         }
 
         connection.Open();
-        if (new FileInfo(path).Length == 0)
-        {
-            connection.Dispose();
-            File.Delete(path);
-            File.Delete(path + "-wal");
-            throw new SqliteException("unable to open database file: it does not exist", 14);
-        }
     }
 
     public async Task<T> ExecuteAsync<T>(TursoRunner io, Func<T> execute, CancellationToken cancellationToken)

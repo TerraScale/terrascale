@@ -67,6 +67,11 @@ internal sealed partial class TursoStorageEngine
             if (name.Split('.') is ["", var database, var nonce, "creating"]
                 && (IsId(database) || database is SystemName or IntentName) && IsId(nonce))
             {
+                var target = Path.Combine(directory, database + FileExtension);
+                if (!File.Exists(target))
+                {
+                    DeleteSidecars(target);
+                }
                 DeleteFiles(Path.Combine(directory, name));
                 changed = true;
             }
@@ -75,7 +80,7 @@ internal sealed partial class TursoStorageEngine
             {
                 var path = Path.Combine(directory, name);
                 RejectDatabaseLinks(path);
-                if (!File.Exists(path))
+                if (!File.Exists(path) && File.Exists(path + ".deleting"))
                 {
                     DeleteSidecars(path);
                     changed = true;
