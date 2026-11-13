@@ -180,10 +180,10 @@ export function restartAfterKill(node: Node): () => Promise<void> {
   };
 }
 
-export async function metric(node: Node, metricName: string): Promise<number> {
+export async function metric(node: Node, metricName: string, label = ''): Promise<number> {
   const response = await fetch(`http://${node.address}:${node.port + 1011}/metrics`);
   expect(response.status).toBe(200);
-  const line = (await response.text()).split('\n').find(text => new RegExp(`^${metricName}(\\{[^}]*\\})? `).test(text));
+  const line = (await response.text()).split('\n').find(text => new RegExp(`^${metricName}(\\{[^}]*\\})? `).test(text) && text.includes(label));
   return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
 }
 

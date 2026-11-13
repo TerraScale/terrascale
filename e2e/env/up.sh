@@ -9,6 +9,8 @@ mkdir -p "$state/terrabase"
 
 random() { openssl rand -base64 "$1" | tr '+/' '-_' | tr -d '=\n'; }
 peer_secret=$(openssl rand -hex 32)
+(umask 077 && printf 'x-terrabase-peer-credential: %s\n' "$peer_secret" > "$state/peer-header")
+internal=(--http2-prior-knowledge -H "@$state/peer-header")
 terrabase_master_key=$(openssl rand -base64 32)
 auth_master_key=$(openssl rand -base64 32)
 auth_audit_signing_key=$(openssl rand -base64 32)
@@ -75,11 +77,11 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
       TERRABASE_PORT=8280 TERRABASE_METRICS_PORT=9291 TERRABASE_POSTGRES_PORT=6632 dotnet "$build/terrabase/terrabase.dll"
     start terrabase-fra-2 env "${cells[@]}" TS_REGION=fra TS_NODE=journey-4 TERRABASE_DATA_DIRECTORY="$state/terrabase-fra-2" \
       TERRABASE_PORT=8380 TERRABASE_METRICS_PORT=9391 TERRABASE_POSTGRES_PORT=6732 dotnet "$build/terrabase/terrabase.dll"
-    ready terrabase-gru-2 curl -fsS --max-time 2 http://127.0.0.3:8081/readyz
-    ready terrabase-fra-2 curl -fsS --max-time 2 http://127.0.0.4:8081/readyz
+    ready terrabase-gru-2 curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.3:8081/readyz
+    ready terrabase-fra-2 curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.4:8081/readyz
   fi
-  ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8081/readyz
-  ready terrabase-fra curl -fsS --max-time 2 http://127.0.0.2:8081/readyz
+  ready terrabase curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.1:8081/readyz
+  ready terrabase-fra curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.2:8081/readyz
 else
   clients=(terrabase:8080)
   start terrabase env DOTNET_ENVIRONMENT=Development TERRABASE_DATA_DIRECTORY="$state/terrabase" TERRABASE_PORT=8080 \
@@ -88,7 +90,7 @@ else
     TERRABASE_PEER_SECRET="$peer_secret" TERRABASE_MASTER_KEY="$terrabase_master_key" \
     TERRABASE_FILES_S3_ENDPOINT=https://journey.r2.cloudflarestorage.com/ TERRABASE_FILES_S3_ACCESS_KEY_ID="$r2_access_key_id" \
     TERRABASE_FILES_S3_SECRET_ACCESS_KEY="$r2_secret_access_key" dotnet "$build/terrabase/terrabase.dll"
-  ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8081/readyz
+  ready terrabase curl -fsS --max-time 2 "${internal[@]}" http://127.0.0.1:8081/readyz
   node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof"
   curl -fsS --max-time 2 http://127.0.0.1:9091/metrics > "$state/backup-disabled.metrics"
   awk '/^terrabase_backup_disabled(\{[^}]*\})? 1$/ {found=1; print} END {exit !found}' "$state/backup-disabled.metrics"
