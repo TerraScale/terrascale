@@ -237,6 +237,27 @@ by waiting. Only TerraBase's sweep of the closed project's prefix can delete it;
 the project's marker has doubled, so the wait is bounded by the time since the deletion began plus 15 s. A `finish`
 without the bucket of the files tests fails with "left no bucket for the account deletion".
 
+## Caller authentication counters
+
+`interactions/callers.spec.ts` uses the journey-only `journey-probe` caller for its exact gRPC
+`caller` counter deltas; the data and catalog keys have separate grants under that one caller name.
+`placement/callers.spec.ts` uses `journey-bridge-probe` so the probes can run together while dashboard,
+auth and peer traffic continue. Both names are bounded registry values, accepted by the registry's
+nonempty, at-most-128-character caller rule; no request identifier becomes a metric label.
+
+The peer credential has no caller identity. `up.sh` therefore runs `caller-peer-probe.mjs` immediately
+after the first cell is ready, before starting any other cell, ts-auth or dashboard. The exact peer +1
+includes the outer gRPC admission and its SQL replay. Only that probe can send peer requests then;
+the interactions spec checks its saved successful proof. This is a serial stack boot step.
+
+Malformed caller tokens are emitted only by the caller probes. The admission probe sends them only
+to gru's platform database, while the bridge checks fra's rejected-caller delta stays exactly zero:
+its valid outer caller and the public request's ignored junk header must not reach fra as caller
+credentials. Ordinary peer traffic has no caller header and cannot increment `caller_rejected`.
+The bridge's metered POST +1 is scoped to its own database, unused by other specs.
+Each metrics read waits for a snapshot newer than the snapshot fetched at the start of that read,
+so a cached scrape created before the request cannot supply the after measurement.
+
 ## The SDK stage and the plans' request budgets
 
 TerraBase admits each organization's requests through its plan's token bucket (Free: 50 per second, burst 100; Pro:
