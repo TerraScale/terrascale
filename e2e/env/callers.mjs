@@ -13,5 +13,8 @@ writeFileSync(join(state, 'callers.json'), JSON.stringify({
   }, {
     kid: 'journey-catalog.local.1', caller: 'journey-catalog', kind: 'service', jwk: publicKey.export({ format: 'jwk' }),
     grants: ['catalog.read'], notAfter: new Date(Date.now() + 86400000).toISOString(),
+  }, {
+    kid: 'op.journey.1', caller: 'op:journey', kind: 'operator', jwk: publicKey.export({ format: 'jwk' }),
+    grants: ['platform.read'], notAfter: new Date(Date.now() + 86400000).toISOString(),
   }],
 }), { mode: 0o600 });

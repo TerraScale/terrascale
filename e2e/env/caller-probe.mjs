@@ -13,10 +13,10 @@ const session = connect(origin);
 const sql = '/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute';
 const body = JSON.stringify({ statements: [{ sql: 'SELECT 29 AS caller_value' }] });
 const peerHeader = { 'X-TerraBase-Peer-Credential': peer };
-function token(kid = 'journey.local.1', age = 0, signingKey = key) {
+function token(kid = 'journey.local.1', age = 0, signingKey = key, extra = {}) {
   const now = Math.floor(Date.now() / 1000) + age;
   const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'ts-caller+jwt', kid })).toString('base64url');
-  const claims = Buffer.from(JSON.stringify({ iss: kid.startsWith('journey-catalog.') ? 'journey-catalog' : 'journey', aud: 'terrabase', iat: now, exp: now + 240, jti: randomUUID() })).toString('base64url');
+  const claims = Buffer.from(JSON.stringify({ iss: kid.startsWith('op.') ? 'op:journey' : kid.startsWith('journey-catalog.') ? 'journey-catalog' : 'journey', aud: 'terrabase', iat: now, exp: now + 240, jti: randomUUID(), ...extra })).toString('base64url');
   const payload = header + '.' + claims;
   return payload + '.' + sign('sha256', Buffer.from(payload), { key: signingKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
 }
@@ -45,6 +45,9 @@ try {
   assert.deepEqual(JSON.parse(own.text).results[0].rows, [[29]]);
   console.log('valid caller own project: 200 rows=[[29]]');
   for (const [label, path, headers, expected] of [
+    ['operator read capability', sql, { 'X-TerraScale-Caller': token('op.journey.1', 0, key, { cap: ['platform.read'], reason: 'journey' }) }, 200],
+    ['operator capability escalation', sql, { 'X-TerraScale-Caller': token('op.journey.1', 0, key, { cap: ['admin'], reason: 'journey' }) }, 401],
+    ['operator missing reason', sql, { 'X-TerraScale-Caller': token('op.journey.1', 0, key, { cap: ['platform.read'] }) }, 401],
     ['other project', sql.replace('00000000000000000000000002', '00000000000000000000000005').replace('ts-auth', 'ts-dashboard'), caller, 403],
     ['admin route', '/admin/api-keys', caller, 403],
     ['valid caller with peer still scoped', '/admin/api-keys', { ...caller, ...peerHeader }, 403],
@@ -62,13 +65,18 @@ try {
     assert.equal(result.status, expected, label + ': ' + result.text);
     console.log(label + ': ' + result.status);
   }
-  for (const [label, jwt, expected] of [
-    ['gRPC caller denied by replay grants', token(), '7'],
-    ['gRPC catalog caller', token('journey-catalog.local.1'), '0'],
+  const operator = { 'X-TerraScale-Caller': token('op.journey.1', 0, key, { cap: ['platform.read'], reason: 'journey' }) };
+  const write = await request(sql, operator, JSON.stringify({ statements: [{ sql: 'CREATE TABLE caller_proof_write (id INTEGER)' }] }));
+  assert.equal(write.status, 403, write.text);
+  console.log('operator read capability rejects SQL writes: 403');
+  for (const [label, jwt, expected, path] of [
+    ['gRPC caller denied by replay grants', token(), '7', '/IPlatformService/ListDatabasesAsync'],
+    ['gRPC public discovery with caller', token(), '0', '/IRegionsService/ListAsync'],
+    ['gRPC catalog caller', token('journey-catalog.local.1'), '0', '/IPlatformService/ListDatabasesAsync'],
   ]) {
     const result = await new Promise((resolve, reject) => {
       const call = session.request({
-        ':method': 'POST', ':path': '/IPlatformService/ListDatabasesAsync',
+        ':method': 'POST', ':path': path,
         'content-type': 'application/grpc', te: 'trailers', 'X-TerraScale-Caller': jwt,
       });
       let status;
@@ -83,7 +91,7 @@ try {
     });
     assert.equal(result.status, 200, label);
     assert.equal(result.grpc, expected, label);
-    if (expected === '0') assert.ok(result.body.includes(Buffer.from('ts-auth')), 'gRPC catalog has platform data');
+    if (label === 'gRPC catalog caller') assert.ok(result.body.includes(Buffer.from('ts-auth')), 'gRPC catalog has platform data');
     console.log(label + ': HTTP ' + result.status + ' grpc-status=' + result.grpc);
   }
   const acting = await request('/v1/management/organizations',
