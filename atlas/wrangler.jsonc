@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ts-atlas",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-13",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "atlas.terrascale.tech", "custom_domain": true }],
+  "d1_databases": [
+    {
+      "binding": "ATLAS_DB",
+      "database_name": "ts-atlas",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+    },
+  ],
+  "kv_namespaces": [{ "binding": "ATLAS_KV", "id": "00000000000000000000000000000000" }],
+  "durable_objects": {
+    "bindings": [{ "name": "ATLAS_STORE", "class_name": "AtlasStore" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AtlasStore"] }],
+  "vars": { "STALE_AFTER_S": "60", "PIN_TTL_S": "600", "VERSION": "dev" },
+}
