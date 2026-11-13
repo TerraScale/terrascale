@@ -112,7 +112,7 @@ internal static partial class SqlErrors
             _ when primary == SqliteTooBig || Has(message, "too big") || Has(message, "too large") || Has(message, "too many") => (new TooBig(), "a value or statement is too big"),
             _ when Has(message, "syntax error") || Has(message, "near \"") || Has(message, "unexpected") || Has(message, "unrecognized token") =>
                 (new Syntax(), "SQL syntax error"),
-            _ when SqlPhrases.FirstOrDefault(phrase => Has(message, phrase)) is { } phrase => (new Error(), phrase),
+            _ when SqlPhrases.FirstOrDefault(phrase => Has(message, phrase)) is { } phrase => (new KnownError(), phrase),
             _ when Has(message, "database is locked") || Has(message, "database is busy") || Has(message, "schema changed") || Has(message, "schema conflict")
                 || Has(message, "write-write conflict") => (new Busy(), "the database is busy; retry"),
             _ when parse => (new Syntax(), "SQL syntax error"),

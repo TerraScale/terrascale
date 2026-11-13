@@ -20,6 +20,7 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
     private readonly ConcurrentDictionary<string, DateTimeOffset> _contacts = new(StringComparer.Ordinal);
     private readonly DateTimeOffset _started = time.GetUtcNow();
     private readonly Lock _totalsGate = new();
+    private readonly HashSet<string> _unreadableLogged = new(StringComparer.Ordinal);
     private bool _counted;
     private long _count;
     private long _bytes;
@@ -31,6 +32,14 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
     public void Touch(string origin) => _contacts[origin] = time.GetUtcNow();
 
     public DateTimeOffset LastContact(string origin) => _contacts.TryGetValue(origin, out var last) ? last : _started;
+
+    internal bool MarkUnreadable(HeldTransaction held)
+    {
+        lock (_totalsGate)
+        {
+            return _unreadableLogged.Add(Id(held.Origin!, held.Organization!, held.Project!, held.Database!, held.Sequence));
+        }
+    }
 
     public async ValueTask<bool> PutAsync(HeldTransaction held, CancellationToken cancellationToken)
     {
@@ -93,6 +102,11 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
                     }
 
                     _ = await transaction.DeleteAsync(Kind, record.Id, cancellationToken).ConfigureAwait(false);
+                    lock (_totalsGate)
+                    {
+                        _ = _unreadableLogged.Remove(record.Id);
+                    }
+
                     dropped++;
                     bytes += record.Json.Length;
                 }
@@ -131,6 +145,11 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
             && await transaction.DeleteAsync(Kind, id, cancellationToken).ConfigureAwait(false))
         {
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            lock (_totalsGate)
+            {
+                _ = _unreadableLogged.Remove(id);
+            }
+
             Forget(record.Json.Length);
         }
     }
