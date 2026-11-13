@@ -34,7 +34,7 @@ export function attach(api, editor, textarea, host) {
   };
   contexts.set(model, context);
   register(api);
-  editor.updateOptions({ wordBasedSuggestions: 'off', quickSuggestions: { other: true, comments: false, strings: false } });
+  editor.updateOptions({ wordBasedSuggestions: 'off', snippetSuggestions: 'top', quickSuggestions: { other: true, comments: false, strings: false } });
 
   const disposables = [];
   let timer;
@@ -200,7 +200,7 @@ function register(api) {
         ...fields.map(field => fieldItem(Kind, table, field, field.path, range)),
         ...context.catalog.keywords.map(keyword => ({ label: keyword, kind: Kind.Keyword, insertText: keyword, sortText: `2${keyword}`, range })),
       ];
-      if (tokens.length === 0) {
+      if (tokens.length === 0 || tokens.at(-1).text === ';') {
         // The default table is snippet text, where $, } and \ are syntax.
         const name = sqlName(table?.name ?? 'table').replace(/[\\$}]/g, '\\$&');
         suggestions.push(...snippets(Kind, Rule, name, range));
@@ -256,10 +256,51 @@ function fieldItem(Kind, table, field, label, range) {
 
 function snippets(Kind, Rule, table, range) {
   return [
-    ['SELECT … FROM … LIMIT', `SELECT \${1:*} FROM \${2:${table}} LIMIT \${3:20}`],
-    ['SELECT … FROM … WHERE … LIMIT', `SELECT \${1:*} FROM \${2:${table}}\nWHERE \${3:field} = \${4:'value'}\nLIMIT \${5:20}`],
-    ['SELECT … FROM … ORDER BY … LIMIT', `SELECT \${1:*} FROM \${2:${table}}\nORDER BY \${3:field} \${4|DESC,ASC|}\nLIMIT \${5:20}`],
-  ].map(([label, insertText]) => ({ label, kind: Kind.Snippet, insertText, insertTextRules: Rule.InsertAsSnippet, sortText: `0${label}`, range }));
+    ['sel', 'SELECT … FROM … LIMIT', 'Read rows from the current table', `SELECT \${1:*} FROM \${2:${table}} LIMIT \${3:20}`],
+    ['sel', 'SELECT … FROM … WHERE … LIMIT', 'Read rows that match', `SELECT \${1:*} FROM \${2:${table}}\nWHERE \${3:field} = \${4:'value'}\nLIMIT \${5:20}`],
+    ['sel', 'SELECT … FROM … ORDER BY … LIMIT', 'Read rows in order', `SELECT \${1:*} FROM \${2:${table}}\nORDER BY \${3:field} \${4|DESC,ASC|}\nLIMIT \${5:20}`],
+    ['count', 'SELECT COUNT(*)', 'Count rows', `SELECT COUNT(*) FROM \${1:${table}}`],
+    ['group', 'GROUP BY with COUNT(*)', 'Count rows per group', `SELECT \${1:name}, COUNT(*) AS count FROM \${2:${table}}\nGROUP BY \${1:name}\nORDER BY count DESC\nLIMIT \${3:20}`],
+    ['group', 'GROUP BY … HAVING', 'Keep groups that match', `SELECT \${1:name}, COUNT(*) AS count FROM \${2:${table}}\nGROUP BY \${1:name}\nHAVING COUNT(*) > \${3:1}`],
+    ['sel', 'SELECT DISTINCT', 'Read distinct values', `SELECT DISTINCT \${1:name} FROM \${2:${table}}`],
+    ['sel', 'LIKE', 'Read rows that match a pattern', `SELECT * FROM \${1:${table}}\nWHERE \${2:name} LIKE \${3:'%value%'}`],
+    ['sel', 'BETWEEN', 'Read rows in a range', `SELECT * FROM \${1:${table}}\nWHERE \${2:created_at} BETWEEN \${3:'2020-01-01'} AND \${4:'2030-01-01'}`],
+    ['sel', 'LIMIT … OFFSET', 'Read a page of rows', `SELECT * FROM \${1:${table}} LIMIT \${2:20} OFFSET \${3:0}`],
+    ['sel', 'CASE WHEN … THEN … ELSE … END', 'Map values with CASE', `SELECT CASE WHEN \${1:score} > \${2:0} THEN \${3:'high'} ELSE \${4:'low'} END FROM \${5:${table}}`],
+    ['dup', 'Find duplicates', 'Find repeated values', `SELECT \${1:name}, COUNT(*) AS count FROM \${2:${table}}\nGROUP BY \${1:name}\nHAVING COUNT(*) > 1`],
+    ['sel', 'json_extract', 'Read a JSON field', `SELECT json_extract(\${1:field}, \${2:'\$.path'}) FROM \${3:${table}}`],
+    ['join', 'INNER JOIN … ON', 'Join another table on a key', `SELECT * FROM \${1:${table}} INNER JOIN \${2:other} ON \${1:${table}}.\${3:id} = \${2:other}.\${4:id}`],
+    ['lj', 'LEFT JOIN … ON', 'Keep rows without a match', `SELECT * FROM \${1:${table}} LEFT JOIN \${2:other} ON \${1:${table}}.\${3:id} = \${2:other}.\${4:id}`],
+    ['cte', 'WITH cte AS (…) SELECT', 'Read through a named result', `WITH \${1:cte} AS (\n  SELECT * FROM \${2:${table}}\n)\nSELECT * FROM \${1:cte}`],
+    ['explain', 'EXPLAIN QUERY PLAN', 'Show how the query runs', `EXPLAIN QUERY PLAN SELECT * FROM \${1:${table}}`],
+    ['schema', 'sqlite_schema', 'List tables, views and indexes', 'SELECT name, type FROM sqlite_schema'],
+    ['pragma', 'PRAGMA table_info', 'List columns of the current table', `PRAGMA table_info(\${1:${table}})`],
+    ['ins', 'INSERT one row', 'Insert one row', `INSERT INTO \${1:${table}} (\${2:id}, \${3:name}) VALUES (\${4:1}, \${5:'value'})`],
+    ['ins', 'INSERT several rows', 'Insert several rows', `INSERT INTO \${1:${table}} (\${2:id}, \${3:name}) VALUES (\${4:1}, \${5:'value'}), (\${6:2}, \${7:'value'})`],
+    ['ins', 'INSERT … ON CONFLICT DO UPDATE', 'Insert or update the matching row', `INSERT INTO \${1:${table}} (\${2:id}, \${3:name}) VALUES (\${4:1}, \${5:'value'})\nON CONFLICT(\${2:id}) DO UPDATE SET \${3:name} = excluded.\${3:name}`],
+    ['ins', 'INSERT … RETURNING *', 'Insert a row and return it', `INSERT INTO \${1:${table}} (\${2:id}, \${3:name}) VALUES (\${4:1}, \${5:'value'}) RETURNING *`],
+    ['upd', 'UPDATE … SET … WHERE', 'Update rows that match', `UPDATE \${1:${table}} SET \${2:name} = \${3:'value'} WHERE \${4:id} = \${5:1}`],
+    ['del', 'DELETE FROM … WHERE', 'Delete rows that match', `DELETE FROM \${1:${table}} WHERE \${2:id} = \${3:1}`],
+    ['ct', 'CREATE TABLE', 'Create a table', `CREATE TABLE \${1:new_table} (\n  id INTEGER PRIMARY KEY,\n  \${2:name} \${3|INTEGER,TEXT,REAL,BLOB|} \${4:NOT NULL}\n)`],
+    ['ct', 'CREATE TABLE IF NOT EXISTS', 'Create a table if it is missing', `CREATE TABLE IF NOT EXISTS \${1:new_table} (\n  id INTEGER PRIMARY KEY,\n  created_at TEXT DEFAULT CURRENT_TIMESTAMP\n)`],
+    ['ct', 'CREATE TABLE … AS SELECT', 'Create a table from a query', `CREATE TABLE \${1:copy} AS SELECT * FROM \${2:${table}}`],
+    ['ci', 'CREATE INDEX', 'Index a column', `CREATE INDEX \${1:idx} ON \${2:${table}} (\${3:id})`],
+    ['ci', 'CREATE UNIQUE INDEX', 'Index unique values', `CREATE UNIQUE INDEX \${1:uidx} ON \${2:${table}} (\${3:name})`],
+    ['cv', 'CREATE VIEW … AS SELECT', 'Save a query as a view', `CREATE VIEW \${1:view_name} AS SELECT * FROM \${2:${table}}`],
+    ['drop', 'DROP TABLE IF EXISTS', 'Drop a table if it exists', 'DROP TABLE IF EXISTS ${1:table_name}'],
+    ['drop', 'DROP INDEX IF EXISTS', 'Drop an index if it exists', `DROP INDEX IF EXISTS \${1:idx}`],
+    ['drop', 'DROP VIEW IF EXISTS', 'Drop a view if it exists', `DROP VIEW IF EXISTS \${1:view_name}`],
+  ].map(([prefix, label, detail, insertText]) => ({
+    label,
+    kind: Kind.Snippet,
+    detail,
+    documentation: detail,
+    insertText,
+    insertTextRules: Rule.InsertAsSnippet,
+    filterText: `${prefix} ${label}`,
+    sortText: `0${label}`,
+    range,
+  }));
 }
 
 // Quote SQL identifiers, including reserved words, spaces and embedded quotes.

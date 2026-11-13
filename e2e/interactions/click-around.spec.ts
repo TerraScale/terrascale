@@ -62,6 +62,22 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
   await audit.check('table rows');
 });
 
+test('the SQL editor suggests CREATE TABLE while typing create', async ({ page }) => {
+  const current = journey();
+  await page.goto(`/databases/${current.databaseId}/sql`);
+  await shell(page, current);
+  const editor = page.locator('#sql-editor ts-code-editor');
+  await expect(editor).toHaveAttribute('data-ready', '');
+  await editor.locator('.monaco-editor').click();
+  await page.keyboard.type('create');
+  const createTable = page.locator('.suggest-widget .monaco-list-row').filter({
+    has: page.locator('.monaco-highlighted-label', { hasText: /^CREATE TABLE$/ }),
+  });
+  await expect(createTable).toBeVisible();
+  await createTable.click();
+  await expect(page.locator('#sql')).toHaveValue(/^CREATE TABLE/);
+});
+
 test('an API key is shown once and rotates twice during grace without another click before revocation', async ({ page, audit }) => {
   const current = journey();
   const name = unique('second-key');
