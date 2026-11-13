@@ -116,6 +116,10 @@ export function keptHash(node: Node, copy: KeptCopy): string {
   return hash.digest('hex');
 }
 
+export function fileHash(node: Node, lease: { organizationId: string; projectId: string; databaseId: string }): string {
+  return createHash('sha256').update(readFileSync(join(stateDir, node.service, lease.organizationId, lease.projectId, `${lease.databaseId}.db`))).digest('hex');
+}
+
 export function holdsFile(node: Node, lease: { organizationId: string; projectId: string; databaseId: string }): boolean {
   return existsSync(join(stateDir, node.service, lease.organizationId, lease.projectId, `${lease.databaseId}.db`));
 }
@@ -131,8 +135,8 @@ export async function counted(node: Node, name: string, labels: Record<string, s
     .reduce((sum, line) => sum + Number(line.slice(line.lastIndexOf(' ') + 1)), 0);
 }
 
-export function logged(node: Node, text: string): number {
-  return readFileSync(join(stateDir, 'logs', `${node.service}.log`), 'utf8').split('\n').filter(line => line.includes(text)).length;
+export function logged(node: Node, ...fragments: string[]): number {
+  return readFileSync(join(stateDir, 'logs', `${node.service}.log`), 'utf8').split('\n').filter(line => fragments.every(fragment => line.includes(fragment))).length;
 }
 
 export async function writerToken(request: APIRequestContext): Promise<string> {

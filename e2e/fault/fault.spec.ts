@@ -8,7 +8,7 @@ import { test, database, json, name, project, removeDatabase, sql, type Cells } 
 import { dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { receiptHandoff } from './receipt-handoff';
-import { backupPuts, backupStore, continuity, counted, crashWrite, endpoint, faultId, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, tokenReady, topology, writerToken, type HomeLease, type Row } from './support';
+import { backupPuts, backupStore, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, tokenReady, topology, writerToken, type HomeLease, type Row } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -257,6 +257,60 @@ test('a move that fails before its commit point rolls back: the target acknowled
   }
 });
 
+test('a rollback keeps both copies in place until the lease names the old home again, then serves every acknowledged row', async ({ cells, request }) => {
+  test.setTimeout(300_000);
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  try {
+    const [ledger] = await createLedgers(cells, 1, 'rollback-unproven');
+    await ledger.write(cells, 'fra', [[31, 'pushed-from-fra']]);
+    await ledger.compare(cells);
+    const before = await homeLease(kv, ledger.id);
+    const { organizationId, projectId } = before.value;
+    const gru = node('journey-1');
+    const target = node('journey-2');
+    const published = await kv.publish(`terrabase.push.fra.gru.${organizationId}.${projectId}.${ledger.id}`, { undecodable: true }, { 'Tb-Epoch': String(before.value.epoch) });
+    expect(published.error, JSON.stringify(published)).toBeUndefined();
+    const move = cells.post(`${endpoint('gru')}${database(ledger.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 });
+
+    await test.step('while the target drains, the lease is rewritten to name a node that never held the database', async () => {
+      await expect.poll(async () => (await kv.get<HomeLease>(homes, `home.${ledger.id}`))?.value, { message: 'journey-2 took the lease', timeout: 60_000, intervals: [100] })
+        .toMatchObject({ home: 'fra', node: 'journey-2', epoch: before.value.epoch + 1 });
+      const taken = await homeLease(kv, ledger.id);
+      await kv.put(homes, `home.${ledger.id}`, { ...taken.value, node: 'journey-4' }, taken.seq);
+    });
+
+    await test.step('the move stays unresolved: neither node sets its copy aside', async () => {
+      const answer = await move;
+      expect(answer.status(), await answer.text()).toBe(503);
+      expect((await answer.json()).error.code).toBe('move_unresolved');
+      expect(holdsFile(gru, before.value), 'the old home keeps its file in place').toBe(true);
+      expect(holdsFile(target, before.value), 'the target keeps its imported copy in place').toBe(true);
+      expect(promoting(target, ledger.id), 'the target stays fenced').toBe(true);
+      expect(await keptCopies(gru, ledger.id)).toEqual([]);
+      expect(await keptCopies(target, ledger.id)).toEqual([]);
+      expect(logged(target, 'is not rolled back: the lease names', '"Node":"journey-4"'), 'the target says why it keeps its copy').toBeGreaterThanOrEqual(1);
+    });
+
+    await test.step('once the lease names the old home again, the rollback finishes and every acknowledged row is served', async () => {
+      const current = await homeLease(kv, ledger.id);
+      await kv.put(homes, `home.${ledger.id}`, { ...current.value, home: 'gru', node: 'journey-1', epoch: before.value.epoch + 2, session: '', adopted: null }, current.seq);
+      await expect.poll(() => keptCopies(target, ledger.id), { message: 'the target sets its imported copy aside only now', timeout: 60_000 })
+        .toEqual([expect.objectContaining({ reason: 'move_rolled_back' })]);
+      expect(promoting(target, ledger.id), 'the promotion fence is lifted').toBe(false);
+      expect(holdsFile(gru, before.value), 'the old home still holds its file').toBe(true);
+      expect(await keptCopies(gru, ledger.id)).toEqual([]);
+      await ledger.write(cells, 'gru', [[33, 'after-rollback-gru']]);
+      await ledger.write(cells, 'fra', [[34, 'after-rollback-fra']]);
+      await ledger.compare(cells);
+      for (const writer of writers()) expect(await ledger.readNode(writer, token), `${writer.name} serves the push from fra before the move`).toContainEqual([31, 'pushed-from-fra']);
+    });
+    await removeDatabase(cells, ledger.id);
+  } finally {
+    kv.close();
+  }
+});
+
 test('a lease that names a node that cannot serve leaves the database unserved, and the old home keeps its file without serving it', async ({ cells, request }) => {
   test.setTimeout(240_000);
   const token = await writerToken(request);
@@ -274,13 +328,12 @@ test('a lease that names a node that cannot serve leaves the database unserved, 
       await restart();
     }
 
-    const copies = await test.step('the old home sets its file aside and serves nothing', async () => {
-      await expect.poll(() => keptCopies(gru, ledger.id), { message: 'journey-1 keeps its file as a kept copy', timeout: 60_000 })
-        .toEqual([expect.objectContaining({ reason: 'lease_unproven' })]);
-      expect(holdsFile(gru, before.value), 'nothing is served from the database path').toBe(false);
-      return keptCopies(gru, ledger.id);
+    const hash = await test.step('the old home keeps its file in place, fenced, and serves nothing', async () => {
+      await expect.poll(() => logged(gru, 'keeps its file in place and fenced', `"Database":"${ledger.id}"`), { message: 'journey-1 keeps its file in place', timeout: 60_000 }).toBe(1);
+      expect(holdsFile(gru, before.value), 'the file stays in the database path').toBe(true);
+      expect(await keptCopies(gru, ledger.id), 'nothing is set aside while no copy is proven').toEqual([]);
+      return fileHash(gru, before.value);
     });
-    const hash = keptHash(gru, copies[0]);
 
     await test.step('the database stays unserved, visibly', async () => {
       const unserved = { databaseId: ledger.id, region: 'fra', node: 'journey-4', epoch: before.value.epoch + 1, cause: 'not_writer' };
@@ -288,15 +341,16 @@ test('a lease that names a node that cannot serve leaves the database unserved, 
         await expect.poll(async () => (await nodeStatus(watcher)).unserved?.filter(entry => entry.databaseId === ledger.id), { message: `${watcher.name} lists the unserved database`, timeout: 60_000 })
           .toEqual([unserved]);
         expect(await counted(watcher, 'terrabase_home_unserved', { region: 'fra' })).toBeGreaterThanOrEqual(1);
-        expect(logged(watcher, `Database ${ledger.id} is unserved: its lease names journey-4 in fra at epoch ${before.value.epoch + 1}`), 'one log line per change of state').toBe(1);
+        expect(logged(watcher, 'is unserved: its lease names', `"Database":"${ledger.id}"`, '"Node":"journey-4"'), 'one log line per change of state').toBe(1);
       }
-      expect(await ledger.refusal(node('journey-2'), token, [[600, 'while-unserved']]), 'the region its lease names refuses the write').toEqual(homeDown);
-      expect((await homeLease(kv, ledger.id)).value, 'nothing claims the lease').toMatchObject({ home: 'fra', node: 'journey-4', epoch: before.value.epoch + 1 });
+      expect(await ledger.refusal(gru, token, [[600, 'while-unserved']]), 'the old home refuses the write').toEqual(homeDown);
+      expect((await homeLease(kv, ledger.id)).value, 'nothing claims the lease, and the old home does not take it back').toMatchObject({ home: 'fra', node: 'journey-4', epoch: before.value.epoch + 1 });
     });
 
-    await test.step('the kept copy stays byte-identical', async () => {
+    await test.step('the file in place stays byte-identical', async () => {
       await expect.poll(() => counted(gru, 'terrabase_home_unserved', { region: 'fra' }), { message: 'journey-1 scanned its leases again' }).toBeGreaterThanOrEqual(1);
-      expect(keptHash(gru, (await keptCopies(gru, ledger.id))[0])).toBe(hash);
+      expect(fileHash(gru, before.value)).toBe(hash);
+      expect(logged(gru, 'keeps its file in place and fenced', `"Database":"${ledger.id}"`), 'one log line per lease').toBe(1);
     });
   } finally {
     kv.close();

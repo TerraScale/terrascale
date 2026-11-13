@@ -112,7 +112,7 @@ internal sealed class DatabaseFences
     public void Lift(string database)
     {
         Release(database);
-        if (Directory.Exists(_directory))
+        if (Directory.Exists(Path.Combine(_directory, PromotingDirectory)))
         {
             File.Delete(PromotionPathOf(database));
         }

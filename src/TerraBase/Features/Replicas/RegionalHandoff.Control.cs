@@ -39,6 +39,7 @@ internal sealed partial class RegionalHandoff
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RecheckEvery = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan CatchUpBudget = TimeSpan.FromSeconds(5);
+    private const int CatchUpParallelism = 16;
     private static readonly TimeSpan ActivationBudget = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AttemptBudget = TimeSpan.FromSeconds(2);
 
@@ -331,9 +332,11 @@ internal sealed partial class RegionalHandoff
             {
                 return false;
             }
+            await CatchUpAsync([.. page.Databases.Where(database => !PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && replicas.HeldRevision(database) is null)])
+                .ConfigureAwait(false);
             foreach (var database in page.Databases)
             {
-                if (!PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && await HeldAsync(database).ConfigureAwait(false) is { } replica)
+                if (!PlatformDatabases.IsPlatformDatabase(database.DatabaseId) && replicas.HeldRevision(database) is { } replica)
                 {
                     var primary = await revisions.CurrentRevisionAsync(database, token).ConfigureAwait(false);
                     if (primary is not { } held || held.Incarnation != replica.Incarnation || DatabaseRevision.Compare(replica, held) > 0)
@@ -353,25 +356,31 @@ internal sealed partial class RegionalHandoff
         _refusal = null;
         return true;
 
-        async Task<DatabaseRevision?> HeldAsync(TenantContext database)
+        async Task CatchUpAsync(IReadOnlyList<TenantContext> unheld)
         {
-            if (replicas.HeldRevision(database) is { } open)
+            if (unheld.Count == 0)
             {
-                return open;
+                return;
             }
 
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
             budget.CancelAfter(CatchUpBudget);
-            try
+            var late = 0;
+            await Parallel.ForEachAsync(unheld, new ParallelOptions { MaxDegreeOfParallelism = CatchUpParallelism, CancellationToken = token }, async (database, cancellation) =>
             {
-                _ = await replication.CatchUpAsync(database, budget.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                try
+                {
+                    _ = await replication.CatchUpAsync(database, budget.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    _ = Interlocked.Increment(ref late);
+                }
+            }).ConfigureAwait(false);
+            if (late > 0)
             {
-                logger.ZLogWarning($"The activation check could not catch up database {database.DatabaseId:@Database}'s local replica within {CatchUpBudget.TotalSeconds:@Seconds} s; it compares the position the replica holds, if any");
+                logger.ZLogWarning($"The activation check could not catch up {late:@Late} of {unheld.Count:@Databases} local replicas within {CatchUpBudget.TotalSeconds:@Seconds} s; it compares the positions the replicas hold, if any");
             }
-
-            return replicas.HeldRevision(database);
         }
 
         void Refuse(HomeRefusal refusal, string state, string detail)

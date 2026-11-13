@@ -4,7 +4,8 @@ An acknowledged write is never lost or undone by anything this build does on its
 writer role, move only through a planned move or a planned drain to a node that has proven it holds everything the
 previous holder acknowledged. Nothing moves when a node stops: the database waits, and is unavailable for the writes
 that need its home. No node deletes a database file unless another node has proven, at a lease revision read again
-just before the delete, that it holds its content; every other file a node no longer serves is set aside and kept.
+just before the delete, that it holds its content. A file that no other copy is proven to cover stays in place and
+fenced, or is set aside and kept; nothing discards it.
 Availability is given up before durability.
 
 ## Lease store
@@ -65,7 +66,8 @@ every 15 s, which also picks up databases that gained replica regions.
    certificate (`Regional writer proof`).
 
 The availability trade, plainly: while a home is down, its databases accept no home-committed write; nothing moves by
-itself; a home whose node and disk are lost for good needs an operator takeover call, which this build does not have.
+itself; a home whose node and disk are lost for good stays unavailable for those writes, and this build has no path
+that moves it.
 The lost home's acknowledged writes that no replica pulled cannot be recovered by any automatic path.
 
 ## A lease that names a node that cannot serve
@@ -77,10 +79,11 @@ Every node checks every lease it watches on each 15 s scan. A lease whose node h
 - each node logs `Database <id> is unserved` once per change of that state, and `is served again` when it ends;
 - `terrabase.home.unserved{region}` counts such databases by the lease's region, and `/v1/rollout/status` lists them
   (`unserved`: database, region, node, epoch, cause);
-- the old home, if it still holds a file, sets the file aside as a kept copy (`lease_unproven`) and does not serve it.
+- the old home, if it still holds a file, keeps it in place and fenced, does not serve it and does not take the lease
+  back: the lease carries no `adopted`, so nothing proves which copy holds the acknowledged writes. It logs
+  `keeps its file in place and fenced` once per lease epoch, and its catalog keeps naming its own region.
 
-Getting such a database served again is an operator takeover call, which is not part of this build. Nothing in this
-build needs an answer from the node the lease names, so that call can act while that node is dead.
+This build has no path that serves such a database again.
 
 ## Moving a home (one commit point)
 
@@ -103,16 +106,20 @@ A home moves only through a planned move (R9), to the current writer of the targ
    only after the placement update, the prepare and the drain have all succeeded. Then the target lifts the fence,
    sends the held notices and serves. After the commit point nothing rolls back: the target is the home and the move
    only goes forward.
-7. When any step before the commit point fails, the target rolls back and answers `move_aborted`: it stops holding the
-   lease, sets its imported copy aside as a kept copy (`move_rolled_back`), writes the lease back to the previous home's
-   node at the next epoch above every epoch written (creating it when it was missing; leaving it alone when it already
-   names another node), records the previous home in its catalog at that epoch when its catalog had taken the new
-   placement, and lifts the fence. It acknowledged no write before the commit point, so the old home resumes at its
-   paused position with nothing lost. Nothing is deleted.
+7. When any step before the commit point fails, the target rolls back: it stops holding the lease and reads it. Only
+   two states let the rollback go on: the lease is this move's own uncommitted lease (names the target at the move's
+   epoch, without `adopted`), which the target rewrites with one compare-and-set to the previous home's node at the next
+   epoch; or the lease already names the previous home's node. The target then records the previous home in its
+   catalog when its catalog had taken the new placement, sets its imported copy aside as a kept copy
+   (`move_rolled_back`), lifts the fence and answers `move_aborted`. It acknowledged no write before the commit point,
+   and the old home never sets its file aside on a lease without `adopted`, so the old home resumes at its paused
+   position with nothing lost. In every other state (no lease, a lease naming another node, a lease with `adopted`) the
+   target keeps its imported copy in place and fenced, logs `is not rolled back`, and answers `503 move_unresolved`;
+   the old home stays paused with its file. The next `promote/abort` tries again. Nothing is deleted.
 8. A target that stops between the fence and its answer keeps the fence across the restart. The old home asks again
    (`promote/abort`, every 5 s); the target then reads the lease: committed (names it at the move's epoch with
-   `adopted`) means it lifts the fence and answers promoted; not committed means it rolls back as in step 7; a lease it
-   cannot read keeps the fence and answers `503 move_unresolved`.
+   `adopted`) means it lifts the fence and answers promoted; not committed means it rolls back as in step 7, under the
+   same two states; a lease it cannot read keeps the fence and answers `503 move_unresolved`.
 
 Pushes during a move: every region's writer consumes every origin's push stream with its own durable consumer and
 acknowledges a pushed transaction only after applying it, or after its catalog says another region is the home. While
@@ -133,8 +140,11 @@ lease's `adopted`:
 - **Proven**: `adopted` is in the same incarnation and at or beyond the final position. The node reads the lease again
   and deletes its file only if the lease's revision is still the one the proof was read at; otherwise it starts over
   (`terrabase.home.demotions`).
-- **Not proven**: the file is set aside as a kept copy (`move_unproven` after a planned move, `lease_unproven`
-  otherwise). The node never takes the home back.
+- **Not proven**: a lease without `adopted` (an uncommitted move, or a claim by an earlier build), or no lease at all,
+  proves nothing about any copy: the file stays in place and fenced and the catalog is not changed. A lease with
+  `adopted` that does not cover the final position means the new home serves without part of this file: the file is
+  set aside as a kept copy (`move_unproven` after a planned move, `lease_unproven` otherwise). The node never takes the
+  home back; the only way a home returns is a planned move, with the same proof as any other.
 
 ## Kept copies
 
@@ -175,8 +185,8 @@ target's replica as its primary file; a file already at that path is set aside a
 ## Mixed builds during a rollout
 
 A node on an earlier build still claims a home automatically when its lease lapses for about 15 s. A node on this build
-never deletes its file because of such a claim: the claim carries no `adopted`, so the old home sets its file aside as a
-kept copy. The claimant serves the database when it is its region's writer; otherwise the database is unserved
+never deletes its file because of such a claim: the claim carries no `adopted`, so the old home keeps its file in place
+and fenced. The claimant serves the database when it is its region's writer; otherwise the database is unserved
 (`A lease that names a node that cannot serve`). Release order:
 
 1. Upgrade every non-writer node first.
@@ -206,7 +216,7 @@ kept copy. The claimant serves the database when it is its region's writer; othe
   applied pull.
 - A replica region that does not report within 10 s fails the request with `503 unavailable` after the commit: the
   write stays at the home, but it may be lost if the home region fails before a replica pulls it.
-- Every replica then holds every `all` write, so a replica an operator promotes after a home is lost for good keeps them.
+- Every replica then holds every `all` write.
 
 ## Metrics
 
@@ -223,11 +233,12 @@ kept copy. The claimant serves the database when it is its region's writer; othe
 
 - `durability` is accepted on SQL REST only; the WebSocket frame field and `SET terrascale.durability` follow.
 - A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-- No operator call takes over a database whose lease names a node that cannot serve it, or whose home's node and disk
-  are lost for good.
+- A database whose lease names a node that cannot serve it, or whose home's node and disk are lost for good, stays
+  unserved: this build has no path that serves it again.
 - Kept copies are never removed automatically, including those of a database a user deleted; each one is disk the
   operator reclaims. A regional drain back to a former writer sets aside that node's earlier primary files.
-- The activation check cannot compare a replica whose follower could not reach its source within 5 s.
+- The activation check cannot compare a replica whose follower could not reach its source within the 5 s it gives each
+  page of homed databases (their replicas catch up together, 16 at a time).
 - Setting a file aside renames the database file first and then each sidecar; a crash between two renames leaves a
   sidecar at the old path.
 - The applied notices a target held for drained pushes are not sent when the target stops between its commit point and
