@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Primitives;
@@ -164,44 +165,61 @@ internal sealed partial class TsAuthKeys
     }
 
     private static PublicIssuerKeys PublicKeys(JsonWebKeySet set) => new([.. set.Keys
-        .Where(key => key.Use is null or "" or "sig")
+        .Where(Verifies)
         .Select(key => new PublicIssuerKey(key.Kty, key.Kid, key.Alg, key.Use, key.KeyOps.Count > 0 ? [.. key.KeyOps] : null, key.Crv, key.X, key.Y, key.N, key.E, [.. key.X5c]))]);
 
     private static JsonWebKeySet ReadKeySet(string json)
     {
-        using var payload = JsonDocument.Parse(json);
-        foreach (var entry in payload.RootElement.GetProperty("keys").EnumerateArray())
+        var root = JsonNode.Parse(json) as JsonObject ?? throw new InvalidDataException("the key set is not an object");
+        var entries = root["keys"] as JsonArray ?? throw new InvalidDataException("the key set lists no keys");
+        for (var index = entries.Count - 1; index >= 0; index--)
         {
-            if (entry.TryGetProperty("use", out var use) && use.GetString() is not (null or "" or "sig"))
+            if (entries[index] is not JsonObject entry
+                || entry.TryGetPropertyValue("use", out var use) && Text(use) is not (null or "" or "sig")
+                || !entry.TryGetPropertyValue("key_ops", out var operations))
             {
                 continue;
             }
 
-            if (entry.TryGetProperty("key_ops", out var operations)
-                && (operations.ValueKind != JsonValueKind.Array || !operations.EnumerateArray().Any(value => value.GetString() == "verify")))
+            if (operations is not JsonArray permitted)
             {
-                throw new InvalidDataException("a signing key does not permit verification");
+                throw new InvalidDataException("a signing key declares malformed operations");
+            }
+
+            if (!permitted.Any(operation => Text(operation) == "verify"))
+            {
+                entries.RemoveAt(index);
             }
         }
 
-        return new JsonWebKeySet(json);
+        return new JsonWebKeySet(root.ToJsonString());
+    }
+
+    private static string? Text(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+
+    private static bool Verifies(JsonWebKey key)
+    {
+        if (key.Use is not (null or "" or "sig"))
+        {
+            return false;
+        }
+
+        if (key.Kty == "oct" || key.HasPrivateKey)
+        {
+            throw new InvalidDataException("the key set contains secret key material");
+        }
+
+        return key.Kty is "RSA" or "EC"
+            && (string.IsNullOrEmpty(key.Alg) || UserAuthenticationHandler.AllowsAlgorithm(key.Alg))
+            && (key.KeyOps.Count == 0 || key.KeyOps.Contains("verify", StringComparer.Ordinal));
     }
 
     private static List<SecurityKey> SigningKeys(JsonWebKeySet set)
     {
         List<SecurityKey> keys = [];
-        foreach (var key in set.Keys)
+        foreach (var key in set.Keys.Where(Verifies))
         {
-            if (key.Use is not (null or "" or "sig"))
-            {
-                continue;
-            }
-
-            if (key.Kty is not ("RSA" or "EC") || key.HasPrivateKey
-                || !string.IsNullOrEmpty(key.Alg) && !UserAuthenticationHandler.AllowsAlgorithm(key.Alg)
-                || key.KeyOps.Count > 0 && !key.KeyOps.Contains("verify", StringComparer.Ordinal)
-                || !JsonWebKeyConverter.TryConvertToSecurityKey(key, out var converted)
-                || converted is not AsymmetricSecurityKey { KeySize: > 0 })
+            if (!JsonWebKeyConverter.TryConvertToSecurityKey(key, out var converted) || converted is not AsymmetricSecurityKey { KeySize: > 0 })
             {
                 throw new InvalidDataException("the key set contains an unusable public signing key");
             }

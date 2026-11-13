@@ -66,8 +66,10 @@ unchanged.
 - **Keys.** TerraBase reads `{auth-issuer without a trailing /}/.well-known/openid-configuration`, then its
   `jwks_uri`. Both must use HTTPS, return 2xx without redirects, and fit within 1 MiB. Discovery must name the
   configured issuer exactly; JWKS must share its origin. One ten-second deadline covers both requests.
-  Entries explicitly marked for another use are skipped. Every signing entry must convert to a usable public RSA
-  or EC key; an unusable entry, symmetric signing key, or empty signing set fails the entire fetch. Existing keys
+  Entries marked for another use, of a key type other than RSA or EC, declaring an algorithm outside the
+  allow-list, or declaring `key_ops` without `verify` are skipped, so a key the node does not understand never
+  stops a refresh. Every remaining signing entry must convert to a usable public RSA or EC key; a malformed one,
+  a symmetric key, private key material, or an empty signing set fails the entire fetch. Existing keys
   remain available after a failed fetch. A declared `alg` restricts that key to that algorithm, within the existing
   asymmetric algorithm allow-list; declared `key_ops` must include `verify`. The platform issuer publishes EC
   P-256 keys declaring `alg: ES256` and `use: sig`, without `key_ops`.
@@ -78,7 +80,7 @@ unchanged.
   - Stored keys wait for the node's existing peer/kernel clock-trust gate before loading; readiness and fresh
     issuer fetches do not wait for stored trust. Disk and issuer keys share validation. A stored file is ignored
     as a whole if unreadable, larger than 2 MiB, truncated, malformed, another version or issuer, empty, or
-    containing an unusable signing entry. The load boundary catches content failures, logs one bounded reason
+    containing a malformed RSA or EC signing entry or secret key material. The load boundary catches content failures, logs one bounded reason
     without contents, and counts rejection; the node continues without stored keys.
   - Within a process, the **24-hour** allowance uses monotonic elapsed time from fetch or load. At load, UTC
     before either fetch time or high-water mark rejects the file as `clock_backwards`. The remaining allowance

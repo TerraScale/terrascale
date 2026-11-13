@@ -470,16 +470,17 @@ test('PostgreSQL preserves 57P03 on renewal and pending Execute, refuses credent
   }
 });
 
-test('an unusable issuer signing entry fails the entire fetch and preserves the previous keys', async ({ request }) => {
+test('a malformed or secret issuer signing entry fails the entire fetch, an entry the node does not understand is skipped', async ({ request }) => {
   const token = await grant(request);
   const node = await signingNode(request);
+  const stored = () => JSON.parse(readFileSync(node.stored, 'utf8')) as Snapshot;
   try {
     await node.start();
     await accepts(request, token);
-    const published = (JSON.parse(readFileSync(node.stored, 'utf8')) as Snapshot).jwks.keys[0];
-    for (const bad of [{ kty: 'RSA', use: 'sig', n: '!', e: 'AQAB' },
-      { kty: 'oct', use: 'sig', k: 'c2VjcmV0' }, { ...published, key_ops: ['sign'] }]) {
+    const published = stored().jwks.keys[0];
+    for (const bad of [{ kty: 'RSA', use: 'sig', n: '!', e: 'AQAB' }, { kty: 'oct', use: 'sig', k: 'c2VjcmV0' }]) {
       const before = node.fetches();
+      const fetched = stored().fetchedAt;
       node.keys([bad]);
       await node.stop();
       await node.start();
@@ -487,6 +488,18 @@ test('an unusable issuer signing entry fails the entire fetch and preserves the 
       await expect.poll(async () => (await node.metrics()).includes('outcome="failure"')).toBe(true);
       await accepts(request, token);
       expect(await node.loaded()).toBe(1);
+      expect(stored().fetchedAt, 'a failed fetch does not renew the stored set').toBe(fetched);
+    }
+    for (const skipped of [{ kty: 'OKP', crv: 'Ed25519', kid: 'future-type', alg: 'EdDSA', use: 'sig', x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo' },
+      { ...published, kid: 'future-algorithm', alg: 'ES3072' }, { ...published, kid: 'other-operation', key_ops: ['sign'] }]) {
+      const fetched = stored().fetchedAt;
+      node.keys([skipped]);
+      await node.stop();
+      await node.start();
+      await expect.poll(() => stored().fetchedAt, { message: `a set with ${skipped.kid} still refreshes` }).not.toBe(fetched);
+      await accepts(request, token);
+      expect(await node.loaded()).toBe(1);
+      expect(stored().jwks.keys.map(key => key.kid), `${skipped.kid} is not stored`).not.toContain(skipped.kid);
     }
     node.keys([], true);
     await node.stop();

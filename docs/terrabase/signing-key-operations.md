@@ -6,7 +6,9 @@ last-known-time high-water mark. Writes flush a sibling `.new` file, atomically 
 Only public material is stored. The data directory is as trusted as the process: restrict its write access accordingly.
 
 A successful nonempty refresh replaces the whole set, including a smaller set; failed, empty or partly unusable sets
-keep the previous keys without renewing their fetch time. Non-signing entries are skipped. Signing entries must be
+keep the previous keys without renewing their fetch time. Entries for another use, of a key type other than RSA
+or EC, with an algorithm outside the allow-list, or whose `key_ops` omit `verify` are skipped and never fail a
+refresh. A malformed RSA or EC signing entry, a symmetric key or private key material fails it. Accepted entries must be
 usable asymmetric public keys, declared `alg` must match the token algorithm, and declared `key_ops` must include
 `verify`. The platform issuer publishes P-256 / ES256 / sig keys without `key_ops`.
 
