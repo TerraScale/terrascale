@@ -59,6 +59,8 @@ email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; 
 | `hosted/imported-password-race.spec.ts` | 1 | 20/hour |
 | `hosted/project-mfa.spec.ts` | 2 | 20/hour |
 | `hosted/project-sign-in.spec.ts` | 2 | 20/hour |
+| `hosted/user-profiles.spec.ts` | 1 | 20/hour |
+| `interactions/auth-organizations.spec.ts` | 1 | 20/hour |
 | `interactions/auth-webhooks.spec.ts` | 6 | 20/hour |
 | `journey/invitation.spec.ts` | 1 | 20/hour |
 | `journey/finish.spec.ts` | 1 | 20/hour |
@@ -435,8 +437,10 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
 - Step-ups: ts-auth issues at most 10 per user in 15 minutes (`StepUpProofs.cs:60-62,94`); a run spends 1 for the
   desktop owner (account deletion), 9 for the phone-and-flows owner (2 access tokens and 2 API-key rotations in `interactions`, 4 in
   `hosted`, account deletion), and 1 for the paid owner (account deletion). API-key creation and revocation need none.
-  Profile, project organization, impersonation and machine-credential flows share one dedicated owner with nine
-  proofs including cleanup, so they spend none of the main owner's proofs and remain within the signup limit.
+  Impersonation and machine-credential flows share a dedicated auth-feature owner. Profiles and project
+  organization policy each provision and delete their own owner and project, keeping verified domains,
+  organization suggestions and proof budgets independent of parallel flows. They spend none of the main
+  owner's proofs and remain within their spec's signup limit.
   Webhook delivery flows use separate owners for both failing and healthy projects. The hasher fairness measurement
   runs in the serial finish phase after the browser flows, retaining its latency thresholds and concurrent hashing load.
 - Secrets: every value the run generates is registered through `saveSecret` in `support/state.ts` or in

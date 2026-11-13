@@ -6,7 +6,7 @@ import { authRows } from '../support/auth-storage';
 import { request } from '../support/client-address';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { prepareAuthManagement, closeAuthManagement, stepUp } from '../support/auth-management';
-import { createProjectOwner } from '../support/project-owner';
+import { createDedicatedProjectOwner } from '../support/project-owner';
 import { hostedReady } from '../support/hosted';
 import { auth, dash, onLocalStack } from '../support/stack';
 import { saveCookies, saveSecret } from '../support/state';
@@ -19,7 +19,7 @@ const nested = (depth: number): Record<string, unknown> => Array.from({ length: 
 
 
 test('SDK profiles and imported passwords work on hosted pages and OIDC', async ({ browser }, info) => {
-  const account = await createProjectOwner(browser, info);
+  const account = await createDedicatedProjectOwner(browser, info, 'Profiles owner');
   const { current, page, audit } = account;
   const management = await prepareAuthManagement(page, 'profiles', current);
   const sdk = createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' }).projects;
@@ -225,7 +225,8 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
       expect(limited.status()).toBe(429);
       expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
       const authorization = await userPage.request.get(authorize.href, { maxRedirects: 0 });
-      expect(authorization.status()).toBe(302);
+      const authorizationPage = await authorization.text();
+      expect(authorization.status(), authorizationPage.match(/<(?:title|h1)[^>]*>[^<]*/g)?.join('; ')).toBe(302);
       const code = new URL(authorization.headers().location).searchParams.get('code')!;
       saveSecret('profile-code', code);
       const token = await userPage.request.post(`${auth}/${current.projectId}/oauth/token`, {
@@ -257,6 +258,6 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
     if (clientId) await sdk.deleteClient(management.ownerToken, current.projectId, clientId);
     for (const id of [createdId, importedId, ...extraIds]) if (id) await sdk.deleteUser(management.writeKey, current.projectId, id);
     await closeAuthManagement(page, management, current);
-    await account.close();
+    await account.remove();
   }
 });
