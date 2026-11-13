@@ -93,6 +93,12 @@ internal sealed class SqlExecuteEndpoint(
         SqlRequestTiming.Mark(HttpContext, "tenant");
         if (await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
         {
+            if (!placement.PlacedIn(options.Region))
+            {
+                await DatabaseRegions.ProxyAsync(HttpContext, placement.Home).ConfigureAwait(false);
+                return Results.Empty;
+            }
+
             return await ReplicaAsync(database, placement, commands, body, all, cancellationToken);
         }
 
