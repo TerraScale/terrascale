@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
@@ -153,6 +154,14 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         }
 
         public string ExpiryLabel => Revealed.Key.ExpiresAt is { } expires ? "expires " + ApiKeyFormat.Date(expires) : "no expiry";
+
+        public IReadOnlyList<string> AccessChips => ApiKeyFormat.Preset(Metadata.Scopes) switch
+        {
+            "full" => ["read", "write"],
+            "read" => ["read"],
+            "custom" => Metadata.Scopes,
+            _ => throw new UnreachableException(),
+        };
 
         public bool Prefixed => Revealed.Secret.StartsWith("sk_", StringComparison.Ordinal);
 
