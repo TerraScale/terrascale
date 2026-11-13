@@ -2,7 +2,7 @@
 
 The hosted sign-in, sign-up, password-reset and device pages charge each end user's IP address (an IPv6 address per
 /64, plus its /48 at four times the budget) before any account work. Account guessing is stopped by the per-email
-password and code budgets, which are unchanged.
+password and code budgets.
 
 ## Client address under ts-orch
 
@@ -30,8 +30,13 @@ The burst covers an office behind one NAT. Sustained rates match or exceed the o
 `Retry-After` is an upper bound on the time until one more request is admitted. A full bucket drains in four minutes
 (calls) or thirty minutes (mail), never a fixed ten-minute lock.
 
-The per-email budgets stay fixed windows. They still send one lockout notice per stored deadline: 10 password attempts
-per 15 minutes, 5 code redemptions per 30 minutes, and 5 code issues and a 60-second cooldown per address. A refusal's
+The per-email budgets stay fixed windows. They send one lockout notice per stored deadline: 10 failed password attempts
+per 15 minutes, 5 code redemptions per 30 minutes, and 5 code issues and a 60-second cooldown per address. Password
+verification reserves a slot before checking the credential and returns that slot after success, using a conditional
+write against the same region and window that admitted it. Concurrent verifications count while in flight; a
+successful sign-in never clears other failures, and an exhausted budget still refuses correct passwords. Previously,
+successful sign-ins and confirmations also consumed the ten slots, locking out ordinary account use. The shared IP
+budgets above still charge every attempt. A refusal's
 `Retry-After` is the remaining part of that window in seconds, and the page speaks it in whole minutes above two
 minutes. A transient failure (a full delivery queue, storage that does not answer) keeps the visitor on their own
 sign-in step with the address they entered and the same forms, so a failed sign-in always has a next action on the page.
