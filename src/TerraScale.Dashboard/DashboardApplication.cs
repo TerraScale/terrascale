@@ -235,6 +235,8 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<RenameDatabaseEndpoint>(),
                 EndpointRegistration.Create<FunctionsPageEndpoint>(),
                 EndpointRegistration.Create<DeleteFunctionEndpoint>(),
+                EndpointRegistration.Create<DeployFunctionEndpoint>(),
+                EndpointRegistration.Create<InvokeFunctionEndpoint>(),
                 EndpointRegistration.Create<HomePageEndpoint>(),
                 EndpointRegistration.Create<HomeRegionsEndpoint>(),
                 EndpointRegistration.Create<DatabaseLogsPageEndpoint>(),
