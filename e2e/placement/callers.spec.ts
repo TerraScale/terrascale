@@ -31,6 +31,9 @@ test('bearer RPC calls preserve regional forwarding and usage with caller assert
     expect(stdout).toContain('bridge bearer caller=true: fra rows=[[291]], fra metered POST +1');
     expect(stdout).toContain('forwarded public caller header: fra rows=[[291]], rejected caller +0');
     console.log(stdout);
+  } catch (error) {
+    console.log('regional caller primary failure:', error);
+    throw error;
   } finally {
     await removeDatabase(cells, created.id);
   }

@@ -156,7 +156,8 @@ function postgresRows(id: string): string {
   const current = journey();
   return execFileSync('psql', ['-X', '-tA', '-v', 'ON_ERROR_STOP=1', '-c', 'SELECT value FROM placement_rows ORDER BY value',
     `postgresql://any@pg.terrascale.tech:5432/${current.projectId}/${id}?sslmode=verify-full&sslrootcert=${encodeURIComponent(join(stateDir, 'pki', 'ca.pem'))}`], {
-    env: { PATH: process.env.PATH, SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
+    env: { PATH: process.env.PATH, SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey,
+      PGSSLCERT: join(stateDir, 'postgres-client.crt'), PGSSLKEY: join(stateDir, 'postgres-client.key') },
     encoding: 'utf8',
   }).trim();
 }
@@ -202,7 +203,8 @@ test('R3 replace the writer and proxy REST and WebSocket through a removed regio
     }), `${home.replace('https:', 'wss:')}${database(created.id)}/sql/ws`);
     pg = spawn('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=verbose',
       `postgresql://any@pg.terrascale.tech:5432/${current.projectId}/${created.id}?sslmode=verify-full&sslrootcert=${encodeURIComponent(join(stateDir, 'pki', 'ca.pem'))}`], {
-      env: { PATH: process.env.PATH, SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
+      env: { PATH: process.env.PATH, SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey,
+      PGSSLCERT: join(stateDir, 'postgres-client.crt'), PGSSLKEY: join(stateDir, 'postgres-client.key') },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     pgExited = new Promise<unknown[]>(resolve => pg!.once('close', (...args) => resolve(args)));
