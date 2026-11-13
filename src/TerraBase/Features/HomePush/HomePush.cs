@@ -57,7 +57,6 @@ internal partial class HomePush(
     internal const int MaxPayloadBytes = 8 << 20;
     private const int MaxParallelDatabases = 16;
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan AckWait = TimeSpan.FromSeconds(5);
 
     private static readonly TimeSpan SettleBound = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HomeWait = TimeSpan.FromSeconds(30);

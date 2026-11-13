@@ -204,7 +204,7 @@ internal partial class HomePush
         if (PushNames.Database(message.Subject) is not { } database)
         {
             await ParkAsync(run.Origin, run.Source!, sequence, message.Subject, message.Data, "malformed", run.Token).ConfigureAwait(false);
-            await message.AckAsync(cancellationToken: run.Token).AsTask().WaitAsync(AckWait).ConfigureAwait(false);
+            await message.AckAsync(cancellationToken: run.Token).ConfigureAwait(false);
             return;
         }
 
@@ -248,7 +248,7 @@ internal partial class HomePush
 
         if (ackNow)
         {
-            await message.AckAsync(cancellationToken: run.Token).AsTask().WaitAsync(AckWait).ConfigureAwait(false);
+            await message.AckAsync(cancellationToken: run.Token).ConfigureAwait(false);
         }
     }
 
@@ -617,7 +617,7 @@ internal partial class HomePush
 
         foreach (var message in delivered)
         {
-            await message.AckAsync(cancellationToken: cancellationToken).AsTask().WaitAsync(AckWait, cancellationToken).ConfigureAwait(false);
+            await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -638,7 +638,7 @@ internal partial class HomePush
 
         foreach (var delivered in replayed)
         {
-            await delivered.AckAsync(cancellationToken: cancellationToken).AsTask().WaitAsync(AckWait, cancellationToken).ConfigureAwait(false);
+            await delivered.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -654,7 +654,7 @@ internal partial class HomePush
 
         foreach (var delivered in decided)
         {
-            await delivered.AckAsync(cancellationToken: cancellationToken).AsTask().WaitAsync(AckWait, cancellationToken).ConfigureAwait(false);
+            await delivered.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 
