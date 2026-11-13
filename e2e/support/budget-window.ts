@@ -8,12 +8,12 @@ export function budgetWindow(response: APIResponse, window: number): number {
   return Math.floor(date / window);
 }
 
-export async function waitForBudgetWindow(request: APIRequestContext, window: number): Promise<void> {
+export async function waitForBudgetWindow(request: APIRequestContext, window: number, remaining = 15_000): Promise<void> {
   while (true) {
     const ready = await request.get(auth + '/readyz');
     expect(ready.status()).toBe(200);
     const date = Date.parse(ready.headers().date);
     expect(Number.isFinite(date), 'budget readiness has a server Date').toBe(true);
-    if (date % window < window - 30_000) return;
+    if (date % window < window - remaining) return;
   }
 }

@@ -51,7 +51,7 @@ test('password reservations are returned after sign-in and retained for wrong pa
         headers: { Origin: auth }, form: { email: address, password },
       });
       const window = 15 * 60_000;
-      await waitForBudgetWindow(context.request, window);
+      await waitForBudgetWindow(context.request, window, 30_000);
       let firstWindow: number | undefined;
       for (let index = 0; index < 11; index++) {
         const signedIn = await attempt(email, current.password);
