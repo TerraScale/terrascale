@@ -14,7 +14,7 @@ internal static class CustomerCredentials
     private const int NonceBytes = 12;
     private const int TagBytes = 16;
 
-    public static async Task<SealedCredentials> SealAsync(IMasterKey master, string accessKeyId, string secretKey, CancellationToken cancellationToken)
+    public static async Task<SealedCredentials> SealAsync(IKeyring master, string accessKeyId, string secretKey, CancellationToken cancellationToken)
     {
         var (key, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
         var plain = JsonSerializer.SerializeToUtf8Bytes(new CustomerKeyPair(accessKeyId, secretKey), BackupJsonContext.Default.CustomerKeyPair);
@@ -34,7 +34,7 @@ internal static class CustomerCredentials
         }
     }
 
-    public static async Task<(string AccessKeyId, string SecretKey)> OpenAsync(IMasterKey master, SealedCredentials credentials, CancellationToken cancellationToken)
+    public static async Task<(string AccessKeyId, string SecretKey)> OpenAsync(IKeyring master, SealedCredentials credentials, CancellationToken cancellationToken)
     {
         var key = await master.UnwrapAsync(credentials.WrappedKey, cancellationToken).ConfigureAwait(false);
         var sealedBytes = new byte[credentials.Ciphertext.Length * 3 / 4];

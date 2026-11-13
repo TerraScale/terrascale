@@ -6,11 +6,11 @@ namespace TerraBase.Configuration;
 
 public sealed class BackupSettings
 {
-    internal static string[] Keys => [.. Required, "backup-key-rotation-days", "cloudflare-api-token"];
+    internal static string[] Keys => [.. Required, "master-key", "master-keys", "backup-key-rotation-days", "cloudflare-api-token"];
 
     private static readonly string[] Required =
     [
-        "backup-endpoint", "backup-region", "backup-bucket", "backup-access-key-id", "backup-secret-key", "master-key",
+        "backup-endpoint", "backup-region", "backup-bucket", "backup-access-key-id", "backup-secret-key",
     ];
 
     internal static readonly (string Variable, string Key)[] TigrisVariables =
@@ -31,7 +31,7 @@ public sealed class BackupSettings
 
     public string? CloudflareApiToken { get; init; }
 
-    public required byte[] MasterKey { get; init; }
+    public required KeyringSettings Keyring { get; init; }
 
     public int KeyRotationDays { get; init; } = 90;
 
@@ -48,14 +48,14 @@ public sealed class BackupSettings
 
     internal static BackupSettings? Parse(IReadOnlyDictionary<string, string> values)
     {
-        if (!Keys.Any(key => key != "master-key" && values.ContainsKey(key)))
+        if (!Keys.Any(key => key is not ("master-key" or "master-keys") && values.ContainsKey(key)))
         {
             return null;
         }
 
-        if (!Required.All(values.ContainsKey))
+        if (!Required.All(values.ContainsKey) || KeyringSettings.Parse(values) is null)
         {
-            throw new TerraBaseConfigurationException($"{string.Join(", ", Required)} must be set together");
+            throw new TerraBaseConfigurationException($"{string.Join(", ", Required)} and master-key or master-keys must be set together");
         }
 
         var endpoint = Https(values, "backup-endpoint");
@@ -76,7 +76,7 @@ public sealed class BackupSettings
                 : throw new TerraBaseConfigurationException("backup-bucket must be 3 to 63 lowercase letters, digits, dots or hyphens"),
             AccessKeyId = Token(values, "backup-access-key-id"),
             SecretKey = Token(values, "backup-secret-key"),
-            MasterKey = ParseMasterKey(values["master-key"]),
+            Keyring = KeyringSettings.Parse(values) ?? throw new TerraBaseConfigurationException("master-key or master-keys is required"),
             CloudflareApiToken = r2 ? Token(values, "cloudflare-api-token") : null,
             KeyRotationDays = values.TryGetValue("backup-key-rotation-days", out var rotation) ? ParseKeyRotation(rotation) : 90,
         };

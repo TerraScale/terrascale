@@ -11,7 +11,7 @@ namespace TerraBase.Features.Backup;
 internal sealed class DataKeys : IDisposable
 {
     private readonly IObjectStore _store;
-    private readonly IMasterKey _master;
+    private readonly IKeyring _master;
     private readonly TimeProvider _time;
     private readonly bool _freshKey;
     private readonly KeyCacheRevocations? _revocations;
@@ -19,7 +19,7 @@ internal sealed class DataKeys : IDisposable
     private readonly Dictionary<string, int> _pendingScopes = new(StringComparer.Ordinal);
     private bool _disposed;
 
-    public DataKeys(IObjectStore store, IMasterKey master, TimeProvider time, BackupSettings settings,
+    public DataKeys(IObjectStore store, IKeyring master, TimeProvider time, BackupSettings settings,
         bool freshKey = false, SemaphoreSlim? reads = null, KeyCacheRevocations? revocations = null)
     {
         _store = store;

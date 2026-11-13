@@ -290,7 +290,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal TursoSessionPool Pool { get; }
 
     public TursoStorageEngine(
-    StorageEngineOptions configured, Meter meter, ILogger<TursoStorageEngine> logger, IMasterKey masterKey,
+    StorageEngineOptions configured, Meter meter, ILogger<TursoStorageEngine> logger, IKeyring masterKey,
     DatabaseLifecycleCheckpoint? checkpoint = null, IMemoryBudget? schemaMemory = null,
     INativeTemporaryStorage? nativeTemporaryStorage = null, IDiskBudget? diskBudget = null)
     {

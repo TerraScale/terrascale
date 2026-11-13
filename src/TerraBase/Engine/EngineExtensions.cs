@@ -20,12 +20,15 @@ public static class EngineExtensions
         ArgumentNullException.ThrowIfNull(options);
         services.TryAddSingleton(options);
         services.TryAddSingleton<INativeTemporaryStorage, NativeTemporaryStorage>();
-        services.TryAddKeyedSingleton<IMasterKey>(DatabaseMasterKey, (provider, _) =>
+        services.TryAddKeyedSingleton<IKeyring>(DatabaseMasterKey, (provider, _) =>
         {
             var configured = provider.GetRequiredService<TerraBaseOptions>();
-            return new MasterKey(configured.DatabaseMasterKey ?? configured.Backup?.MasterKey
+            return new Keyring(configured.DatabaseKeyring ?? configured.Backup?.Keyring
                 ?? throw new TerraBaseConfigurationException("master-key is required for database encryption"));
         });
+        services.TryAddSingleton<IKeyring>(provider => provider.GetRequiredKeyedService<IKeyring>(DatabaseMasterKey));
+        services.AddSingleton<CredentialKeyRewrap>();
+        services.AddHostedService<KeyRewrap>();
         services.TryAddSingleton<DatabaseLifecycleCheckpoint>(_ => static (_, _) => { });
         services.AddMetrics();
         services.TryAddSingleton<IDiskBudget, DiskBudget>();
@@ -40,7 +43,7 @@ public static class EngineExtensions
                     configured.ShutdownGrace, ReadinessCacheTtl: configured.ReadinessCacheTtl, QueryBudget: configured.QueryBudget,
                     Time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), BackupTime: provider.GetService<TimeProvider>()),
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(DatabaseMasterKey),
+                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), provider.GetRequiredKeyedService<IKeyring>(DatabaseMasterKey),
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 schemaMemory: provider.GetRequiredService<IMemoryBudget>(),
                 nativeTemporaryStorage: provider.GetRequiredService<INativeTemporaryStorage>(),
@@ -52,7 +55,10 @@ public static class EngineExtensions
         services.AddSingleton<IRecoverySnapshotReader>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IHealthyRewrite>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IDatabaseRevisions>(provider => provider.GetRequiredService<TursoStorageEngine>());
-        services.AddSingleton<IDatabaseReplicas, TursoReplicas>();
+        services.AddSingleton<TursoReplicas>();
+        services.AddSingleton<IDatabaseReplicas>(provider => provider.GetRequiredService<TursoReplicas>());
+        services.AddSingleton<IWrappedKeyFiles>(provider => provider.GetRequiredService<TursoStorageEngine>());
+        services.AddSingleton<IWrappedKeyFiles>(provider => provider.GetRequiredService<TursoReplicas>());
         services.AddSingleton<IDatabaseRewind>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton(provider => provider.GetRequiredService<TursoStorageEngine>().Fences);
         services.AddSingleton<IStorageCopyFaults>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);

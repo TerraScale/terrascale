@@ -27,13 +27,15 @@ using TerraBase.Features.Sql;
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoReplicas(
-    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, IMemoryBudget memory, ILogger<TursoReplicas> logger, TimeProvider? time = null)
+    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IKeyring master, IMemoryBudget memory, ILogger<TursoReplicas> logger, TimeProvider? time = null)
     : IDatabaseReplicas, IAsyncDisposable
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
     internal const string DirectoryName = ".replicas";
-    internal const string KeyHeader = "TERRABASE-REPLICA-KEY-1\n";
+    internal const string KeyHeader = "TERRABASE-REPLICA-KEY-2\n";
+    private const string PreviousKeyHeader = "TERRABASE-REPLICA-KEY-1\n";
+    private static readonly Lock KeyRecords = new();
     private const int MaxIdleConnections = 4;
     private const int MaxReadRows = 10_000;
 
@@ -134,6 +136,15 @@ internal sealed partial class TursoReplicas(
         return await Task.Run(() =>
         {
             var wrapped = DataKeyRecord(path) ?? throw new InvalidDataException("the replica's data key record is missing");
+            var plain = master.Unwrap(wrapped);
+            try
+            {
+                wrapped = master.Wrap(plain);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(plain);
+            }
             var detached = Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db");
             DeleteDetached(detached);
             DatabaseKeys.RejectLink(path);
@@ -345,22 +356,14 @@ internal sealed partial class TursoReplicas(
 
     private async Task<string?> UnwrapAsync(string wrapped)
     {
+        var key = await master.UnwrapAsync(wrapped, CancellationToken.None).ConfigureAwait(false);
         try
         {
-            var key = await master.UnwrapAsync(wrapped, CancellationToken.None).ConfigureAwait(false);
-            try
-            {
-                return key.Length == 32 ? Convert.ToHexString(key) : null;
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(key);
-            }
+            return key.Length == 32 ? Convert.ToHexString(key) : throw new InvalidDataException("replica data key must contain 256 bits");
         }
-        catch (CryptographicException)
+        finally
         {
-            logger.ZLogWarning($"A replica's data key is not authentic under this node's master key; the replica is started again");
-            return null;
+            CryptographicOperations.ZeroMemory(key);
         }
     }
 
@@ -371,16 +374,19 @@ internal sealed partial class TursoReplicas(
         {
             await Task.Run(() =>
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                DatabaseKeys.RejectLink(path + DatabaseKeys.Suffix);
-                var temporary = path + DatabaseKeys.Suffix + ".tmp";
-                using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+                lock (KeyRecords)
                 {
-                    file.Write(Encoding.ASCII.GetBytes(KeyHeader + wrapped + "\n"));
-                    file.Flush(flushToDisk: true);
-                }
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    DatabaseKeys.RejectLink(path + DatabaseKeys.Suffix);
+                    var temporary = path + DatabaseKeys.Suffix + ".tmp";
+                    using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        file.Write(Encoding.ASCII.GetBytes(KeyHeader + wrapped + "\n"));
+                        file.Flush(flushToDisk: true);
+                    }
 
-                File.Move(temporary, path + DatabaseKeys.Suffix, overwrite: true);
+                    File.Move(temporary, path + DatabaseKeys.Suffix, overwrite: true);
+                }
             }).ConfigureAwait(false);
             return Convert.ToHexString(key);
         }
@@ -392,37 +398,58 @@ internal sealed partial class TursoReplicas(
 
     private static string? DataKeyRecord(string path)
     {
-        var file = path + DatabaseKeys.Suffix;
-        DatabaseKeys.RejectLink(file);
-        if (!File.Exists(file) || new FileInfo(file).Length > DatabaseKeys.MaxFileBytes)
+        lock (KeyRecords)
         {
-            return null;
-        }
+            var file = path + DatabaseKeys.Suffix;
+            DatabaseKeys.RejectLink(file);
+            if (!File.Exists(file))
+            {
+                return null;
+            }
 
-        var text = File.ReadAllText(file, Encoding.ASCII);
-        return text.StartsWith(KeyHeader, StringComparison.Ordinal) && text.EndsWith('\n') && text.Length > KeyHeader.Length + 1
-            ? text[KeyHeader.Length..^1]
-            : null;
+            if (new FileInfo(file).Length > DatabaseKeys.MaxFileBytes)
+            {
+                throw new InvalidDataException("the replica wrapped key record is malformed");
+            }
+
+            var text = File.ReadAllText(file, Encoding.ASCII);
+            var current = text.StartsWith(KeyHeader, StringComparison.Ordinal);
+            var previous = text.StartsWith(PreviousKeyHeader, StringComparison.Ordinal);
+            if (!(current || previous) || !text.EndsWith('\n') || text.Length <= KeyHeader.Length + 1)
+            {
+                throw new InvalidDataException("the replica wrapped key record is malformed");
+            }
+
+            var wrapped = text[KeyHeader.Length..^1];
+            if (current && !wrapped.StartsWith("v2.", StringComparison.Ordinal) || previous && wrapped.Contains('.', StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("the replica wrapped key version does not match its header");
+            }
+            return wrapped;
+        }
     }
 
     private static bool DeleteFiles(string path)
     {
-        var directory = Path.GetDirectoryName(path)!;
-        if (!Directory.Exists(directory))
+        lock (KeyRecords)
         {
-            return false;
-        }
+            var directory = Path.GetDirectoryName(path)!;
+            if (!Directory.Exists(directory))
+            {
+                return false;
+            }
 
-        DatabaseKeys.RejectLink(directory);
-        var name = Path.GetFileName(path);
-        var deleted = false;
-        foreach (var file in Directory.EnumerateFiles(directory, name + "*"))
-        {
-            File.Delete(file);
-            deleted = true;
-        }
+            DatabaseKeys.RejectLink(directory);
+            var name = Path.GetFileName(path);
+            var deleted = false;
+            foreach (var file in Directory.EnumerateFiles(directory, name + "*"))
+            {
+                File.Delete(file);
+                deleted = true;
+            }
 
-        return deleted;
+            return deleted;
+        }
     }
 
     private sealed class PushedAnswer(DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, IMemoryReservation reservation, long? cdcPosition) : IDisposable

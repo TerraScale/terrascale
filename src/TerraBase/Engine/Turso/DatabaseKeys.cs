@@ -5,11 +5,14 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed class DatabaseKeys(IMasterKey master)
+internal sealed class DatabaseKeys(IKeyring master)
 {
+    internal IKeyring Keyring => master;
+
     internal const string Suffix = ".key";
     internal const int MaxFileBytes = 16 * 1024;
-    internal const string Header = "TERRABASE-DB-KEY-1\n";
+    internal const string Header = "TERRABASE-DB-KEY-2\n";
+    private const string PreviousHeader = "TERRABASE-DB-KEY-1\n";
 
     internal async Task<string> CreateAsync(string path, TursoRunner io, CancellationToken cancellationToken)
     {
@@ -91,7 +94,7 @@ internal sealed class DatabaseKeys(IMasterKey master)
         }
     }
 
-    private static string ReadWrapped(string path)
+    internal static string ReadWrapped(string path)
     {
         var record = ReadRecord(path);
         return Encoding.ASCII.GetString(record.AsSpan(Header.Length, record.Length - Header.Length - 1));
@@ -100,9 +103,16 @@ internal sealed class DatabaseKeys(IMasterKey master)
     internal static void ValidateRecord(ReadOnlySpan<byte> record)
     {
         if (record.Length <= Header.Length + 1 || record.Length > MaxFileBytes
-            || !record.StartsWith("TERRABASE-DB-KEY-1\n"u8) || record[^1] != (byte)'\n')
+            || !(record.StartsWith("TERRABASE-DB-KEY-1\n"u8) || record.StartsWith("TERRABASE-DB-KEY-2\n"u8)) || record[^1] != (byte)'\n')
         {
             throw new InvalidDataException("the database wrapped key record is malformed");
+        }
+
+        var wrapped = Encoding.ASCII.GetString(record[Header.Length..^1]);
+        if (record.StartsWith(Encoding.ASCII.GetBytes(Header)) && !wrapped.StartsWith("v2.", StringComparison.Ordinal)
+            || record.StartsWith(Encoding.ASCII.GetBytes(PreviousHeader)) && wrapped.Contains('.', StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("the database wrapped key version does not match its header");
         }
 
         foreach (var value in record[Header.Length..^1])

@@ -71,8 +71,18 @@ try
     var options = new TerraBaseOptions { DataDirectory = scratch, MemoryBudget = 64L << 20, StorageThreads = 1, StorageQueue = 32 };
     using var meter = new Meter("TerraBase.LiveRestoreDrill");
     var services = new ServiceCollection();
-    engine = new TursoStorageEngine(options.DataDirectory, 1, 32, options.MemoryBudget, meter,
-        NullLogger<TursoStorageEngine>.Instance, new MasterKey(master), TimeSpan.FromSeconds(10),
+    var settings = new BackupSettings
+    {
+        Endpoint = new Uri(ReadOnlyTransport.Endpoint),
+        Region = "auto",
+        Bucket = bucket,
+        AccessKeyId = access,
+        SecretKey = secret,
+        Keyring = KeyringSettings.Parse(new Dictionary<string, string> { ["master-key"] = Convert.ToBase64String(master) })!,
+    };
+    engine = new TursoStorageEngine(
+        new StorageEngineOptions(options.DataDirectory, 1, 32, options.MemoryBudget, TimeSpan.FromSeconds(10)), meter,
+        NullLogger<TursoStorageEngine>.Instance, new Keyring(settings.Keyring),
         nativeTemporaryStorage: new NativeTemporaryStorage(options));
     services.AddHttpClient(S3ObjectStore.HttpClientName)
         .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false })
@@ -84,16 +94,7 @@ try
     await readOnly.CheckWriteRejectionAsync().ConfigureAwait(false);
     proof.WriteRejectionSelfCheck = true;
 
-    var settings = new BackupSettings
-    {
-        Endpoint = new Uri(ReadOnlyTransport.Endpoint),
-        Region = "auto",
-        Bucket = bucket,
-        AccessKeyId = access,
-        SecretKey = secret,
-        MasterKey = master,
-    };
-    using var keys = new DataKeys(readOnly, new MasterKey(master), TimeProvider.System, settings);
+    using var keys = new DataKeys(readOnly, new Keyring(settings.Keyring), TimeProvider.System, settings);
     var reader = new BackupReader(engine, readOnly, keys, options, engine.Disk);
     proof.Stage = "snapshot_selection";
     SnapshotKey? latest = null;
@@ -153,7 +154,7 @@ try
     proof.ExpectedDigest = Convert.ToHexString(await engine.RestoreDrillChecksumAsync(baseline, stop.Token).ConfigureAwait(false));
     proof.Stage = "restore";
     started = Stopwatch.GetTimestamp();
-    using var restored = await reader.BuildAsync(file, scope, source, DateTimeOffset.MaxValue, latest.Position, stop.Token).ConfigureAwait(false);
+    using var restored = await reader.BuildAsync(file, scope, source, DateTimeOffset.MaxValue, latest.Position, latest, stop.Token).ConfigureAwait(false);
     proof.DownloadRestoreMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
     proof.ReachedPosition = restored.Position;
     proof.EncryptedObjectAuthentication = true;

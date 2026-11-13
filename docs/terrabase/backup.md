@@ -327,9 +327,37 @@ key objects are ignored during selection; a future-dated key can still decrypt h
 Changing `backup-key-rotation-days` requires a rolling
 restart; use `1` for the next daily rotation when shortening the schedule.
 
-The master key does not rotate yet. Changing `TERRABASE_MASTER_KEY` makes retained backups unreadable, because
-their wrapped data keys no longer unwrap. There is no key versioning yet. Do not delete wrapped keys while their
-backups are still retained; only a database's deletion destroys its keys.
+Configure a versioned keyring with `TERRABASE_MASTER_KEYS_FILE`, a protected JSON file with
+`active` and `keys` properties. The keys object maps ids to base64-encoded 32-byte keys.
+Ids contain 1–63 ASCII letters, digits, underscores or hyphens; at most 32 keys are accepted.
+The active id must exist. Supply either this file or `TERRABASE_MASTER_KEY_FILE`, never both.
+The single-key configuration assigns the id `k0`.
+
+New wrappers use `v2.<keyId>.<base64(nonce|ciphertext|tag)>`, with the version and id authenticated
+as AES-GCM associated data. Unprefixed wrappers use only `k0`. Database and replica sidecars
+use version 2 headers; version 1 sidecars remain readable under `k0`. Missing, malformed,
+unknown or unauthentic ids fail closed without trying other keys. The encrypted database bytes,
+storage format identity and backup payloads do not change.
+
+Rotate in stages: distribute the new key to every node while retaining the current active id;
+restart all nodes; then select the new active id and restart them again. New wraps immediately
+use the active key. The always-running key maintenance pass runs at startup and every minute.
+It atomically replaces database and replica sidecars without changing their data keys, conditionally
+rewraps the shared custody objects, and updates current and historical customer-backup credential
+wrappers through catalog transactions. Interrupted passes resume from the wrappers still naming an
+older key. Custody replacements require the entity tag read with the wrapper, so deletion or another
+rotation cannot be overwritten.
+
+`terrabase.keys.wrapped{key_id}` counts wrapped items after a complete successful pass. It includes
+local database and replica sidecars, custody keys, and current and historical customer credentials.
+A failed or incomplete inventory publishes no counts. Check every node, require fresh successful
+inventories with the old id at zero, and keep all nodes on the same active id before retiring a key.
+Shared custody and catalog items are counted on multiple nodes; do not sum those copies to infer
+unique item counts. A zero local count alone does not prove that another node has finished.
+Retain the old key until every backup needing it has also passed the 7-day retention and 14-day bucket
+snapshot window; use a longer wait where the configured retention is longer. Historical catalog
+backups still contain the credential wrappers from their capture time. Never delete custody keys
+while retained backups need them; database deletion remains the operation that destroys data keys.
 
 This rotation preserves the existing backup bytes, bucket layout and database files. Live database files, WAL files, local
 managed snapshots and restore scratch files still require encryption of the node's storage; TS-702's disk-encryption
