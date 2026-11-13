@@ -35,6 +35,48 @@ To iterate: `bash e2e/env/local.sh prepare`, `bash e2e/env/local.sh start`,
 `bash e2e/env/local.sh exec bash e2e/env/up.sh`, then from `e2e/`
 `bash env/local.sh exec npx playwright test --project pages-desktop`, and `bash e2e/env/local.sh stop`.
 
+## Client addresses and sign-up budgets
+
+The local namespace runs `env/client-proxy.mjs` on port 8089. Global setup allocates an invocation number by
+creating a directory under `$E2E_STATE/client-runs`. Each spec gets one stable address for that invocation:
+`127.(64 + invocation).specIndex.repeatEachIndex`, where `specIndex` is its one-based position in the sorted
+list of spec paths. All workers executing that spec share its address. Repeated cases get separate addresses.
+The proxy binds its outgoing socket to the address on which it accepted the connection. Caddy listens on those
+loopback addresses and replaces `X-Forwarded-For` with the actual socket source. Auth trusts exactly one rightmost
+hop from the edge's loopback socket peer (`App.cs`), as it does behind the production edge. Client-supplied
+forwarding headers cannot select an address; `signup-address-limit.spec.ts` proves that forged headers still
+exhaust the same stored bucket. This proxy exists only inside the isolated journey namespace.
+
+The `phone and flows` shard charges the platform tenant's `hosted-signup-ip` budget as follows. The product limit
+is 20 attempts per address per hour (`HostedAuth.SignUpsPerIp` and `SignUpWindow`), including starts that leave an
+email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; imported users consume none.
+
+| Spec address | Platform sign-up charges per run | Limit |
+| --- | ---: | ---: |
+| `journey/setup.spec.ts` | 2 | 20/hour |
+| `hosted/hosted.spec.ts` | 5 | 20/hour |
+| `hosted/attack-protection.spec.ts` | 1 | 20/hour |
+| `hosted/imported-password-race.spec.ts` | 1 | 20/hour |
+| `hosted/project-mfa.spec.ts` | 2 | 20/hour |
+| `hosted/project-sign-in.spec.ts` | 2 | 20/hour |
+| `interactions/auth-webhooks.spec.ts` | 6 | 20/hour |
+| `journey/invitation.spec.ts` | 1 | 20/hour |
+| `journey/finish.spec.ts` | 1 | 20/hour |
+| `hosted/signup-address-limit.spec.ts` | 20 admitted, attempt 21 refused | 20/hour |
+| Each other spec's own address | 0 | 20/hour |
+
+Teardown prints `signup address <address> <spec>: <stored count>/20 per hour`, reading the limiter's persisted
+counts with the same keyed subject derivation. Ordinary addresses spend at most 6 of 20 slots. Each invocation
+allocates a fresh address range, so consecutive runs on the same stack do not inherit a previous run's budget.
+Attack protection and sign-in limit specs retain one dedicated address per spec across every browser context and
+API client; the sign-up limit spec alone exhausts its dedicated address.
+
+Add a sign-up to the address of its spec, keep that spec's complete ordinary run below 20, and update this table
+from the stored counts. Open browser contexts through `auditedContext`; create standalone API clients through
+`support/client-address.request`. The normal `page`, `context` and `request` fixtures already use the spec address.
+Keep limit probes in their dedicated spec and use its single address throughout. New specs automatically get their
+own address without a product setting or a special header. Production uses the machine's real address directly.
+
 ## Two local TerraBase regions
 
 Placement work uses an opt-in pair of real cells, with the same builds and namespaces:

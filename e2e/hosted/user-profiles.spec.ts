@@ -2,13 +2,13 @@ import { createTsAuthClient } from '../../sdk/js/src/ts-auth.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { connect } from 'node:http2';
-import { request } from '@playwright/test';
+import { authRows } from '../support/auth-storage';
+import { request } from '../support/client-address';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { prepareAuthManagement, closeAuthManagement, stepUp } from '../support/auth-management';
 import { createProjectOwner } from '../support/project-owner';
 import { hostedReady } from '../support/hosted';
-import { auth, dash, stateDir, onLocalStack } from '../support/stack';
+import { auth, dash, onLocalStack } from '../support/stack';
 import { saveCookies, saveSecret } from '../support/state';
 
 const median = (samples: number[]) => [...samples].sort((left, right) => left - right)[Math.floor(samples.length / 2)];
@@ -17,29 +17,6 @@ const djangoHash = 'pbkdf2_sha256$600000$seasalt$OAXyhAQ/4ZDA9V5RMExt3C1OwQdUpLZ
 const django52Hash = 'pbkdf2_sha256$1000000$seasalt$r1uLUxoxpP2Ued/qxvmje7UH9PUJBkRrvf9gGPL7Cps=';
 const nested = (depth: number): Record<string, unknown> => Array.from({ length: depth - 1 }).reduce<Record<string, unknown>>(value => ({ child: value }), { value: true });
 
-async function authRows(sql: string, args: string[]): Promise<unknown[][]> {
-  const peer = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
-  const connection = connect('http://127.0.0.1:8081');
-  try {
-    return await new Promise((resolve, reject) => {
-      const query = connection.request({ ':method': 'POST',
-        ':path': '/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute',
-        'content-type': 'application/json', 'X-TerraBase-Peer-Credential': peer });
-      let response = '';
-      query.setEncoding('utf8');
-      query.on('error', reject);
-      query.on('data', chunk => { response += chunk; });
-      query.on('end', () => {
-        const result = JSON.parse(response);
-        if (result.error) reject(new Error(result.error.code));
-        else resolve(result.results[0].rows);
-      });
-      query.end(JSON.stringify({ statements: [{ sql, args }] }));
-    });
-  } finally {
-    connection.close();
-  }
-}
 
 test('SDK profiles and imported passwords work on hosted pages and OIDC', async ({ browser }, info) => {
   const account = await createProjectOwner(browser, info);
