@@ -380,11 +380,22 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
   for (const action of ['apiKey.created', 'apiKey.revoked']) {
     expect(events.some(event => event.action === action)).toBe(true);
   }
-  const keyEvents = await page.request.get(root + '/events', { headers: { Authorization: 'Bearer ' + management.ownerToken } });
-  expect(keyEvents.status()).toBe(200);
-  const outboxEvents = (await keyEvents.json()).items as { type: string }[];
-  expect(outboxEvents.some(event => event.type === 'apiKey.created')).toBe(true);
-  expect(outboxEvents.some(event => event.type === 'apiKey.revoked')).toBe(true);
+  await expect.poll(async () => {
+    const types = new Set<string>();
+    let cursor = '';
+    do {
+      const response = await page.request.get(root + '/events', {
+        headers: { Authorization: 'Bearer ' + management.ownerToken }, params: { limit: 100, after: cursor },
+      });
+      expect(response.status()).toBe(200);
+      const body = await response.json();
+      for (const event of body.items as { type: string; data: { user_id: string } }[]) {
+        if (event.data.user_id === management.user) types.add(event.type);
+      }
+      cursor = body.next ?? '';
+    } while (cursor);
+    return ['apiKey.created', 'apiKey.revoked'].filter(type => types.has(type));
+  }).toEqual(['apiKey.created', 'apiKey.revoked']);
 
   for (const [action, key, status] of [
     ['disable_project_user.failed', management.readKey, 403],
