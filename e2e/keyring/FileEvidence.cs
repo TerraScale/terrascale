@@ -41,7 +41,8 @@ internal sealed class FileEvidence(Dictionary<string, byte[]> files)
         var bytes = ReadGauge(text, "terrabase_storage_retained_bytes");
         if (count != retained.Length || bytes != retained.Sum(path => new FileInfo(path).Length))
         {
-            throw new InvalidDataException("retained files or bytes were not counted");
+            throw new InvalidDataException(string.Create(CultureInfo.InvariantCulture,
+                $"retained files or bytes were not counted: files={count}/{retained.Length}, bytes={bytes}/{retained.Sum(path => new FileInfo(path).Length)}"));
         }
         Console.WriteLine("keyring-driver:retained-gauges-exact-files=" + retained.Length);
     }

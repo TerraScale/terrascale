@@ -43,7 +43,7 @@ internal static class InventoryProof
             $"keyring-driver:10000 startup_ms={startupMilliseconds:F2} scrape_ms={scrape:F2}"));
     }
 
-    internal static async Task ImportAsync(IServiceProvider services, CancellationToken cancellationToken)
+    internal static async Task WaitForMaintenanceAsync(CancellationToken cancellationToken)
     {
         var complete = false;
         using var listener = new MeterListener
@@ -68,6 +68,11 @@ internal static class InventoryProof
             }
         }
         while (await timer.WaitForNextTickAsync(cancellationToken));
+    }
+
+    internal static async Task ImportAsync(IServiceProvider services, CancellationToken cancellationToken)
+    {
+        await WaitForMaintenanceAsync(cancellationToken);
         var engine = services.GetRequiredService<IStorageEngine>();
         var receipts = services.GetRequiredService<RegionalReceiptImports>();
         var settings = services.GetRequiredService<TerraBaseOptions>().DatabaseKeyring!;

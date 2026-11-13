@@ -86,6 +86,10 @@ internal static class Lifecycle
         if (evidence is not null && args.Length == 1 && File.ReadAllText(args[0]).Contains("\"mode\"", StringComparison.Ordinal)
             && !File.ReadAllText(args[0]).Contains("key-refused", StringComparison.Ordinal))
         {
+            if (app.Services.GetRequiredService<IKeyring>().KeyIds.Count > 1)
+            {
+                await InventoryProof.WaitForMaintenanceAsync(cancellationToken);
+            }
             await FileEvidence.VerifyMetricsAsync(cancellationToken);
         }
         try

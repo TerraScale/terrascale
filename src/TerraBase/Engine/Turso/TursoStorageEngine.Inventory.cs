@@ -15,14 +15,14 @@ internal sealed partial class TursoStorageEngine
     private readonly ConcurrentDictionary<string, string> _keyRefusals = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _weakWarnings = new(StringComparer.Ordinal);
 
-    private static IEnumerable<(string Path, bool Failed)> InventoryPaths(string directory)
+    private static IEnumerable<(FileSystemInfo Entry, bool Failed)> InventoryPaths(string directory)
     {
-        string[] entries;
+        FileSystemInfo[] entries;
         var failed = false;
         try
         {
             DatabaseKeys.RejectLink(directory);
-            entries = Directory.GetFileSystemEntries(directory);
+            entries = new DirectoryInfo(directory).GetFileSystemInfos();
         }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
         {
@@ -31,13 +31,13 @@ internal sealed partial class TursoStorageEngine
         }
         if (failed)
         {
-            yield return (directory, true);
+            yield return (new DirectoryInfo(directory), true);
         }
         foreach (var entry in entries)
         {
-            if (Directory.Exists(entry))
+            if (entry is DirectoryInfo child)
             {
-                foreach (var path in InventoryPaths(entry))
+                foreach (var path in InventoryPaths(child.FullName))
                 {
                     yield return path;
                 }
@@ -118,8 +118,9 @@ internal sealed partial class TursoStorageEngine
     private Dictionary<string, long> InventoryLocalKeys(bool startup, Dictionary<string, long> missing)
     {
         var counts = NewKeyCounts();
-        foreach (var (path, failed) in InventoryPaths(_dataDirectory))
+        foreach (var (entry, failed) in InventoryPaths(_dataDirectory))
         {
+            var path = entry.FullName;
             if (failed)
             {
                 Unknown(counts);
@@ -202,7 +203,6 @@ internal sealed partial class TursoStorageEngine
             {
                 missing[keyId] = missing.GetValueOrDefault(keyId) + 1;
             }
-
         }
         catch (Exception error) when (error is InvalidDataException or JsonException or InvalidOperationException or ArgumentException)
         {
@@ -345,8 +345,9 @@ internal sealed partial class TursoStorageEngine
     {
         long count = 0;
         long bytes = 0;
-        foreach (var (path, failed) in InventoryPaths(_dataDirectory))
+        foreach (var (entry, failed) in InventoryPaths(_dataDirectory))
         {
+            var path = entry.FullName;
             if (failed)
             {
                 return (-1, -1);
@@ -360,7 +361,7 @@ internal sealed partial class TursoStorageEngine
             }
             try
             {
-                bytes += new FileInfo(path).Length;
+                bytes += ((FileInfo)entry).Length;
                 count++;
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
