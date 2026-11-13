@@ -148,7 +148,6 @@ internal sealed class HomeSessions(
 
         var upstream = new Pipe();
         var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        stop.CancelAfter(SqlLimits.MaxRequestTime);
         var forwarding = new Upstream(upstream.Reader, stop.Token);
         var request = new HttpRequestMessage(HttpMethod.Post, new Uri(node.Internal, Path)) { Content = forwarding };
         try
@@ -171,7 +170,6 @@ internal sealed class HomeSessions(
                     await session.DisposeAsync().ConfigureAwait(false);
                     return refused;
                 case HomeSessionAnswer:
-                    stop.CancelAfter(Timeout.InfiniteTimeSpan);
                     return session;
                 default:
                     await session.DisposeAsync().ConfigureAwait(false);

@@ -34,6 +34,7 @@ export async function postgres(port = 6432, database = journey().databaseId) {
   const errors: string[] = [];
   const results = new EventEmitter();
   const closed = (async () => {
+    try {
     for await (const packet of messages(socket)) {
       if (packet.type === 'R' && packet.body.readInt32BE() === 3) {
         socket.write(message('p', Buffer.from(current.apiKey + '\0')));
@@ -44,6 +45,11 @@ export async function postgres(port = 6432, database = journey().databaseId) {
         errors.push(...packet.body.toString().split('\0').filter(Boolean));
         admitted(false);
       }
+    }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ECONNRESET' && code !== 'ERR_STREAM_PREMATURE_CLOSE') throw error;
+      errors.push('transport:' + code);
     }
     admitted(false);
     return errors;
@@ -97,6 +103,7 @@ export async function stalledPostgres(port: number, database: string, pipelined:
   });
   const drain = async () => {
     let rows = 0;
+    let transport: string | undefined;
     const errors: string[] = [];
     try {
       for await (const packet of messages(socket)) {
@@ -104,9 +111,11 @@ export async function stalledPostgres(port: number, database: string, pipelined:
         if (packet.type === 'E') errors.push(packet.body.toString());
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ECONNRESET') throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ECONNRESET' && code !== 'ERR_STREAM_PREMATURE_CLOSE') throw error;
+      transport = code;
     }
-    return { rows, errors };
+    return { rows, errors, transport };
   };
   socket.write(pipelined);
   return { socket, closed, drain };

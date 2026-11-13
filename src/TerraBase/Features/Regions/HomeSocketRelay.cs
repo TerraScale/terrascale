@@ -251,7 +251,8 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             {
                 WebSocketReceiveResult read;
                 using var deadline = input is null ? new SessionMessageDeadline(time, null, executing: true) : state.Wait();
-                using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+                var closing = Task.CompletedTask;
+                var expiry = deadline.Token.Register(() => closing = ExpireAsync());
                 if (input is not null)
                 {
                     input.Progress = (bytes, started) => deadline.Progress(bytes, started);
@@ -264,7 +265,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                 {
                     do
                     {
-                        read = await from.ReceiveAsync(buffer, waiting.Token).ConfigureAwait(false);
+                        read = await from.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
                         if (input is null && read.Count > 0)
                         {
                             deadline.Progress(read.Count);
@@ -314,10 +315,6 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                 }
                 catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    await state.DrainAsync(cancellationToken).ConfigureAwait(false);
-                    beginClose();
-                    await CloseAsync(from, WebSocketCloseStatus.PolicyViolation, deadline.IsPartial ? "incomplete message timeout exceeded"
-                        : deadline.IsTransaction ? SqlErrors.TransactionExpired.Message : "session idle timeout exceeded", cancellationToken).ConfigureAwait(false);
                     break;
                 }
                 catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException or InvalidDataException or JsonException)
@@ -330,6 +327,23 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                     {
                         input.Progress = null;
                     }
+
+                    await expiry.DisposeAsync().ConfigureAwait(false);
+                    await closing.ConfigureAwait(false);
+                }
+
+                async Task ExpireAsync()
+                {
+                    if (input is not null)
+                    {
+                        await state.DrainAsync(cancellationToken).ConfigureAwait(false);
+                    }
+
+                    beginClose();
+                    var reason = deadline.IsPartial ? "incomplete message timeout exceeded"
+                        : deadline.IsTransaction ? SqlErrors.TransactionExpired.Message : "session idle timeout exceeded";
+                    await CloseAsync(from, WebSocketCloseStatus.PolicyViolation, reason, cancellationToken).ConfigureAwait(false);
+                    await CloseAsync(to, WebSocketCloseStatus.PolicyViolation, reason, cancellationToken).ConfigureAwait(false);
                 }
 
                 if (read.MessageType == WebSocketMessageType.Close)

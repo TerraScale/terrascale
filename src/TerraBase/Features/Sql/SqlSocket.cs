@@ -280,9 +280,11 @@ internal sealed class SqlSocket(
 
         var transaction = _session?.TransactionRemaining;
         using var idle = new SessionMessageDeadline(time, transaction);
+        var closing = Task.CompletedTask;
+        var expiry = idle.Token.Register(() => closing = ExpireAsync());
         var input = context.Features.GetRequiredFeature<SqlSocketInput>();
         input.Progress = (bytes, started) => idle.Progress(bytes, started);
-        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closed.Token, idle.Token);
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closed.Token);
         var buffer = ArrayPool<byte>.Shared.Rent(FirstBufferBytes);
         var length = 0;
         try
@@ -341,7 +343,6 @@ internal sealed class SqlSocket(
         }
         catch (OperationCanceledException) when (idle.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            await ExpireAsync().ConfigureAwait(false);
             Release();
             return null;
         }
@@ -353,6 +354,8 @@ internal sealed class SqlSocket(
         finally
         {
             input.Progress = null;
+            await expiry.DisposeAsync().ConfigureAwait(false);
+            await closing.ConfigureAwait(false);
         }
 
         async Task ExpireAsync()

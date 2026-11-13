@@ -12,6 +12,8 @@ internal sealed class SessionMessageDeadline : IDisposable
     private bool _expired;
     private long? _started;
     private long _bytes;
+    private long _armedAt;
+    private TimeSpan _budget;
 
     public SessionMessageDeadline(TimeProvider time, TimeSpan? transaction, bool executing = false)
     {
@@ -19,7 +21,9 @@ internal sealed class SessionMessageDeadline : IDisposable
         IsTransaction = transaction is not null;
         var idle = transaction is { } remaining && remaining < SqlLimits.MaxTransactionTime ? remaining
             : transaction is not null ? SqlLimits.MaxTransactionTime : QosSessions.IdleTimeout;
-        _timer = time.CreateTimer(_ => Expire(), null, executing ? Timeout.InfiniteTimeSpan : idle, Timeout.InfiniteTimeSpan);
+        _armedAt = time.GetTimestamp();
+        _budget = executing ? Timeout.InfiniteTimeSpan : idle;
+        _timer = time.CreateTimer(_ => Expire(), null, _budget, Timeout.InfiniteTimeSpan);
     }
 
     public CancellationToken Token => _stop.Token;
@@ -43,7 +47,7 @@ internal sealed class SessionMessageDeadline : IDisposable
             _bytes += bytes;
             var remaining = QosSessions.MessageTimeout + TimeSpan.FromSeconds((double)_bytes / QosSessions.MinimumMessageBytesPerSecond)
                 - _time.GetElapsedTime(_started.Value);
-            _timer.Change(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+            Arm(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
         }
     }
 
@@ -56,7 +60,7 @@ internal sealed class SessionMessageDeadline : IDisposable
                 IsTransaction = transaction is not null;
                 var idle = transaction is { } remaining && remaining < SqlLimits.MaxTransactionTime ? remaining
                     : transaction is not null ? SqlLimits.MaxTransactionTime : QosSessions.IdleTimeout;
-                _timer.Change(idle, Timeout.InfiniteTimeSpan);
+                Arm(idle);
             }
         }
     }
@@ -86,12 +90,26 @@ internal sealed class SessionMessageDeadline : IDisposable
         _stop.Dispose();
     }
 
+    private void Arm(TimeSpan budget)
+    {
+        _armedAt = _time.GetTimestamp();
+        _budget = budget;
+        _timer.Change(budget, Timeout.InfiniteTimeSpan);
+    }
+
     private void Expire()
     {
         lock (_gate)
         {
-            if (!_completed)
+            if (!_completed && _budget != Timeout.InfiniteTimeSpan)
             {
+                var remaining = _budget - _time.GetElapsedTime(_armedAt);
+                if (remaining > TimeSpan.Zero)
+                {
+                    _timer.Change(remaining, Timeout.InfiniteTimeSpan);
+                    return;
+                }
+
                 _expired = true;
                 _stop.Cancel();
             }

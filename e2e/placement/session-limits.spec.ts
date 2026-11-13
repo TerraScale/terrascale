@@ -271,6 +271,7 @@ test('a commit whose answer arrives after the transaction deadline is reported a
   const fault = await holdPeerReplies('127.0.0.5', 8081, 'http://127.0.0.1:8081', '/v1/internal/sql/session');
   let ws: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
   let release: NodeJS.Timeout | undefined;
+  let cancelCommit = () => {};
   try {
     await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
     await sql(cells, home, created.id, 'INSERT INTO placement_rows VALUES (1)');
@@ -287,7 +288,7 @@ test('a commit whose answer arrives after the transaction deadline is reported a
     fault.hold();
     const held = once(fault.events, 'held');
     const answer = once(ws.events, 'message');
-    ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 3, type: 'commit' }))));
+    cancelCommit = scheduleStatement(ws.socket, frame(1, Buffer.from(JSON.stringify({ id: 3, type: 'commit' }))), began, 4500);
     await held;
     release = setTimeout(fault.release, Math.max(0, began + 6500 - performance.now()));
     expect((await answer)[0]).toMatchObject({ id: 3, type: 'result', transaction: false });
@@ -309,6 +310,7 @@ test('a commit whose answer arrives after the transaction deadline is reported a
     expect((await unknown)[0]).toMatchObject({ id: 4, type: 'error', error: { code: 'write_outcome_unknown', sqlstate: '08007' } });
     expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3]]);
   } finally {
+    cancelCommit();
     clearTimeout(release);
     fault.release();
     writeFileSync(peersPath, peers);
@@ -451,6 +453,46 @@ test('an established Postgres relay delivers a late commit answer without a tran
     writeFileSync(peersPath, peers);
     pg?.socket.destroy();
     if (pg) await pg.closed;
+    await fault.close();
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('an entry WebSocket relay preserves a commit answer held beyond the total limit', async ({ cells, request }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('websocket-late-commit'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  const token = await credential(request);
+  const peersPath = join(stateDir, 'peers');
+  const peers = readFileSync(peersPath, 'utf8');
+  const route = database(created.id) + '/sql/ws';
+  const fault = await holdPeerReplies('127.0.0.5', 8081, 'http://127.0.0.1:8081', route);
+  let ws: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
+  let cancel = () => {};
+  let release: NodeJS.Timeout | undefined;
+  try {
+    await sql(cells, home, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
+    writeFileSync(peersPath, peers.replace('journey-1 gru 127.0.0.1', 'journey-1 gru 127.0.0.5'));
+    ws = await rawSqlSocket('http://127.0.0.1:8180' + route, token);
+    const began = performance.now();
+    expect((await execute(ws, 'BEGIN')).transaction).toBe(true);
+    expect((await execute(ws, 'INSERT INTO placement_rows VALUES (7)')).type).toBe('result');
+    fault.hold();
+    const held = once(fault.events, 'held');
+    const committed = once(ws.events, 'message');
+    cancel = scheduleStatement(ws.socket, frame(1, Buffer.from(JSON.stringify({ id: 9, type: 'commit' }))), began, 4500);
+    await held;
+    release = setTimeout(fault.release, Math.max(0, began + 6500 - performance.now()));
+    expect((await committed)[0]).toMatchObject({ id: 9, type: 'result', transaction: false });
+    expect(performance.now() - began).toBeGreaterThan(5000);
+    expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows')).results[0].rows).toEqual([[7]]);
+  } finally {
+    cancel();
+    clearTimeout(release);
+    fault.release();
+    writeFileSync(peersPath, peers);
+    ws?.socket.destroy();
+    if (ws) await ws.closed;
     await fault.close();
     await removeDatabase(cells, created.id);
   }

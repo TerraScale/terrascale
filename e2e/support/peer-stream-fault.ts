@@ -47,7 +47,7 @@ export async function holdPeerStream(address: string, port: number, destination:
 }
 
 export async function holdPeerReplies(address: string, port: number, destination: string, path: string) {
-  const server = createServer();
+  const server = createServer({ settings: { enableConnectProtocol: true } });
   const sessions = new Set<ServerHttp2Session>();
   const events = new EventEmitter();
   const held: (() => void)[] = [];
@@ -57,8 +57,9 @@ export async function holdPeerReplies(address: string, port: number, destination
     session.on('error', error => events.emit('transportError', error));
     session.once('close', () => sessions.delete(session));
   });
-  server.on('stream', (stream: ServerHttp2Stream, headers: IncomingHttpHeaders) => {
+  server.on('stream', async (stream: ServerHttp2Stream, headers: IncomingHttpHeaders) => {
     const peer = connect(destination);
+    if (headers[':protocol']) await once(peer, 'remoteSettings');
     const outgoing = peer.request({ ...headers, ':authority': new URL(destination).host });
     peer.on('error', () => stream.close(constants.NGHTTP2_CANCEL));
     outgoing.on('error', () => stream.close(constants.NGHTTP2_CANCEL));
