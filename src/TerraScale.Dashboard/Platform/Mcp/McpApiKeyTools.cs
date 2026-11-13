@@ -132,7 +132,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             if (tool == "create_database")
             {
                 var ttl = DatabaseTtl.Seconds(Hours());
-                return Reply(Output(await management.CreateDatabaseAsync(scope.ProjectId, new(Name: Text("name"), Regions: [region.Id], TtlSeconds: ttl))), McpAgentJson.Default.McpDatabase);
+                return Reply(Output(await management.CreateDatabaseAsync(scope.ProjectId, new(Name: Text("name"), HomeRegion: region.Id, TtlSeconds: ttl))), McpAgentJson.Default.McpDatabase);
             }
             if (tool == "list_databases")
             {

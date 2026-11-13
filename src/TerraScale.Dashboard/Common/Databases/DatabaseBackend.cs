@@ -202,8 +202,8 @@ namespace TerraScale.Dashboard.Common.Databases
         public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
             var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId, new(Name: name,
-                Regions: allRegions ? null : [home.Id, .. replicaRegions], AllRegions: allRegions ? true : null, TtlSeconds: ttlSeconds)).ResponseAsync));
+            return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId, new(Name: name, HomeRegion: home.Id,
+                ReplicaRegions: allRegions || replicaRegions.Count == 0 ? null : replicaRegions, AllRegions: allRegions ? true : null, TtlSeconds: ttlSeconds)).ResponseAsync));
         }
 
         public async Task<ManagedDatabase> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
@@ -223,7 +223,7 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
             return Map(await RunAsync(() => client.SetDatabaseAsync(scope.ProjectId, databaseId,
-                allRegions ? new(AllRegions: true) : new(Regions: [home.Id, .. replicaRegions])).ResponseAsync));
+                allRegions ? new(AllRegions: true) : new(ReplicaRegions: replicaRegions)).ResponseAsync));
         }
 
         public async Task<ManagedDatabase> MoveHomeAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string homeRegion, CancellationToken cancellationToken)
