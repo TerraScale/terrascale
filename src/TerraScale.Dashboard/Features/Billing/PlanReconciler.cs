@@ -25,6 +25,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            await billing.RecoverEventReceiptsAsync(cancellationToken);
             List<BillingBinding> pending;
             await using (var db = await storage.CreateDbContextAsync(cancellationToken))
             {
@@ -45,7 +46,12 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             foreach (var organization in await organizations.ListAsync(cancellationToken))
             {
-                await plans.PublishAsync(organization, reconcile: true, cancellationToken);
+                var current = organization;
+                if (organization.BillingStatus == "active" && organization.PaymentGraceUntil is { } deadline && deadline <= clock.GetUtcNow())
+                {
+                    current = await billing.ResolveExpiredGraceAsync(organization.Id, cancellationToken);
+                }
+                await plans.PublishAsync(current, reconcile: true, cancellationToken);
             }
         }
     }

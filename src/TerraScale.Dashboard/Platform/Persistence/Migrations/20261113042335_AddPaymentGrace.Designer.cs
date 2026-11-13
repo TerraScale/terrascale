@@ -11,7 +11,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 {
     [DbContext(typeof(DashboardDbContext))]
-    [Migration("20261113014902_AddPaymentGrace")]
+    [Migration("20261113042335_AddPaymentGrace")]
     partial class AddPaymentGrace
     {
         /// <inheritdoc />

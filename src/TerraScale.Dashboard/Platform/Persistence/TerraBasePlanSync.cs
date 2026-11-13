@@ -42,7 +42,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
         // catalog plan is enterprise. An unpaid organization (billing_required) keeps Hobby, so no allowance precedes payment.
         public static string PlanFor(OrganizationRecord organization, DateTimeOffset now)
         {
-            if (organization.BillingStatus != "active" || organization.PaymentGraceUntil is { } deadline && deadline <= now)
+            if (organization.BillingStatus != "active")
             {
                 return "hobby";
             }

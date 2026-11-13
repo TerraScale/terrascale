@@ -125,50 +125,106 @@ Webhook signatures are verified with the endpoint secret in the OCI Vault-delive
 machine identity. Delivery failures remain visible to Stripe for retry. Confirm
 successful delivery attempts in Stripe Workbench when validating an endpoint.
 
-## Operation-unit overage
+## Closed-month overage ledger
 
-Paid plans (Starter, Pro, Team) pay for operation units above their monthly
-allowance at the published rate (`metering.overageRates.operationUnitsPerMillionUsd`
-in `pricing.json`, $5 per million). Free stops at its allowance and is never
-charged. `UsageOverageReporter` runs at startup and then hourly. It reads every
-organization's operation units for the current UTC month from TerraBase's
-`/v1/usage/allowances` page and, for each organization with an active, trialing
-or past-due Stripe subscription, makes its invoice items for that month add up to
-`max(0, units - allowance)`.
+Paid operation and storage overage is frozen only after its UTC month closes.
+`billing_months` records the last plan observed before the boundary, including its
+name, allowances, unit rates, currency and pricing-version hash. The record uses
+stored terms, never a retrospective lookup in the current catalog. A refresh
+records the previous month's terms before observing today's catalog. If no
+qualifying plan was observed, `billing_skipped_months` permanently closes the
+month without a charge and increments the skipped-month counter and log.
+Missing storage-contract data also skips the month before either meter freezes.
 
-The items are ordinary invoice items attached to the subscription, so they go on
-its next invoice. The subscription keeps its single plan item. Each item has the
-metadata `terrascale_kind=operation_unit_overage`, `terrascale_month=yyyy-MM`
-and `terrascale_org=<organization id>`, a quantity in operation units and a
-`unit_amount_decimal` of 0.0005 cents. Items that are already invoiced are
-final. One pending item holds the rest of the month: the reporter creates it
-with an idempotency key, updates its quantity, and deletes it when nothing
-remains to bill. Invoiced quantities never go down. Stripe holds the invoice-item record;
-the dashboard stores a completed-month watermark and a plan record for each
-completed month. The billing page shows "Usage this
-period" from the same items.
+`billing_overage_charges` has a unique key on organisation, subscription, UTC
+month and meter. Each insert freezes usage, allowance, unit rate, currency,
+pricing version, plan name, overage quantity, rounded amount and description.
+Concurrent inserts read the winning row. The payload cannot change after that
+insert; only the provider ID and acceptance time can be recorded. A zero-cent
+row closes its meter without a provider object. Usage arriving after freezing
+is never charged. `terrascale_billing_overage_late_usage_observations_total`
+counts observations with usage above the frozen value, including repeated
+observations; it is not a unique count of late units.
 
-A daily pass records completed months at the last known plan in force before
-the month ended, before reporting them. Plan changes preserve those records.
-A missing historical plan skips that month, advances the watermark and emits
-a counter and an organization/month log entry. No plan is inferred retrospectively.
-The deployment migration excludes every month before the latest complete one;
-that month also needs a known plan before any charge can be created. Resubscribing
-starts a new watermark. Current-month reconciliation remains hourly, and a failed
-month does not stop other months. A missing storage contract skips the completed
-month without creating a partial charge. Annual subscriptions collect overage
-items monthly.
+Before dispatching any nonzero row without a provider ID, the reporter lists
+all of that customer's invoice items and matches `terrascale_charge=<row ID>`.
+It records an existing match rather than creating another item, including after
+the provider's idempotency cache expires. Creation uses the immutable row's
+quantity, rate, currency and description, with key
+`TerraScale.Dashboard/overage-<row ID>`. The row ID uniquely identifies the
+organisation, subscription, month and meter. Two dispatchers send the same key
+and payload. The provider item also carries organisation, month and meter
+metadata. Accepted provider objects are never updated or deleted by the reporter.
 
-Failed payments retain the paid plan for seven days, rounded up to the end of
-the deadline's UTC day. The notice includes its UTC time. A current active,
-trialing, cancelled or expired-incomplete subscription clears stale grace.
-Accounts already restricted at deployment retain an expired deadline.
+The hourly pass records boundary observations and dispatches pending ledger
+rows. The daily pass freezes closed-month usage; failures remain pending per
+row and neither block nor reopen later months. There is no progress watermark.
+Monthly scans begin at `billing.overage_starts_at`, set to the deployment UTC
+month for existing subscriptions and the first observation month for new ones.
+Months before deployment are never charged by this code. A missing historical
+observation is skipped permanently. Annual subscriptions collect overage monthly.
+The billing page estimates current usage; the current month has no provider item.
 
-New checkouts collect automatic tax and put the automatic-tax policy on their
-subscription metadata. Refresh can restore tax only for those subscriptions.
-Existing subscriptions retain their tax policy. A refused update is recorded
-separately from an unusable billing address and does not display an address
-notice or interrupt refresh.
+## Payment recovery and event receipts
+
+A payment failure's deadline is the end of UTC calendar day `failure day + 7
+days` (23:59:59.999 UTC). For example, a failure on January 1 ends grace on
+January 8 at that time. Duplicate or late failures never extend an existing
+deadline. A failure for an invoice whose canonical provider state is paid never
+starts grace. Canonical active, trialing or paid state clears it.
+
+A stored deadline alone never changes the published plan. Every 30 seconds,
+the reconciler asks the provider before committing an expiry. Paid, active or
+trialing state retains the plan and clears grace; still unpaid expires it once.
+Provider unavailability retains the plan and retries next pass, increments
+`terrascale_billing_grace_expiry_deferred_provider_unavailable_total`, and after
+24 hours emits at most one warning per customer per UTC day. The first failure
+time and last warning day are persisted. The migration gives existing
+past-due/unpaid customers the same full grace starting on migration day.
+Stored `billing_required` does not distinguish every restriction reason: paid
+subscriptions marked active/trialing with that ambiguous restriction also get
+grace. Explicit paused, canceled, expired-incomplete and internal billing
+restrictions are left alone.
+
+Canonical entitlement and grace changes commit before optional automatic-tax
+repair. API refusals, transport errors and timeouts in that repair are logged,
+counted by `terrascale_billing_tax_repair_failed_total`, and attempted on a later
+canonical refresh. New checkouts always collect automatic tax; existing
+subscriptions without the automatic-tax metadata retain their policy.
+
+Signed provider event IDs have durable unique receipts. A completed receipt
+acknowledges a replay without applying billing effects. In-flight duplicates
+are also acknowledged without work. Receipts retain the validated event's
+routing fields, not its payload; the 30-second reconciler recovers incomplete
+work using a five-minute processing lease if a process dies. Processing has a
+four-minute cancellation budget, shorter than that lease. Failed work releases
+its lease and recovery rereads canonical state. Daily cleanup removes receipts
+older than 30 days after receipt once no processing lease is active, covering
+automatic retries (three days) and manual resend (up to 30 days).
+Events created more than 30 days ago are
+acknowledged without effects, so cleanup cannot reopen old events.
+
+## Schema rollout and rollback
+
+The unreleased grace, progress and monthly-plan migrations are replaced by
+migrations for the final tables. Apply them only after draining every previous
+dashboard instance, then start the new build. There is no dashboard background
+job leader or single-runner barrier: jobs run in every instance. New expiry
+work starts only with the new instances. This ordering closes the mixed-build
+window but requires a dashboard maintenance interval.
+
+A schema-first rolling deployment with previous instances still serving is
+unsafe: they ignore grace, and their refresh or plan publication can restrict
+a customer in grace. The exposure lasts from schema application until the last
+old instance is stopped; there is no application-enforced upper bound. Do not
+claim a 30-second bound: the old job's period bounds detection, not exposure.
+
+Rollback of the application leaves the additive schema and ledger in place.
+The previous build ignores grace, receipts and ledger completion. Do not run
+its reporting jobs against this schema: it can recreate overage items and
+restrict customers in grace. Drain all new instances and keep the dashboard
+stopped until a corrected build with these invariants is available. There is
+no safe supported rollback to the previous dashboard's background jobs.
 
 ## Internal billing
 

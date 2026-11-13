@@ -1,97 +1,78 @@
 using System.Globalization;
-using Stripe;
+using Microsoft.EntityFrameworkCore;
 
-namespace TerraScale.Dashboard.Features.Billing
+namespace TerraScale.Dashboard.Features.Billing;
+
+public sealed partial class StripeBilling
 {
-    internal sealed record OverageKind(string Kind, decimal UnitAmountCents, Func<long, DateTimeOffset, string> Describe);
+    internal void RecordLateOverage() => telemetry.ReportLateOverage();
 
-    public sealed partial class StripeBilling
+    internal void RecordSkippedOverageMonth(string organizationId, DateTimeOffset month, string reason)
     {
-        internal void RecordSkippedOverageMonth(string organizationId, DateTimeOffset month, string reason)
+        telemetry.ReportSkippedOverageMonth();
+        logger.UsageOverageMonthSkipped(organizationId, month, reason);
+    }
+
+    internal async Task ReportOverageAsync(OverageCharge charge, CancellationToken cancellationToken)
+    {
+        if (charge.AmountCents == 0 || charge.ProviderId is not null) { return; }
+        var client = await ClientAsync(cancellationToken);
+        string? providerId = null;
+        await foreach (var item in client.V1.InvoiceItems.ListAutoPagingAsync(new() { Customer = charge.CustomerId, Limit = 100 }, cancellationToken: cancellationToken))
         {
-            telemetry.ReportSkippedOverageMonth();
-            logger.UsageOverageMonthSkipped(organizationId, month, reason);
-        }
-
-        internal static OverageKind OperationUnits(BillingPlan plan) => new(OperationUnitOverage.Kind, OperationUnitOverage.UnitAmountCents,
-            (quantity, month) => string.Create(CultureInfo.InvariantCulture, $"Operation units over the {plan.Name} allowance, {month:MMMM yyyy}: {quantity:N0} × {OperationUnitOverage.Rate}"));
-
-        internal static OverageKind Storage(BillingPlan plan) => new(StorageOverage.Kind, StorageOverage.UnitAmountCents,
-            (quantity, month) => string.Create(CultureInfo.InvariantCulture, $"Storage over the {plan.Name} allowance, {month:MMMM yyyy}: {quantity:N0} MB-months"));
-
-        internal async Task ReportOverageAsync(BillingBinding binding, OverageKind kind, long overage, DateTimeOffset month, CancellationToken cancellationToken)
-        {
-            var client = await ClientAsync(cancellationToken);
-            var (invoiced, pending) = await OverageItemsAsync(client, binding, kind.Kind, month, cancellationToken);
-            var remaining = Math.Max(0, overage - invoiced);
-            var keep = remaining > 0 ? pending.FirstOrDefault(item => item.Parent?.SubscriptionDetails?.Subscription == binding.SubscriptionId) : null;
-            foreach (var item in pending.Where(item => item != keep))
+            if (item.Metadata?.GetValueOrDefault("terrascale_charge") == charge.Id)
             {
-                await client.V1.InvoiceItems.DeleteAsync(item.Id, cancellationToken: cancellationToken);
-            }
-
-            if (remaining == 0)
-            {
-                return;
-            }
-
-            var description = kind.Describe(remaining, month);
-            if (keep is null)
-            {
-                if (binding.EffectiveInterval == "annual")
+                if (item.CustomerId != charge.CustomerId || item.Currency != charge.Currency || item.Quantity != charge.Quantity || item.Amount != charge.AmountCents)
                 {
-                    await client.V1.Subscriptions.UpdateAsync(binding.SubscriptionId, new()
-                    { PendingInvoiceItemInterval = new() { Interval = "month", IntervalCount = 1 } }, cancellationToken: cancellationToken);
+                    throw new IOException("The provider charge does not match its frozen ledger row.");
                 }
-
-                var monthKey = month.ToString("yyyy-MM", CultureInfo.InvariantCulture);
-                await client.V1.InvoiceItems.CreateAsync(new()
-                {
-                    Customer = binding.CustomerId,
-                    Subscription = binding.SubscriptionId,
-                    Currency = "usd",
-                    Quantity = remaining,
-                    UnitAmountDecimal = kind.UnitAmountCents,
-                    Description = description,
-                    Metadata = new() { ["terrascale_kind"] = kind.Kind, ["terrascale_month"] = monthKey, ["terrascale_org"] = binding.OrganizationId }
-                }, Idempotent($"{kind.Kind}-{binding.OrganizationId}-{monthKey}-{binding.SubscriptionId}-{invoiced}-{remaining}"), cancellationToken);
-            }
-            else if (keep.Quantity != remaining || keep.Description != description)
-            {
-                await client.V1.InvoiceItems.UpdateAsync(keep.Id, new() { Quantity = remaining, UnitAmountDecimal = kind.UnitAmountCents, Description = description }, cancellationToken: cancellationToken);
+                if (providerId is not null && providerId != item.Id) { throw new IOException("Multiple provider objects identify one charge."); }
+                providerId = item.Id;
             }
         }
-
-        public async Task<long> OperationUnitOverageAsync(BillingBinding binding, DateTimeOffset now, CancellationToken cancellationToken)
+        if (providerId is null)
         {
-            var (invoiced, pending) = await OverageItemsAsync(await ClientAsync(cancellationToken), binding, OperationUnitOverage.Kind, new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), cancellationToken);
-            return invoiced + pending.Sum(item => item.Quantity);
-        }
-
-        private static async Task<(long Invoiced, List<InvoiceItem> Pending)> OverageItemsAsync(StripeClient client, BillingBinding binding, string kind, DateTimeOffset month, CancellationToken cancellationToken)
-        {
-            var monthKey = month.ToString("yyyy-MM", CultureInfo.InvariantCulture);
-            long invoiced = 0;
-            var pending = new List<InvoiceItem>();
-            await foreach (var item in client.V1.InvoiceItems.ListAutoPagingAsync(new()
-            { Customer = binding.CustomerId, Created = new DateRangeOptions { GreaterThanOrEqual = month.UtcDateTime }, Limit = 100 }, cancellationToken: cancellationToken))
+            var binding = await storage.BindingRowAsync(charge.OrganizationId, cancellationToken);
+            if (binding is null || binding.State == "deleting" || binding.ErasureId is not null) { return; }
+            if (binding.EffectiveInterval == "annual")
             {
-                if (item.Metadata?.GetValueOrDefault("terrascale_kind") != kind || item.Metadata.GetValueOrDefault("terrascale_month") != monthKey ||
-                    item.Metadata.GetValueOrDefault("terrascale_org") != binding.OrganizationId)
-                {
-                    continue;
-                }
-
-                if (item.InvoiceId is { Length: > 0 })
-                {
-                    invoiced = checked(invoiced + item.Quantity);
-                }
-                else
-                {
-                    pending.Add(item);
-                }
+                await client.V1.Subscriptions.UpdateAsync(charge.SubscriptionId, new() { PendingInvoiceItemInterval = new() { Interval = "month", IntervalCount = 1 } }, cancellationToken: cancellationToken);
             }
-            return (invoiced, pending);
+            var item = await client.V1.InvoiceItems.CreateAsync(new()
+            {
+                Customer = charge.CustomerId,
+                Subscription = charge.SubscriptionId,
+                Currency = charge.Currency,
+                Quantity = charge.Quantity,
+                UnitAmountDecimal = charge.UnitRate,
+                Description = charge.Description,
+                Metadata = new()
+                {
+                    ["terrascale_charge"] = charge.Id,
+                    ["terrascale_kind"] = charge.Meter,
+                    ["terrascale_month"] = charge.Month.ToString("yyyy-MM", CultureInfo.InvariantCulture),
+                    ["terrascale_org"] = charge.OrganizationId
+                }
+            }, Idempotent("overage-" + charge.Id), cancellationToken);
+            providerId = item.Id;
         }
+        await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        var stored = await db.OverageCharges.SingleAsync(row => row.Id == charge.Id, cancellationToken);
+        if (stored.ProviderId is not null)
+        {
+            if (stored.ProviderId != providerId) { throw new IOException("The provider charge identity changed."); }
+            return;
+        }
+        stored.ProviderId = providerId;
+        stored.AcceptedAt = time.GetUtcNow();
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<long> OperationUnitOverageAsync(BillingBinding binding, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        var rows = await db.OverageCharges.AsNoTracking().Where(row => row.OrganizationId == binding.OrganizationId && row.SubscriptionId == binding.SubscriptionId && row.Month == month && row.Meter == OperationUnitOverage.Kind).ToListAsync(cancellationToken);
+        return rows.Sum(row => row.Quantity);
     }
 }

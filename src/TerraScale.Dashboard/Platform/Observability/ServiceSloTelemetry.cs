@@ -28,6 +28,13 @@ namespace TerraScale.Dashboard.Platform.Observability
         private long organizationCreationFailures;
         private long organizationMetadataFailures;
         private long skippedOverageMonths;
+        private long lateOverageObservations;
+        private long deferredGraceExpiries;
+        private long failedTaxRepairs;
+
+        public void ReportLateOverage() => Interlocked.Increment(ref lateOverageObservations);
+        public void ReportDeferredGraceExpiry() => Interlocked.Increment(ref deferredGraceExpiries);
+        public void ReportFailedTaxRepair() => Interlocked.Increment(ref failedTaxRepairs);
 
         public void ReportSkippedOverageMonth()
         {
@@ -155,6 +162,9 @@ namespace TerraScale.Dashboard.Platform.Observability
                 "terrascale_organization_checkout_failures_total{phase=\"creating\"} " + Interlocked.Read(ref organizationCreationFailures).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "terrascale_organization_checkout_failures_total{phase=\"metadata\"} " + Interlocked.Read(ref organizationMetadataFailures).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "# TYPE terrascale_billing_overage_skipped_months_total counter\n" +
+                "terrascale_billing_overage_late_usage_observations_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref lateOverageObservations).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "terrascale_billing_grace_expiry_deferred_provider_unavailable_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref deferredGraceExpiries).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "terrascale_billing_tax_repair_failed_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref failedTaxRepairs).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "terrascale_billing_overage_skipped_months_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref skippedOverageMonths).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "# TYPE terrascale_deletion_cleanup_failing_entries gauge\n" +
                 "terrascale_deletion_cleanup_failing_entries{service=\"ts-dashboard\"} " + Interlocked.Read(ref failingDeletionEntries).ToString(CultureInfo.InvariantCulture) + "\n");

@@ -1,62 +1,60 @@
-using TerraScale.TerraBase.Contracts;
+using System.Globalization;
+using System.Numerics;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using StripeException = Stripe.StripeException;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.TerraBase.Contracts;
+using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    public sealed class UsageOverageReporter(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
+    public sealed class UsageOverageReporter(IDbContextFactory<DashboardDbContext> storage, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
     {
-        public Task RunCurrentAsync(CancellationToken cancellationToken) => RunMonthAsync(null, cancellationToken);
-
-        public async Task RunOnceAsync(CancellationToken cancellationToken)
+        public async Task RunCurrentAsync(CancellationToken cancellationToken)
         {
-            try { await RunCurrentAsync(cancellationToken); }
-            catch (Exception error) when (IsReportingFailure(error, cancellationToken))
-            {
-                logger.UsageOverageReportingIsUnavailableRetrying(error.GetType().Name);
-            }
-            var now = clock.GetUtcNow();
-            var current = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            var bindings = await db.Billing.AsNoTracking()
-                .Where(row => row.Kind == "stripe" && row.State != "deleting" && row.SubscriptionId != "" && row.ErasureId == null &&
-                    (row.Status == "active" || row.Status == "trialing" || row.Status == "past_due") &&
-                    (row.EffectivePlan == "starter" || row.EffectivePlan == "pro" || row.EffectivePlan == "team"))
-                .ToListAsync(cancellationToken);
-            DateTimeOffset? earliest = null;
+            var bindings = await db.Billing.AsNoTracking().Where(row => row.Kind == "stripe" && row.State != "deleting" && row.SubscriptionId != "" && row.ErasureId == null).ToListAsync(cancellationToken);
             foreach (var binding in bindings)
             {
                 try
                 {
-                    var currentBinding = binding;
-                    while (!await BillingMonth.RecordAsync(storage, currentBinding, now, cancellationToken))
+                    var fresh = binding;
+                    while (!await BillingMonth.RecordAsync(storage, fresh, clock.GetUtcNow(), cancellationToken))
                     {
-                        currentBinding = await storage.BindingRowAsync(binding.OrganizationId, cancellationToken) ?? throw new IOException("Billing state is unavailable.");
+                        fresh = await storage.BindingRowAsync(binding.OrganizationId, cancellationToken) ?? throw new IOException("Billing state is unavailable.");
                     }
                 }
                 catch (Exception error) when (IsReportingFailure(error, cancellationToken))
                 {
                     logger.UsageOverageCouldNotBeReported(error.GetType().Name);
                 }
-
-                var first = binding.OverageReportedThrough?.AddMonths(1) ?? new DateTimeOffset(binding.StartedAt.Year, binding.StartedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
-                var started = new DateTimeOffset(binding.StartedAt.Year, binding.StartedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
-                first = first < started ? started : first;
-                earliest = earliest is null || first < earliest ? first : earliest;
             }
-
-            if (earliest is { } start)
+            var pending = await db.OverageCharges.AsNoTracking().Where(row => row.ProviderId == null && row.AmountCents > 0).ToListAsync(cancellationToken);
+            foreach (var charge in pending)
             {
-                for (var month = start; month < current; month = month.AddMonths(1))
+                try { await billing.ReportOverageAsync(charge, cancellationToken); }
+                catch (Exception error) when (IsReportingFailure(error, cancellationToken))
                 {
-                    try { await RunMonthAsync(month, cancellationToken); }
-                    catch (Exception error) when (IsReportingFailure(error, cancellationToken))
-                    {
-                        logger.UsageOverageReportingIsUnavailableRetrying(error.GetType().Name);
-                    }
+                    logger.UsageOverageCouldNotBeReported(error.GetType().Name);
+                }
+            }
+        }
+
+        public async Task RunOnceAsync(CancellationToken cancellationToken)
+        {
+            await RunCurrentAsync(cancellationToken);
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var starts = await db.Billing.AsNoTracking().Where(row => row.Kind == "stripe" && row.SubscriptionId != "" && row.State != "deleting" && row.ErasureId == null).Select(row => row.OverageStartsAt).ToListAsync(cancellationToken);
+            var now = clock.GetUtcNow();
+            var current = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
+            for (var month = starts.Count > 0 ? starts.Min() : current; month < current; month = month.AddMonths(1))
+            {
+                try { await RunMonthAsync(month, cancellationToken); }
+                catch (Exception error) when (IsReportingFailure(error, cancellationToken))
+                {
+                    logger.UsageOverageReportingIsUnavailableRetrying(error.GetType().Name);
                 }
             }
         }
@@ -65,7 +63,7 @@ namespace TerraScale.Dashboard.Features.Billing
             error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
 
-        private async Task RunMonthAsync(DateTimeOffset? requestedMonth, CancellationToken cancellationToken)
+        private async Task RunMonthAsync(DateTimeOffset requestedMonth, CancellationToken cancellationToken)
         {
             string? after = null;
             do
@@ -74,11 +72,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 var month = AllowanceNotifications.ValidatedMonth(page, after, clock.GetUtcNow(), requestedMonth);
                 foreach (var item in page.Items)
                 {
-                    if (item.Operations is not { } units)
-                    {
-                        continue;
-                    }
-
+                    if (item.Operations is not { } units) { continue; }
                     var byteHours = page.StorageContract == AllowanceNotifications.StorageContract ? item.StorageByteHours : null;
                     try { await ReportAsync(item.OrganizationId, units, byteHours, month, cancellationToken); }
                     catch (Exception error) when (IsReportingFailure(error, cancellationToken))
@@ -92,93 +86,67 @@ namespace TerraScale.Dashboard.Features.Billing
 
         public async Task ReportAsync(string organizationId, long units, long? storageByteHours, DateTimeOffset month, CancellationToken cancellationToken)
         {
-            var row = await organizations.FindAsync(organizationId, cancellationToken);
-            if (row is null)
+            if (month.Offset != TimeSpan.Zero || month.Day != 1 || month.TimeOfDay != TimeSpan.Zero || month.AddMonths(1) > clock.GetUtcNow()) { return; }
+            ArgumentOutOfRangeException.ThrowIfNegative(units);
+            var binding = await storage.BindingRowAsync(organizationId, cancellationToken);
+            if (binding is null || binding.State == "deleting" || binding.ErasureId is not null || binding.Kind != "stripe" || binding.CustomerId.Length == 0 || binding.SubscriptionId.Length == 0 || month < binding.OverageStartsAt) { return; }
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            if (await db.SkippedBillingMonths.AnyAsync(row => row.OrganizationId == organizationId && row.SubscriptionId == binding.SubscriptionId && row.Month == month, cancellationToken)) { return; }
+            var terms = await db.BillingMonths.AsNoTracking().SingleOrDefaultAsync(row => row.OrganizationId == organizationId && row.SubscriptionId == binding.SubscriptionId && row.Month == month, cancellationToken);
+            if (terms is null || storageByteHours is null)
             {
-                return;
-            }
-
-            var organization = row.Erased ? throw new IOException("Dashboard record was erased.") : row.Organization;
-            if (organization.InternalBilling is not null || PlanCatalog.For(organization) is not { PriceCents: > 0 } plan)
-            {
-                return;
-            }
-
-            var bindingRow = await storage.BindingRowAsync(organizationId, cancellationToken);
-            if (bindingRow is null)
-            {
-                return;
-            }
-
-            var binding = StripeBilling.ReadBinding(bindingRow, organizationId);
-            if (binding.State == "deleting" || binding.Kind != "stripe" || binding.CustomerId.Length == 0 || binding.SubscriptionId.Length == 0 || binding.Status is not ("active" or "trialing" or "past_due"))
-            {
-                return;
-            }
-
-            var firstMonth = new DateTimeOffset(binding.StartedAt.Year, binding.StartedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
-            if (month < firstMonth || binding.OverageReportedThrough >= month)
-            {
-                return;
-            }
-
-            var complete = month.AddMonths(1) <= clock.GetUtcNow();
-            if (complete)
-            {
-                await using var db = await storage.CreateDbContextAsync(cancellationToken);
-                var recorded = await db.BillingMonths.AsNoTracking().SingleOrDefaultAsync(item => item.OrganizationId == organizationId && item.Month == month, cancellationToken);
-                if (recorded is null || recorded.SubscriptionId != binding.SubscriptionId)
+                var reason = terms is null ? "missing_plan" : "missing_storage_contract";
+                if (await storage.InsertAsync(new SkippedBillingMonth { OrganizationId = organizationId, SubscriptionId = binding.SubscriptionId, Month = month, Reason = reason }, cancellationToken))
                 {
-                    billing.RecordSkippedOverageMonth(organizationId, month, "missing_plan");
-                    await AdvanceAsync(binding, month, firstMonth, cancellationToken);
-                    return;
-                }
-
-                plan = PlanCatalog.For(recorded.Plan);
-            }
-
-            if (storageByteHours is not { } byteHours)
-            {
-                if (complete)
-                {
-                    billing.RecordSkippedOverageMonth(organizationId, month, "missing_storage_contract");
-                    await AdvanceAsync(binding, month, firstMonth, cancellationToken);
+                    billing.RecordSkippedOverageMonth(organizationId, month, reason);
                 }
                 return;
             }
-
-            await billing.ReportOverageAsync(binding, StripeBilling.OperationUnits(plan), OperationUnitOverage.Units(plan, units), month, cancellationToken);
-            await billing.ReportOverageAsync(binding, StripeBilling.Storage(plan), StorageOverage.MegabyteMonths(plan, byteHours, month), month, cancellationToken);
-            if (complete)
+            ArgumentOutOfRangeException.ThrowIfNegative(storageByteHours.Value);
+            var hours = (long)(month.AddMonths(1) - month).TotalHours;
+            var storageAllowance = checked(terms.StorageAllowance * hours);
+            var storageQuantity = (long)BigInteger.Max(0, ((BigInteger)storageByteHours.Value - storageAllowance) / hours / 1_000_000);
+            var operations = await FreezeAsync(binding, terms, OperationUnitOverage.Kind, units, terms.OperationsAllowance, terms.OperationRate, Math.Max(0, units - terms.OperationsAllowance), cancellationToken);
+            var stored = await FreezeAsync(binding, terms, StorageOverage.Kind, storageByteHours.Value, storageAllowance, terms.StorageRate, storageQuantity, cancellationToken);
+            foreach (var charge in new[] { operations, stored })
             {
-                await AdvanceAsync(binding, month, firstMonth, cancellationToken);
+                if (charge.AmountCents > 0 && charge.ProviderId is null)
+                {
+                    try { await billing.ReportOverageAsync(charge, cancellationToken); }
+                    catch (Exception error) when (IsReportingFailure(error, cancellationToken))
+                    {
+                        logger.UsageOverageCouldNotBeReported(error.GetType().Name);
+                    }
+                }
             }
         }
 
-        private async Task AdvanceAsync(BillingBinding binding, DateTimeOffset month, DateTimeOffset firstMonth, CancellationToken cancellationToken)
+        private async Task<OverageCharge> FreezeAsync(BillingBinding binding, BillingMonth terms, string meter, long used, long allowance, decimal rate, long quantity, CancellationToken cancellationToken)
         {
-            var organizationId = binding.OrganizationId;
-            while (true)
+            var charge = new OverageCharge
             {
-                var fresh = await storage.BindingRowAsync(organizationId, cancellationToken) ?? throw new IOException("Billing state is unavailable.");
-                if (fresh.OverageReportedThrough >= month)
-                {
-                    return;
-                }
-
-                var expected = fresh.OverageReportedThrough?.AddMonths(1) ?? firstMonth;
-                expected = expected < firstMonth ? firstMonth : expected;
-                if (expected != month || fresh.SubscriptionId != binding.SubscriptionId || fresh.State == "deleting")
-                {
-                    return;
-                }
-
-                fresh.OverageReportedThrough = month;
-                if (await storage.ReplaceAsync(fresh, cancellationToken))
-                {
-                    return;
-                }
-            }
+                Id = AccountService.NewId(),
+                OrganizationId = binding.OrganizationId,
+                SubscriptionId = binding.SubscriptionId,
+                CustomerId = binding.CustomerId,
+                Month = terms.Month,
+                Meter = meter,
+                FrozenAt = clock.GetUtcNow(),
+                Usage = used,
+                Allowance = allowance,
+                UnitRate = rate,
+                Currency = terms.Currency,
+                PricingVersion = terms.PricingVersion,
+                PlanName = terms.PlanName,
+                Quantity = quantity,
+                AmountCents = checked((long)Math.Round(quantity * rate, 0, MidpointRounding.AwayFromZero)),
+                Description = string.Create(CultureInfo.InvariantCulture, $"{meter}, {terms.PlanName}, {terms.Month:yyyy-MM}: {quantity}")
+            };
+            if (await storage.InsertAsync(charge, cancellationToken)) { return charge; }
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var winner = await db.OverageCharges.AsNoTracking().SingleAsync(row => row.OrganizationId == binding.OrganizationId && row.SubscriptionId == binding.SubscriptionId && row.Month == terms.Month && row.Meter == meter, cancellationToken);
+            if (used > winner.Usage) { billing.RecordLateOverage(); }
+            return winner;
         }
     }
 

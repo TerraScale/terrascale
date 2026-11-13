@@ -133,6 +133,7 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 RenewalAt = pending.RenewalAt is { } renewal ? RowSync.At(renewal) : null,
                 ReturnPath = "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organization.Id)
             };
+            BillingMonth.Observe(billing, PlanCatalog.For(pending.Plan), RowSync.At(pending.CreatedAt));
             if (stored is null)
             {
                 StageCreate(db, organization);

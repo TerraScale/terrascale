@@ -26,7 +26,9 @@ test('completed overage months use recorded plans and deployment never rebills o
   const build = process.env.E2E_BUILD;
   if (!build) throw new Error('E2E_BUILD is required for the billing journey');
   const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll')], { env: process.env });
-  expect(result.stdout).toContain('billing overage journey: completed month once; repeated pass unchanged; skipped pass caught up; downgrade uses recorded plan; migration excludes old months; unknown plan skipped');
+  const lines = result.stdout.split('\n').filter((line) => /^billing (ledger|migration|grace|tax|webhook) journey:/.test(line));
+  expect(lines).toHaveLength(11);
+  console.log(lines.join('\n'));
 });
 
 test.describe('paid owner billing', () => {
@@ -196,10 +198,24 @@ test('paid owner billing recovery, UTC deadline and subscription tax policy', as
   await expect(page.locator('#billing-payment-grace')).toContainText(graceDate + ' UTC');
   await expect(page.locator('#organization-payment-grace')).toContainText(graceDate + ' UTC');
   await audit.check('paid owner seven day payment grace');
+  const replay = await fetch(stripeStandIn + '/replay-event', { method: 'POST', body: JSON.stringify({ object: (await stripeLog()).events.filter((event) => event.type === 'invoice.payment_failed').at(-1)?.object }) });
+  expect(replay.status).toBe(200);
+  expect((await replay.json()).status).toBe(200);
   await payment(false, failedAt + 86400);
   await page.reload();
   await expect(page.locator('#billing-payment-grace')).toContainText(graceDate + ' UTC');
-  await payment(true);
+  const transportFailure = await fetch(stripeStandIn + '/failure', {
+    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + checkoutSession.subscription, status: 400, remaining: 3, transport: true }),
+  });
+  expect(transportFailure.status).toBe(200);
+  const paidWithoutEvent = await fetch(stripeStandIn + '/payment', { method: 'POST', body: JSON.stringify({ subscription: checkoutSession.subscription, paid: true, deliver: false }) });
+  expect(paidWithoutEvent.status).toBe(200);
+  await taxLocation('supported', 'new');
+  expect(await subscriptionTax(), 'tax transport failure leaves repair for a later refresh').toBe(false);
+  const alreadyPaidFailure = await fetch(stripeStandIn + '/payment', {
+    method: 'POST', body: JSON.stringify({ subscription: checkoutSession.subscription, paid: true, eventType: 'invoice.payment_failed' }),
+  });
+  expect(alreadyPaidFailure.status).toBe(200);
   await page.reload();
   await expect(page.locator('#billing-payment-grace')).toHaveCount(0);
   await expect(page.locator('#organization-payment-grace')).toHaveCount(0);
@@ -225,6 +241,7 @@ test('paid owner billing recovery, UTC deadline and subscription tax policy', as
   await expect(page.locator('#billing-payment-grace')).toHaveCount(0);
   await expect(page.locator('#billing-tax-location')).toHaveCount(0);
 
+  console.log('billing payment journey: UTC deadline; duplicate and late failure never extend grace; paid invoice failure never starts grace; tax transport failure preserves restored entitlement; webhook replay acknowledged');
   await saveSession(context);
 });
 });

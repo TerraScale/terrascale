@@ -23,6 +23,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            await billing.CleanEventReceiptsAsync(cancellationToken);
             List<string> organizationIds;
             await using (var db = await storage.CreateDbContextAsync(cancellationToken))
             {

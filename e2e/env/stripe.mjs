@@ -8,6 +8,7 @@ const objects = new Map();
 const checkouts = new Map();
 const replays = new Map();
 const failures = new Map();
+const deliveredEvents = new Map();
 const authFailures = new Set();
 const refundStatuses = new Map();
 const subscriptionTaxUpdates = new Map();
@@ -117,13 +118,8 @@ const api = [
     log.refunds.push({ payment: payment.id, subscription: payment.subscription, amount: refund.amount });
     return refund;
   }, { payment_intent: /^pi_\w+$/ }, {}, ['payment_intent', 'charge', 'amount', 'reason']],
-  ['POST', /^\/v1\/invoiceitems$/, (form) => store({ id: id('ii'), object: 'invoiceitem', customer: form.get('customer'), currency: form.get('currency'), quantity: Number(form.get('quantity')), unit_amount_decimal: form.get('unit_amount_decimal'), description: form.get('description'), metadata: fields(form, 'metadata'), parent: { type: 'subscription_details', subscription_details: { subscription: form.get('subscription') } } }), { customer: customerId }, {}, ['customer', 'subscription', 'currency', 'quantity', 'unit_amount_decimal', 'description', 'metadata']],
-  ['POST', /^\/v1\/invoiceitems\/(ii_\w+)$/, (form, [key]) => {
-    const item = find('ii', key);
-    return item && Object.assign(item, { quantity: Number(form.get('quantity')), description: form.get('description') });
-  }, {}, {}, ['quantity', 'unit_amount_decimal', 'description']],
-  ['DELETE', /^\/v1\/invoiceitems\/(ii_\w+)$/, (form, [key]) => objects.delete(key) ? { id: key, object: 'invoiceitem', deleted: true } : undefined],
-  ['GET', /^\/v1\/invoiceitems$/, (query) => list(owned('ii', query.get('customer'))), { customer: customerId }, {}, ['customer', 'created', 'limit']],
+  ['POST', /^\/v1\/invoiceitems$/, (form) => store({ id: id('ii'), object: 'invoiceitem', customer: form.get('customer'), currency: form.get('currency'), quantity: Number(form.get('quantity')), amount: Math.round(Number(form.get('quantity')) * Number(form.get('unit_amount_decimal'))), unit_amount_decimal: form.get('unit_amount_decimal'), description: form.get('description'), metadata: fields(form, 'metadata'), parent: { type: 'subscription_details', subscription_details: { subscription: form.get('subscription') } } }), { customer: customerId }, {}, ['customer', 'subscription', 'currency', 'quantity', 'unit_amount_decimal', 'description', 'metadata']],
+  ['GET', /^\/v1\/invoiceitems$/, (query) => list(owned('ii', query.get('customer'))), { customer: customerId }, {}, ['customer', 'created', 'limit', 'starting_after']],
 ];
 
 function complete(session) {
@@ -156,6 +152,7 @@ async function deliver(type, object, created = now()) {
   const timestamp = now();
   const signature = createHmac('sha256', secret('whsec_')).update(`${timestamp}.${payload}`).digest('hex');
   const answer = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': `t=${timestamp},v1=${signature}` }, body: payload });
+  deliveredEvents.set(object.id, payload);
   log.events.push({ type, object: object.id, status: answer.status });
 }
 
@@ -197,19 +194,34 @@ async function handle(request, response, body) {
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-subscription') {
     const { organization } = JSON.parse(body);
     const customer = store({ id: id('cus'), metadata: { organization_id: organization } });
-    const subscription = store({ id: id('sub'), customer: customer.id, metadata: { organization_id: organization }, status: 'active' });
+    const session = store({ id: id('cs_test'), customer: customer.id, automatic_tax: { enabled: true } });
+    checkouts.set(session.id, { price: find('price', 'price_starter_month'), metadata: { organization_id: organization, terrascale_tax: 'automatic' } });
+    complete(session);
+    const subscription = find('sub', session.subscription);
     return reply(response, 200, { customer: customer.id, subscription: subscription.id });
   }
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/billing-items') {
     const items = owned('ii', url.searchParams.get('customer')).filter((item) => item.metadata.terrascale_month === url.searchParams.get('month'));
     return reply(response, 200, { count: items.length, quantity: items.reduce((sum, item) => sum + item.quantity, 0) });
   }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-forget-idempotency') {
+    replays.clear();
+    return reply(response, 200, {});
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/replay-event') {
+    const payload = deliveredEvents.get(JSON.parse(body).object);
+    if (!payload) return reply(response, 404, {});
+    const timestamp = now();
+    const signature = createHmac('sha256', secret('whsec_')).update(`${timestamp}.${payload}`).digest('hex');
+    const answer = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': `t=${timestamp},v1=${signature}` }, body: payload });
+    return reply(response, 200, { status: answer.status });
+  }
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/auth-failure') {
     authFailures.add(JSON.parse(body).checkout);
     return reply(response, 200, {});
   }
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/subscription-tax-state') {
-    return reply(response, 200, { updates: subscriptionTaxUpdates.get(url.searchParams.get('subscription')) ?? 0 });
+    return reply(response, 200, { updates: subscriptionTaxUpdates.get(url.searchParams.get('subscription')) ?? 0, enabled: find('sub', url.searchParams.get('subscription'))?.automatic_tax?.enabled ?? false });
   }
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/subscription-tax') {
     const { subscription: key, location = 'supported', policy } = JSON.parse(body);
@@ -223,7 +235,7 @@ async function handle(request, response, body) {
     return reply(response, 200, {});
   }
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/payment') {
-    const { subscription: key, paid, status, invoiceStatus, created = now() } = JSON.parse(body);
+    const { subscription: key, paid, status, invoiceStatus, created = now(), deliver: notify = true, eventType } = JSON.parse(body);
     const subscription = find('sub', key);
     if (!subscription) return reply(response, 404, {});
     const invoice = owned('in', subscription.customer).find((item) => item.parent.subscription_details.subscription === key);
@@ -231,7 +243,7 @@ async function handle(request, response, body) {
     invoice.status = invoiceStatus ?? (paid ? 'paid' : 'open');
     invoice.object = 'invoice';
     invoice.amount_remaining = paid ? 0 : invoice.amount_due;
-    await deliver(invoiceStatus === 'void' ? 'invoice.voided' : invoiceStatus === 'uncollectible' ? 'invoice.marked_uncollectible' : paid ? 'invoice.paid' : 'invoice.payment_failed', structuredClone(invoice), created);
+    if (notify) await deliver(eventType ?? (invoiceStatus === 'void' ? 'invoice.voided' : invoiceStatus === 'uncollectible' ? 'invoice.marked_uncollectible' : paid ? 'invoice.paid' : 'invoice.payment_failed'), structuredClone(invoice), created);
     return reply(response, 200, {});
   }
   if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/log') return reply(response, 200, log);
@@ -267,6 +279,7 @@ async function handle(request, response, body) {
   if (failure?.remaining > 0) {
     failure.remaining -= 1;
     log.calls.push({ method: request.method, path: url.pathname, status: failure.status });
+    if (failure.transport) { response.destroy(); return; }
     return reply(response, failure.status, { error: { type: 'invalid_request_error', code: failure.status === 404 ? 'resource_missing' : undefined, message: 'Journey Stripe failure.' } });
   }
   const replay = request.method === 'POST' && request.headers['idempotency-key'] ? `${request.method} ${url.pathname} ${request.headers['idempotency-key']}` : '';

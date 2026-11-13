@@ -277,6 +277,19 @@ namespace TerraScale.Dashboard.Features.Billing
 
             var orgId = customer.OrganizationId;
             var binding = await ReadAsync(orgId, cancellationToken);
+            if (@event.Created < time.GetUtcNow().UtcDateTime.AddDays(-30)) { return; }
+            var receipt = new StripeEventReceipt
+            {
+                Id = @event.Id,
+                OrganizationId = orgId,
+                SubscriptionId = binding?.SubscriptionId ?? "",
+                InvoiceId = @event.Data.Object is Invoice paymentInvoice && paymentInvoice.Parent?.SubscriptionDetails?.SubscriptionId == binding?.SubscriptionId ? paymentInvoice.Id : "",
+                EventType = @event.Type,
+                EventCreated = new(DateTime.SpecifyKind(@event.Created, DateTimeKind.Utc)),
+                ReceivedAt = time.GetUtcNow(),
+                ProcessingUntil = time.GetUtcNow().AddMinutes(5)
+            };
+            if (!await storage.InsertAsync(receipt, cancellationToken)) { return; }
             try
             {
                 if (binding?.CustomerId != customerId)
@@ -284,17 +297,16 @@ namespace TerraScale.Dashboard.Features.Billing
                     throw new IOException("Billing index does not match its customer.");
                 }
 
-                if (@event.Data.Object is Invoice invoice && invoice.Parent?.SubscriptionDetails?.SubscriptionId == binding.SubscriptionId)
-                {
-                    await ApplyPaymentAsync(binding, invoice.Id, @event.Type, @event.Created, cancellationToken);
-                }
-
-                await RefreshAsync(orgId, cancellationToken);
+                await ApplyEventReceiptAsync(receipt, cancellationToken);
             }
             // Not applied: the endpoint answers 503 so Stripe redelivers it; a redelivery re-reads Stripe's current state.
             catch (Exception error) when (error is IOException or TerraBaseException or HttpRequestException or TimeoutException or StripeException ||
                                           error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-            { throw new StripeWebhookDeferredException(@event.Id, @event.Type, error); }
+            {
+                receipt.ProcessingUntil = time.GetUtcNow();
+                await storage.ReplaceAsync(receipt, cancellationToken);
+                throw new StripeWebhookDeferredException(@event.Id, @event.Type, error);
+            }
             logger.StripeEventAppliedForOrganization(@event.Id, @event.Type, orgId);
         }
 
@@ -486,6 +498,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 BillingPlan plan;
                 string effectiveInterval;
                 var paymentValid = false;
+                var taxRepair = false;
                 var unmappedPrice = false;
                 DateTimeOffset? renewalAt = null;
                 string status;
@@ -497,35 +510,27 @@ namespace TerraScale.Dashboard.Features.Billing
                     // plan changes and cancellation remain effective even while a
                     // later checkout is open or expired.
                     var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId,
-                        new() { Expand = ["items.data.price.product", "default_payment_method", "customer.tax"] }, cancellationToken: cancellationToken);
+                        new() { Expand = ["items.data.price.product", "default_payment_method", "customer.tax", "latest_invoice"] }, cancellationToken: cancellationToken);
                     if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
                     {
                         throw new IOException("Subscription ownership does not match.");
                     }
 
                     binding.TaxLocationStatus = subscription.Customer?.Tax?.AutomaticTax ?? "unrecognized_location";
-                    if (subscription.Metadata.GetValueOrDefault("terrascale_tax") == "automatic" && binding.TaxLocationStatus is "supported" or "not_collecting" && subscription.AutomaticTax?.Enabled != true && subscription.Status is not ("canceled" or "incomplete_expired"))
-                    {
-                        try
-                        {
-                            await client.V1.Subscriptions.UpdateAsync(subscription.Id, new()
-                            { AutomaticTax = new() { Enabled = true } }, cancellationToken: cancellationToken);
-                        }
-                        catch (StripeException error)
-                        {
-                            logger.DashboardDependencyFailedOn("billing/automatic-tax", error.GetType().Name, error.HttpStatusCode);
-                            binding.TaxLocationStatus = "update_refused";
-                        }
-                    }
+                    taxRepair = subscription.Metadata.GetValueOrDefault("terrascale_tax") == "automatic" && binding.TaxLocationStatus is "supported" or "not_collecting" && subscription.AutomaticTax?.Enabled != true && subscription.Status is not ("canceled" or "incomplete_expired");
 
                     var item = subscription.Items.Data.Count == 1 ? subscription.Items.Data[0] : null;
                     var mapped = item is { Quantity: 1 } ? EffectivePlan(item.Price) : null;
                     unmappedPrice = mapped is null;
                     (plan, effectiveInterval) = mapped ?? (PlanCatalog.For("free"), "");
                     status = subscription.Status;
-                    // Invoices fall back to the customer's default, which the billing portal sets when a card is made default.
-                    paymentValid = !unmappedPrice && (status is "active" or "trialing") && (subscription.DefaultPaymentMethodId is { Length: > 0 } ||
-                        subscription.Customer is { Deleted: not true, InvoiceSettings.DefaultPaymentMethodId.Length: > 0 });
+                    var canonicalPaid = status is "active" or "trialing" || subscription.LatestInvoice is { Status: "paid" } && status is "past_due" or "unpaid";
+                    if (unmappedPrice && canonicalPaid && PlanCatalog.For(org) is { PriceCents: > 0 } retained)
+                    {
+                        plan = retained;
+                        effectiveInterval = binding.EffectiveInterval;
+                    }
+                    paymentValid = canonicalPaid && (!unmappedPrice || plan.PriceCents > 0);
                     if (item is not null && status is not ("canceled" or "incomplete_expired"))
                     {
                         renewalAt = item.CurrentPeriodEnd;
@@ -566,17 +571,17 @@ namespace TerraScale.Dashboard.Features.Billing
                 binding.Status = status;
                 binding.TrialUsed |= status is "active" or "trialing";
                 binding.Revision = checked(binding.Revision + 1);
-                if (status is "active" or "trialing" or "canceled" or "incomplete_expired")
+                if (paymentValid || status is "active" or "trialing" or "canceled" or "incomplete_expired")
                 {
                     org.PaymentGraceUntil = null;
                 }
                 else if (status is "past_due" or "unpaid" && PlanCatalog.For(org) is { PriceCents: > 0 })
                 {
-                    org.PaymentGraceUntil ??= org.BillingStatus == "billing_required" ? time.GetUtcNow() : GraceDeadline(time.GetUtcNow());
+                    org.PaymentGraceUntil ??= GraceDeadline(time.GetUtcNow());
                 }
                 paymentValid &= org.PaymentGraceUntil is null;
                 org.PaymentMethodValidated = paymentValid;
-                if (org.PaymentGraceUntil is { } deadline && !unmappedPrice && status is not ("canceled" or "incomplete_expired"))
+                if (org.PaymentGraceUntil is { } deadline && status is not ("canceled" or "incomplete_expired"))
                 {
                     org.BillingStatus = deadline > time.GetUtcNow() ? "active" : "billing_required";
                     binding.EffectivePlan = previousEffectivePlan;
@@ -619,10 +624,17 @@ namespace TerraScale.Dashboard.Features.Billing
                     binding.EffectivePlan = previousEffectivePlan;
                     binding.EffectiveInterval = previousEffectiveInterval;
                 }
-                if (binding.EffectivePlan != previousEffectivePlan || binding.EffectivePlanSince is null)
+                if (PlanCatalog.Plans.FirstOrDefault(candidate => candidate.Key == binding.EffectivePlan) is { } observed)
                 {
+                    BillingMonth.Observe(binding, observed, time.GetUtcNow());
+                }
+                else
+                {
+                    binding.ObservedPricingVersion = "";
                     binding.EffectivePlanSince = time.GetUtcNow();
                 }
+                binding.ExpiryUnavailableSince = null;
+                binding.ExpiryLastLoggedAt = null;
                 if (org.PlanId != previousPlanId)
                 {
                     org.AuditEvents.Add(new(AccountService.NewId(), "billing service", "billing.plan_changed", PlanCatalog.Plans.FirstOrDefault(item => item.Id == org.PlanId)?.Name ?? org.PlanId, "plan", time.GetUtcNow()));
@@ -641,6 +653,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     if (current?.RequestId == binding.RequestId && current.Revision == binding.Revision)
                     {
                         await plans.PublishAsync(org, cancellationToken);
+                        if (taxRepair) { await RepairTaxAsync(client, subscriptionId, cancellationToken); }
                         return paymentValid;
                     }
                 }
@@ -652,7 +665,7 @@ namespace TerraScale.Dashboard.Features.Billing
             throw new IOException("Billing changed concurrently. Retry reconciliation.");
         }
 
-        private static DateTimeOffset GraceDeadline(DateTimeOffset failedAt) => new(failedAt.UtcDateTime.Date.AddDays(8).AddTicks(-1), TimeSpan.Zero);
+        private static DateTimeOffset GraceDeadline(DateTimeOffset failedAt) => new(failedAt.UtcDateTime.Date.AddDays(8).AddMilliseconds(-1), TimeSpan.Zero);
 
         private async Task<BillingBinding> ReserveAsync(string orgId, string projectId, string plan, string interval, string returnPath, CancellationToken cancellationToken)
         {
@@ -708,7 +721,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 current.RequestId = initial.RequestId; current.StartedAt = initial.StartedAt; current.CheckoutId = "";
                 current.SubscriptionId = ""; current.EffectivePlan = ""; current.EffectiveInterval = "";
                 current.RenewalAt = null;
-                current.OverageReportedThrough = null;
+                current.OverageStartsAt = new(time.GetUtcNow().Year, time.GetUtcNow().Month, 1, 0, 0, 0, TimeSpan.Zero);
+                current.ObservedPricingVersion = "";
                 current.EffectivePlanSince = null;
                 current.Status = "pending";
             }, cancellationToken);
