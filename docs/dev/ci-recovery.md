@@ -33,21 +33,19 @@ Status Workers are compared separately and only the selected Workers deploy.
 
 Auth and dashboard read their readiness revision. Their release jobs run in
 `ci.yml` and `images-ghcr.yml`, as required by the release service's existing
-OIDC policy. gru accepts the image only when its revision label equals the
-OIDC sha. A main push releases both after `all-green`, from that push's sha:
-`main-auth` in `ci.yml`, and dashboard by calling `images-ghcr.yml`. The gate
-counts that in-progress push as qualified once `all-green` and the journey
-shards succeeded. Sites still requests a main dispatch when work is due. The
-locked job reads live and chooses target again, and releases only when target
-is this run's sha. It checks out that commit, reuses an image labeled with it,
-or builds and checks one. Only then does it move the mutable main tag and
-release the pinned arm64 digest. A dispatch whose sha is not the qualified
-target does not release.
+OIDC policy. Dashboard provenance, the SBOM and `gh attestation verify` name
+the package `scripts/ci/reconcile-image.sh` publishes,
+`ghcr.io/terrascale/terrascale-dashboard`. When work is due, Sites requests a
+main dispatch. That job reads
+live and chooses target again inside its release lock. It checks out target,
+reuses an image labeled with that exact commit, or builds and checks one.
+Only then does it move the mutable main tag and release the pinned arm64 digest.
+The trigger commit and the availability of a prior Images run do not matter.
 
 Every site deploy records target as the Worker version message. The proof
 requires that version at 100% traffic. Auth and dashboard verify readiness and
 write `deploy-revision`. The production journey reads this receipt, so it uses
-the deployed source, which is the signed commit that was released.
+the deployed source even when the dispatch was created on another commit.
 A release job that did not succeed starts no production journey; its own
 state issue and job summary show the failure.
 
