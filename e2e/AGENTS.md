@@ -144,7 +144,8 @@ never for a pull request: once after the last release of each commit (the rule i
 
 What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 
-- Mail: `newAddress` uses a fresh 20-character lowercase hexadecimal username (80 random bits) on the active
+- Mail: `newAddress` uses a fresh 20-character lowercase hexadecimal username that starts with a letter (about 78
+  random bits) on the active
   mail.tm domain (`E2E_INBOX_DOMAIN`), independently of the caller's label. The public API description does not
   specify the username validator; long journey labels have been rejected as invalid usernames. The local target
   keeps its named `@example.com` addresses in Mailpit. `nextMail` waits at most 120 s on production (`mailWait`),
@@ -159,7 +160,11 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   (seconds or HTTP date) and `RateLimit-Reset` (relative seconds, epoch seconds or HTTP date) determine the earliest
   next request. With neither, the response's `RateLimit-Policy` window applies, with a 60-s minimum. Requests continue
   only while a scheduled slot fits inside the original mail deadline; non-poll requests have a 120-s response budget
-  after their first slot. Individual HTTP requests are bounded by 15 s and the remaining budget.
+  after their first slot. Individual HTTP requests are bounded by 15 s and the remaining budget, and a response
+  body that stalls or cannot be read fails with the same "inbox provider" error. The first provider call of a run
+  records the run's start in `inbox-run`; no request waits for a slot or a response past 24 minutes after it, one
+  minute inside the suite's limit, and a request that cannot get a slot before then fails with "has no slot before
+  the run's time limit".
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
   Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.

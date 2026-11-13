@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const slotMs = 7_000;
+const runMs = 24 * 60_000;
 
 function resetAt(headers: Headers, now: number): number {
   const retry = headers.get('retry-after');
@@ -19,7 +20,8 @@ function resetAt(headers: Headers, now: number): number {
 }
 
 export function inboxAddress(domain: string): string {
-  return `${randomBytes(10).toString('hex')}@${domain}`;
+  const bytes = randomBytes(10);
+  return `${'abcdef'[bytes[0] % 6]}${bytes.toString('hex').slice(1)}@${domain}`;
 }
 
 export class InboxProvider {
@@ -31,6 +33,13 @@ export class InboxProvider {
     this.state = state;
     this.onWait = onWait;
     this.context = context;
+  }
+
+  private runDeadline(): number {
+    const starts = join(this.state, 'inbox-run');
+    mkdirSync(starts, { recursive: true });
+    if (!readdirSync(starts).length) writeFileSync(join(starts, String(Date.now())), '');
+    return Math.min(...readdirSync(starts).map(Number)) + runMs;
   }
 
   private async turn(every: number, notBefore: number, deadline: number): Promise<number | undefined> {
@@ -61,9 +70,12 @@ export class InboxProvider {
 
   async request<T>(method: string, path: string, token?: string, body?: object, deadline = Infinity): Promise<T> {
     const every = method === 'POST' && path === '/accounts' ? 10 : 1;
-    let slot = await this.turn(every, Date.now(), deadline);
-    if (slot === undefined) throw new Error(`inbox provider mail.tm: ${method} ${path} has no slot before the mail poll deadline`);
-    const until = Number.isFinite(deadline) ? deadline : Date.now() + 120_000;
+    const run = this.runDeadline();
+    let slot = await this.turn(every, Date.now(), Math.min(deadline, run));
+    if (slot === undefined) {
+      throw new Error(`inbox provider mail.tm: ${method} ${path} has no slot before ${deadline <= run ? 'the mail poll deadline' : "the run's time limit"}`);
+    }
+    const until = Math.min(run, Number.isFinite(deadline) ? deadline : Date.now() + 120_000);
     const headers: Record<string, string> = { accept: 'application/json' };
     if (body) headers['content-type'] = 'application/json';
     if (token) headers.authorization = `Bearer ${token}`;
@@ -79,8 +91,11 @@ export class InboxProvider {
       });
       const limits = Object.fromEntries([...response.headers].filter(([name]) => name.startsWith('ratelimit-') || name === 'retry-after'));
       process.stderr.write(`inbox provider mail.tm: response ${JSON.stringify({ ...sent, status: response.status, headers: limits })}\n`);
-      if (response.ok) return (await response.json()) as T;
-      const detail = (await response.text()).replace(/\s+/g, ' ').slice(0, 500);
+      const read = <V>(content: Promise<V>): Promise<V> => content.catch((error: Error) => {
+        throw new Error(`inbox provider mail.tm: ${method} ${path} answered HTTP ${response.status} and its body failed: ${error.cause ?? error.message}`);
+      });
+      if (response.ok) return (await read(response.json())) as T;
+      const detail = (await read(response.text())).replace(/\s+/g, ' ').slice(0, 500);
       const failure = new Error(`inbox provider mail.tm: ${method} ${path} answered HTTP ${response.status}; headers ${JSON.stringify(limits)}: ${detail}`);
       if (response.status !== 429) throw failure;
       const retryAt = resetAt(response.headers, Date.now());
