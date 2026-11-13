@@ -11,6 +11,7 @@ using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Storage;
@@ -75,6 +76,7 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         var policy = (await settings.GetAsync(project, cancellationToken)).Configuration ?? ConfigurationBody.Default;
         var method = "pwd";
         var passwordVerified = false;
+        AttemptLimiter.Reservation? reservation = null;
         if (request.Password is not null)
         {
             var checkedPassword = await hosted.CheckPasswordAsync(caller.Email, request.Password, cancellationToken);
@@ -89,6 +91,7 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
             }
 
             passwordVerified = true;
+            reservation = checkedPassword.Reservation;
         }
 
         if (request.Code is not null && request.Passkey is null && request.Challenge is null)
@@ -159,7 +162,13 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
                         : passwordVerified && method != "pwd" ? new[] { "pwd", method, "mfa" } : new[] { method },
                 },
             });
-            return Results.Json(new ProjectStepUpBody(proof, expires), ProjectTenantJson.Default.ProjectStepUpBody);
+            var result = Results.Json(new ProjectStepUpBody(proof, expires), ProjectTenantJson.Default.ProjectStepUpBody);
+            if (reservation is not null)
+            {
+                await reservation.ReturnAsync(cancellationToken);
+            }
+
+            return result;
         }
         finally
         {

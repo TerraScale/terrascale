@@ -164,11 +164,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
     public static IResult TooMany(TimeSpan wait) => new RetryAfterResult(wait,
         Results.Json(new OAuthErrorBody("rate_limited", "Too many attempts; retry later."), statusCode: StatusCodes.Status429TooManyRequests));
 
-    /// <summary>
-    /// Charges the email's password budget, then checks <paramref name="password"/>. The account, null for any wrong
-    /// email or password alike, or how long to wait. Callers charge the IP budget first and check MFA after.
-    /// </summary>
-    public async Task<(UserRecord? User, TimeSpan? Wait)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken, string locale = AuthEmails.English)
+    public async Task<(UserRecord? User, TimeSpan? Wait, AttemptLimiter.Reservation? Reservation)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
         if (Users.NormalizeEmail(email) is null && HostedTheme.Of(http.HttpContext ?? throw new InvalidOperationException("Hosted authentication requires an HTTP context.")).Username
             && await users.FindByUsernameAsync(this.Tenant, email, cancellationToken) is { } named)
@@ -177,20 +173,28 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
         }
 
         var context = http.HttpContext ?? throw new InvalidOperationException("Hosted sign-in requires an HTTP context.");
-        if ((!Tenancy.IsProject(this.Tenant) || !(await context.RequestServices.GetRequiredService<ProjectAuthSettings>()
-            .GetAsync(this.Tenant, cancellationToken)).AttackProtection.AccountLockout) && await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken, locale) is { } wait)
+        var normalized = Users.NormalizeEmail(email);
+        AttemptLimiter.Reservation? reservation = null;
+        if (normalized is not null && (!Tenancy.IsProject(this.Tenant) || !(await context.RequestServices.GetRequiredService<ProjectAuthSettings>()
+            .GetAsync(this.Tenant, cancellationToken)).AttackProtection.AccountLockout))
         {
-            return (null, wait);
+            var admission = await limiter.ReserveAsync(this.Tenant, "headless-password-email", limiter.Fold(normalized), PasswordPerEmail, PasswordWindow, cancellationToken);
+            if (admission.Rejection is { } rejection)
+            {
+                return (null, this.Refused(normalized, "headless-password-email", rejection, notify: true, locale), null);
+            }
+
+            reservation = admission.Reservation;
         }
 
         var started = passwords.StartPasswordCheck();
-        var user = Users.NormalizeEmail(email) is { } normalized ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null;
+        var user = normalized is not null ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null;
         if (user is null)
         {
             await passwords.PadFailureAsync(started, cancellationToken);
         }
 
-        return (user, null);
+        return (user, null, user is null ? null : reservation);
     }
 
     private async Task<UserRecord?> VerifyPasswordAsync(string email, string password, CancellationToken cancellationToken)
@@ -303,10 +307,14 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
             return null;
         }
 
+        return this.Refused(normalized, purpose, rejection, notify, locale);
+    }
+
+    private TimeSpan Refused(string normalized, string purpose, AttemptRejection rejection, bool notify, string locale)
+    {
         logger.ZLogWarning($"Audit: hosted request rate-limited by the {purpose:@Purpose} budget");
         if (notify)
         {
-            // Both known and unknown addresses enqueue the same work; only the worker looks up the account.
             var tenant = this.Tenant;
             mail.EnqueueLockout(async () => await users.FindByEmailAsync(tenant, normalized, CancellationToken.None) is { } user
                 && await limiter.ClaimLockoutNoticeAsync(tenant, purpose, user.Id, rejection.Until, CancellationToken.None)

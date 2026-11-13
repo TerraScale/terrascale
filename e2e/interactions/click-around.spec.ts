@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { confirmWithPassword } from '../support/hosted';
@@ -235,6 +236,35 @@ test('an alert webhook secret is shown once, including two parallel reads, and i
   }
   await audit.check('alert rules after delete');
 });
+
+for (const area of ['usage', 'analytics']) {
+  test(`${area} filters keep text readable while measurements refresh`, async ({ page, audit }) => {
+    await page.goto(`/${area}?range=7d`);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route(`**/${area}?*`, async route => {
+      await held;
+      await route.continue();
+    }, { times: 1 });
+    const updated = page.waitForResponse(response => new URL(response.url()).pathname === `/${area}`);
+    try {
+      await page.locator(area === 'usage' ? '#usage-database' : 'select[name="database"]').selectOption(journey().databaseId);
+      await expect(page.locator('body')).toHaveClass(/ts-nav-pending/);
+      await page.locator('main').evaluate(async element => {
+        await Promise.all(element.getAnimations({ subtree: true })
+          .filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity)
+          .map(animation => animation.finished));
+      });
+      const contrast = await new AxeBuilder({ page }).include('main').withRules(['color-contrast']).analyze();
+      expect(contrast.violations, 'refreshing measurements retain readable text').toEqual([]);
+    } finally {
+      release();
+      await updated;
+    }
+    await expect(page.locator('body')).not.toHaveClass(/ts-nav-pending/);
+    await audit.check(`${area} measurements refreshed`);
+  });
+}
 
 test('native dropdowns preserve filters and context while browser popovers dismiss and return focus', async ({ page, audit }) => {
   const current = journey();
