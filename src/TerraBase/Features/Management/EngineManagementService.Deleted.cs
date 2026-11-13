@@ -146,6 +146,22 @@ internal sealed partial class EngineManagementService
     public async ValueTask<PurgeDatabaseResult> PurgeDeletedDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken)
     {
+        try
+        {
+            return await PurgeDeletedCoreAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "retained_purge"));
+            logger.ZLogWarning(error, $"Permanent purge of retained database {databaseId:@Database} remains unverified");
+            var job = await GetDatabasePurgeAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
+            return job is DatabasePurgeBody ? job : new Unavailable("permanent purge could not be verified");
+        }
+    }
+
+    private async ValueTask<PurgeDatabaseResult> PurgeDeletedCoreAsync(
+        string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken)
+    {
         using var authority = await retention.EnterAsync(databaseId, cancellationToken).ConfigureAwait(false);
         if (authority is null)
         {
@@ -156,7 +172,7 @@ internal sealed partial class EngineManagementService
         {
             if (existing.State == "complete")
             {
-                return ManagementErrors.NotFound;
+                return new NotFound("the database has been permanently purged", "database_gone");
             }
             await AdvancePurgeAsync(databaseId, cancellationToken).ConfigureAwait(false);
             return await GetDatabasePurgeAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
