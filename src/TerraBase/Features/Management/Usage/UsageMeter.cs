@@ -21,6 +21,8 @@ internal sealed record ObservationFilter(Func<UsageDimension, bool> Keep, Action
 
 internal sealed record UsageTotals(long Reads, long Writes)
 {
+    internal bool Persisted { get; init; }
+
     public OpCounts Counts => new(Reads, Writes);
 
     public long StorageByteHours { get; init; }
