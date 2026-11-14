@@ -9,9 +9,9 @@
     <TieredPGO>true</TieredPGO>
     <!-- ReadyToRun precompiles on publish for a faster cold start; hot methods still tier up on the JIT. -->
     <PublishReadyToRun>true</PublishReadyToRun>
-    <!-- Workstation GC: a 512 MB machine gets no per-core server heaps; concurrent marking keeps pauses short. -->
-    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
     <!-- TerraScale.Endpoints (src/TerraScale.Endpoints) and its generator, referenced by Directory.Build.targets. -->
     <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
   </PropertyGroup>
