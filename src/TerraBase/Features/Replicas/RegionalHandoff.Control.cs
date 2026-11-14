@@ -9,6 +9,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 using TerraBase.Hosting;
+using TerraScale.TerraBase.Contracts;
 using ZLogger;
 
 namespace TerraBase.Features.Replicas;
@@ -42,6 +43,9 @@ internal sealed partial class RegionalHandoff
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan CatchUpBudget = TimeSpan.FromSeconds(1);
     private const int CatchUpParallelism = 16;
+    private const string ReplicaTablesSql = "SELECT tbl_name FROM sqlite_schema";
+    private const int MaxSchemaRows = 10_000;
+    private const long MaxSchemaBytes = 4L * 1024 * 1024;
     private static readonly TimeSpan ActivationBudget = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AttemptBudget = TimeSpan.FromSeconds(2);
 
@@ -402,11 +406,25 @@ internal sealed partial class RegionalHandoff
             HeldAt(var replica) => await services.GetRequiredService<IDatabaseRevisions>().CurrentRevisionAsync(database, token).ConfigureAwait(false) switch
             {
                 null => new(HomeRefusal.PrimaryMissing, $"has a local replica at {replica} and no primary file"),
-                { } primary when primary.Incarnation != replica.Incarnation || DatabaseRevision.Compare(replica, primary) > 0 =>
+                { } primary when (primary.Incarnation == replica.Incarnation
+                    ? DatabaseRevision.Compare(replica, primary) > 0
+                    : await ReplicaHoldsDataAsync(database, token).ConfigureAwait(false)) =>
                     new(HomeRefusal.ReplicaNewer, $"has a local replica at {replica} that its primary file does not cover, at {primary}"),
                 _ => null,
             },
         };
+
+    private async Task<bool> ReplicaHoldsDataAsync(TenantContext database, CancellationToken token)
+    {
+        await using var reader = await services.GetRequiredService<IDatabaseReplicas>().BeginReadAsync(database, token).ConfigureAwait(false);
+        if (reader is null)
+        {
+            return true;
+        }
+
+        var schema = await reader.ExecuteAsync(new SqlStatement(ReplicaTablesSql, [], new Dictionary<string, object?>(), MaxSchemaRows, MaxSchemaBytes, AttemptBudget), token).ConfigureAwait(false);
+        return schema.Truncated || schema.Rows.Any(row => row[0] is not string table || !TerraBaseSqlNames.IsInternalTable(table));
+    }
 
     private async Task<int> CatchUpAsync(IReadOnlyList<TenantContext> unheld, CancellationToken token)
     {
